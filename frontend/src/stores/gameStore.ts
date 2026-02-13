@@ -49,11 +49,11 @@ interface GameState {
 }
 
 const initialScore: Score = {
-  efficiency: 25,
-  safety: 25,
-  documentation: 25,
-  accuracy: 25,
-  total: 100,
+  efficiency: 0,
+  safety: 0,
+  documentation: 0,
+  accuracy: 0,
+  total: 0,
 };
 
 export const useGameStore = create<GameState>((set, get) => ({

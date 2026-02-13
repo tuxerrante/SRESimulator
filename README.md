@@ -1,12 +1,13 @@
 # 🎮 SRE Simulator
 
-## *The Break-Fix Game for Azure Red Hat OpenShift*
+## _The Break-Fix Game for Azure Red Hat OpenShift_
 
-> An AI-powered training tool that gamifies the SRE investigation experience. An AI **Dungeon Master** 🧙 generates realistic ARO cluster incidents, and you investigate them using the proper methodology:
+> An AI-powered training tool that gamifies the SRE investigation experience.
+> An AI **Dungeon Master** 🧙 generates realistic ARO cluster incidents, and you investigate them using the proper methodology:
 >
 > **📖 Reading → 🔍 Context Gathering → 📊 Facts Gathering → 💡 Theory Building → 🔧 Action**
 
-You're scored on how well you follow the process, not just whether you find the fix.
+You're scored on how well you follow the process, not just whether you find the fix!
 
 ---
 
@@ -25,12 +26,12 @@ Your score tracks four dimensions: **Efficiency**, **Safety**, **Documentation**
 
 ## 📋 Prerequisites
 
-| Requirement | Version |
-| --- | --- |
-| 🟢 Node.js | >= 20 (tested with v25.6.1) |
-| 📦 npm | >= 10 |
+| Requirement                    | Version                                |
+| ------------------------------ | -------------------------------------- |
+| 🟢 Node.js                     | >= 20 (tested with v25.6.1)            |
+| 📦 npm                         | >= 10                                  |
 | ☁️ Google Cloud SDK (`gcloud`) | Authenticated with access to Vertex AI |
-| 🤖 Claude on Vertex AI | Enabled in your GCP project |
+| 🤖 Claude on Vertex AI         | Enabled in your GCP project            |
 
 ---
 
@@ -58,10 +59,10 @@ CLOUD_ML_REGION=us-east5
 ANTHROPIC_VERTEX_PROJECT_ID=your-gcp-project-id
 ```
 
-| Variable | Description |
-| --- | --- |
-| `CLOUD_ML_REGION` | GCP region where Claude is available (e.g. `us-east5`) |
-| `ANTHROPIC_VERTEX_PROJECT_ID` | Your GCP project ID |
+| Variable                      | Description                                            |
+| ----------------------------- | ------------------------------------------------------ |
+| `CLOUD_ML_REGION`             | GCP region where Claude is available (e.g. `us-east5`) |
+| `ANTHROPIC_VERTEX_PROJECT_ID` | Your GCP project ID                                    |
 
 > 💡 The SDK authenticates automatically using Application Default Credentials from `gcloud auth application-default login`. No API keys needed.
 
@@ -107,7 +108,7 @@ Use the Vertex AI model name format: `model-name@date` (with `@`, not `-`).
 
 ```bash
 # 1. Clone the repository
-git clone <repo-url>
+git clone https://github.com/tuxerrante/SRESimulator.git
 cd SRESimulator
 
 # 2. Configure environment (see LLM Setup above)
@@ -127,19 +128,19 @@ Open [http://localhost:3000](http://localhost:3000) in your browser. 🌐
 
 Run `make help` for the full list. Here are the most useful ones:
 
-| Command | Description |
-| --- | --- |
-| `make install` | 📦 Install all dependencies |
-| `make dev` | 🚀 Start Next.js dev server |
-| `make build` | 🏗️ Build the production bundle |
-| `make start` | 🏗️ + ▶️ Build and start production server |
-| `make lint` | 🔍 Run all linters (TS, YAML, Markdown) |
-| `make fmt` | ✨ Auto-fix formatting |
-| `make typecheck` | 🔎 Run TypeScript type checking |
-| `make validate` | 🔍 + 🔎 Lint + type check |
-| `make security` | 🔒 Run security audit + lockfile check |
-| `make all` | 🏁 Full CI pipeline (lint + typecheck + security + build) |
-| `make clean` | 🧹 Remove build artifacts and node_modules |
+| Command          | Description                                               |
+| ---------------- | --------------------------------------------------------- |
+| `make install`   | 📦 Install all dependencies                               |
+| `make dev`       | 🚀 Start Next.js dev server                               |
+| `make build`     | 🏗️ Build the production bundle                            |
+| `make start`     | 🏗️ + ▶️ Build and start production server                 |
+| `make lint`      | 🔍 Run all linters (TS, YAML, Markdown)                   |
+| `make fmt`       | ✨ Auto-fix formatting                                    |
+| `make typecheck` | 🔎 Run TypeScript type checking                           |
+| `make validate`  | 🔍 + 🔎 Lint + type check                                 |
+| `make security`  | 🔒 Run security audit + lockfile check                    |
+| `make all`       | 🏁 Full CI pipeline (lint + typecheck + security + build) |
+| `make clean`     | 🧹 Remove build artifacts and node_modules                |
 
 ---
 
@@ -181,14 +182,14 @@ SRESimulator/
 
 ## 🧰 Tech Stack
 
-| Layer | Technology |
-| --- | --- |
-| ⚡ Framework | Next.js 15 (App Router, TypeScript) |
-| 🎨 Styling | Tailwind CSS v4 |
-| 🗃️ State | Zustand |
-| 🤖 LLM | Claude via Vertex AI (`@anthropic-ai/vertex-sdk`) |
-| 📝 Markdown | react-markdown + remark-gfm |
-| 🎯 Icons | Lucide React |
+| Layer        | Technology                                        |
+| ------------ | ------------------------------------------------- |
+| ⚡ Framework | Next.js 15 (App Router, TypeScript)               |
+| 🎨 Styling   | Tailwind CSS v4                                   |
+| 🗃️ State     | Zustand                                           |
+| 🤖 LLM       | Claude via Vertex AI (`@anthropic-ai/vertex-sdk`) |
+| 📝 Markdown  | react-markdown + remark-gfm                       |
+| 🎯 Icons     | Lucide React                                      |
 
 ---
 
@@ -196,13 +197,13 @@ SRESimulator/
 
 The game enforces the SRE "Scientific Method of Investigation":
 
-| Phase | What to do | Example |
-| --- | --- | --- |
-| 📖 **Reading** | Read the incident ticket carefully | *"What inconsistencies do you see?"* |
-| 🔍 **Context Gathering** | Check dashboards, cluster history | *"Have you checked Geneva first?"* |
-| 📊 **Facts Gathering** | Run commands, collect evidence | `oc get nodes`, KQL queries |
-| 💡 **Theory Building** | Form a hypothesis | *"What do you think is happening?"* |
-| 🔧 **Action** | Apply the fix (safely) | *"Is this reversible?"* |
+| Phase                    | What to do                         | Example                              |
+| ------------------------ | ---------------------------------- | ------------------------------------ |
+| 📖 **Reading**           | Read the incident ticket carefully | _"What inconsistencies do you see?"_ |
+| 🔍 **Context Gathering** | Check dashboards, cluster history  | _"Have you checked Geneva first?"_   |
+| 📊 **Facts Gathering**   | Run commands, collect evidence     | `oc get nodes`, KQL queries          |
+| 💡 **Theory Building**   | Form a hypothesis                  | _"What do you think is happening?"_  |
+| 🔧 **Action**            | Apply the fix (safely)             | _"Is this reversible?"_              |
 
 > ⚠️ The AI Dungeon Master will push back if you try to skip phases!
 
@@ -210,11 +211,28 @@ The game enforces the SRE "Scientific Method of Investigation":
 
 ## 🏆 Scoring
 
-| Dimension | Max | What's measured |
-| --- | --- | --- |
-| ⚡ Efficiency | 25 | Commands run vs. optimal path |
-| 🛡️ Safety | 25 | Checked dashboards before commands, backed up config |
-| 📝 Documentation | 25 | Followed methodology phases in order |
-| 🎯 Accuracy | 25 | Correctly identified root cause |
+You start at **0/100** and earn points through good investigation practices. Every smart move is rewarded — the score climbs as you demonstrate SRE discipline.
+
+### Dimensions
+
+| Dimension        | Max | What earns points                             | What loses points                    |
+| ---------------- | --- | --------------------------------------------- | ------------------------------------ |
+| ⚡ Efficiency    | 25  | Focused, targeted investigation               | Excessive or irrelevant commands     |
+| 🛡️ Safety        | 25  | Checking dashboards first, suggesting backups | Running commands without context     |
+| 📝 Documentation | 25  | Following phases in order, thorough analysis  | Skipping phases, jumping to action   |
+| 🎯 Accuracy      | 25  | Correct hypotheses, proper root cause         | Wrong theories, misidentified causes |
+
+### How scoring works
+
+**AI-driven scoring:** The Dungeon Master evaluates your approach in real-time and awards/deducts points after each interaction. Good questions, careful analysis, and methodical investigation earn bonuses. Rushing, skipping steps, or wrong conclusions cost points.
+
+**Automatic scoring:** The system also tracks your behavior directly:
+
+- Opening the Dashboard tab before running commands → safety bonus
+- Running commands without checking the dashboard → safety penalty
+- Running commands during the Reading phase → documentation penalty
+- Exceeding 5 commands → progressive efficiency penalties
+
+### Grades
 
 **Final grade:** 🥇 A (90+) · 🥈 B (80+) · 🥉 C (70+) · D (60+) · F (<60)
