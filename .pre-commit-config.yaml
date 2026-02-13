@@ -27,3 +27,25 @@ repos:
     hooks:
       - id: markdownlint
         args: [--fix]
+
+  - repo: local
+    hooks:
+      - id: npm-audit
+        name: npm audit (high/critical)
+        entry: bash -c 'cd frontend && npm audit --audit-level=high'
+        language: system
+        files: frontend/package-lock\.json
+        pass_filenames: false
+      - id: lockfile-lint
+        name: lockfile-lint
+        entry: >-
+          bash -c
+          'cd frontend &&
+          npx lockfile-lint
+          --path package-lock.json
+          --type npm
+          --allowed-hosts npm
+          --validate-https'
+        language: system
+        files: frontend/package-lock\.json
+        pass_filenames: false
