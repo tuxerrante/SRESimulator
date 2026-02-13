@@ -20,7 +20,7 @@ You're scored on how well you follow the process, not just whether you find the 
 5. 📊 **Check the dashboard** — view cluster health, active alerts, and upgrade history
 6. ✅ **Resolve the incident** — identify the root cause and apply the fix
 
-Your score tracks four dimensions: **Efficiency**, **Safety**, **Documentation**, and **Accuracy**.
+Your score tracks four dimensions: **Efficiency**, **Safety**, **Documentation**, and **Accuracy** — starting from 0 and climbing with every smart move. See [Architecture & Game Design](docs/ARCHITECTURE.md) for full details.
 
 ---
 
@@ -28,7 +28,7 @@ Your score tracks four dimensions: **Efficiency**, **Safety**, **Documentation**
 
 | Requirement                    | Version                                |
 | ------------------------------ | -------------------------------------- |
-| 🟢 Node.js                     | >= 20 (tested with v25.6.1)            |
+| 🟢 Node.js                     | >= 20                                  |
 | 📦 npm                         | >= 10                                  |
 | ☁️ Google Cloud SDK (`gcloud`) | Authenticated with access to Vertex AI |
 | 🤖 Claude on Vertex AI         | Enabled in your GCP project            |
@@ -37,48 +37,33 @@ Your score tracks four dimensions: **Efficiency**, **Safety**, **Documentation**
 
 ## 🔑 LLM Setup (Claude on Vertex AI)
 
-This project uses Claude via Google Cloud's Vertex AI. You need a GCP project with the Anthropic Claude model enabled.
-
-### Step 1 — 🔐 Authenticate with Google Cloud
+### Step 1 — Authenticate
 
 ```bash
 gcloud auth login
 gcloud auth application-default login
 ```
 
-### Step 2 — ⚙️ Configure environment variables
+### Step 2 — Configure environment
 
 ```bash
 cp frontend/.env.local.example frontend/.env.local
 ```
 
-Edit `frontend/.env.local` with your values:
+Edit `frontend/.env.local`:
 
 ```env
 CLOUD_ML_REGION=us-east5
 ANTHROPIC_VERTEX_PROJECT_ID=your-gcp-project-id
 ```
 
-| Variable                      | Description                                            |
-| ----------------------------- | ------------------------------------------------------ |
-| `CLOUD_ML_REGION`             | GCP region where Claude is available (e.g. `us-east5`) |
-| `ANTHROPIC_VERTEX_PROJECT_ID` | Your GCP project ID                                    |
+> 💡 The SDK authenticates via Application Default Credentials. No API keys needed.
 
-> 💡 The SDK authenticates automatically using Application Default Credentials from `gcloud auth application-default login`. No API keys needed.
-
-### Step 3 — ✅ Verify your project and region
-
-Load the variables you just configured and set the active GCP project:
+### Step 3 — Verify access
 
 ```bash
 source frontend/.env.local
 gcloud config set project $ANTHROPIC_VERTEX_PROJECT_ID
-```
-
-The model used is `claude-sonnet-4@20250514`. Verify it's available in your region:
-
-```bash
-source frontend/.env.local
 curl -s -X POST \
   -H "Authorization: Bearer $(gcloud auth print-access-token)" \
   -H "Content-Type: application/json" \
@@ -86,153 +71,42 @@ curl -s -X POST \
   -d '{"anthropic_version":"vertex-2023-10-16","messages":[{"role":"user","content":"hi"}],"max_tokens":10}'
 ```
 
-If you get a `200` response, you're good to go! 🎉 If not, check that:
-
-- ✅ The Vertex AI API is enabled in your project
-- ✅ Claude models are enabled (via the Vertex AI Model Garden in the GCP Console)
-- ✅ Your region supports Claude (common regions: `us-east5`, `us-central1`, `europe-west1`)
-
-### 🔄 Changing the model
-
-To use a different Claude model, edit the `CLAUDE_MODEL` constant in `frontend/src/lib/claude.ts`:
-
-```typescript
-export const CLAUDE_MODEL = "claude-sonnet-4@20250514";
-```
-
-Use the Vertex AI model name format: `model-name@date` (with `@`, not `-`).
+A `200` response means you're ready. If not, ensure the Vertex AI API and Claude models are enabled in your GCP project.
 
 ---
 
 ## 🚀 Getting Started
 
 ```bash
-# 1. Clone the repository
 git clone https://github.com/tuxerrante/SRESimulator.git
 cd SRESimulator
 
-# 2. Configure environment (see LLM Setup above)
+# Configure environment (see LLM Setup above)
 cp frontend/.env.local.example frontend/.env.local
-# ✏️ Edit frontend/.env.local with your GCP project ID and region
 
-# 3. Install dependencies
+# Install and run
 make install
-
-# 4. Start the development server
 make dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) in your browser. 🌐
+Open [http://localhost:3000](http://localhost:3000) in your browser.
 
-### 🛠️ Available Make targets
+### Make targets
 
-Run `make help` for the full list. Here are the most useful ones:
-
-| Command          | Description                                               |
-| ---------------- | --------------------------------------------------------- |
-| `make install`   | 📦 Install all dependencies                               |
-| `make dev`       | 🚀 Start Next.js dev server                               |
-| `make build`     | 🏗️ Build the production bundle                            |
-| `make start`     | 🏗️ + ▶️ Build and start production server                 |
-| `make lint`      | 🔍 Run all linters (TS, YAML, Markdown)                   |
-| `make fmt`       | ✨ Auto-fix formatting                                    |
-| `make typecheck` | 🔎 Run TypeScript type checking                           |
-| `make validate`  | 🔍 + 🔎 Lint + type check                                 |
-| `make security`  | 🔒 Run security audit + lockfile check                    |
-| `make all`       | 🏁 Full CI pipeline (lint + typecheck + security + build) |
-| `make clean`     | 🧹 Remove build artifacts and node_modules                |
+| Command          | Description                         |
+| ---------------- | ----------------------------------- |
+| `make install`   | Install all dependencies            |
+| `make dev`       | Start Next.js dev server            |
+| `make build`     | Build the production bundle         |
+| `make lint`      | Run all linters                     |
+| `make typecheck` | Run TypeScript type checking        |
+| `make security`  | Run security audit + lockfile check |
+| `make all`       | Full CI pipeline                    |
+| `make clean`     | Remove build artifacts              |
 
 ---
 
-## 📁 Project Structure
+## 📚 Documentation
 
-```text
-SRESimulator/
-├── 📄 CLAUDE.md                          # Design document and game spec
-├── 📄 README.md                          # This file
-├── 📄 Makefile                           # Build, lint, dev, and CI targets
-├── 📚 knowledge_base/                    # Reference docs loaded into AI context
-│   ├── sre-investigation-techniques.md
-│   ├── Openshift-clusters-alerts-resolutions.md
-│   └── Community-reported-issues.md
-└── 🖥️ frontend/                          # Next.js application
-    ├── src/
-    │   ├── app/
-    │   │   ├── page.tsx               # Landing page (scenario selection)
-    │   │   ├── game/page.tsx          # Main game page
-    │   │   └── api/
-    │   │       ├── chat/route.ts      # Claude streaming chat endpoint
-    │   │       ├── command/route.ts   # Simulated command execution
-    │   │       └── scenario/route.ts  # Scenario generation
-    │   ├── components/
-    │   │   ├── chat/                  # Chat panel, messages, input
-    │   │   ├── terminal/              # Terminal output display
-    │   │   ├── dashboard/             # Cluster overview and alerts
-    │   │   ├── scoring/               # Phase tracker, score overlay, breakdown
-    │   │   ├── layout/                # Game layout, header, right panel
-    │   │   └── shared/                # Code blocks, incident ticket
-    │   ├── hooks/                     # useChat, useCommand, useScoring
-    │   ├── stores/                    # Zustand game state
-    │   ├── lib/                       # Claude client, knowledge loader, prompts
-    │   └── types/                     # TypeScript type definitions
-    └── .env.local                     # Environment variables (not committed)
-```
-
----
-
-## 🧰 Tech Stack
-
-| Layer        | Technology                                        |
-| ------------ | ------------------------------------------------- |
-| ⚡ Framework | Next.js 15 (App Router, TypeScript)               |
-| 🎨 Styling   | Tailwind CSS v4                                   |
-| 🗃️ State     | Zustand                                           |
-| 🤖 LLM       | Claude via Vertex AI (`@anthropic-ai/vertex-sdk`) |
-| 📝 Markdown  | react-markdown + remark-gfm                       |
-| 🎯 Icons     | Lucide React                                      |
-
----
-
-## 🔬 Investigation Methodology
-
-The game enforces the SRE "Scientific Method of Investigation":
-
-| Phase                    | What to do                         | Example                              |
-| ------------------------ | ---------------------------------- | ------------------------------------ |
-| 📖 **Reading**           | Read the incident ticket carefully | _"What inconsistencies do you see?"_ |
-| 🔍 **Context Gathering** | Check dashboards, cluster history  | _"Have you checked Geneva first?"_   |
-| 📊 **Facts Gathering**   | Run commands, collect evidence     | `oc get nodes`, KQL queries          |
-| 💡 **Theory Building**   | Form a hypothesis                  | _"What do you think is happening?"_  |
-| 🔧 **Action**            | Apply the fix (safely)             | _"Is this reversible?"_              |
-
-> ⚠️ The AI Dungeon Master will push back if you try to skip phases!
-
----
-
-## 🏆 Scoring
-
-You start at **0/100** and earn points through good investigation practices. Every smart move is rewarded — the score climbs as you demonstrate SRE discipline.
-
-### Dimensions
-
-| Dimension        | Max | What earns points                             | What loses points                    |
-| ---------------- | --- | --------------------------------------------- | ------------------------------------ |
-| ⚡ Efficiency    | 25  | Focused, targeted investigation               | Excessive or irrelevant commands     |
-| 🛡️ Safety        | 25  | Checking dashboards first, suggesting backups | Running commands without context     |
-| 📝 Documentation | 25  | Following phases in order, thorough analysis  | Skipping phases, jumping to action   |
-| 🎯 Accuracy      | 25  | Correct hypotheses, proper root cause         | Wrong theories, misidentified causes |
-
-### How scoring works
-
-**AI-driven scoring:** The Dungeon Master evaluates your approach in real-time and awards/deducts points after each interaction. Good questions, careful analysis, and methodical investigation earn bonuses. Rushing, skipping steps, or wrong conclusions cost points.
-
-**Automatic scoring:** The system also tracks your behavior directly:
-
-- Opening the Dashboard tab before running commands → safety bonus
-- Running commands without checking the dashboard → safety penalty
-- Running commands during the Reading phase → documentation penalty
-- Exceeding 5 commands → progressive efficiency penalties
-
-### Grades
-
-**Final grade:** 🥇 A (90+) · 🥈 B (80+) · 🥉 C (70+) · D (60+) · F (<60)
+- **[Architecture & Game Design](docs/ARCHITECTURE.md)** — project structure, tech stack, scoring system, investigation methodology, API routes
+- **[CLAUDE.md](CLAUDE.md)** — original design document and game spec
