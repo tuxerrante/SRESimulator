@@ -77,7 +77,9 @@ export function ChatMessage({ message, onRunCommand }: ChatMessageProps) {
                 return <>{children}</>;
               },
             }}
-          />
+          >
+            {displayContent}
+          </ReactMarkdown>
         </div>
       </div>
     </div>
