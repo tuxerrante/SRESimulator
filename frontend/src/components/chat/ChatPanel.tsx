@@ -4,6 +4,7 @@ import { useEffect, useRef } from "react";
 import { ChatMessage } from "./ChatMessage";
 import { ChatInput } from "./ChatInput";
 import { useChat } from "@/hooks/useChat";
+import { useGameStore } from "@/stores/gameStore";
 import { Loader2 } from "lucide-react";
 
 interface ChatPanelProps {
@@ -14,14 +15,18 @@ export function ChatPanel({ onRunCommand }: ChatPanelProps) {
   const { messages, isStreaming, sendMessage } = useChat();
   const scrollRef = useRef<HTMLDivElement>(null);
 
+  // Subscribe to the raw messages array to detect content updates during streaming
+  const storeMessages = useGameStore((s) => s.messages);
+  const lastContent = storeMessages[storeMessages.length - 1]?.content;
+
   useEffect(() => {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
-  }, [messages]);
+  }, [storeMessages.length, lastContent]);
 
   return (
-    <div className="flex flex-col h-full bg-zinc-900 border-r border-zinc-700">
+    <div className="flex flex-col h-full">
       <div className="px-4 py-2 border-b border-zinc-700 bg-zinc-800">
         <h2 className="text-sm font-semibold text-zinc-200">
           Investigation Chat
@@ -30,7 +35,7 @@ export function ChatPanel({ onRunCommand }: ChatPanelProps) {
 
       <div
         ref={scrollRef}
-        className="flex-1 overflow-y-auto"
+        className="flex-1 overflow-y-auto min-h-0"
       >
         {messages.length === 0 && (
           <div className="flex items-center justify-center h-full text-zinc-600 text-sm px-8 text-center">

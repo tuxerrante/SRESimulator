@@ -33,7 +33,7 @@ export default function GamePage() {
     <>
       <GameLayout
         chatPanel={
-          <div className="flex flex-col h-full">
+          <div className="flex flex-col h-full bg-zinc-900 border-r border-zinc-700">
             <IncidentTicket ticket={scenario.incidentTicket} />
             <div className="flex-1 min-h-0">
               <ChatPanel onRunCommand={handleRunCommand} />
