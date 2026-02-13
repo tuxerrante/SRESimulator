@@ -115,8 +115,6 @@ The AI maps user intent to specific tools defined in the "Tools" documentation.
     └── alerts.md          #
 ```
 
-````
-
 ## 6. Scoring Metrics
 
 - **Efficiency:** Number of commands run vs. optimal path.
@@ -126,9 +124,7 @@ The AI maps user intent to specific tools defined in the "Tools" documentation.
 
 - **Accuracy:** Was the root cause correctly identified (e.g., distinguishing between a "Network Issue" and a "Geneva Blip" )?
 
-```
-
-***
+---
 
 ### Answer to your UI Question
 
@@ -138,17 +134,15 @@ The AI maps user intent to specific tools defined in the "Tools" documentation.
 
 You should use a **TypeScript/Electron** app or a local **Next.js** application. Here is how the connections would work:
 
-1.  **The Terminal Interface (`xterm.js`):**
+1. **The Terminal Interface (`xterm.js`):**
     You don't need to re-implement a shell. You can embed `xterm.js` in your React UI. The frontend sends the AI-generated command (e.g., `oc get nodes`) to your local Node.js backend. The backend spawns a child process using the user's existing local shell (which already has the `KUBECONFIG` and `oc` binary loaded), executes the command, and streams the stdout/stderr back to the frontend.
 
-2.  **The LLM Integration:**
-    The Frontend captures the user's natural language input (e.g., *"Why is the API server down?"*). It sends this to the LLM (Gemini/Claude) along with a system prompt containing the `CLAUDE.md` context and the `kusto_queries.md` content. The LLM returns a JSON object containing the suggested command and the explanation.
+2. **The LLM Integration:**
+    The Frontend captures the user's natural language input (e.g., _"Why is the API server down?"_). It sends this to the LLM (Gemini/Claude) along with a system prompt containing the `CLAUDE.md` context and the `kusto_queries.md` content. The LLM returns a JSON object containing the suggested command and the explanation.
 
-3.  **The "Geneva" Simulation:**
+3. **The "Geneva" Simulation:**
     Since you likely cannot grant the game actual access to Microsoft's internal "Geneva" dashboards, your UI can simulate this. When the user asks to "Check Geneva," the LLM can generate a query based on the **Kusto Tables** file, run it against the cluster's log endpoint (if available) or a mock dataset, and render a graph in the UI using a library like **Recharts**.
 
 ### Next Step
-Would you like me to generate the **Scenario 001 (Easy): "The Sleeping Cluster"** script and its corresponding solution file to populate your `/scenarios/easy` folder?
 
-```
-````
+Would you like me to generate the **Scenario 001 (Easy): "The Sleeping Cluster"** script and its corresponding solution file to populate your `/scenarios/easy` folder?
