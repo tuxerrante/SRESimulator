@@ -9,6 +9,18 @@
 
 You're scored on how well you follow the process, not just whether you find the fix!
 
+<p align="center">
+  <img src="img/landing.png" alt="Landing page" width="100%">
+</p>
+
+<table>
+  <tr>
+    <td align="center"><a href="img/scenario-easy.png"><img src="img/scenario-easy.png" alt="Easy scenario" width="100%"></a><br><b>Easy</b> — Worker Node NotReady</td>
+    <td align="center"><a href="img/scenario-medium.png"><img src="img/scenario-medium.png" alt="Medium scenario" width="100%"></a><br><b>Medium</b> — DNS Resolution Failures</td>
+    <td align="center"><a href="img/scenario-hard.png"><img src="img/scenario-hard.png" alt="Hard scenario" width="100%"></a><br><b>Hard</b> — Cascading Control Plane Failure</td>
+  </tr>
+</table>
+
 ---
 
 ## 🕹️ How It Works
