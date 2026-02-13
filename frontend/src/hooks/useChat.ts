@@ -3,21 +3,38 @@
 import { useCallback } from "react";
 import { useGameStore } from "@/stores/gameStore";
 import type { ChatMessage, InvestigationPhase } from "@/types/chat";
+import type { ScoringEvent } from "@/types/scoring";
+
+const VALID_PHASES: InvestigationPhase[] = [
+  "reading", "context", "facts", "theory", "action",
+];
+
+const VALID_DIMENSIONS = ["efficiency", "safety", "documentation", "accuracy"];
 
 function extractPhase(content: string): InvestigationPhase | null {
   const match = content.match(/\[PHASE:(\w+)\]/);
-  if (match) {
-    const phase = match[1] as InvestigationPhase;
-    const valid: InvestigationPhase[] = [
-      "reading",
-      "context",
-      "facts",
-      "theory",
-      "action",
-    ];
-    return valid.includes(phase) ? phase : null;
+  if (!match) return null;
+  const phase = match[1] as InvestigationPhase;
+  return VALID_PHASES.includes(phase) ? phase : null;
+}
+
+function extractScoreMarkers(content: string): ScoringEvent[] {
+  const events: ScoringEvent[] = [];
+  const pattern = /\[SCORE:(\w+):([+-]\d+):([^\]]+)\]/g;
+  let match;
+  while ((match = pattern.exec(content)) !== null) {
+    const dimension = match[1];
+    if (!VALID_DIMENSIONS.includes(dimension)) continue;
+    const points = parseInt(match[2], 10);
+    events.push({
+      type: points >= 0 ? "bonus" : "penalty",
+      dimension: dimension as ScoringEvent["dimension"],
+      points: Math.abs(points),
+      reason: match[3],
+      timestamp: Date.now(),
+    });
   }
-  return null;
+  return events;
 }
 
 function extractResolved(content: string): boolean {
@@ -34,6 +51,8 @@ export function useChat() {
     updateLastAssistantMessage,
     setStreaming,
     setPhase,
+    addScoringEvent,
+    recalculateScore,
     endGame,
   } = useGameStore();
 
@@ -116,6 +135,12 @@ export function useChat() {
         const phase = extractPhase(accumulated);
         if (phase) setPhase(phase);
 
+        const scoreEvents = extractScoreMarkers(accumulated);
+        for (const event of scoreEvents) {
+          addScoringEvent(event);
+        }
+        if (scoreEvents.length > 0) recalculateScore();
+
         if (extractResolved(accumulated)) endGame();
       } catch (error) {
         const errMsg =
@@ -136,6 +161,8 @@ export function useChat() {
       updateLastAssistantMessage,
       setStreaming,
       setPhase,
+      addScoringEvent,
+      recalculateScore,
       endGame,
     ]
   );

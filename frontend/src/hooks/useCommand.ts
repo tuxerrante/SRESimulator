@@ -14,6 +14,31 @@ export function useCommand() {
       if (isExecuting) return;
       setIsExecuting(true);
 
+      // Scoring checks before execution
+      const state = useGameStore.getState();
+
+      // Penalize running commands without checking dashboard first
+      if (!state.checkedDashboard && state.commandCount === 0) {
+        addScoringEvent({
+          type: "penalty",
+          dimension: "safety",
+          points: 5,
+          reason: "Ran commands without checking dashboard first",
+          timestamp: Date.now(),
+        });
+      }
+
+      // Penalize running commands during reading phase
+      if (state.currentPhase === "reading") {
+        addScoringEvent({
+          type: "penalty",
+          dimension: "documentation",
+          points: 3,
+          reason: "Ran commands during Reading phase",
+          timestamp: Date.now(),
+        });
+      }
+
       try {
         const response = await fetch("/api/command", {
           method: "POST",
@@ -34,18 +59,19 @@ export function useCommand() {
 
         addTerminalEntry(entry);
 
-        // Score efficiency penalty for excessive commands
+        // Progressive efficiency penalty for excessive commands
         const commandCount = useGameStore.getState().commandCount;
-        if (commandCount > 10) {
+        if (commandCount > 5 && commandCount % 3 === 0) {
           addScoringEvent({
             type: "penalty",
             dimension: "efficiency",
             points: 2,
-            reason: `Excessive commands (${commandCount} total)`,
+            reason: `High command count (${commandCount} total)`,
             timestamp: Date.now(),
           });
-          recalculateScore();
         }
+
+        recalculateScore();
       } catch {
         const entry: TerminalEntry = {
           id: crypto.randomUUID(),

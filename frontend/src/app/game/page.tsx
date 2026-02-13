@@ -6,7 +6,6 @@ import { useGameStore } from "@/stores/gameStore";
 import { GameLayout } from "@/components/layout/GameLayout";
 import { ChatPanel } from "@/components/chat/ChatPanel";
 import { RightPanel } from "@/components/layout/RightPanel";
-import { ScoreOverlay } from "@/components/scoring/ScoreOverlay";
 import { ScoreBreakdown } from "@/components/scoring/ScoreBreakdown";
 import { IncidentTicket } from "@/components/shared/IncidentTicket";
 import { useCommand } from "@/hooks/useCommand";
@@ -41,7 +40,6 @@ export default function GamePage() {
           </div>
         }
         rightPanel={<RightPanel />}
-        scoreOverlay={status === "playing" ? <ScoreOverlay /> : undefined}
       />
       {status === "completed" && <ScoreBreakdown />}
     </>

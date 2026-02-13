@@ -15,9 +15,10 @@ interface ChatMessageProps {
 export function ChatMessage({ message, onRunCommand }: ChatMessageProps) {
   const isUser = message.role === "user";
 
-  // Strip phase markers and resolved markers from display
+  // Strip control markers from display
   const displayContent = message.content
     .replace(/\[PHASE:\w+\]/g, "")
+    .replace(/\[SCORE:\w+:[+-]\d+:[^\]]+\]/g, "")
     .replace(/\[RESOLVED\]/g, "")
     .trim();
 

@@ -1,17 +1,41 @@
 "use client";
 
+import { useState, useRef, useEffect } from "react";
 import { useGameStore } from "@/stores/gameStore";
 import { PhaseTracker } from "@/components/scoring/PhaseTracker";
-import { Shield, ArrowLeft } from "lucide-react";
+import { Shield, ArrowLeft, ChevronDown, Target, FileText, Crosshair } from "lucide-react";
 import Link from "next/link";
+
+const DIMENSIONS = [
+  { key: "efficiency" as const, label: "Efficiency", icon: Target, color: "text-blue-400" },
+  { key: "safety" as const, label: "Safety", icon: Shield, color: "text-emerald-400" },
+  { key: "documentation" as const, label: "Documentation", icon: FileText, color: "text-purple-400" },
+  { key: "accuracy" as const, label: "Accuracy", icon: Crosshair, color: "text-amber-400" },
+];
 
 export function Header() {
   const scenario = useGameStore((s) => s.scenario);
   const score = useGameStore((s) => s.score);
   const status = useGameStore((s) => s.status);
+  const commandCount = useGameStore((s) => s.commandCount);
+  const scoringEvents = useGameStore((s) => s.scoringEvents);
+  const [showScore, setShowScore] = useState(false);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+        setShowScore(false);
+      }
+    }
+    if (showScore) {
+      document.addEventListener("mousedown", handleClickOutside);
+      return () => document.removeEventListener("mousedown", handleClickOutside);
+    }
+  }, [showScore]);
 
   return (
-    <header className="flex items-center justify-between px-4 py-2 border-b border-zinc-700 bg-zinc-900">
+    <header className="flex items-center justify-between px-4 py-2 border-b border-zinc-700 bg-zinc-900 relative z-20">
       <div className="flex items-center gap-3">
         <Link
           href="/"
@@ -47,10 +71,82 @@ export function Header() {
         <div className="flex items-center gap-4">
           <PhaseTracker />
           <div className="w-px h-5 bg-zinc-700" />
-          <div className="text-sm font-mono">
-            <span className="text-zinc-500">Score: </span>
-            <span className="text-amber-400 font-bold">{score.total}</span>
-            <span className="text-zinc-600">/100</span>
+          <div className="relative" ref={dropdownRef}>
+            <button
+              onClick={() => setShowScore(!showScore)}
+              className="flex items-center gap-1.5 text-sm font-mono px-2 py-1 rounded hover:bg-zinc-800 transition-colors"
+            >
+              <span className="text-zinc-500">Score:</span>
+              <span className="text-amber-400 font-bold">{score.total}</span>
+              <span className="text-zinc-600">/100</span>
+              <ChevronDown
+                size={14}
+                className={cn(
+                  "text-zinc-500 transition-transform",
+                  showScore && "rotate-180"
+                )}
+              />
+            </button>
+
+            {showScore && (
+              <div className="absolute right-0 top-full mt-2 bg-zinc-900 border border-zinc-700 rounded-lg p-3 shadow-xl min-w-[240px]">
+                <div className="text-xs font-semibold text-zinc-400 mb-2 flex items-center justify-between">
+                  <span>SCORE BREAKDOWN</span>
+                  <span className="text-zinc-600">{commandCount} cmds</span>
+                </div>
+                <div className="space-y-1.5">
+                  {DIMENSIONS.map((d) => {
+                    const Icon = d.icon;
+                    const value = score[d.key];
+                    return (
+                      <div key={d.key} className="flex items-center gap-2">
+                        <Icon size={12} className={d.color} />
+                        <span className="text-xs text-zinc-500 w-20">{d.label}</span>
+                        <div className="flex-1 h-1.5 bg-zinc-800 rounded-full overflow-hidden">
+                          <div
+                            className={cn(
+                              "h-full rounded-full transition-all",
+                              value >= 20 ? "bg-emerald-500" :
+                              value >= 10 ? "bg-amber-500" : "bg-red-500"
+                            )}
+                            style={{ width: `${(value / 25) * 100}%` }}
+                          />
+                        </div>
+                        <span className="text-xs text-zinc-400 font-mono w-6 text-right">
+                          {value}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+                <div className="mt-2 pt-2 border-t border-zinc-700 flex items-center justify-between">
+                  <span className="text-xs font-semibold text-zinc-300">Total</span>
+                  <span className="text-sm font-bold text-amber-400">{score.total}/100</span>
+                </div>
+                {scoringEvents.length > 0 && (
+                  <div className="mt-2 pt-2 border-t border-zinc-700">
+                    <div className="text-[10px] font-semibold text-zinc-500 uppercase mb-1">
+                      Recent Events
+                    </div>
+                    <div className="space-y-0.5 max-h-32 overflow-y-auto">
+                      {scoringEvents.slice(-8).reverse().map((event, i) => (
+                        <div key={i} className="flex items-center gap-1.5 text-[11px]">
+                          <span
+                            className={cn(
+                              "font-mono font-bold",
+                              event.type === "bonus" ? "text-emerald-400" : "text-red-400"
+                            )}
+                          >
+                            {event.type === "bonus" ? "+" : "-"}{event.points}
+                          </span>
+                          <span className="text-zinc-400 truncate">{event.reason}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </div>
       )}
