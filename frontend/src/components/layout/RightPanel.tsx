@@ -3,13 +3,15 @@
 import { useState } from "react";
 import { TerminalPanel } from "@/components/terminal/TerminalPanel";
 import { DashboardPanel } from "@/components/dashboard/DashboardPanel";
+import { useGameStore } from "@/stores/gameStore";
 import { cn } from "@/lib/utils";
-import { Terminal, LayoutDashboard } from "lucide-react";
+import { Terminal, LayoutDashboard, Loader2 } from "lucide-react";
 
 type Tab = "terminal" | "dashboard";
 
 export function RightPanel() {
   const [activeTab, setActiveTab] = useState<Tab>("terminal");
+  const isExecuting = useGameStore((s) => s.isExecuting);
 
   return (
     <div className="flex flex-col h-full">
@@ -23,7 +25,11 @@ export function RightPanel() {
               : "border-transparent text-zinc-500 hover:text-zinc-300"
           )}
         >
-          <Terminal size={14} />
+          {isExecuting ? (
+            <Loader2 size={14} className="animate-spin" />
+          ) : (
+            <Terminal size={14} />
+          )}
           Terminal
         </button>
         <button
