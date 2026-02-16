@@ -4,13 +4,26 @@ import { useCallback } from "react";
 import { useGameStore } from "@/stores/gameStore";
 import type { TerminalEntry } from "@/types/terminal";
 
+export const COMMAND_COOLDOWN_MS = 60_000;
+
 export function useCommand() {
   const { scenario, addTerminalEntry, addScoringEvent, recalculateScore, setExecuting } =
     useGameStore();
 
+  const getCooldownRemaining = useCallback((): number => {
+    const { lastCommandTime } = useGameStore.getState();
+    if (!lastCommandTime) return 0;
+    const elapsed = Date.now() - lastCommandTime;
+    return Math.max(0, COMMAND_COOLDOWN_MS - elapsed);
+  }, []);
+
   const executeCommand = useCallback(
     async (command: string, type: "oc" | "kql" | "geneva") => {
       if (useGameStore.getState().isExecuting) return;
+
+      const remaining = getCooldownRemaining();
+      if (remaining > 0) return;
+
       setExecuting(true);
 
       // Scoring checks before execution
@@ -85,8 +98,8 @@ export function useCommand() {
         setExecuting(false);
       }
     },
-    [scenario, addTerminalEntry, addScoringEvent, recalculateScore, setExecuting]
+    [scenario, addTerminalEntry, addScoringEvent, recalculateScore, setExecuting, getCooldownRemaining]
   );
 
-  return { executeCommand };
+  return { executeCommand, getCooldownRemaining };
 }

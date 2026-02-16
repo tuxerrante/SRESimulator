@@ -90,6 +90,7 @@ You start at **0/100** and earn points through good investigation practices.
 - Running commands without checking the dashboard → safety penalty
 - Running commands during the Reading phase → documentation penalty
 - Exceeding 5 commands → progressive efficiency penalties
+- Command rate limit: one terminal command per 60 seconds (cooldown timer shown in terminal)
 
 ### Grades
 

@@ -1,7 +1,9 @@
 "use client";
 
-import { Play, Copy, Check } from "lucide-react";
-import { useState } from "react";
+import { Play, Copy, Check, Clock } from "lucide-react";
+import { useState, useEffect } from "react";
+import { useGameStore } from "@/stores/gameStore";
+import { COMMAND_COOLDOWN_MS } from "@/hooks/useCommand";
 import { cn } from "@/lib/utils";
 
 interface CodeBlockProps {
@@ -19,7 +21,24 @@ const LANGUAGE_LABELS: Record<string, string> = {
 
 export function CodeBlock({ code, language, onRun }: CodeBlockProps) {
   const [copied, setCopied] = useState(false);
+  const [cooldownSeconds, setCooldownSeconds] = useState(0);
+  const lastCommandTime = useGameStore((s) => s.lastCommandTime);
+  const isExecuting = useGameStore((s) => s.isExecuting);
   const isRunnable = ["oc", "kql", "geneva"].includes(language);
+
+  useEffect(() => {
+    if (!lastCommandTime || !isRunnable) return;
+
+    const tick = () => {
+      const elapsed = Date.now() - lastCommandTime;
+      const remaining = Math.max(0, COMMAND_COOLDOWN_MS - elapsed);
+      setCooldownSeconds(Math.ceil(remaining / 1000));
+    };
+
+    tick();
+    const interval = setInterval(tick, 1000);
+    return () => clearInterval(interval);
+  }, [lastCommandTime, isRunnable]);
 
   const handleCopy = async () => {
     await navigator.clipboard.writeText(code);
@@ -28,10 +47,12 @@ export function CodeBlock({ code, language, onRun }: CodeBlockProps) {
   };
 
   const handleRun = () => {
-    if (onRun && isRunnable) {
+    if (onRun && isRunnable && cooldownSeconds === 0 && !isExecuting) {
       onRun(code, language as "oc" | "kql" | "geneva");
     }
   };
+
+  const isDisabled = cooldownSeconds > 0 || isExecuting;
 
   return (
     <div className="my-2 rounded-lg border border-zinc-700 bg-zinc-900 overflow-hidden">
@@ -50,14 +71,26 @@ export function CodeBlock({ code, language, onRun }: CodeBlockProps) {
           {isRunnable && (
             <button
               onClick={handleRun}
+              disabled={isDisabled}
               className={cn(
                 "flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium transition-colors",
-                "bg-emerald-600/20 text-emerald-400 hover:bg-emerald-600/30 hover:text-emerald-300"
+                isDisabled
+                  ? "bg-zinc-700/30 text-zinc-500 cursor-not-allowed"
+                  : "bg-emerald-600/20 text-emerald-400 hover:bg-emerald-600/30 hover:text-emerald-300"
               )}
-              title="Run command"
+              title={cooldownSeconds > 0 ? `Wait ${cooldownSeconds}s` : "Run command"}
             >
-              <Play size={12} />
-              Run
+              {cooldownSeconds > 0 ? (
+                <>
+                  <Clock size={12} />
+                  {cooldownSeconds}s
+                </>
+              ) : (
+                <>
+                  <Play size={12} />
+                  Run
+                </>
+              )}
             </button>
           )}
         </div>

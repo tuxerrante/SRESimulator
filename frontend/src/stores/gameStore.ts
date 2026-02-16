@@ -24,6 +24,7 @@ interface GameState {
   terminalEntries: TerminalEntry[];
   commandCount: number;
   isExecuting: boolean;
+  lastCommandTime: number | null;
 
   // Scoring
   score: Score;
@@ -74,6 +75,7 @@ export const useGameStore = create<GameState>((set, get) => ({
   terminalEntries: [],
   commandCount: 0,
   isExecuting: false,
+  lastCommandTime: null,
 
   score: { ...initialScore },
   scoringEvents: [],
@@ -94,6 +96,7 @@ export const useGameStore = create<GameState>((set, get) => ({
       terminalEntries: [],
       commandCount: 0,
       isExecuting: false,
+      lastCommandTime: null,
       score: { ...initialScore },
       scoringEvents: [],
       isStreaming: false,
@@ -118,6 +121,7 @@ export const useGameStore = create<GameState>((set, get) => ({
       terminalEntries: [],
       commandCount: 0,
       isExecuting: false,
+      lastCommandTime: null,
       score: { ...initialScore },
       scoringEvents: [],
       isStreaming: false,
@@ -152,6 +156,7 @@ export const useGameStore = create<GameState>((set, get) => ({
     set((state) => ({
       terminalEntries: [...state.terminalEntries, entry],
       commandCount: state.commandCount + 1,
+      lastCommandTime: Date.now(),
     })),
 
   setExecuting: (isExecuting) => set({ isExecuting }),
