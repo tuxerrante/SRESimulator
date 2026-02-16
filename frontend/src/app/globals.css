@@ -52,3 +52,23 @@ body {
 ::selection {
   background: rgba(245, 158, 11, 0.3);
 }
+
+/* Score popup animation */
+@keyframes score-pop {
+  0% {
+    opacity: 1;
+    transform: translateY(0) scale(1.2);
+  }
+  30% {
+    opacity: 1;
+    transform: translateY(4px) scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(16px) scale(0.9);
+  }
+}
+
+.animate-score-pop {
+  animation: score-pop 1.5s ease-out forwards;
+}

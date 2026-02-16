@@ -1,18 +1,17 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback } from "react";
 import { useGameStore } from "@/stores/gameStore";
 import type { TerminalEntry } from "@/types/terminal";
 
 export function useCommand() {
-  const { scenario, addTerminalEntry, addScoringEvent, recalculateScore } =
+  const { scenario, addTerminalEntry, addScoringEvent, recalculateScore, setExecuting } =
     useGameStore();
-  const [isExecuting, setIsExecuting] = useState(false);
 
   const executeCommand = useCallback(
     async (command: string, type: "oc" | "kql" | "geneva") => {
-      if (isExecuting) return;
-      setIsExecuting(true);
+      if (useGameStore.getState().isExecuting) return;
+      setExecuting(true);
 
       // Scoring checks before execution
       const state = useGameStore.getState();
@@ -83,11 +82,11 @@ export function useCommand() {
         };
         addTerminalEntry(entry);
       } finally {
-        setIsExecuting(false);
+        setExecuting(false);
       }
     },
-    [isExecuting, scenario, addTerminalEntry, addScoringEvent, recalculateScore]
+    [scenario, addTerminalEntry, addScoringEvent, recalculateScore, setExecuting]
   );
 
-  return { executeCommand, isExecuting };
+  return { executeCommand };
 }

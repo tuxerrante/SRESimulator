@@ -23,6 +23,7 @@ interface GameState {
   // Terminal
   terminalEntries: TerminalEntry[];
   commandCount: number;
+  isExecuting: boolean;
 
   // Scoring
   score: Score;
@@ -43,6 +44,7 @@ interface GameState {
   setCheckedDashboard: (checked: boolean) => void;
 
   addTerminalEntry: (entry: TerminalEntry) => void;
+  setExecuting: (executing: boolean) => void;
 
   addScoringEvent: (event: ScoringEvent) => void;
   recalculateScore: () => void;
@@ -71,6 +73,7 @@ export const useGameStore = create<GameState>((set, get) => ({
 
   terminalEntries: [],
   commandCount: 0,
+  isExecuting: false,
 
   score: { ...initialScore },
   scoringEvents: [],
@@ -90,6 +93,7 @@ export const useGameStore = create<GameState>((set, get) => ({
       checkedDashboard: false,
       terminalEntries: [],
       commandCount: 0,
+      isExecuting: false,
       score: { ...initialScore },
       scoringEvents: [],
       isStreaming: false,
@@ -113,6 +117,7 @@ export const useGameStore = create<GameState>((set, get) => ({
       checkedDashboard: false,
       terminalEntries: [],
       commandCount: 0,
+      isExecuting: false,
       score: { ...initialScore },
       scoringEvents: [],
       isStreaming: false,
@@ -148,6 +153,8 @@ export const useGameStore = create<GameState>((set, get) => ({
       terminalEntries: [...state.terminalEntries, entry],
       commandCount: state.commandCount + 1,
     })),
+
+  setExecuting: (isExecuting) => set({ isExecuting }),
 
   addScoringEvent: (event) =>
     set((state) => {

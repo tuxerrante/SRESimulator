@@ -1,10 +1,16 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { useGameStore } from "@/stores/gameStore";
 import { PhaseTracker } from "@/components/scoring/PhaseTracker";
 import { Shield, ArrowLeft, ChevronDown, Target, FileText, Crosshair } from "lucide-react";
 import Link from "next/link";
+
+interface ScorePopup {
+  id: number;
+  text: string;
+  positive: boolean;
+}
 
 const DIMENSIONS = [
   { key: "efficiency" as const, label: "Efficiency", icon: Target, color: "text-blue-400" },
@@ -20,7 +26,29 @@ export function Header() {
   const commandCount = useGameStore((s) => s.commandCount);
   const scoringEvents = useGameStore((s) => s.scoringEvents);
   const [showScore, setShowScore] = useState(false);
+  const [scorePopups, setScorePopups] = useState<ScorePopup[]>([]);
+  const prevEventsLength = useRef(scoringEvents.length);
+  const popupIdRef = useRef(0);
   const dropdownRef = useRef<HTMLDivElement>(null);
+
+  const addPopup = useCallback((text: string, positive: boolean) => {
+    const id = ++popupIdRef.current;
+    setScorePopups((prev) => [...prev, { id, text, positive }]);
+    setTimeout(() => {
+      setScorePopups((prev) => prev.filter((p) => p.id !== id));
+    }, 1500);
+  }, []);
+
+  useEffect(() => {
+    if (scoringEvents.length > prevEventsLength.current) {
+      const newEvents = scoringEvents.slice(prevEventsLength.current);
+      for (const event of newEvents) {
+        const sign = event.type === "bonus" ? "+" : "-";
+        addPopup(`${sign}${event.points}`, event.type === "bonus");
+      }
+    }
+    prevEventsLength.current = scoringEvents.length;
+  }, [scoringEvents, addPopup]);
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
@@ -87,6 +115,19 @@ export function Header() {
                 )}
               />
             </button>
+
+            {scorePopups.map((popup, i) => (
+              <span
+                key={popup.id}
+                className={cn(
+                  "absolute top-full mt-1 right-0 text-xs font-bold font-mono pointer-events-none animate-score-pop whitespace-nowrap",
+                  popup.positive ? "text-emerald-400" : "text-red-400"
+                )}
+                style={{ right: `${i * 28}px` }}
+              >
+                {popup.text}
+              </span>
+            ))}
 
             {showScore && (
               <div className="absolute right-0 top-full mt-2 bg-zinc-900 border border-zinc-700 rounded-lg p-3 shadow-xl min-w-[240px]">

@@ -3,17 +3,18 @@
 import { useEffect, useRef } from "react";
 import { useGameStore } from "@/stores/gameStore";
 import { CommandBlock } from "./CommandBlock";
-import { Terminal } from "lucide-react";
+import { Terminal, Loader2 } from "lucide-react";
 
 export function TerminalPanel() {
   const terminalEntries = useGameStore((s) => s.terminalEntries);
+  const isExecuting = useGameStore((s) => s.isExecuting);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
-  }, [terminalEntries]);
+  }, [terminalEntries, isExecuting]);
 
   return (
     <div className="flex flex-col h-full bg-zinc-950">
@@ -26,7 +27,7 @@ export function TerminalPanel() {
       </div>
 
       <div ref={scrollRef} className="flex-1 overflow-y-auto p-4">
-        {terminalEntries.length === 0 && (
+        {terminalEntries.length === 0 && !isExecuting && (
           <div className="flex flex-col items-center justify-center h-full text-zinc-700 text-sm gap-2">
             <Terminal size={32} />
             <span>Command output will appear here</span>
@@ -36,6 +37,12 @@ export function TerminalPanel() {
         {terminalEntries.map((entry) => (
           <CommandBlock key={entry.id} entry={entry} />
         ))}
+        {isExecuting && (
+          <div className="flex items-center gap-2 px-3 py-2 mt-2 text-sm text-zinc-400">
+            <Loader2 size={14} className="animate-spin text-emerald-400" />
+            <span className="font-mono text-xs">Simulating command execution...</span>
+          </div>
+        )}
       </div>
     </div>
   );
