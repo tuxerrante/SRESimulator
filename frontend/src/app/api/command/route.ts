@@ -29,6 +29,12 @@ Recent Events: ${scenario.clusterContext.recentEvents.join("; ")}
 `
       : "No specific scenario context available.";
 
+    // Derive "current" simulation time from the scenario's reported time + a realistic offset
+    const reportedTime = scenario?.incidentTicket?.reportedTime;
+    const simNow = reportedTime
+      ? `The incident was reported at ${reportedTime}. The current simulation time is approximately 1-2 hours after the reported time. All timestamps in your output must be in the past relative to this current time.`
+      : "Use consistent, realistic timestamps. All timestamps must be in the past relative to the current time shown in any dashboard or query output.";
+
     const systemPrompt = `You are a command output simulator for an SRE training tool.
 Given a command and scenario context, generate realistic output that would be seen on an Azure Red Hat OpenShift cluster experiencing the described incident.
 
@@ -41,6 +47,7 @@ Rules:
 - Use consistent naming: cluster name, node names, etc. from the scenario context.
 - For KQL queries, format as a table with headers and rows.
 - For Geneva commands, format as structured dashboard output.
+- TEMPORAL CONSISTENCY: ${simNow} If a time range is shown (e.g. "11:00 - 13:00"), the "Last Updated" or "as of" timestamp must be at or after the end of that range. Never show a "Last Updated" time that falls before the end of the displayed time range.
 
 Scenario Context:
 ${scenarioContext}`;
