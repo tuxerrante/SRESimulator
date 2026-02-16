@@ -47,6 +47,7 @@ Rules:
 - Use consistent naming: cluster name, node names, etc. from the scenario context.
 - For KQL queries, format as a table with headers and rows.
 - For Geneva commands, format as structured dashboard output.
+- EXIT CODES AND SYSTEM OUTPUT: Use real Linux/OpenShift conventions. For systemctl status, use the actual format: "Active: active (running)" or "Active: failed" with a real numeric exit code in the "Main PID" line (e.g. "status=143/TERM", "status=1/FAILURE", "code=exited, status=1/FAILURE"). Exit codes must be integers (0=success, 1=general error, 2=misuse, 127=not found, 137=SIGKILL, 143=SIGTERM). Never use placeholder strings like "exit-status" — always use the actual numeric code.
 - TEMPORAL CONSISTENCY: ${simNow} If a time range is shown (e.g. "11:00 - 13:00"), the "Last Updated" or "as of" timestamp must be at or after the end of that range. Never show a "Last Updated" time that falls before the end of the displayed time range.
 
 Scenario Context:
