@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getClaudeClient, CLAUDE_MODEL } from "@/lib/claude";
 import { loadKnowledgeBase } from "@/lib/knowledge";
+import { createSession } from "@/lib/sessions";
 import type { Difficulty, Scenario } from "@/types/game";
 
 export const runtime = "nodejs";
@@ -104,7 +105,9 @@ ${scenarioContext}`,
     // Parse the JSON response
     const scenario: Scenario = JSON.parse(text);
 
-    return NextResponse.json(scenario);
+    const sessionToken = createSession(difficulty, scenario.title);
+
+    return NextResponse.json({ scenario, sessionToken });
   } catch (error) {
     const message =
       error instanceof Error ? error.message : "Scenario generation failed";

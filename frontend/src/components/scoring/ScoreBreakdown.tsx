@@ -1,9 +1,10 @@
 "use client";
 
+import { useState } from "react";
 import { useGameStore } from "@/stores/gameStore";
 import { useRouter } from "next/navigation";
 import { cn } from "@/lib/utils";
-import { Trophy, Target, Shield, FileText, Crosshair, X } from "lucide-react";
+import { Trophy, Target, Shield, FileText, Crosshair, X, Check, Loader2 } from "lucide-react";
 
 const DIMENSIONS = [
   { key: "efficiency" as const, label: "Efficiency", icon: Target, color: "blue", description: "Number of commands vs optimal path" },
@@ -18,7 +19,11 @@ export function ScoreBreakdown() {
   const scoringEvents = useGameStore((s) => s.scoringEvents);
   const scenario = useGameStore((s) => s.scenario);
   const commandCount = useGameStore((s) => s.commandCount);
+  const sessionToken = useGameStore((s) => s.sessionToken);
   const resetGame = useGameStore((s) => s.resetGame);
+
+  const [nickname, setNickname] = useState("");
+  const [submitState, setSubmitState] = useState<"idle" | "submitting" | "submitted">("idle");
 
   const handleClose = () => {
     resetGame();
@@ -30,6 +35,27 @@ export function ScoreBreakdown() {
     score.total >= 80 ? "B" :
     score.total >= 70 ? "C" :
     score.total >= 60 ? "D" : "F";
+
+  const handleSubmit = async () => {
+    if (!nickname.trim() || submitState !== "idle") return;
+    setSubmitState("submitting");
+    try {
+      await fetch("/api/scores", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sessionToken,
+          nickname: nickname.trim(),
+          score,
+          grade,
+          commandCount,
+        }),
+      });
+      setSubmitState("submitted");
+    } catch {
+      setSubmitState("idle");
+    }
+  };
 
   const gradeColor =
     grade === "A" ? "text-emerald-400" :
@@ -141,10 +167,38 @@ export function ScoreBreakdown() {
           )}
         </div>
 
-        <div className="px-5 py-4 border-t border-zinc-700">
+        <div className="px-5 py-4 border-t border-zinc-700 space-y-3">
+          {submitState !== "submitted" ? (
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={nickname}
+                onChange={(e) => setNickname(e.target.value.slice(0, 20))}
+                placeholder="Your callsign"
+                maxLength={20}
+                disabled={submitState === "submitting"}
+                className="flex-1 px-3 py-2 rounded-lg bg-zinc-800 border border-zinc-700 text-sm text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-amber-600 disabled:opacity-50"
+              />
+              <button
+                onClick={handleSubmit}
+                disabled={!nickname.trim() || submitState === "submitting"}
+                className="px-4 py-2 rounded-lg bg-amber-600 text-white text-sm font-medium hover:bg-amber-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+              >
+                {submitState === "submitting" ? (
+                  <Loader2 size={14} className="animate-spin" />
+                ) : null}
+                Submit to Leaderboard
+              </button>
+            </div>
+          ) : (
+            <div className="flex items-center gap-2 text-emerald-400 text-sm justify-center py-2">
+              <Check size={16} />
+              Submitted!
+            </div>
+          )}
           <button
             onClick={handleClose}
-            className="w-full py-2 rounded-lg bg-amber-600 text-white text-sm font-medium hover:bg-amber-500 transition-colors"
+            className="w-full py-2 rounded-lg bg-zinc-800 border border-zinc-700 text-zinc-300 text-sm font-medium hover:bg-zinc-700 transition-colors"
           >
             Back to Scenarios
           </button>

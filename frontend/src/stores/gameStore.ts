@@ -8,6 +8,7 @@ interface GameState {
   // Session
   status: GameStatus;
   scenario: Scenario | null;
+  sessionToken: string | null;
   startTime: number | null;
   endTime: number | null;
 
@@ -33,7 +34,7 @@ interface GameState {
   // Actions
   setStatus: (status: GameStatus) => void;
   setScenario: (scenario: Scenario) => void;
-  startGame: (scenario: Scenario) => void;
+  startGame: (scenario: Scenario, sessionToken: string) => void;
   endGame: () => void;
   resetGame: () => void;
 
@@ -62,6 +63,7 @@ const initialScore: Score = {
 export const useGameStore = create<GameState>((set, get) => ({
   status: "idle",
   scenario: null,
+  sessionToken: null,
   startTime: null,
   endTime: null,
 
@@ -83,10 +85,11 @@ export const useGameStore = create<GameState>((set, get) => ({
   setStatus: (status) => set({ status }),
   setScenario: (scenario) => set({ scenario }),
 
-  startGame: (scenario) =>
+  startGame: (scenario, sessionToken) =>
     set({
       status: "playing",
       scenario,
+      sessionToken,
       startTime: Date.now(),
       endTime: null,
       messages: [],
@@ -112,6 +115,7 @@ export const useGameStore = create<GameState>((set, get) => ({
     set({
       status: "idle",
       scenario: null,
+      sessionToken: null,
       startTime: null,
       endTime: null,
       messages: [],

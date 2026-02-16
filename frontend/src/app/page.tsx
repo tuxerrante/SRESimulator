@@ -4,7 +4,8 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useGameStore } from "@/stores/gameStore";
 import type { Difficulty, Scenario } from "@/types/game";
-import { Shield, AlertTriangle, Zap, Flame, Loader2 } from "lucide-react";
+import { Shield, AlertTriangle, Zap, Flame, Loader2, Trophy } from "lucide-react";
+import Link from "next/link";
 import { cn } from "@/lib/utils";
 
 const DIFFICULTIES: {
@@ -66,8 +67,8 @@ export default function HomePage() {
         throw new Error(data.error || "Failed to generate scenario");
       }
 
-      const scenario: Scenario = await response.json();
-      startGame(scenario);
+      const { scenario, sessionToken }: { scenario: Scenario; sessionToken: string } = await response.json();
+      startGame(scenario, sessionToken);
       router.push("/game");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong");
@@ -142,6 +143,14 @@ export default function HomePage() {
             </button>
           ))}
         </div>
+
+        <Link
+          href="/leaderboard"
+          className="mt-8 flex items-center gap-2 text-zinc-500 hover:text-amber-400 transition-colors text-sm"
+        >
+          <Trophy size={16} />
+          Hall of Fame
+        </Link>
 
         {loading && (
           <div className="mt-6 flex items-center gap-2 text-zinc-500 text-sm">
