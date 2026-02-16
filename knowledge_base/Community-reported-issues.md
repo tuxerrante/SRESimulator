@@ -1,5 +1,12 @@
 # Community-Reported OpenShift Issues: Reproducible Scenarios
 
+**References:**
+
+- [ARO Support Lifecycle & Release Calendar](https://learn.microsoft.com/en-us/azure/openshift/support-lifecycle)
+- [ARO Support Policies](https://learn.microsoft.com/en-us/azure/openshift/support-policies-v4)
+- [OpenShift Container Platform Documentation](https://docs.openshift.com/container-platform/4.18/welcome/index.html)
+- [Red Hat Knowledge Base](https://access.redhat.com/knowledgebase)
+
 Real-world OpenShift issues collected from r/openshift, Stack Overflow, GitHub issues, Red Hat Knowledge Base, and community blog posts. Each entry is documented with injection methods for reproducing in a local cluster.
 
 ## Networking
@@ -176,7 +183,7 @@ Real-world OpenShift issues collected from r/openshift, Stack Overflow, GitHub i
   2. Attempt to create a deployment as that user -- fails with "forbidden"
   3. Or remove an existing `edit` binding: `oc adm policy remove-role-from-user edit <user> -n <namespace>`
 - **References:**
-  - [OpenShift Docs: Using RBAC](https://docs.openshift.com/container-platform/4.10/authentication/using-rbac.html)
+  - [OpenShift Docs: Using RBAC](https://docs.openshift.com/container-platform/4.18/authentication/using-rbac.html)
 
 ## Resource Management
 
@@ -212,7 +219,7 @@ Real-world OpenShift issues collected from r/openshift, Stack Overflow, GitHub i
 
 - **References:**
   - [Red Hat Solution 3449651: OOMKilled in OpenShift](https://access.redhat.com/solutions/3449651)
-  - [OpenShift Docs: Resource Configuration](https://docs.openshift.com/container-platform/4.12/nodes/clusters/nodes-cluster-resource-configure.html)
+  - [OpenShift Docs: Resource Configuration](https://docs.openshift.com/container-platform/4.18/nodes/clusters/nodes-cluster-resource-configure.html)
 
 ### CPU Throttling -- Application Slow Despite Low CPU Metrics
 
@@ -271,7 +278,7 @@ Real-world OpenShift issues collected from r/openshift, Stack Overflow, GitHub i
   1. Taint all worker nodes: `oc adm taint nodes <worker> maintenance=true:NoSchedule`
   2. Deploy a new application -- pods remain `Pending`
 - **References:**
-  - [OpenShift Docs: Taints and Tolerations](https://docs.openshift.com/container-platform/4.9/nodes/scheduling/nodes-scheduler-taints-tolerations.html)
+  - [OpenShift Docs: Taints and Tolerations](https://docs.openshift.com/container-platform/4.18/nodes/scheduling/nodes-scheduler-taints-tolerations.html)
 
 ## Node Health
 
@@ -279,7 +286,7 @@ Real-world OpenShift issues collected from r/openshift, Stack Overflow, GitHub i
 
 - **Difficulty:** Medium
 - **Symptoms:** `oc get nodes` shows one or more nodes as `NotReady`. Pods on the affected node are evicted. `oc debug node/<node>` may fail. CRI-O and kubelet services show as `dead` or `failed` via `systemctl status`.
-- **Root Cause:** CRI-O storage corruption (missing symlinks in overlay layers), `nodeip-configuration.service` stuck blocking CRI-O from starting, or kubelet dependency chain broken. Storage corruption typically happens after an unclean shutdown. In RHOCP 4.14.23-4.14.32 and 4.15.9-4.15.21, a known dependency bug prevents CRI-O and kubelet from auto-starting after reboot.
+- **Root Cause:** CRI-O storage corruption (missing symlinks in overlay layers), `nodeip-configuration.service` stuck blocking CRI-O from starting, or kubelet dependency chain broken. Storage corruption typically happens after an unclean shutdown. In RHOCP 4.14.23–4.14.32 and 4.15.9–4.15.21, a known dependency bug prevented CRI-O and kubelet from auto-starting after reboot. This is fixed in 4.16+.
 - **Fix:**
   1. SSH to the node: `ssh core@<node>`
   2. Check what's blocking: `systemctl list-jobs`
@@ -403,7 +410,7 @@ Real-world OpenShift issues collected from r/openshift, Stack Overflow, GitHub i
   2. The pod starts, the probe fails with 404, kubelet kills it, and it enters CrashLoopBackOff
 
 - **References:**
-  - [OpenShift 4.8 Docs: Application Health](https://docs.openshift.com/container-platform/4.8/applications/application-health.html)
+  - [OpenShift 4.8 Docs: Application Health](https://docs.openshift.com/container-platform/4.18/applications/application-health.html)
 
 ## Control Plane
 

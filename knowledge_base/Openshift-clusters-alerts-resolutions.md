@@ -1,5 +1,12 @@
 # Openshift Clusters: Alerts/Symptoms and Possible Root Causes or Resolutions
 
+**References:**
+
+- [ARO Support Lifecycle & Release Calendar](https://learn.microsoft.com/en-us/azure/openshift/support-lifecycle)
+- [ARO Support Policies](https://learn.microsoft.com/en-us/azure/openshift/support-policies-v4)
+- [OpenShift Container Platform Documentation](https://docs.openshift.com/container-platform/4.18/welcome/index.html)
+- [Red Hat Knowledge Base](https://access.redhat.com/knowledgebase)
+
 ## Cluster Availability & Health
 
 ### Cluster Shutdown & Failed Restart
@@ -57,7 +64,7 @@
 
 ### Cluster Install Failure (410 Gone)
 
-- **Version:** 4.11 / 4.12 / 4.13 (Impacted installer images)
+- **Version:** 4.x (historically 4.11–4.13; pattern applies to any version with stale installer images)
 - **Symptoms:** Cluster installations failed consistently with a 410 Gone response regarding the OS image.
 - **Root Cause:** A backend issue with the Azure machine image repository (potentially triggered by a Windows update) caused it to incorrectly report Red Hat CoreOS (RHCOS) images as deleted/gone. This was a widespread outage requiring an RP configuration update to reference specific image digests.
 - **Technical Details:** A `410 Gone` HTTP status on Azure during RHCOS image retrieval typically means the RHCOS VHD blob URL embedded in the installer version has been decommissioned or removed from Azure storage. Older OpenShift installer versions reference RHCOS image URLs via the `rhcos-redirector` service, which may have been retired. The redirector host `rhcos-redirector.apps.art.xq1c.p1.openshiftapps.com` embedded in older installers (4.6, 4.7.53 and earlier, 4.8.48 and earlier, 4.9.44 and earlier) may no longer resolve.
@@ -70,10 +77,10 @@
 
 ### Hive Install Failure (OCPBUGS-35300)
 
-- **Version:** 4.14
+- **Version:** 4.14 (fixed in 4.14.39+)
 - **Symptoms:** HiveClusterInstallFailure with an "Unknown Error" in the Hive cluster logs.
 - **Root Cause:** Traced to OpenShift bug OCPBUGS-35300. The bug is related to the Machine Config Daemon (MCD) on Azure — specifically, the MCD pull service starts before networking is fully available. The fix (PR `openshift/machine-config-operator#4423`) ensures the MCD pull service runs after the `network-online.target` systemd unit.
-- **Workaround:** Delete and recreate the cluster using version 4.13 until the fix is available.
+- **Workaround:** Fixed in 4.14.39+. Previously: delete and recreate the cluster using a prior version.
 - **Diagnostic Tips:** Each install attempt runs in a pod in the same namespace as the ClusterDeployment. Filter with `-l hive.openshift.io/job-type=provision` to find provision pods and check their logs.
 - **References:**
   - [OCPBUGS-35300 on Red Hat Jira](https://issues.redhat.com/browse/OCPBUGS-35300)
@@ -87,7 +94,7 @@
 
 ### Install Failure (ARO-10654)
 
-- **Version:** 4.14
+- **Version:** 4.14 (patched Sep 2024; resolved in 4.14.38+)
 - **Symptoms:** Cluster install failure where the customer saw an "Internal Server Error".
 - **Root Cause:** Identified as a bug tracked by ARO-10654. The failure was related to specific networking configurations (UDR) in 4.14 installer logic. Specifically, the ARO gateway proxy was not active early enough in the machine boot sequence — the `machine-config-daemon-pull` service attempted to pull an image before the ARO-provisioned dnsmasq service started. In clusters dependent on the RP Gateway Service (private clusters with UDR), the ACR image pull would fail with a timeout.
 - **Resolution:** As of September 5, 2024, all new cluster installs have been patched. Fleet-wide maintenance completed October 25, 2024. Safe upgrade edges: 4.13.51, 4.13.52, 4.14.38, 4.14.39.
@@ -117,7 +124,7 @@
 
 ### Pull Secret / Operator Update Failure
 
-- **Version:** 4.12.54
+- **Version:** 4.x (any version; originally observed on 4.12)
 - **Symptoms:** The ARO Operator update failed. One worker pod successfully pulled image 0116:01, but another failed to pull 0116:06 with an unauthorized error.
 - **Root Cause:** The image pull secret used by the ARO operator was invalid or expired. The cluster required a specific PUCM update to rotate the ACR token and fix the secrets/certs.
 - **Technical Details:** The cluster pull secret (in `openshift-config/pull-secret`) contains an `arosvc.azurecr.io` auth entry that is critical for cluster operation. The `imagecontentsourcepolicies` are configured with digest mirrors pointing to `arosvc.azurecr.io` as mirrors for upstream `quay.io` sources. If this auth entry expires or is corrupted, image pulls fail with `unauthorized` errors.
@@ -128,7 +135,7 @@
 
 ### Upgrade Stuck (Partition Table)
 
-- **Version:** Upgrading 4.12.25 -> 4.12.30
+- **Version:** 4.x (any minor upgrade)
 - **Symptoms:** Upgrade hung; machine-config-daemon pods were degraded.
 - **Root Cause:** The daemon failed with "failed to update the partition table". This is a known issue where the partition table update on the nodes fails during the upgrade process, blocking the new machine config application.
 - **Technical Details:** This can occur when Ignition tries to modify disk partitions during the MCD update process and the disk layout doesn't match expectations, or the disk is locked by another process. Related issues include the MCD failing to pivot the OS image (`rpm-ostree rebase` failures).
@@ -218,8 +225,8 @@
   3. **Verify:** `oc get openshiftapiserver -o=jsonpath='{range .items[0].status.conditions[?(@.type=="Encrypted")]}{.reason}{"\n"}{.message}{"\n"}'`
   4. **Rescan:** `oc annotate compliancescans/<scan_name> compliance.openshift.io/rescan=`
 - **References:**
-  - [Red Hat: Encrypting etcd data](https://docs.redhat.com/en/documentation/openshift_container_platform/4.10/html/security_and_compliance/encrypting-etcd)
-  - [Red Hat: Compliance Operator](https://docs.redhat.com/en/documentation/openshift_container_platform/4.9/html/security_and_compliance/compliance-operator)
+  - [Red Hat: Encrypting etcd data](https://docs.redhat.com/en/documentation/openshift_container_platform/4.18/html/security_and_compliance/encrypting-etcd)
+  - [Red Hat: Compliance Operator](https://docs.redhat.com/en/documentation/openshift_container_platform/4.18/html/security_and_compliance/compliance-operator)
 
 ### Image Pull Errors (arosvc unreachable)
 
@@ -341,7 +348,7 @@
 - **Technical Details:** The `MachineHealthCheckUnterminatedShortCircuit` alert fires when `mapi_machinehealthcheck_short_circuit == 1`. Known bugs (OCPBUGS-4725, OCPBUGS-8286) cause this alert to fire spuriously — the `mapi_machinehealthcheck_short_circuit` Prometheus metric fails to properly reconcile and remove MachineHealthChecks that have been deleted. Short-circuiting is controlled by the `maxUnhealthy` field: if not set, it defaults to 100% and machines are remediated regardless of cluster state.
 - **References:**
   - [OCPBUGS-4725](https://issues.redhat.com/browse/OCPBUGS-4725)
-  - [Red Hat: Deploying Machine Health Checks](https://docs.openshift.com/container-platform/4.8/machine_management/deploying-machine-health-checks.html)
+  - [Red Hat: Deploying Machine Health Checks](https://docs.openshift.com/container-platform/4.18/machine_management/deploying-machine-health-checks.html)
 
 ### HighOverallControlPlaneMemory (Recurring)
 
@@ -374,7 +381,7 @@
 - **References:**
   - [Red Hat Solution 3804501: Troubleshooting OCP 4 DNS](https://access.redhat.com/solutions/3804501)
   - [Red Hat Solution 7015390: CoreDNS SERVFAIL Timeouts on ARO](https://access.redhat.com/solutions/7015390)
-  - [Red Hat: DNS Operator in OpenShift](https://docs.openshift.com/container-platform/4.11/networking/dns-operator.html)
+  - [Red Hat: DNS Operator in OpenShift](https://docs.openshift.com/container-platform/4.18/networking/dns-operator.html)
 
 ### api-int Unreachable / Live Migration
 
@@ -396,10 +403,10 @@
 
 ### Accelerated Networking Issue
 
-- **Version:** 4.13
+- **Version:** 4.x (originally observed on 4.13)
 - **Symptoms:** Accelerated networking issue.
 - **Root Cause:** Required manual remediation via SSH to fix the accelerated networking configuration on the nodes. This is often related to the nmstate bug or similar issues where the interface doesn't come up correctly after a reboot or update.
-- **Technical Details:** Accelerated networking is not configured by default on OpenShift 4 on Azure. Enabling it requires shutting down and deallocating the VM first, then updating the machine object spec. For OpenShift v4.10 and v4.11, configuring master nodes with accelerated networking is not supported because no machine sets are available for control plane nodes. The Kubernetes NMState Operator can manage network interface configuration declaratively, but deleting an NNCP does not remove the configuration from the primary interface — the operator re-adds the interface on pod/node restart.
+- **Technical Details:** Accelerated networking is not configured by default on OpenShift 4 on Azure. Enabling it requires shutting down and deallocating the VM first, then updating the machine object spec. In older versions (4.10–4.11), configuring master nodes with accelerated networking was not supported because no machine sets were available for control plane nodes. This has been addressed in later versions with the Control Plane Machine Set operator. The Kubernetes NMState Operator can manage network interface configuration declaratively, but deleting an NNCP does not remove the configuration from the primary interface — the operator re-adds the interface on pod/node restart.
 - **References:**
   - [Red Hat Solution 6007341: Accelerated networking on OpenShift 4 / Azure](https://access.redhat.com/solutions/6007341)
   - [Red Hat Solution 7024803: Configuring Accelerated Networking for OpenShift on Azure](https://access.redhat.com/solutions/7024803)
@@ -427,4 +434,4 @@
 - **References:**
   - [Red Hat Solution 7057169: Limited Live Migration from SDN to OVN-Kubernetes](https://access.redhat.com/solutions/7057169)
   - [Red Hat Solution 7005009: Migration breaks EgressNetworkPolicy](https://access.redhat.com/solutions/7005009)
-  - [OKD: Migrating from OpenShift SDN](https://docs.okd.io/4.15/networking/ovn_kubernetes_network_provider/migrate-from-openshift-sdn.html)
+  - [OKD: Migrating from OpenShift SDN](https://docs.okd.io/latest/networking/ovn_kubernetes_network_provider/migrate-from-openshift-sdn.html)
