@@ -17,17 +17,45 @@ export async function POST(request: NextRequest) {
     const knowledgeBase = await loadKnowledgeBase();
     const client = getClaudeClient();
 
+    // Extract only scenario-relevant context from the knowledge base (alert names,
+    // incident types, cluster components) — skip detailed investigation steps and
+    // KQL queries which are only needed during chat.
+    const scenarioContext = knowledgeBase
+      .split("\n")
+      .filter((line) => {
+        const l = line.trim().toLowerCase();
+        return (
+          l.startsWith("#") ||
+          l.startsWith("- ") ||
+          l.includes("alert") ||
+          l.includes("scenario") ||
+          l.includes("symptom") ||
+          l.includes("error") ||
+          l.includes("failure") ||
+          l.includes("cluster") ||
+          l.includes("node") ||
+          l.includes("pod") ||
+          l.includes("version") ||
+          l === ""
+        );
+      })
+      .join("\n")
+      .replace(/\n{3,}/g, "\n\n")
+      .slice(0, 12000);
+
     const response = await client.messages.create({
       model: CLAUDE_MODEL,
-      max_tokens: 4096,
+      max_tokens: 1024,
       system: `You are a scenario generator for an ARO (Azure Red Hat OpenShift) SRE training simulator.
-Generate a realistic incident scenario based on the knowledge base provided.
+Generate a realistic incident scenario. Be concise.
 The scenario should be appropriate for the "${difficulty}" difficulty level.
 
 Difficulty guidelines:
 - easy: Single-component failures, obvious symptoms (e.g., node down, pods crashlooping, simple resource issues)
 - medium: Networking, permissions, configuration drift, multi-component interactions
 - hard: Deep obscure bugs, race conditions, distributed system failures, cascading failures
+
+Use currently supported ARO versions (4.16–4.20). For easy scenarios, you may use 4.15 (EOL) to test "upgrade your cluster" awareness.
 
 IMPORTANT: Respond with ONLY valid JSON matching this exact structure (no markdown, no code fences):
 {
@@ -57,8 +85,8 @@ IMPORTANT: Respond with ONLY valid JSON matching this exact structure (no markdo
   }
 }
 
-Knowledge Base for reference:
-${knowledgeBase}`,
+Reference incidents and alerts:
+${scenarioContext}`,
       messages: [
         {
           role: "user",
