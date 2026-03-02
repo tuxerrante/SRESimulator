@@ -1,0 +1,59 @@
+---
+name: CI
+
+"on":
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Harden runner
+        # v2.12.0
+        uses: >-
+          step-security/harden-runner@0634a2670c59f64b4a01f0f96f84700a4088b9f0
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        # v4.2.2
+        uses: >-
+          actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+
+      - name: Setup Node.js
+        # v4.4.0
+        uses: >-
+          actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Ensure SHA-pinned actions
+        # v3.0.23
+        uses: >-
+          zgosalvez/github-actions-ensure-sha-pinned-actions@25ed13d5ef74bff4b0ae2a35a0ae10aa02b87b3f
+
+      - name: Install frontend dependencies
+        run: make install
+
+      - name: Install backend dependencies
+        run: cd backend && npm ci
+
+      - name: Validate (lint + typecheck)
+        run: make validate
+
+      - name: Security checks
+        run: make security
+
+      - name: Build frontend Docker image
+        run: make docker-build-frontend
+
+      - name: Build backend Docker image
+        run: make docker-build-backend

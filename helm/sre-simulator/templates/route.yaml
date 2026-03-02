@@ -1,0 +1,34 @@
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: {{ include "sre-simulator.fullname" . }}
+  labels:
+    {{- include "sre-simulator.labels" . | nindent 4 }}
+spec:
+  host: {{ .Values.route.host }}
+  tls:
+    termination: {{ .Values.route.tls.termination }}
+  to:
+    kind: Service
+    name: {{ include "sre-simulator.fullname" . }}-frontend
+    weight: 100
+  port:
+    targetPort: {{ .Values.frontend.port }}
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: {{ include "sre-simulator.fullname" . }}-api
+  labels:
+    {{- include "sre-simulator.labels" . | nindent 4 }}
+spec:
+  host: {{ .Values.route.host }}
+  path: /api
+  tls:
+    termination: {{ .Values.route.tls.termination }}
+  to:
+    kind: Service
+    name: {{ include "sre-simulator.fullname" . }}-backend
+    weight: 100
+  port:
+    targetPort: {{ .Values.backend.port }}

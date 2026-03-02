@@ -1,0 +1,64 @@
+---
+name: Build and Push Images
+
+"on":
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build-push:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - component: frontend
+            context: .
+            dockerfile: frontend/Dockerfile
+          - component: backend
+            context: .
+            dockerfile: backend/Dockerfile
+    env:
+      REGISTRY: ghcr.io
+    steps:
+      - name: Harden runner
+        # v2.12.0
+        uses: >-
+          step-security/harden-runner@0634a2670c59f64b4a01f0f96f84700a4088b9f0
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        # v4.2.2
+        uses: >-
+          actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+
+      - name: Login to GHCR
+        # v3.4.0
+        uses: >-
+          docker/login-action@74a5d142397b4f367a81961eba4e8cd7edddf772
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set image name
+        id: meta
+        run: |
+          OWNER="${GITHUB_REPOSITORY_OWNER}"
+          NAME="sre-simulator-${{ matrix.component }}"
+          TAG="${REGISTRY}/${OWNER}/${NAME}:latest"
+          echo "tags=${TAG}" >> "${GITHUB_OUTPUT}"
+
+      - name: Build and push
+        # v6.18.0
+        uses: >-
+          docker/build-push-action@263435318d21b8e681c14492fe198e19c816612b
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.dockerfile }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}

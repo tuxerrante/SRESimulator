@@ -1,0 +1,25 @@
+{
+  "name": "sre-simulator-backend",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "npx tsx watch src/index.ts",
+    "build": "tsc",
+    "start": "node dist/backend/src/index.js",
+    "lint": "eslint ."
+  },
+  "dependencies": {
+    "@anthropic-ai/vertex-sdk": "^0.14.3",
+    "cors": "^2.8.5",
+    "express": "^4.21.2"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.17",
+    "@types/express": "^5.0.2",
+    "@types/node": "^20",
+    "eslint": "^9",
+    "tsx": "^4.19.4",
+    "typescript": "^5",
+    "typescript-eslint": "^8.33.1"
+  }
+}

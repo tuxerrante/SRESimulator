@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "sre-simulator.fullname" . }}-backend
+  labels:
+    {{- include "sre-simulator.labels" . | nindent 4 }}
+    {{- include "sre-simulator.backend.selectorLabels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  ports:
+    - port: {{ .Values.backend.port }}
+      targetPort: {{ .Values.backend.port }}
+      protocol: TCP
+  selector:
+    {{- include "sre-simulator.backend.selectorLabels" . | nindent 4 }}

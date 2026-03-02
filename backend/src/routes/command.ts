@@ -1,8 +1,8 @@
-import { NextRequest, NextResponse } from "next/server";
-import { getClaudeClient, CLAUDE_MODEL } from "@/lib/claude";
-import type { Scenario } from "@/types/game";
+import { Router, type Request, type Response } from "express";
+import { getClaudeClient, CLAUDE_MODEL } from "../lib/claude";
+import type { Scenario } from "../../../shared/types/game";
 
-export const runtime = "nodejs";
+export const commandRouter = Router();
 
 interface CommandRequestBody {
   command: string;
@@ -10,9 +10,9 @@ interface CommandRequestBody {
   scenario: Scenario | null;
 }
 
-export async function POST(request: NextRequest) {
+commandRouter.post("/", async (req: Request, res: Response) => {
   try {
-    const body: CommandRequestBody = await request.json();
+    const body: CommandRequestBody = req.body;
     const { command, type, scenario } = body;
 
     const client = getClaudeClient();
@@ -29,7 +29,6 @@ Recent Events: ${scenario.clusterContext.recentEvents.join("; ")}
 `
       : "No specific scenario context available.";
 
-    // Derive "current" simulation time from the scenario's reported time + a realistic offset
     const reportedTime = scenario?.incidentTicket?.reportedTime;
     const simNow = reportedTime
       ? `The incident was reported at ${reportedTime}. The current simulation time is approximately 1-2 hours after the reported time. All timestamps in your output must be in the past relative to this current time.`
@@ -71,10 +70,10 @@ ${scenarioContext}`;
     // Strip markdown code fences if present
     output = output.replace(/^```(?:\w*)\s*\n?/i, "").replace(/\n?```\s*$/i, "").trim();
 
-    return NextResponse.json({ output, exitCode: 0 });
+    res.json({ output, exitCode: 0 });
   } catch (error) {
     const message =
       error instanceof Error ? error.message : "Command simulation failed";
-    return NextResponse.json({ error: message }, { status: 500 });
+    res.status(500).json({ error: message });
   }
-}
+});

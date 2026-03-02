@@ -1,0 +1,46 @@
+frontend:
+  image:
+    repository: ghcr.io/tuxerrante/sre-simulator-frontend
+    tag: latest
+    pullPolicy: IfNotPresent
+  replicas: 2
+  port: 3000
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+
+backend:
+  image:
+    repository: ghcr.io/tuxerrante/sre-simulator-backend
+    tag: latest
+    pullPolicy: IfNotPresent
+  replicas: 1
+  port: 8080
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+route:
+  host: sre-simulator.apps.example.com
+  tls:
+    termination: edge
+
+storage:
+  storageClass: azurefile-csi
+  size: 1Gi
+
+keyvault:
+  name: ""
+  tenantId: ""
+
+secrets:
+  - CLOUD_ML_REGION
+  - ANTHROPIC_VERTEX_PROJECT_ID

@@ -47,6 +47,9 @@ venv/
 # Testing
 coverage/
 
+# Data (leaderboard storage)
+data/
+
 # Misc
 *.tmp
 *.bak

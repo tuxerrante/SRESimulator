@@ -1,26 +1,24 @@
-import { NextRequest, NextResponse } from "next/server";
-import { getClaudeClient, CLAUDE_MODEL } from "@/lib/claude";
-import { loadKnowledgeBase } from "@/lib/knowledge";
-import { createSession } from "@/lib/sessions";
-import type { Difficulty, Scenario } from "@/types/game";
+import { Router, type Request, type Response } from "express";
+import { getClaudeClient, CLAUDE_MODEL } from "../lib/claude";
+import { loadKnowledgeBase } from "../lib/knowledge";
+import { createSession } from "../lib/sessions";
+import type { Difficulty, Scenario } from "../../../shared/types/game";
 
-export const runtime = "nodejs";
+export const scenarioRouter = Router();
 
 interface ScenarioRequestBody {
   difficulty: Difficulty;
 }
 
-export async function POST(request: NextRequest) {
+scenarioRouter.post("/", async (req: Request, res: Response) => {
   try {
-    const body: ScenarioRequestBody = await request.json();
+    const body: ScenarioRequestBody = req.body;
     const { difficulty } = body;
 
     const knowledgeBase = await loadKnowledgeBase();
     const client = getClaudeClient();
 
-    // Extract only scenario-relevant context from the knowledge base (alert names,
-    // incident types, cluster components) — skip detailed investigation steps and
-    // KQL queries which are only needed during chat.
+    // Extract only scenario-relevant context from the knowledge base
     const scenarioContext = knowledgeBase
       .split("\n")
       .filter((line) => {
@@ -102,15 +100,14 @@ ${scenarioContext}`,
     // Strip markdown code fences if present
     text = text.replace(/^```(?:json)?\s*\n?/i, "").replace(/\n?```\s*$/i, "").trim();
 
-    // Parse the JSON response
     const scenario: Scenario = JSON.parse(text);
 
     const sessionToken = createSession(difficulty, scenario.title);
 
-    return NextResponse.json({ scenario, sessionToken });
+    res.json({ scenario, sessionToken });
   } catch (error) {
     const message =
       error instanceof Error ? error.message : "Scenario generation failed";
-    return NextResponse.json({ error: message }, { status: 500 });
+    res.status(500).json({ error: message });
   }
-}
+});
