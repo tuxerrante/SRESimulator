@@ -1,5 +1,7 @@
 import { Router, type Request, type Response } from "express";
-import { getClaudeClient, CLAUDE_MODEL } from "../lib/claude";
+import { getClaudeClient, getClaudeModel } from "../lib/claude";
+import { getAiReadiness } from "../lib/ai-config";
+import { generateMockCommandOutput } from "../lib/mock-ai";
 import type { Scenario } from "../../../shared/types/game";
 
 export const commandRouter = Router();
@@ -14,6 +16,15 @@ commandRouter.post("/", async (req: Request, res: Response) => {
   try {
     const body: CommandRequestBody = req.body;
     const { command, type, scenario } = body;
+
+    const readiness = getAiReadiness();
+    if (readiness.mockMode) {
+      res.json({
+        output: generateMockCommandOutput(command, type),
+        exitCode: 0,
+      });
+      return;
+    }
 
     const client = getClaudeClient();
 
@@ -53,7 +64,7 @@ Scenario Context:
 ${scenarioContext}`;
 
     const response = await client.messages.create({
-      model: CLAUDE_MODEL,
+      model: getClaudeModel(),
       max_tokens: 2048,
       system: systemPrompt,
       messages: [

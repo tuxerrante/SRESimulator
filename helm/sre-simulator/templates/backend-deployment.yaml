@@ -27,12 +27,21 @@ spec:
               value: /data
             - name: CORS_ORIGIN
               value: "https://{{ .Values.route.host }}"
+            {{- if .Values.ai.vertex.credentials.existingSecretName }}
+            - name: GOOGLE_APPLICATION_CREDENTIALS
+              value: "{{ .Values.ai.vertex.credentials.mountPath }}/{{ .Values.ai.vertex.credentials.key }}"
+            {{- end }}
           envFrom:
             - configMapRef:
                 name: {{ include "sre-simulator.fullname" . }}-config
           volumeMounts:
             - name: data
               mountPath: /data
+            {{- if .Values.ai.vertex.credentials.existingSecretName }}
+            - name: gcp-credentials
+              mountPath: {{ .Values.ai.vertex.credentials.mountPath }}
+              readOnly: true
+            {{- end }}
             {{- if .Values.keyvault.name }}
             - name: secrets
               mountPath: /mnt/secrets
@@ -56,6 +65,11 @@ spec:
         - name: data
           persistentVolumeClaim:
             claimName: {{ include "sre-simulator.fullname" . }}-data
+        {{- if .Values.ai.vertex.credentials.existingSecretName }}
+        - name: gcp-credentials
+          secret:
+            secretName: {{ .Values.ai.vertex.credentials.existingSecretName }}
+        {{- end }}
         {{- if .Values.keyvault.name }}
         - name: secrets
           csi:

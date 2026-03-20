@@ -1,7 +1,9 @@
 import { Router, type Request, type Response } from "express";
-import { getClaudeClient, CLAUDE_MODEL } from "../lib/claude";
+import { getClaudeClient, getClaudeModel } from "../lib/claude";
 import { loadKnowledgeBase } from "../lib/knowledge";
 import { buildSystemPrompt } from "../lib/prompts/system";
+import { getAiReadiness } from "../lib/ai-config";
+import { generateMockChatResponse } from "../lib/mock-ai";
 import type { Scenario } from "../../../shared/types/game";
 import type { InvestigationPhase } from "../../../shared/types/chat";
 
@@ -18,13 +20,26 @@ chatRouter.post("/", async (req: Request, res: Response) => {
     const body: ChatRequestBody = req.body;
     const { messages, scenario, currentPhase } = body;
 
+    const readiness = getAiReadiness();
+    if (readiness.mockMode) {
+      res.setHeader("Content-Type", "text/event-stream");
+      res.setHeader("Cache-Control", "no-cache");
+      res.setHeader("Connection", "keep-alive");
+      res.flushHeaders();
+      const mockText = generateMockChatResponse(currentPhase);
+      res.write(`data: ${JSON.stringify({ text: mockText })}\n\n`);
+      res.write("data: [DONE]\n\n");
+      res.end();
+      return;
+    }
+
     const knowledgeBase = await loadKnowledgeBase();
     const systemPrompt = buildSystemPrompt(knowledgeBase, scenario, currentPhase);
 
     const client = getClaudeClient();
 
     const stream = await client.messages.stream({
-      model: CLAUDE_MODEL,
+      model: getClaudeModel(),
       max_tokens: 4096,
       system: systemPrompt,
       messages: messages.map((m) => ({

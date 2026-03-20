@@ -104,11 +104,11 @@ You start at **0/100** and earn points through good investigation practices.
 
 ---
 
-## API Routes
+## Backend API Routes
 
 ### `POST /api/scenario`
 
-Generates a scenario for the given difficulty. Calls Claude with the full knowledge base to produce a realistic incident ticket and cluster context.
+Generates a scenario for the given difficulty. Calls Claude with the full knowledge base to produce a realistic incident ticket and cluster context. In `AI_MOCK_MODE=true`, returns a deterministic mock scenario.
 
 ### `POST /api/chat`
 
@@ -116,16 +116,24 @@ Streaming chat endpoint. Builds a system prompt with Dungeon Master persona, met
 
 ### `POST /api/command`
 
-Simulates command execution. Given an `oc`, KQL, or Geneva command and the current scenario, Claude generates realistic output consistent with the incident.
+Simulates command execution. Given an `oc`, KQL, or Geneva command and the current scenario, Claude generates realistic output consistent with the incident. In `AI_MOCK_MODE=true`, returns mock command output.
+
+### `GET /api/ai/readiness`
+
+Returns AI runtime readiness checks (safe diagnostics only, no secrets).
+
+### `GET /api/ai/probe?live=true`
+
+Performs an active Claude-on-Vertex probe to validate in-cluster connectivity end-to-end.
 
 ---
 
 ## Changing the model
 
-Edit the `CLAUDE_MODEL` constant in `frontend/src/lib/claude.ts`:
+Set the model through the backend environment variable:
 
-```typescript
-export const CLAUDE_MODEL = "claude-sonnet-4@20250514";
+```bash
+CLAUDE_MODEL=claude-sonnet-4@20250514
 ```
 
 Use the Vertex AI model name format: `model-name@date` (with `@`, not `-`).

@@ -1,7 +1,9 @@
 import { Router, type Request, type Response } from "express";
-import { getClaudeClient, CLAUDE_MODEL } from "../lib/claude";
+import { getClaudeClient, getClaudeModel } from "../lib/claude";
 import { loadKnowledgeBase } from "../lib/knowledge";
 import { createSession } from "../lib/sessions";
+import { getAiReadiness } from "../lib/ai-config";
+import { generateMockScenario } from "../lib/mock-ai";
 import type { Difficulty, Scenario } from "../../../shared/types/game";
 
 export const scenarioRouter = Router();
@@ -14,6 +16,14 @@ scenarioRouter.post("/", async (req: Request, res: Response) => {
   try {
     const body: ScenarioRequestBody = req.body;
     const { difficulty } = body;
+
+    const readiness = getAiReadiness();
+    if (readiness.mockMode) {
+      const scenario = generateMockScenario(difficulty);
+      const sessionToken = createSession(difficulty, scenario.title);
+      res.json({ scenario, sessionToken });
+      return;
+    }
 
     const knowledgeBase = await loadKnowledgeBase();
     const client = getClaudeClient();
@@ -43,7 +53,7 @@ scenarioRouter.post("/", async (req: Request, res: Response) => {
       .slice(0, 12000);
 
     const response = await client.messages.create({
-      model: CLAUDE_MODEL,
+      model: getClaudeModel(),
       max_tokens: 1024,
       system: `You are a scenario generator for an ARO (Azure Red Hat OpenShift) SRE training simulator.
 Generate a realistic incident scenario. Be concise.

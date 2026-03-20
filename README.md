@@ -47,6 +47,23 @@ Your score tracks four dimensions: **Efficiency**, **Safety**, **Documentation**
 
 ---
 
+## 🤖 AI Runtime Modes
+
+The backend now supports two runtime modes:
+
+- **Mock mode** (`AI_MOCK_MODE=true`): no live Vertex calls; useful for smoke tests and chart validation.
+- **Live mode** (`AI_MOCK_MODE=false`): performs real Claude-on-Vertex requests.
+
+Health and probe endpoints:
+
+- `GET /readyz` — readiness (returns `503` if AI runtime config is invalid)
+- `GET /api/ai/readiness` — detailed AI config checks (safe to expose, no secrets)
+- `GET /api/ai/probe?live=true` — active live probe to Vertex (for end-to-end validation)
+
+See `docs/ARO_AI_CONNECTIVITY_SPIKE.md` for the full ARO pod connectivity validation workflow.
+
+---
+
 ## 🔑 LLM Setup (Claude on Vertex AI)
 
 ### Step 1 — Authenticate
@@ -121,4 +138,5 @@ Open [http://localhost:3000](http://localhost:3000) in your browser.
 ## 📚 Documentation
 
 - **[Architecture & Game Design](docs/ARCHITECTURE.md)** — project structure, tech stack, scoring system, investigation methodology, API routes
+- **[ARO AI Connectivity Spike](docs/ARO_AI_CONNECTIVITY_SPIKE.md)** — prove Claude-on-Vertex connectivity from a pod end-to-end
 - **[CLAUDE.md](CLAUDE.md)** — original design document and game spec

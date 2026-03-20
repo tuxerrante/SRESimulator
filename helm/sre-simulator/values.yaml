@@ -28,6 +28,19 @@ backend:
       cpu: 500m
       memory: 512Mi
 
+ai:
+  provider: vertex
+  mockMode: true
+  strictStartup: true
+  model: claude-sonnet-4@20250514
+  vertex:
+    region: us-east5
+    projectId: ""
+    credentials:
+      existingSecretName: ""
+      key: credentials.json
+      mountPath: /var/run/secrets/gcp
+
 route:
   host: sre-simulator.apps.example.com
   tls:
