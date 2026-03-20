@@ -24,7 +24,14 @@ help: ## Show this help
 install: ## Install all dependencies
 	cd $(FRONTEND_DIR) && npm ci
 	cd $(BACKEND_DIR) && npm ci
-	pre-commit install
+	@if [ "$$CI" = "true" ]; then \
+		echo "CI detected; skipping pre-commit hook installation"; \
+	elif command -v pre-commit >/dev/null 2>&1; then \
+		pre-commit install; \
+	else \
+		echo "pre-commit not found. Install it locally or set CI=true."; \
+		exit 1; \
+	fi
 
 install-backend: ## Install backend dependencies
 	cd $(BACKEND_DIR) && npm ci
