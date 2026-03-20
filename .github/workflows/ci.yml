@@ -36,9 +36,9 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
 
       - name: Ensure SHA-pinned actions
-        # v3.0.23
+        # v5.0.3
         uses: >-
-          zgosalvez/github-actions-ensure-sha-pinned-actions@25ed13d5ef74bff4b0ae2a35a0ae10aa02b87b3f
+          zgosalvez/github-actions-ensure-sha-pinned-actions@471d5ace1f08e3c4df1c4c2f7e6341aa75da434a
 
       - name: Install frontend dependencies
         run: make install
