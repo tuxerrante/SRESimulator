@@ -74,7 +74,7 @@ lint-md: ## Lint Markdown files with markdownlint
 # Type checking & validation
 # ──────────────────────────────────────────────
 typecheck: ## Run frontend TypeScript type checking
-	cd $(FRONTEND_DIR) && npx tsc --noEmit
+	cd $(FRONTEND_DIR) && rm -rf .next && npx tsc --noEmit
 
 typecheck-backend: ## Run backend TypeScript type checking
 	cd $(BACKEND_DIR) && npx tsc --noEmit
