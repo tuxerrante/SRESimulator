@@ -13,6 +13,7 @@ data:
   AI_STRICT_STARTUP: "{{ .Values.ai.strictStartup }}"
   AI_MODEL: "{{ .Values.ai.model }}"
   CLAUDE_MODEL: "{{ .Values.ai.model }}"
+  AI_LIVE_PROBE_TOKEN: "{{ .Values.ai.liveProbeToken }}"
   CLOUD_ML_REGION: "{{ .Values.ai.vertex.region }}"
   ANTHROPIC_VERTEX_PROJECT_ID: "{{ .Values.ai.vertex.projectId }}"
   {{- if not .Values.ai.azureOpenai.endpointFromSecret.existingSecretName }}

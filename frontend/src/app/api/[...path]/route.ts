@@ -9,7 +9,7 @@ function getBackendBaseUrl(): string {
 }
 
 async function proxyRequest(request: NextRequest): Promise<Response> {
-  const backendPath = request.nextUrl.pathname.replace(/^\/api/, "") || "/";
+  const backendPath = request.nextUrl.pathname || "/";
   const targetUrl = `${getBackendBaseUrl()}${backendPath}${request.nextUrl.search}`;
 
   const headers = new Headers(request.headers);

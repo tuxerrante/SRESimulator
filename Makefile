@@ -3,13 +3,15 @@
        lint lint-ts lint-backend lint-yaml lint-md \
        typecheck typecheck-backend validate \
        security audit lockfile-lint grype \
-       test smoke-local-vertex e2e-azure-route e2e-azure-route-up e2e-azure-route-down \
+       test smoke-local-vertex env-check e2e-azure-route e2e-azure-route-up e2e-azure-route-down \
        build dev start \
        docker-build-frontend docker-build-backend docker-build \
        pre-commit all
 
 FRONTEND_DIR := frontend
 BACKEND_DIR := backend
+E2E_ENV_FILE ?= $(BACKEND_DIR)/.env.local
+-include $(E2E_ENV_FILE)
 SECURITY_FAIL_LEVEL ?= high
 GRYPE_VERSION ?= v0.110.0
 GRYPE_IMAGE ?= anchore/grype:$(GRYPE_VERSION)@sha256:af65fbc0c664691067788fe95ff88760b435543e45595eb2ca6f102fc476fbe1
@@ -22,6 +24,19 @@ AOAI_DEPLOYMENT ?=
 E2E_NAMESPACE_PREFIX ?= sre-manual-e2e
 E2E_RELEASE ?= sre-simulator
 E2E_METADATA_FILE ?= data/e2e-azure-route.env
+E2E_REQUIRED_VARS := AZURE_SUBSCRIPTION_ID ARO_RG ARO_CLUSTER AOAI_RG AOAI_ACCOUNT AOAI_DEPLOYMENT
+
+define e2e_var_source
+$(if $(findstring environment,$(origin $(1))),shell,$(if $(findstring command line,$(origin $(1))),shell (command line),$(if $(filter file,$(origin $(1))),$(E2E_ENV_FILE),make ($(origin $(1))))))
+endef
+
+E2E_MISSING_VARS := $(strip \
+  $(if $(strip $(AZURE_SUBSCRIPTION_ID)),,AZURE_SUBSCRIPTION_ID) \
+  $(if $(strip $(ARO_RG)),,ARO_RG) \
+  $(if $(strip $(ARO_CLUSTER)),,ARO_CLUSTER) \
+  $(if $(strip $(AOAI_RG)),,AOAI_RG) \
+  $(if $(strip $(AOAI_ACCOUNT)),,AOAI_ACCOUNT) \
+  $(if $(strip $(AOAI_DEPLOYMENT)),,AOAI_DEPLOYMENT))
 
 # ──────────────────────────────────────────────
 # Help
@@ -158,15 +173,29 @@ smoke-local-vertex: ## Run local backend live probe using Vertex env from fronte
 
 e2e-azure-route: e2e-azure-route-up ## Create temporary Azure OpenAI-backed route for manual UI testing
 
-e2e-azure-route-up: ## Build+deploy frontend/backend to ARO and print temporary UI route URL
+env-check: ## Show source of required e2e vars (values hidden)
+	@echo "E2E variable source check (values hidden):"
+	@echo "  AZURE_SUBSCRIPTION_ID: $(call e2e_var_source,AZURE_SUBSCRIPTION_ID)"
+	@echo "  ARO_RG: $(call e2e_var_source,ARO_RG)"
+	@echo "  ARO_CLUSTER: $(call e2e_var_source,ARO_CLUSTER)"
+	@echo "  AOAI_RG: $(call e2e_var_source,AOAI_RG)"
+	@echo "  AOAI_ACCOUNT: $(call e2e_var_source,AOAI_ACCOUNT)"
+	@echo "  AOAI_DEPLOYMENT: $(call e2e_var_source,AOAI_DEPLOYMENT)"
+	@if [ -n "$(E2E_MISSING_VARS)" ]; then \
+		echo "Missing required e2e vars: $(E2E_MISSING_VARS)"; \
+		exit 1; \
+	fi
+
+e2e-azure-route-up: env-check ## Build+deploy frontend/backend to ARO and print temporary UI route URL
 	@set -e; \
-	if [ -z "$(AZURE_SUBSCRIPTION_ID)" ] || [ -z "$(ARO_RG)" ] || [ -z "$(ARO_CLUSTER)" ] || [ -z "$(AOAI_RG)" ] || [ -z "$(AOAI_ACCOUNT)" ] || [ -z "$(AOAI_DEPLOYMENT)" ]; then \
-		echo "Missing required env vars. Export: AZURE_SUBSCRIPTION_ID, ARO_RG, ARO_CLUSTER, AOAI_RG, AOAI_ACCOUNT, AOAI_DEPLOYMENT"; \
+	if [ -n "$(E2E_MISSING_VARS)" ]; then \
+		echo "Missing required env vars. Export: AZURE_SUBSCRIPTION_ID, ARO_RG, ARO_CLUSTER, AOAI_RG, AOAI_ACCOUNT, AOAI_DEPLOYMENT (or set them in $(E2E_ENV_FILE))."; \
 		exit 1; \
 	fi; \
 	TS=$$(date +%Y%m%d-%H%M%S); \
 	NS="$(E2E_NAMESPACE_PREFIX)-$$TS"; \
 	TAG="e2e$$TS"; \
+	PROBE_TOKEN="probe-$$TS"; \
 	echo "Using namespace: $$NS"; \
 	az account set -s "$(AZURE_SUBSCRIPTION_ID)" >/dev/null; \
 	API=$$(az aro show -g "$(ARO_RG)" -n "$(ARO_CLUSTER)" --query apiserverProfile.url -o tsv); \
@@ -196,6 +225,7 @@ e2e-azure-route-up: ## Build+deploy frontend/backend to ARO and print temporary 
 		--set ai.mockMode=false \
 		--set ai.strictStartup=true \
 		--set ai.model="$(AOAI_DEPLOYMENT)" \
+		--set-string ai.liveProbeToken="$$PROBE_TOKEN" \
 		--set ai.azureOpenai.endpointFromSecret.existingSecretName=azure-openai-creds \
 		--set ai.azureOpenai.endpointFromSecret.key=endpoint \
 		--set ai.azureOpenai.deployment="$(AOAI_DEPLOYMENT)" \
@@ -209,13 +239,13 @@ e2e-azure-route-up: ## Build+deploy frontend/backend to ARO and print temporary 
 	printf 'NS=%s\nRELEASE=%s\nURL=%s\nTAG=%s\n' "$$NS" "$(E2E_RELEASE)" "https://$$HOST" "$$TAG" > "$(E2E_METADATA_FILE)"; \
 	PROBE_CODE=""; \
 	for i in 1 2 3 4 5 6 7 8 9 10; do \
-		PROBE_CODE=$$(curl -ksS -o /dev/null -w '%{http_code}' "https://$$HOST/api/ai/probe?live=true" || true); \
+		PROBE_CODE=$$(curl -ksS -H "x-ai-probe-token: $$PROBE_TOKEN" -o /dev/null -w '%{http_code}' "https://$$HOST/api/ai/probe?live=true" || true); \
 		if [ "$$PROBE_CODE" = "200" ]; then break; fi; \
 		sleep 2; \
 	done; \
 	if [ "$$PROBE_CODE" != "200" ]; then \
 		echo "Probe failed with status $$PROBE_CODE"; \
-		curl -ksS "https://$$HOST/api/ai/probe?live=true" || true; \
+		curl -ksS -H "x-ai-probe-token: $$PROBE_TOKEN" "https://$$HOST/api/ai/probe?live=true" || true; \
 		echo; \
 		exit 1; \
 	fi; \
