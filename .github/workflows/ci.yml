@@ -35,7 +35,9 @@ jobs:
         with:
           node-version: 24
           cache: npm
-          cache-dependency-path: frontend/package-lock.json
+          cache-dependency-path: |
+            frontend/package-lock.json
+            backend/package-lock.json
 
       - name: Ensure SHA-pinned actions
         # v5.0.3
@@ -44,9 +46,6 @@ jobs:
 
       - name: Install frontend dependencies
         run: make install
-
-      - name: Install backend dependencies
-        run: cd backend && npm ci
 
       - name: Validate (lint + typecheck)
         run: make validate
