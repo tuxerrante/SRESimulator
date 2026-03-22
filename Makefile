@@ -56,8 +56,7 @@ install: ## Install all dependencies
 	elif command -v pre-commit >/dev/null 2>&1; then \
 		pre-commit install; \
 	else \
-		echo "pre-commit not found. Install it locally or set CI=true."; \
-		exit 1; \
+		echo "pre-commit not found. Skipping pre-commit hook installation."; \
 	fi
 
 install-backend: ## Install backend dependencies
@@ -95,7 +94,7 @@ lint-yaml: ## Lint YAML files with yamllint
 	find . \( -path './helm' -o -path './helm/*' -o -path '*/node_modules' -o -path '*/node_modules/*' \) -prune -o -type f \( -name '*.yml' -o -name '*.yaml' \) -print0 | xargs -0 -r yamllint --strict
 
 lint-md: ## Lint Markdown files with markdownlint
-	npx markdownlint-cli '**/*.md' --ignore '**/node_modules/**'
+	npx markdownlint '**/*.md' --ignore '**/node_modules/**'
 
 # ──────────────────────────────────────────────
 # Type checking & validation

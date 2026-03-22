@@ -15,19 +15,21 @@ oc -n <namespace> create secret generic azure-openai-creds \
   --from-literal=api-key="<azure-openai-key>"
 ```
 
-1. Deploy with the Azure Foundry override values:
+1. Deploy with the Azure Foundry override values and a probe token:
 
 ```bash
+PROBE_TOKEN="replace-with-long-random-token"
 helm upgrade --install sre-simulator ./helm/sre-simulator \
   -n <namespace> \
-  -f helm/sre-simulator/values-aro-ai-azure-foundry.example.yaml
+  -f helm/sre-simulator/values-aro-ai-azure-foundry.example.yaml \
+  --set-string ai.liveProbeToken="${PROBE_TOKEN}"
 ```
 
 1. Run the same probe checks:
 
 ```bash
 oc -n <namespace> exec deploy/sre-simulator-backend -- \
-  node -e "fetch('http://127.0.0.1:8080/api/ai/probe?live=true').then(async (r)=>{console.log(r.status);console.log(await r.text());process.exit(r.ok?0:1)}).catch((e)=>{console.error(e);process.exit(1)})"
+  node -e "fetch('http://127.0.0.1:8080/api/ai/probe?live=true',{headers:{'x-ai-probe-token':'${PROBE_TOKEN}'}}).then(async (r)=>{console.log(r.status);console.log(await r.text());process.exit(r.ok?0:1)}).catch((e)=>{console.error(e);process.exit(1)})"
 ```
 
 ## Goal
@@ -51,6 +53,7 @@ Create an override file:
 ai:
   mockMode: false
   strictStartup: true
+  liveProbeToken: replace-with-long-random-token
   model: claude-sonnet-4@20250514
   vertex:
     region: us-east5
@@ -87,8 +90,9 @@ oc -n <namespace> logs deploy/sre-simulator-backend
 Use Node.js (present in the backend container) so no extra tooling is required:
 
 ```bash
+PROBE_TOKEN="replace-with-long-random-token"
 oc -n <namespace> exec deploy/sre-simulator-backend -- \
-  node -e "fetch('http://127.0.0.1:8080/api/ai/probe?live=true').then(async (r)=>{console.log(r.status);console.log(await r.text());process.exit(r.ok?0:1)}).catch((e)=>{console.error(e);process.exit(1)})"
+  node -e "fetch('http://127.0.0.1:8080/api/ai/probe?live=true',{headers:{'x-ai-probe-token':'${PROBE_TOKEN}'}}).then(async (r)=>{console.log(r.status);console.log(await r.text());process.exit(r.ok?0:1)}).catch((e)=>{console.error(e);process.exit(1)})"
 ```
 
 Expected result:
@@ -100,7 +104,8 @@ Expected result:
 
 ```bash
 ROUTE_HOST=$(oc -n <namespace> get route sre-simulator -o jsonpath='{.spec.host}')
-curl -sS "https://${ROUTE_HOST}/api/ai/probe?live=true" | jq
+curl -sS -H "x-ai-probe-token: replace-with-long-random-token" \
+  "https://${ROUTE_HOST}/api/ai/probe?live=true" | jq
 ```
 
 Expected result:

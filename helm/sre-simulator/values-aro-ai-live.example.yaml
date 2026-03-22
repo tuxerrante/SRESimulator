@@ -2,6 +2,7 @@
 ai:
   mockMode: false
   strictStartup: true
+  liveProbeToken: replace-with-long-random-token
   model: claude-sonnet-4@20250514
   vertex:
     region: us-east5

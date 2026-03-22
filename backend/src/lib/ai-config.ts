@@ -113,7 +113,12 @@ export function getAiReadiness(): AiReadiness {
   ) {
     reasons.push("AI_AZURE_OPENAI_DEPLOYMENT is not configured");
   }
-  if (checks.credentialsPathConfigured && !checks.credentialsFileReadable) {
+  if (
+    !mockMode &&
+    provider === "vertex" &&
+    checks.credentialsPathConfigured &&
+    !checks.credentialsFileReadable
+  ) {
     reasons.push("GOOGLE_APPLICATION_CREDENTIALS points to a missing or unreadable file");
   }
 

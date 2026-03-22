@@ -50,6 +50,25 @@ jobs:
       - name: Validate (lint + typecheck)
         run: make validate
 
+      - name: Install Helm
+        run: |
+          set -euo pipefail
+          HELM_VERSION="v3.14.4"
+          HELM_TARBALL_URL="https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz"
+          curl -fsSL "${HELM_TARBALL_URL}" -o /tmp/helm.tar.gz
+          tar -C /tmp -zxvf /tmp/helm.tar.gz
+          sudo mv /tmp/linux-amd64/helm /usr/local/bin/helm
+          helm version
+
+      - name: Helm lint
+        run: helm lint ./helm/sre-simulator
+
+      - name: Helm template
+        run: |
+          set -euo pipefail
+          helm template sre-simulator ./helm/sre-simulator \
+            --values ./helm/sre-simulator/values.yaml
+
       - name: Security checks
         run: make security
 
