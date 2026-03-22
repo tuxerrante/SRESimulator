@@ -18,7 +18,7 @@ ARO_RG ?=
 ARO_CLUSTER ?=
 AOAI_RG ?=
 AOAI_ACCOUNT ?=
-AOAI_DEPLOYMENT ?= gpt-5.2
+AOAI_DEPLOYMENT ?=
 E2E_NAMESPACE_PREFIX ?= sre-manual-e2e
 E2E_RELEASE ?= sre-simulator
 E2E_METADATA_FILE ?= data/e2e-azure-route.env
@@ -160,8 +160,8 @@ e2e-azure-route: e2e-azure-route-up ## Create temporary Azure OpenAI-backed rout
 
 e2e-azure-route-up: ## Build+deploy frontend/backend to ARO and print temporary UI route URL
 	@set -e; \
-	if [ -z "$(AZURE_SUBSCRIPTION_ID)" ] || [ -z "$(ARO_RG)" ] || [ -z "$(ARO_CLUSTER)" ] || [ -z "$(AOAI_RG)" ] || [ -z "$(AOAI_ACCOUNT)" ]; then \
-		echo "Missing required env vars. Export: AZURE_SUBSCRIPTION_ID, ARO_RG, ARO_CLUSTER, AOAI_RG, AOAI_ACCOUNT"; \
+	if [ -z "$(AZURE_SUBSCRIPTION_ID)" ] || [ -z "$(ARO_RG)" ] || [ -z "$(ARO_CLUSTER)" ] || [ -z "$(AOAI_RG)" ] || [ -z "$(AOAI_ACCOUNT)" ] || [ -z "$(AOAI_DEPLOYMENT)" ]; then \
+		echo "Missing required env vars. Export: AZURE_SUBSCRIPTION_ID, ARO_RG, ARO_CLUSTER, AOAI_RG, AOAI_ACCOUNT, AOAI_DEPLOYMENT"; \
 		exit 1; \
 	fi; \
 	TS=$$(date +%Y%m%d-%H%M%S); \
