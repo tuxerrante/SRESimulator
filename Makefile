@@ -94,7 +94,7 @@ lint-yaml: ## Lint YAML files with yamllint
 	find . \( -path './helm' -o -path './helm/*' -o -path '*/node_modules' -o -path '*/node_modules/*' \) -prune -o -type f \( -name '*.yml' -o -name '*.yaml' \) -print0 | xargs -0 -r yamllint --strict
 
 lint-md: ## Lint Markdown files with markdownlint
-	npx markdownlint '**/*.md' --ignore '**/node_modules/**'
+	npx markdownlint-cli '**/*.md' --ignore '**/node_modules/**'
 
 # ──────────────────────────────────────────────
 # Type checking & validation
