@@ -1,3 +1,4 @@
+---
 frontend:
   image:
     repository: ghcr.io/tuxerrante/sre-simulator-frontend
@@ -40,6 +41,16 @@ ai:
       existingSecretName: ""
       key: credentials.json
       mountPath: /var/run/secrets/gcp
+  azureOpenai:
+    endpoint: ""
+    endpointFromSecret:
+      existingSecretName: ""
+      key: endpoint
+    deployment: ""
+    apiVersion: 2024-10-21
+    credentials:
+      existingSecretName: ""
+      key: api-key
 
 route:
   host: sre-simulator.apps.example.com

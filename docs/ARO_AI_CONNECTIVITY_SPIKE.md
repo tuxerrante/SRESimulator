@@ -2,6 +2,34 @@
 
 This runbook validates issue `#4` end-to-end: backend pod -> Vertex AI -> Claude response.
 
+## Alternative: Azure OpenAI / Foundry
+
+For a no-`gcloud` pod-native path, use Azure OpenAI/Foundry with API key auth.
+In this flow, both endpoint and API key are masked in a Kubernetes Secret (not in Helm values).
+
+1. Create an API key secret in the target namespace:
+
+```bash
+oc -n <namespace> create secret generic azure-openai-creds \
+  --from-literal=endpoint="https://<your-account>.cognitiveservices.azure.com" \
+  --from-literal=api-key="<azure-openai-key>"
+```
+
+1. Deploy with the Azure Foundry override values:
+
+```bash
+helm upgrade --install sre-simulator ./helm/sre-simulator \
+  -n <namespace> \
+  -f helm/sre-simulator/values-aro-ai-azure-foundry.example.yaml
+```
+
+1. Run the same probe checks:
+
+```bash
+oc -n <namespace> exec deploy/sre-simulator-backend -- \
+  node -e "fetch('http://127.0.0.1:8080/api/ai/probe?live=true').then(async (r)=>{console.log(r.status);console.log(await r.text());process.exit(r.ok?0:1)}).catch((e)=>{console.error(e);process.exit(1)})"
+```
+
 ## Goal
 
 Prove that an in-cluster backend pod can execute a live model call using `GET /api/ai/probe?live=true`.

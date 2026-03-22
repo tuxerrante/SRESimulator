@@ -27,6 +27,20 @@ spec:
               value: /data
             - name: CORS_ORIGIN
               value: "https://{{ .Values.route.host }}"
+            {{- if .Values.ai.azureOpenai.endpointFromSecret.existingSecretName }}
+            - name: AI_AZURE_OPENAI_ENDPOINT
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.ai.azureOpenai.endpointFromSecret.existingSecretName }}
+                  key: {{ .Values.ai.azureOpenai.endpointFromSecret.key }}
+            {{- end }}
+            {{- if .Values.ai.azureOpenai.credentials.existingSecretName }}
+            - name: AI_AZURE_OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.ai.azureOpenai.credentials.existingSecretName }}
+                  key: {{ .Values.ai.azureOpenai.credentials.key }}
+            {{- end }}
             {{- if .Values.ai.vertex.credentials.existingSecretName }}
             - name: GOOGLE_APPLICATION_CREDENTIALS
               value: "{{ .Values.ai.vertex.credentials.mountPath }}/{{ .Values.ai.vertex.credentials.key }}"

@@ -1,7 +1,7 @@
 import { Router, type Request, type Response } from "express";
-import { getClaudeClient, getClaudeModel } from "../lib/claude";
 import { getAiReadiness } from "../lib/ai-config";
 import { generateMockCommandOutput } from "../lib/mock-ai";
+import { generateAiText } from "../lib/ai-runtime";
 import type { Scenario } from "../../../shared/types/game";
 
 export const commandRouter = Router();
@@ -25,8 +25,13 @@ commandRouter.post("/", async (req: Request, res: Response) => {
       });
       return;
     }
-
-    const client = getClaudeClient();
+    if (!readiness.ready) {
+      res.status(503).json({
+        error: "AI runtime configuration is invalid",
+        details: readiness.reasons,
+      });
+      return;
+    }
 
     const scenarioContext = scenario
       ? `
@@ -63,9 +68,8 @@ Rules:
 Scenario Context:
 ${scenarioContext}`;
 
-    const response = await client.messages.create({
-      model: getClaudeModel(),
-      max_tokens: 2048,
+    const responseText = await generateAiText({
+      maxTokens: 2048,
       system: systemPrompt,
       messages: [
         {
@@ -75,8 +79,7 @@ ${scenarioContext}`;
       ],
     });
 
-    let output =
-      response.content[0].type === "text" ? response.content[0].text : "";
+    let output = responseText;
 
     // Strip markdown code fences if present
     output = output.replace(/^```(?:\w*)\s*\n?/i, "").replace(/\n?```\s*$/i, "").trim();

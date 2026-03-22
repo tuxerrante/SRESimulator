@@ -1,9 +1,9 @@
 import { Router, type Request, type Response } from "express";
-import { getClaudeClient, getClaudeModel } from "../lib/claude";
 import { loadKnowledgeBase } from "../lib/knowledge";
 import { buildSystemPrompt } from "../lib/prompts/system";
 import { getAiReadiness } from "../lib/ai-config";
 import { generateMockChatResponse } from "../lib/mock-ai";
+import { streamAiText } from "../lib/ai-runtime";
 import type { Scenario } from "../../../shared/types/game";
 import type { InvestigationPhase } from "../../../shared/types/chat";
 
@@ -32,20 +32,20 @@ chatRouter.post("/", async (req: Request, res: Response) => {
       res.end();
       return;
     }
+    if (!readiness.ready) {
+      res.status(503).json({
+        error: "AI runtime configuration is invalid",
+        details: readiness.reasons,
+      });
+      return;
+    }
 
     const knowledgeBase = await loadKnowledgeBase();
     const systemPrompt = buildSystemPrompt(knowledgeBase, scenario, currentPhase);
-
-    const client = getClaudeClient();
-
-    const stream = await client.messages.stream({
-      model: getClaudeModel(),
-      max_tokens: 4096,
+    const stream = streamAiText({
+      maxTokens: 4096,
       system: systemPrompt,
-      messages: messages.map((m) => ({
-        role: m.role,
-        content: m.content,
-      })),
+      messages: messages.map((m) => ({ role: m.role, content: m.content })),
     });
 
     res.setHeader("Content-Type", "text/event-stream");
@@ -54,14 +54,9 @@ chatRouter.post("/", async (req: Request, res: Response) => {
     res.flushHeaders();
 
     try {
-      for await (const event of stream) {
-        if (
-          event.type === "content_block_delta" &&
-          event.delta.type === "text_delta"
-        ) {
-          const data = JSON.stringify({ text: event.delta.text });
-          res.write(`data: ${data}\n\n`);
-        }
+      for await (const text of stream) {
+        const data = JSON.stringify({ text });
+        res.write(`data: ${data}\n\n`);
       }
       res.write("data: [DONE]\n\n");
       res.end();

@@ -1,9 +1,9 @@
 import { Router, type Request, type Response } from "express";
-import { getClaudeClient, getClaudeModel } from "../lib/claude";
 import { loadKnowledgeBase } from "../lib/knowledge";
 import { createSession } from "../lib/sessions";
 import { getAiReadiness } from "../lib/ai-config";
 import { generateMockScenario } from "../lib/mock-ai";
+import { generateAiText } from "../lib/ai-runtime";
 import type { Difficulty, Scenario } from "../../../shared/types/game";
 
 export const scenarioRouter = Router();
@@ -24,9 +24,15 @@ scenarioRouter.post("/", async (req: Request, res: Response) => {
       res.json({ scenario, sessionToken });
       return;
     }
+    if (!readiness.ready) {
+      res.status(503).json({
+        error: "AI runtime configuration is invalid",
+        details: readiness.reasons,
+      });
+      return;
+    }
 
     const knowledgeBase = await loadKnowledgeBase();
-    const client = getClaudeClient();
 
     // Extract only scenario-relevant context from the knowledge base
     const scenarioContext = knowledgeBase
@@ -52,9 +58,8 @@ scenarioRouter.post("/", async (req: Request, res: Response) => {
       .replace(/\n{3,}/g, "\n\n")
       .slice(0, 12000);
 
-    const response = await client.messages.create({
-      model: getClaudeModel(),
-      max_tokens: 1024,
+    const responseText = await generateAiText({
+      maxTokens: 1024,
       system: `You are a scenario generator for an ARO (Azure Red Hat OpenShift) SRE training simulator.
 Generate a realistic incident scenario. Be concise.
 The scenario should be appropriate for the "${difficulty}" difficulty level.
@@ -104,8 +109,7 @@ ${scenarioContext}`,
       ],
     });
 
-    let text =
-      response.content[0].type === "text" ? response.content[0].text : "";
+    let text = responseText;
 
     // Strip markdown code fences if present
     text = text.replace(/^```(?:json)?\s*\n?/i, "").replace(/\n?```\s*$/i, "").trim();

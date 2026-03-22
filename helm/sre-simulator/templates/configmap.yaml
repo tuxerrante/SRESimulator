@@ -11,6 +11,12 @@ data:
   AI_PROVIDER: "{{ .Values.ai.provider }}"
   AI_MOCK_MODE: "{{ .Values.ai.mockMode }}"
   AI_STRICT_STARTUP: "{{ .Values.ai.strictStartup }}"
+  AI_MODEL: "{{ .Values.ai.model }}"
   CLAUDE_MODEL: "{{ .Values.ai.model }}"
   CLOUD_ML_REGION: "{{ .Values.ai.vertex.region }}"
   ANTHROPIC_VERTEX_PROJECT_ID: "{{ .Values.ai.vertex.projectId }}"
+  {{- if not .Values.ai.azureOpenai.endpointFromSecret.existingSecretName }}
+  AI_AZURE_OPENAI_ENDPOINT: "{{ .Values.ai.azureOpenai.endpoint }}"
+  {{- end }}
+  AI_AZURE_OPENAI_DEPLOYMENT: "{{ .Values.ai.azureOpenai.deployment }}"
+  AI_AZURE_OPENAI_API_VERSION: "{{ .Values.ai.azureOpenai.apiVersion }}"
