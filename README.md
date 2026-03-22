@@ -162,19 +162,19 @@ Open [http://localhost:3000](http://localhost:3000) in your browser.
 
 ### Make targets
 
-| Command          | Description                         |
-| ---------------- | ----------------------------------- |
-| `make install`   | Install all dependencies            |
-| `make dev`       | Start Next.js dev server            |
-| `make build`     | Build the production bundle         |
-| `make lint`      | Run all linters                     |
-| `make typecheck` | Run TypeScript type checking        |
-| `make smoke-local-vertex` | Run local live Vertex probe against backend |
-| `make e2e-azure-route-up` | Build/deploy temporary ARO route using Azure OpenAI |
-| `make e2e-azure-route-down` | Tear down temporary Azure e2e namespace |
-| `make security`  | Run security audit + lockfile check |
-| `make all`       | Full CI pipeline                    |
-| `make clean`     | Remove build artifacts              |
+| Command                     | Description                                         |
+| --------------------------- | --------------------------------------------------- |
+| `make install`              | Install all dependencies                            |
+| `make dev`                  | Start Next.js dev server                            |
+| `make build`                | Build the production bundle                         |
+| `make lint`                 | Run all linters                                     |
+| `make typecheck`            | Run TypeScript type checking                        |
+| `make smoke-local-vertex`   | Run local live Vertex probe against backend         |
+| `make e2e-azure-route-up`   | Build/deploy temporary ARO route using Azure OpenAI |
+| `make e2e-azure-route-down` | Tear down temporary Azure e2e namespace             |
+| `make security`             | Run security audit + lockfile check                 |
+| `make all`                  | Full CI pipeline                                    |
+| `make clean`                | Remove build artifacts                              |
 
 For `make e2e-azure-route-up`, export these runtime variables first:
 
