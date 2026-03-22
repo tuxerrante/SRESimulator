@@ -2,7 +2,7 @@
        fmt fmt-check \
        lint lint-ts lint-backend lint-yaml lint-md \
        typecheck typecheck-backend validate \
-       security audit lockfile-lint \
+       security audit lockfile-lint grype \
        test smoke-local-vertex e2e-azure-route e2e-azure-route-up e2e-azure-route-down \
        build dev start \
        docker-build-frontend docker-build-backend docker-build \
@@ -10,6 +10,9 @@
 
 FRONTEND_DIR := frontend
 BACKEND_DIR := backend
+SECURITY_FAIL_LEVEL ?= high
+GRYPE_VERSION ?= v0.110.0
+GRYPE_IMAGE ?= anchore/grype:$(GRYPE_VERSION)@sha256:af65fbc0c664691067788fe95ff88760b435543e45595eb2ca6f102fc476fbe1
 AZURE_SUBSCRIPTION_ID ?=
 ARO_RG ?=
 ARO_CLUSTER ?=
@@ -77,7 +80,7 @@ lint-yaml: ## Lint YAML files with yamllint
 	find . \( -path './helm' -o -path './helm/*' -o -path '*/node_modules' -o -path '*/node_modules/*' \) -prune -o -type f \( -name '*.yml' -o -name '*.yaml' \) -print0 | xargs -0 -r yamllint --strict
 
 lint-md: ## Lint Markdown files with markdownlint
-	npx markdownlint '**/*.md' --ignore '**/node_modules/**'
+	npx markdownlint-cli '**/*.md' --ignore '**/node_modules/**'
 
 # ──────────────────────────────────────────────
 # Type checking & validation
@@ -93,10 +96,10 @@ validate: lint typecheck typecheck-backend ## Run all linters + type checking
 # ──────────────────────────────────────────────
 # Security
 # ──────────────────────────────────────────────
-security: audit lockfile-lint ## Run all security checks
+security: audit lockfile-lint grype ## Run all security checks
 
 audit: ## Check npm dependencies for known vulnerabilities
-	cd $(FRONTEND_DIR) && npm audit --audit-level=high
+	cd $(FRONTEND_DIR) && npm audit --audit-level=$(SECURITY_FAIL_LEVEL)
 
 lockfile-lint: ## Validate lockfile integrity (registry & HTTPS)
 	cd $(FRONTEND_DIR) && npx lockfile-lint \
@@ -104,6 +107,20 @@ lockfile-lint: ## Validate lockfile integrity (registry & HTTPS)
 		--type npm \
 		--allowed-hosts npm \
 		--validate-https
+
+grype: ## Scan frontend/backend dependencies with Grype (high/critical)
+	@set -e; \
+	if command -v grype >/dev/null 2>&1; then \
+		GRYPE_DB_AUTO_UPDATE=true grype "dir:$(FRONTEND_DIR)" --fail-on $(SECURITY_FAIL_LEVEL) --only-fixed; \
+		GRYPE_DB_AUTO_UPDATE=true grype "dir:$(BACKEND_DIR)" --fail-on $(SECURITY_FAIL_LEVEL) --only-fixed; \
+	elif command -v docker >/dev/null 2>&1; then \
+		mkdir -p "$$HOME/.cache/grype"; \
+		docker run --rm -e GRYPE_DB_AUTO_UPDATE=true -v "$$HOME/.cache/grype:/root/.cache/grype" -v "$$(pwd):/work" -w /work "$(GRYPE_IMAGE)" "dir:$(FRONTEND_DIR)" --fail-on $(SECURITY_FAIL_LEVEL) --only-fixed; \
+		docker run --rm -e GRYPE_DB_AUTO_UPDATE=true -v "$$HOME/.cache/grype:/root/.cache/grype" -v "$$(pwd):/work" -w /work "$(GRYPE_IMAGE)" "dir:$(BACKEND_DIR)" --fail-on $(SECURITY_FAIL_LEVEL) --only-fixed; \
+	else \
+		echo "grype scanner requires either grype CLI or docker."; \
+		exit 1; \
+	fi
 
 # ──────────────────────────────────────────────
 # Testing

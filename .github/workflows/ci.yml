@@ -13,23 +13,25 @@ permissions:
 jobs:
   validate:
     runs-on: ubuntu-latest
+    env:
+      SECURITY_FAIL_LEVEL: high
     steps:
       - name: Harden runner
-        # v2.12.0
+        # v2.16.0
         uses: >-
-          step-security/harden-runner@0634a2670c59f64b4a01f0f96f84700a4088b9f0
+          step-security/harden-runner@fa2e9d605c4eeb9fcad4c99c224cee0c6c7f3594
         with:
           egress-policy: audit
 
       - name: Checkout
-        # v4.2.2
+        # v6.0.2
         uses: >-
-          actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+          actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
 
       - name: Setup Node.js
-        # v4.4.0
+        # v6.3.0
         uses: >-
-          actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+          actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f
         with:
           node-version: 24
           cache: npm
@@ -51,6 +53,25 @@ jobs:
 
       - name: Security checks
         run: make security
+
+      - name: Grype severity gate
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.cache/grype"
+          grype_digest_a="sha256:af65fbc0c664691067788fe95ff88760"
+          grype_digest_b="b435543e45595eb2ca6f102fc476fbe1"
+          grype_image="anchore/grype:v0.110.0@${grype_digest_a}${grype_digest_b}"
+          docker_args=(
+            --rm
+            -e GRYPE_DB_AUTO_UPDATE=true
+            -v "$HOME/.cache/grype:/root/.cache/grype"
+            -v "$PWD:/work"
+            -w /work
+            "$grype_image"
+          )
+          fail_args=(--only-fixed --fail-on "$SECURITY_FAIL_LEVEL")
+          docker run "${docker_args[@]}" "dir:frontend" "${fail_args[@]}"
+          docker run "${docker_args[@]}" "dir:backend" "${fail_args[@]}"
 
       - name: Build frontend Docker image
         run: make docker-build-frontend
