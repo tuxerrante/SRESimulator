@@ -7,7 +7,7 @@ FROM node:24-alpine AS build
 WORKDIR /app/backend
 COPY --from=deps /app/backend/node_modules ./node_modules
 COPY backend ./
-COPY shared ../shared
+COPY shared /app/shared
 RUN npm run build
 
 FROM node:24-alpine AS run
@@ -18,7 +18,7 @@ RUN addgroup --system --gid 1001 nodejs && \
 
 COPY --from=deps /app/backend/node_modules ./node_modules
 COPY --from=build /app/backend/dist ./dist
-COPY knowledge_base/ ./knowledge_base/
+COPY knowledge_base/ ../knowledge_base/
 
 USER 1001
 EXPOSE 8080
