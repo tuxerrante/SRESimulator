@@ -4,6 +4,10 @@ import { generateAiText } from "../lib/ai-runtime";
 
 export const aiRouter = Router();
 
+function isProductionRuntime(): boolean {
+  return (process.env.NODE_ENV ?? "").trim().toLowerCase() === "production";
+}
+
 aiRouter.get("/readiness", (_req: Request, res: Response) => {
   const readiness = getAiReadiness();
   const statusCode = readiness.ready ? 200 : 503;
@@ -36,6 +40,19 @@ aiRouter.get("/probe", async (req: Request, res: Response) => {
           : "Configuration is valid. Set ?live=true to run a live model probe.",
     });
     return;
+  }
+
+  if (isProductionRuntime()) {
+    const expectedToken = process.env.AI_LIVE_PROBE_TOKEN?.trim() ?? "";
+    const receivedToken = req.header("x-ai-probe-token")?.trim() ?? "";
+    if (!expectedToken || receivedToken !== expectedToken) {
+      res.status(403).json({
+        ok: false,
+        mode: "live",
+        reason: "Live probe is disabled or unauthorized in production",
+      });
+      return;
+    }
   }
 
   try {
