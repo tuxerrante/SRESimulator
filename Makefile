@@ -139,9 +139,8 @@ grype: ## Scan frontend/backend dependencies with Grype (high/critical)
 # ──────────────────────────────────────────────
 # Testing
 # ──────────────────────────────────────────────
-test: ## Run tests (placeholder — add test runner config)
-	@echo "No test runner configured yet. Add vitest or jest to $(FRONTEND_DIR)."
-	@exit 1
+test: ## Run backend unit tests with coverage
+	cd $(BACKEND_DIR) && npm run test:coverage
 
 smoke-local-vertex: ## Run local backend live probe using Vertex env from frontend/.env.local
 	@set -e; \
