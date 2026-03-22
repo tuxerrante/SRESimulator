@@ -20,34 +20,70 @@ SRESimulator/
 ├── CLAUDE.md                             # Design document and game spec
 ├── README.md
 ├── Makefile                              # Build, lint, dev, and CI targets
+├── helm/sre-simulator/                   # OpenShift/Kubernetes deployment manifests
 ├── knowledge_base/                       # Reference docs loaded into AI context
 │   ├── sre-investigation-techniques.md
 │   ├── Openshift-clusters-alerts-resolutions.md
 │   └── Community-reported-issues.md
 ├── docs/
 │   └── ARCHITECTURE.md                   # This file
-└── frontend/                             # Next.js application
-    ├── src/
-    │   ├── app/
-    │   │   ├── page.tsx                  # Landing page (scenario selection)
-    │   │   ├── game/page.tsx             # Main game page
-    │   │   └── api/
-    │   │       ├── chat/route.ts         # Claude streaming chat endpoint
-    │   │       ├── command/route.ts      # Simulated command execution
-    │   │       └── scenario/route.ts     # Scenario generation
-    │   ├── components/
-    │   │   ├── chat/                     # Chat panel, messages, input
-    │   │   ├── terminal/                 # Terminal output display
-    │   │   ├── dashboard/                # Cluster overview and alerts
-    │   │   ├── scoring/                  # Phase tracker, score breakdown
-    │   │   ├── layout/                   # Game layout, header, right panel
-    │   │   └── shared/                   # Code blocks, incident ticket
-    │   ├── hooks/                        # useChat, useCommand, useScoring
-    │   ├── stores/                       # Zustand game state
-    │   ├── lib/                          # Claude client, knowledge loader, prompts
-    │   └── types/                        # TypeScript type definitions
-    └── .env.local                        # Environment variables (not committed)
+├── frontend/                             # Next.js application (UI only)
+│   ├── src/
+│   │   ├── app/
+│   │   │   ├── page.tsx                  # Landing page (scenario selection)
+│   │   │   ├── game/page.tsx             # Main game page
+│   │   │   ├── leaderboard/page.tsx      # Hall of fame view
+│   │   │   └── api/[...path]/route.ts    # Internal BFF proxy to backend service
+│   │   ├── components/
+│   │   │   ├── chat/                     # Chat panel, messages, input
+│   │   │   ├── terminal/                 # Terminal output display
+│   │   │   ├── dashboard/                # Cluster overview and alerts
+│   │   │   ├── scoring/                  # Phase tracker, score breakdown
+│   │   │   ├── layout/                   # Game layout, header, right panel
+│   │   │   └── shared/                   # Code blocks, incident ticket
+│   │   ├── hooks/                        # useChat, useCommand, useScoring
+│   │   ├── stores/                       # Zustand game state
+│   │   ├── lib/                          # API client helpers
+│   │   └── types/                        # TypeScript type definitions
+│   └── .env.local                        # Environment variables (not committed)
+└── backend/                              # Express API server
+    └── src/
+        ├── index.ts                      # API wiring and middleware
+        ├── routes/                       # /api/chat, /api/command, /api/scenario, /api/scores, /api/ai
+        └── lib/                          # AI runtime, scoring, leaderboard, prompts
 ```
+
+---
+
+## OpenShift Exposure Model
+
+Short answer: **only the frontend is internet-exposed; backend stays private inside the cluster**.
+
+### What is exposed
+
+- A single OpenShift Route maps `https://<host>/` to the frontend `ClusterIP` service.
+- There is **no** backend Route (`/api` is not published by the OpenShift router).
+- The backend remains a private `ClusterIP` service reachable only from inside the namespace network.
+
+### How the internal proxy works
+
+- Browser still calls same-origin paths like `/api/chat`.
+- Those requests hit the frontend Next.js server first.
+- Frontend route handler (`app/api/[...path]/route.ts`) proxies server-to-server to `http://<release>-backend:<port>`.
+- Backend `NetworkPolicy` only allows ingress from frontend Pods on backend port.
+
+### Request flow in OpenShift
+
+1. User opens `https://<host>/` (frontend Route).
+2. Frontend calls `fetch("/api/...")`.
+3. Frontend pod proxies the request internally to backend `ClusterIP`.
+4. Backend responds to frontend pod; frontend returns response to client.
+
+### Security outcome
+
+- Backend is not directly reachable from the internet.
+- External traffic terminates at frontend only.
+- Backend remains isolated with least-privilege pod-to-pod access.
 
 ---
 
@@ -105,6 +141,8 @@ You start at **0/100** and earn points through good investigation practices.
 ---
 
 ## Backend API Routes
+
+In OpenShift, browser requests hit the frontend at `/api/*`; the frontend BFF proxy forwards them internally to this backend service.
 
 ### `POST /api/scenario`
 

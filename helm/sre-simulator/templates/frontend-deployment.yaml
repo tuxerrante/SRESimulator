@@ -19,6 +19,9 @@ spec:
         - name: frontend
           image: "{{ .Values.frontend.image.repository }}:{{ .Values.frontend.image.tag }}"
           imagePullPolicy: {{ .Values.frontend.image.pullPolicy }}
+          env:
+            - name: BACKEND_INTERNAL_BASE_URL
+              value: "http://{{ include "sre-simulator.fullname" . }}-backend:{{ .Values.backend.port }}"
           ports:
             - containerPort: {{ .Values.frontend.port }}
               protocol: TCP

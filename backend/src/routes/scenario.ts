@@ -56,7 +56,8 @@ scenarioRouter.post("/", async (req: Request, res: Response) => {
       })
       .join("\n")
       .replace(/\n{3,}/g, "\n\n")
-      .slice(0, 12000);
+      // Keep scenario generation fast by limiting prompt context size.
+      .slice(0, 6000);
 
     const responseText = await generateAiText({
       maxTokens: 1024,

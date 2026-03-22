@@ -169,6 +169,9 @@ Open [http://localhost:3000](http://localhost:3000) in your browser.
 | `make build`     | Build the production bundle         |
 | `make lint`      | Run all linters                     |
 | `make typecheck` | Run TypeScript type checking        |
+| `make smoke-local-vertex` | Run local live Vertex probe against backend |
+| `make e2e-azure-route-up` | Build/deploy temporary ARO route using Azure OpenAI |
+| `make e2e-azure-route-down` | Tear down temporary Azure e2e namespace |
 | `make security`  | Run security audit + lockfile check |
 | `make all`       | Full CI pipeline                    |
 | `make clean`     | Remove build artifacts              |
@@ -180,3 +183,9 @@ Open [http://localhost:3000](http://localhost:3000) in your browser.
 - **[Architecture & Game Design](docs/ARCHITECTURE.md)** — project structure, tech stack, scoring system, investigation methodology, API routes
 - **[ARO AI Connectivity Spike](docs/ARO_AI_CONNECTIVITY_SPIKE.md)** — prove Claude-on-Vertex connectivity from a pod end-to-end
 - **[CLAUDE.md](CLAUDE.md)** — original design document and game spec
+
+---
+
+## 🗺️ Roadmap
+
+- [ ] Train and deploy a project-specific fine-tuned model on Azure OpenAI to improve response speed and domain correctness for SRE investigations.

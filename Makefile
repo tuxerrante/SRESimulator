@@ -3,19 +3,28 @@
        lint lint-ts lint-backend lint-yaml lint-md \
        typecheck typecheck-backend validate \
        security audit lockfile-lint \
-       test \
+       test smoke-local-vertex e2e-azure-route e2e-azure-route-up e2e-azure-route-down \
        build dev start \
        docker-build-frontend docker-build-backend docker-build \
        pre-commit all
 
 FRONTEND_DIR := frontend
 BACKEND_DIR := backend
+AZURE_SUBSCRIPTION_ID ?= fe16a035-e540-4ab7-80d9-373fa9a3d6ae
+ARO_RG ?= aasserzo-icmtest-rg
+ARO_CLUSTER ?= aasserzo-icmtest
+AOAI_RG ?= holmesgpt-haowang
+AOAI_ACCOUNT ?= haowa-mlachj9h-eastus2
+AOAI_DEPLOYMENT ?= gpt-5.2
+E2E_NAMESPACE_PREFIX ?= sre-manual-e2e
+E2E_RELEASE ?= sre-simulator
+E2E_METADATA_FILE ?= data/e2e-azure-route.env
 
 # ──────────────────────────────────────────────
 # Help
 # ──────────────────────────────────────────────
 help: ## Show this help
-	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
+	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
 		awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-24s\033[0m %s\n", $$1, $$2}'
 
 # ──────────────────────────────────────────────
@@ -102,6 +111,114 @@ lockfile-lint: ## Validate lockfile integrity (registry & HTTPS)
 test: ## Run tests (placeholder — add test runner config)
 	@echo "No test runner configured yet. Add vitest or jest to $(FRONTEND_DIR)."
 	@exit 1
+
+smoke-local-vertex: ## Run local backend live probe using Vertex env from frontend/.env.local
+	@set -e; \
+	if [ ! -f "$(FRONTEND_DIR)/.env.local" ]; then \
+		echo "Missing $(FRONTEND_DIR)/.env.local with Vertex settings"; \
+		exit 1; \
+	fi; \
+	set -a; . "$(FRONTEND_DIR)/.env.local"; set +a; \
+	if [ -z "$${CLOUD_ML_REGION:-}" ] || [ -z "$${ANTHROPIC_VERTEX_PROJECT_ID:-}" ]; then \
+		echo "CLOUD_ML_REGION and ANTHROPIC_VERTEX_PROJECT_ID must be set in $(FRONTEND_DIR)/.env.local"; \
+		exit 1; \
+	fi; \
+	echo "Starting backend on http://127.0.0.1:8081 (temporary)"; \
+	PORT=8081 AI_PROVIDER=vertex AI_MOCK_MODE=false AI_STRICT_STARTUP=true AI_MODEL="$${AI_MODEL:-claude-sonnet-4@20250514}" CLOUD_ML_REGION="$$CLOUD_ML_REGION" ANTHROPIC_VERTEX_PROJECT_ID="$$ANTHROPIC_VERTEX_PROJECT_ID" npm --prefix "$(BACKEND_DIR)" run dev >/tmp/sre-backend-vertex.log 2>&1 & \
+	PID=$$!; \
+	trap 'kill $$PID >/dev/null 2>&1 || true' EXIT INT TERM; \
+	for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30; do \
+		CODE=$$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:8081/readyz" || true); \
+		if [ "$$CODE" = "200" ]; then break; fi; \
+		sleep 1; \
+	done; \
+	echo "Readiness:"; \
+	curl -sS "http://127.0.0.1:8081/api/ai/readiness"; echo; \
+	echo "Live probe:"; \
+	curl -sS "http://127.0.0.1:8081/api/ai/probe?live=true"; echo; \
+	echo "Backend logs are at /tmp/sre-backend-vertex.log"; \
+	kill $$PID >/dev/null 2>&1 || true
+
+e2e-azure-route: e2e-azure-route-up ## Create temporary Azure OpenAI-backed route for manual UI testing
+
+e2e-azure-route-up: ## Build+deploy frontend/backend to ARO and print temporary UI route URL
+	@set -e; \
+	TS=$$(date +%Y%m%d-%H%M%S); \
+	NS="$(E2E_NAMESPACE_PREFIX)-$$TS"; \
+	TAG="e2e$$TS"; \
+	echo "Using namespace: $$NS"; \
+	az account set -s "$(AZURE_SUBSCRIPTION_ID)" >/dev/null; \
+	API=$$(az aro show -g "$(ARO_RG)" -n "$(ARO_CLUSTER)" --query apiserverProfile.url -o tsv); \
+	PASS=$$(az aro list-credentials -g "$(ARO_RG)" -n "$(ARO_CLUSTER)" --query kubeadminPassword -o tsv); \
+	oc login "$$API" -u kubeadmin -p "$$PASS" --insecure-skip-tls-verify=true >/dev/null; \
+	AOAI_ENDPOINT=$$(az cognitiveservices account show -g "$(AOAI_RG)" -n "$(AOAI_ACCOUNT)" --query properties.endpoint -o tsv | sed 's:/*$$::'); \
+	AOAI_KEY=$$(az cognitiveservices account keys list -g "$(AOAI_RG)" -n "$(AOAI_ACCOUNT)" --query key1 -o tsv); \
+	oc create namespace "$$NS" >/dev/null; \
+	oc -n "$$NS" create secret generic azure-openai-creds --from-literal=endpoint="$$AOAI_ENDPOINT" --from-literal=api-key="$$AOAI_KEY" >/dev/null; \
+	oc -n "$$NS" new-build --name=sre-simulator-frontend --binary=true --strategy=docker --to=sre-simulator-frontend:$$TAG >/dev/null; \
+	oc -n "$$NS" new-build --name=sre-simulator-backend --binary=true --strategy=docker --to=sre-simulator-backend:$$TAG >/dev/null; \
+	oc -n "$$NS" patch bc/sre-simulator-frontend --type=merge -p '{"spec":{"strategy":{"dockerStrategy":{"dockerfilePath":"frontend/Dockerfile"}}}}' >/dev/null; \
+	oc -n "$$NS" patch bc/sre-simulator-backend --type=merge -p '{"spec":{"strategy":{"dockerStrategy":{"dockerfilePath":"backend/Dockerfile"}}}}' >/dev/null; \
+	oc -n "$$NS" start-build sre-simulator-frontend --from-dir=. --follow --wait >/dev/null; \
+	oc -n "$$NS" start-build sre-simulator-backend --from-dir=. --follow --wait >/dev/null; \
+	DOMAIN=$$(oc get ingresses.config/cluster -o jsonpath='{.spec.domain}'); \
+	HOST="$$NS.$${DOMAIN}"; \
+	helm upgrade --install "$(E2E_RELEASE)" ./helm/sre-simulator -n "$$NS" \
+		--set route.host="$$HOST" \
+		--set frontend.image.repository="image-registry.openshift-image-registry.svc:5000/$$NS/sre-simulator-frontend" \
+		--set frontend.image.tag="$$TAG" \
+		--set frontend.image.pullPolicy=Always \
+		--set backend.image.repository="image-registry.openshift-image-registry.svc:5000/$$NS/sre-simulator-backend" \
+		--set backend.image.tag="$$TAG" \
+		--set backend.image.pullPolicy=Always \
+		--set ai.provider=azure-openai \
+		--set ai.mockMode=false \
+		--set ai.strictStartup=true \
+		--set ai.model="$(AOAI_DEPLOYMENT)" \
+		--set ai.azureOpenai.endpointFromSecret.existingSecretName=azure-openai-creds \
+		--set ai.azureOpenai.endpointFromSecret.key=endpoint \
+		--set ai.azureOpenai.deployment="$(AOAI_DEPLOYMENT)" \
+		--set ai.azureOpenai.apiVersion=2024-10-21 \
+		--set ai.azureOpenai.credentials.existingSecretName=azure-openai-creds \
+		--set ai.azureOpenai.credentials.key=api-key \
+		--wait --timeout 15m >/dev/null; \
+	oc -n "$$NS" rollout status deployment/$(E2E_RELEASE)-frontend --timeout=6m >/dev/null; \
+	oc -n "$$NS" rollout status deployment/$(E2E_RELEASE)-backend --timeout=6m >/dev/null; \
+	mkdir -p "$$(dirname "$(E2E_METADATA_FILE)")"; \
+	printf 'NS=%s\nRELEASE=%s\nURL=%s\nTAG=%s\n' "$$NS" "$(E2E_RELEASE)" "https://$$HOST" "$$TAG" > "$(E2E_METADATA_FILE)"; \
+	PROBE_CODE=""; \
+	for i in 1 2 3 4 5 6 7 8 9 10; do \
+		PROBE_CODE=$$(curl -ksS -o /dev/null -w '%{http_code}' "https://$$HOST/api/ai/probe?live=true" || true); \
+		if [ "$$PROBE_CODE" = "200" ]; then break; fi; \
+		sleep 2; \
+	done; \
+	if [ "$$PROBE_CODE" != "200" ]; then \
+		echo "Probe failed with status $$PROBE_CODE"; \
+		curl -ksS "https://$$HOST/api/ai/probe?live=true" || true; \
+		echo; \
+		exit 1; \
+	fi; \
+	echo "Manual e2e environment is ready."; \
+	echo "URL: https://$$HOST"; \
+	echo "Probe status: $$PROBE_CODE"; \
+	echo "Metadata saved to $(E2E_METADATA_FILE)"
+
+e2e-azure-route-down: ## Delete temporary Azure OpenAI e2e namespace (uses NS=... or metadata file)
+	@set -e; \
+	if [ -n "$${NS:-}" ]; then \
+		TARGET_NS="$$NS"; \
+	elif [ -f "$(E2E_METADATA_FILE)" ]; then \
+		. "$(E2E_METADATA_FILE)"; \
+		TARGET_NS="$$NS"; \
+	else \
+		echo "Set NS=<namespace> or run e2e-azure-route-up first."; \
+		exit 1; \
+	fi; \
+	echo "Deleting namespace $$TARGET_NS"; \
+	oc delete namespace "$$TARGET_NS" --wait=false >/dev/null; \
+	oc wait --for=delete "namespace/$$TARGET_NS" --timeout=10m >/dev/null || true; \
+	if [ -f "$(E2E_METADATA_FILE)" ]; then rm -f "$(E2E_METADATA_FILE)"; fi; \
+	echo "Temporary e2e environment removed."
 
 # ──────────────────────────────────────────────
 # Build & Run

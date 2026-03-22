@@ -68,10 +68,18 @@ async function* streamVertexText(
 
 interface AzureChatResponse {
   choices?: Array<{
+    finish_reason?: string;
     message?: {
-      content?: string;
+      content?: string | Array<{ text?: string }>;
+      refusal?: string | null;
     };
   }>;
+  usage?: {
+    completion_tokens?: number;
+    completion_tokens_details?: {
+      reasoning_tokens?: number;
+    };
+  };
 }
 
 async function runAzureOpenAiRequest(
@@ -158,8 +166,35 @@ async function callAzureOpenAi(request: AiTextRequest): Promise<string> {
   }
 
   const payload = (await response.json()) as AzureChatResponse;
-  const text = payload.choices?.[0]?.message?.content?.trim() ?? "";
+  const firstChoice = payload.choices?.[0];
+  const messageContent = firstChoice?.message?.content;
+  const text =
+    typeof messageContent === "string"
+      ? messageContent.trim()
+      : Array.isArray(messageContent)
+        ? messageContent
+            .map((part) => (typeof part?.text === "string" ? part.text : ""))
+            .join("")
+            .trim()
+        : "";
+
+  const refusal = firstChoice?.message?.refusal?.trim() ?? "";
+  if (!text && refusal) {
+    return refusal;
+  }
+
   if (!text) {
+    const completionTokens = payload.usage?.completion_tokens ?? 0;
+    const reasoningTokens =
+      payload.usage?.completion_tokens_details?.reasoning_tokens ?? 0;
+    const finishedByLength = firstChoice?.finish_reason === "length";
+
+    if (finishedByLength && completionTokens > 0 && reasoningTokens > 0) {
+      throw new Error(
+        "Azure OpenAI consumed completion tokens for reasoning without output text"
+      );
+    }
+
     throw new Error("Azure OpenAI response did not include text content");
   }
   return text;

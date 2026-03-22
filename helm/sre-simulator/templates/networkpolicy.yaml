@@ -18,10 +18,3 @@ spec:
       ports:
         - port: {{ .Values.backend.port }}
           protocol: TCP
-    - from:
-        - namespaceSelector:
-            matchLabels:
-              network.openshift.io/policy-group: ingress
-      ports:
-        - port: {{ .Values.backend.port }}
-          protocol: TCP

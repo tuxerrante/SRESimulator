@@ -88,6 +88,20 @@ ${scenarioContext}`;
   } catch (error) {
     const message =
       error instanceof Error ? error.message : "Command simulation failed";
+
+    // gpt-5.x can occasionally exhaust reasoning tokens without emitting text.
+    // Keep gameplay flowing by returning deterministic mock output.
+    if (
+      message.includes("without output text") ||
+      message.includes("did not include text content")
+    ) {
+      res.json({
+        output: generateMockCommandOutput(req.body.command, req.body.type),
+        exitCode: 0,
+      });
+      return;
+    }
+
     res.status(500).json({ error: message });
   }
 });
