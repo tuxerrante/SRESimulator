@@ -8,6 +8,7 @@
     "skipLibCheck": true,
     "outDir": "./dist",
     "rootDir": "..",
+    "baseUrl": ".",
     "resolveJsonModule": true,
     "declaration": true,
     "paths": {
