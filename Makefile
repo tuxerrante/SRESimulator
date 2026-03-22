@@ -15,6 +15,7 @@ E2E_ENV_FILE ?= $(BACKEND_DIR)/.env.local
 SECURITY_FAIL_LEVEL ?= high
 GRYPE_VERSION ?= v0.110.0
 GRYPE_IMAGE ?= anchore/grype:$(GRYPE_VERSION)@sha256:af65fbc0c664691067788fe95ff88760b435543e45595eb2ca6f102fc476fbe1
+NPM_VERSION ?= $(shell tr -d '\n' < .npm-version)
 AZURE_SUBSCRIPTION_ID ?=
 ARO_RG ?=
 ARO_CLUSTER ?=
@@ -214,8 +215,8 @@ e2e-azure-route-up: env-check ## Build+deploy frontend/backend to ARO and print 
 	oc -n "$$NS" create secret generic azure-openai-creds --from-literal=endpoint="$$AOAI_ENDPOINT" --from-literal=api-key="$$AOAI_KEY" >/dev/null; \
 	oc -n "$$NS" new-build --name=sre-simulator-frontend --binary=true --strategy=docker --to=sre-simulator-frontend:$$TAG >/dev/null; \
 	oc -n "$$NS" new-build --name=sre-simulator-backend --binary=true --strategy=docker --to=sre-simulator-backend:$$TAG >/dev/null; \
-	oc -n "$$NS" patch bc/sre-simulator-frontend --type=merge -p '{"spec":{"strategy":{"dockerStrategy":{"dockerfilePath":"frontend/Dockerfile"}}}}' >/dev/null; \
-	oc -n "$$NS" patch bc/sre-simulator-backend --type=merge -p '{"spec":{"strategy":{"dockerStrategy":{"dockerfilePath":"backend/Dockerfile"}}}}' >/dev/null; \
+	oc -n "$$NS" patch bc/sre-simulator-frontend --type=merge -p '{"spec":{"strategy":{"dockerStrategy":{"dockerfilePath":"frontend/Dockerfile","buildArgs":[{"name":"NPM_VERSION","value":"$(NPM_VERSION)"}]}}}}' >/dev/null; \
+	oc -n "$$NS" patch bc/sre-simulator-backend --type=merge -p '{"spec":{"strategy":{"dockerStrategy":{"dockerfilePath":"backend/Dockerfile","buildArgs":[{"name":"NPM_VERSION","value":"$(NPM_VERSION)"}]}}}}' >/dev/null; \
 	oc -n "$$NS" start-build sre-simulator-frontend --from-dir=. --follow --wait >/dev/null; \
 	oc -n "$$NS" start-build sre-simulator-backend --from-dir=. --follow --wait >/dev/null; \
 	DOMAIN=$$(oc get ingresses.config/cluster -o jsonpath='{.spec.domain}'); \
@@ -296,10 +297,10 @@ start: build ## Build and start production server
 # Docker
 # ──────────────────────────────────────────────
 docker-build-frontend: ## Build frontend Docker image
-	docker build -f $(FRONTEND_DIR)/Dockerfile -t sre-simulator-frontend .
+	docker build --build-arg NPM_VERSION=$(NPM_VERSION) -f $(FRONTEND_DIR)/Dockerfile -t sre-simulator-frontend .
 
 docker-build-backend: ## Build backend Docker image
-	docker build -f $(BACKEND_DIR)/Dockerfile -t sre-simulator-backend .
+	docker build --build-arg NPM_VERSION=$(NPM_VERSION) -f $(BACKEND_DIR)/Dockerfile -t sre-simulator-backend .
 
 docker-build: docker-build-frontend docker-build-backend ## Build all Docker images
 
