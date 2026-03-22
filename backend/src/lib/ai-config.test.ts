@@ -7,28 +7,47 @@ import {
   getConfiguredProvider,
 } from "./ai-config";
 
-const ORIGINAL_ENV = { ...process.env };
+const TEST_ENV_KEYS = [
+  "AI_PROVIDER",
+  "AI_MOCK_MODE",
+  "AI_MODEL",
+  "CLAUDE_MODEL",
+  "CLOUD_ML_REGION",
+  "ANTHROPIC_VERTEX_PROJECT_ID",
+  "AI_AZURE_OPENAI_ENDPOINT",
+  "AI_AZURE_OPENAI_API_KEY",
+  "AI_AZURE_OPENAI_DEPLOYMENT",
+] as const;
 
-function resetEnv(): void {
-  process.env = { ...ORIGINAL_ENV };
-  delete process.env.AI_PROVIDER;
-  delete process.env.AI_MOCK_MODE;
-  delete process.env.AI_MODEL;
-  delete process.env.CLAUDE_MODEL;
-  delete process.env.CLOUD_ML_REGION;
-  delete process.env.ANTHROPIC_VERTEX_PROJECT_ID;
-  delete process.env.AI_AZURE_OPENAI_ENDPOINT;
-  delete process.env.AI_AZURE_OPENAI_API_KEY;
-  delete process.env.AI_AZURE_OPENAI_DEPLOYMENT;
+const ORIGINAL_ENV_VALUES: Record<string, string | undefined> = {};
+for (const key of TEST_ENV_KEYS) {
+  ORIGINAL_ENV_VALUES[key] = process.env[key];
+}
+
+function restoreTestEnv(): void {
+  for (const key of TEST_ENV_KEYS) {
+    const originalValue = ORIGINAL_ENV_VALUES[key];
+    if (originalValue === undefined) {
+      delete process.env[key];
+      continue;
+    }
+    process.env[key] = originalValue;
+  }
+}
+
+function clearTestEnv(): void {
+  for (const key of TEST_ENV_KEYS) {
+    delete process.env[key];
+  }
 }
 
 describe("ai-config readiness", () => {
   beforeEach(() => {
-    resetEnv();
+    clearTestEnv();
   });
 
   afterAll(() => {
-    process.env = ORIGINAL_ENV;
+    restoreTestEnv();
   });
 
   it("defaults to vertex and reports missing vertex runtime vars", () => {
@@ -72,11 +91,11 @@ describe("ai-config readiness", () => {
 
 describe("ai-config model selection", () => {
   beforeEach(() => {
-    resetEnv();
+    clearTestEnv();
   });
 
   afterAll(() => {
-    process.env = ORIGINAL_ENV;
+    restoreTestEnv();
   });
 
   it("uses provider defaults when no model is configured", () => {

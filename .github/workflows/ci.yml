@@ -8,7 +8,7 @@ name: CI
     branches: [main]
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   validate:
@@ -83,31 +83,6 @@ jobs:
           summary_line="- Backend line coverage: ${coverage_value}%"
           echo "$summary_line" >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Generate coverage badge
-        run: |
-          set -euo pipefail
-          mkdir -p badges
-          coverage_value='${{ steps.coverage.outputs.value }}'
-          coverage_label="${coverage_value}%25"
-          badge_url="https://img.shields.io/badge/coverage-"
-          badge_url+="${coverage_label}-${{ steps.coverage.outputs.color }}.svg"
-          curl -fsSL "$badge_url" \
-            -o badges/coverage.svg
-
-      - name: Commit updated coverage badge
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        run: |
-          set -euo pipefail
-          if git diff --quiet -- badges/coverage.svg; then
-            echo "Coverage badge is already up to date."
-            exit 0
-          fi
-          git add badges/coverage.svg
-          git -c user.name="github-actions[bot]" \
-            -c user.email="github-actions[bot]@users.noreply.github.com" \
-            commit -m "chore(ci): update coverage badge [skip ci]"
-          git push origin "HEAD:${GITHUB_REF_NAME}"
-
       - name: Install Helm
         run: |
           set -euo pipefail
@@ -154,3 +129,81 @@ jobs:
 
       - name: Build backend Docker image
         run: make docker-build-backend
+
+  update-coverage-badge:
+    runs-on: ubuntu-latest
+    needs: validate
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: write
+    steps:
+      - name: Harden runner
+        # v2.16.0
+        uses: >-
+          step-security/harden-runner@fa2e9d605c4eeb9fcad4c99c224cee0c6c7f3594
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        # v6.0.2
+        uses: >-
+          actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+
+      - name: Setup Node.js
+        # v6.3.0
+        uses: >-
+          actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: |
+            frontend/package-lock.json
+            backend/package-lock.json
+
+      - name: Install dependencies
+        run: make install
+
+      - name: Run backend tests with coverage
+        run: make test
+
+      - name: Generate coverage badge
+        run: |
+          set -euo pipefail
+          coverage_pct="$(node -e '
+            const fs = require("fs");
+            const data = JSON.parse(
+              fs.readFileSync("backend/coverage/coverage-summary.json", "utf8")
+            );
+            process.stdout.write(String(data.total.lines.pct));
+          ')"
+          coverage_value="$(printf '%.1f' "$coverage_pct")"
+          color="red"
+          if awk "BEGIN {exit !($coverage_pct >= 90)}"; then
+            color="brightgreen"
+          elif awk "BEGIN {exit !($coverage_pct >= 80)}"; then
+            color="green"
+          elif awk "BEGIN {exit !($coverage_pct >= 70)}"; then
+            color="yellowgreen"
+          elif awk "BEGIN {exit !($coverage_pct >= 60)}"; then
+            color="yellow"
+          elif awk "BEGIN {exit !($coverage_pct >= 50)}"; then
+            color="orange"
+          fi
+          mkdir -p badges
+          coverage_label="${coverage_value}%25"
+          badge_url="https://img.shields.io/badge/coverage-"
+          badge_url+="${coverage_label}-${color}.svg"
+          curl -fsSL "$badge_url" -o badges/coverage.svg
+
+      - name: Commit updated coverage badge
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- badges/coverage.svg; then
+            echo "Coverage badge is already up to date."
+            exit 0
+          fi
+          git add badges/coverage.svg
+          git -c user.name="github-actions[bot]" \
+            -c user.email="github-actions[bot]@users.noreply.github.com" \
+            commit -m "chore(ci): update coverage badge [skip ci]"
+          git push origin HEAD:main
