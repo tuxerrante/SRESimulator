@@ -2,6 +2,8 @@
 
 ## _The Break-Fix Game for Azure Red Hat OpenShift_
 
+![Coverage](badges/coverage.svg)
+
 > An AI-powered training tool that gamifies the SRE investigation experience.
 > An AI **Dungeon Master** 🧙 generates realistic ARO cluster incidents, and you investigate them using the proper methodology:
 >
