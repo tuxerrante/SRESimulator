@@ -1,5 +1,5 @@
 FROM node:24-alpine AS base
-ARG NPM_VERSION=11.12.0
+ARG NPM_VERSION
 RUN npm install --global "npm@${NPM_VERSION}"
 
 FROM base AS deps
@@ -14,7 +14,7 @@ COPY backend ./
 COPY shared /app/shared
 RUN npm run build
 
-FROM base AS run
+FROM node:24-alpine AS run
 WORKDIR /app/backend
 ENV NODE_ENV=production
 RUN addgroup --system --gid 1001 nodejs && \
