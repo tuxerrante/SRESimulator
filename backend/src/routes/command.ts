@@ -5,6 +5,7 @@ import { generateAiText } from "../lib/ai-runtime";
 import type { Scenario } from "../../../shared/types/game";
 
 export const commandRouter = Router();
+const VALID_COMMAND_TYPES = ["oc", "kql", "geneva"] as const;
 
 interface CommandRequestBody {
   command: string;
@@ -16,6 +17,13 @@ commandRouter.post("/", async (req: Request, res: Response) => {
   try {
     const body: CommandRequestBody = req.body;
     const { command, type, scenario } = body;
+
+    if (!VALID_COMMAND_TYPES.includes(type)) {
+      res.status(400).json({
+        error: "Invalid command type. Must be oc, kql, or geneva.",
+      });
+      return;
+    }
 
     const readiness = getAiReadiness();
     if (readiness.mockMode) {

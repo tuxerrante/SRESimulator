@@ -7,6 +7,7 @@ import { generateAiText } from "../lib/ai-runtime";
 import type { Difficulty, Scenario } from "../../../shared/types/game";
 
 export const scenarioRouter = Router();
+const VALID_DIFFICULTIES: Difficulty[] = ["easy", "medium", "hard"];
 
 interface ScenarioRequestBody {
   difficulty: Difficulty;
@@ -16,6 +17,13 @@ scenarioRouter.post("/", async (req: Request, res: Response) => {
   try {
     const body: ScenarioRequestBody = req.body;
     const { difficulty } = body;
+
+    if (!VALID_DIFFICULTIES.includes(difficulty)) {
+      res.status(400).json({
+        error: "Invalid difficulty. Must be easy, medium, or hard.",
+      });
+      return;
+    }
 
     const readiness = getAiReadiness();
     if (readiness.mockMode) {
