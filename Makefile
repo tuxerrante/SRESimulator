@@ -158,11 +158,20 @@ smoke-local-vertex: ## Run local backend live probe using Vertex env from fronte
 	PORT=8081 AI_PROVIDER=vertex AI_MOCK_MODE=false AI_STRICT_STARTUP=true AI_MODEL="$${AI_MODEL:-claude-sonnet-4@20250514}" CLOUD_ML_REGION="$$CLOUD_ML_REGION" ANTHROPIC_VERTEX_PROJECT_ID="$$ANTHROPIC_VERTEX_PROJECT_ID" npm --prefix "$(BACKEND_DIR)" run dev >/tmp/sre-backend-vertex.log 2>&1 & \
 	PID=$$!; \
 	trap 'kill $$PID >/dev/null 2>&1 || true' EXIT INT TERM; \
-	for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30; do \
-		CODE=$$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:8081/readyz" || true); \
-		if [ "$$CODE" = "200" ]; then break; fi; \
+	READY=0; \
+	i=0; \
+	while [ $$i -lt 30 ]; do \
+		if curl -fsS -o /dev/null "http://127.0.0.1:8081/readyz"; then \
+			READY=1; \
+			break; \
+		fi; \
+		i=$$((i + 1)); \
 		sleep 1; \
 	done; \
+	if [ "$$READY" -ne 1 ]; then \
+		echo "Backend did not become ready within 30 seconds"; \
+		exit 1; \
+	fi; \
 	echo "Readiness:"; \
 	curl -sS "http://127.0.0.1:8081/api/ai/readiness"; echo; \
 	echo "Live probe:"; \
@@ -237,9 +246,11 @@ e2e-azure-route-up: env-check ## Build+deploy frontend/backend to ARO and print 
 	mkdir -p "$$(dirname "$(E2E_METADATA_FILE)")"; \
 	printf 'NS=%s\nRELEASE=%s\nURL=%s\nTAG=%s\n' "$$NS" "$(E2E_RELEASE)" "https://$$HOST" "$$TAG" > "$(E2E_METADATA_FILE)"; \
 	PROBE_CODE=""; \
-	for i in 1 2 3 4 5 6 7 8 9 10; do \
+	i=0; \
+	while [ $$i -lt 10 ]; do \
 		PROBE_CODE=$$(curl -ksS -H "x-ai-probe-token: $$PROBE_TOKEN" -o /dev/null -w '%{http_code}' "https://$$HOST/api/ai/probe?live=true" || true); \
 		if [ "$$PROBE_CODE" = "200" ]; then break; fi; \
+		i=$$((i + 1)); \
 		sleep 2; \
 	done; \
 	if [ "$$PROBE_CODE" != "200" ]; then \
