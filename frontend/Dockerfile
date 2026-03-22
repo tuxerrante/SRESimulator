@@ -1,16 +1,20 @@
-FROM node:24-alpine AS deps
+FROM node:24-alpine AS base
+ARG NPM_VERSION=11.12.0
+RUN npm install --global "npm@${NPM_VERSION}"
+
+FROM base AS deps
 WORKDIR /app/frontend
 COPY frontend/package.json frontend/package-lock.json ./
 RUN npm ci
 
-FROM node:24-alpine AS build
+FROM base AS build
 WORKDIR /app/frontend
 COPY --from=deps /app/frontend/node_modules ./node_modules
 COPY frontend ./
 COPY shared /app/shared
 RUN npm run build -- --webpack
 
-FROM node:24-alpine AS run
+FROM base AS run
 WORKDIR /app/frontend
 ENV NODE_ENV=production
 RUN addgroup --system --gid 1001 nodejs && \
