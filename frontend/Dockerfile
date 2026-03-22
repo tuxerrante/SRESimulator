@@ -7,7 +7,7 @@ FROM node:24-alpine AS build
 WORKDIR /app/frontend
 COPY --from=deps /app/frontend/node_modules ./node_modules
 COPY frontend ./
-COPY shared ../shared
+COPY shared /app/shared
 RUN npm run build -- --webpack
 
 FROM node:24-alpine AS run
