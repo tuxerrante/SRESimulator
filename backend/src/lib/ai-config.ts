@@ -1,4 +1,4 @@
-import { existsSync } from "fs";
+import { accessSync, constants } from "fs";
 
 export const DEFAULT_CLAUDE_MODEL = "claude-sonnet-4@20250514";
 export const DEFAULT_AZURE_OPENAI_API_VERSION = "2024-10-21";
@@ -30,6 +30,15 @@ function parseBoolean(value: string | undefined, fallback: boolean): boolean {
   if (["1", "true", "yes", "on"].includes(normalized)) return true;
   if (["0", "false", "no", "off"].includes(normalized)) return false;
   return fallback;
+}
+
+function isReadableFile(path: string): boolean {
+  try {
+    accessSync(path, constants.R_OK);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export function getConfiguredModel(): string {
@@ -70,7 +79,7 @@ export function getAiReadiness(): AiReadiness {
     anthropicProjectConfigured: anthropicProject.length > 0,
     credentialsPathConfigured: credentialsPath.length > 0,
     credentialsFileReadable:
-      credentialsPath.length > 0 ? existsSync(credentialsPath) : null,
+      credentialsPath.length > 0 ? isReadableFile(credentialsPath) : null,
     azureOpenAiEndpointConfigured: azureEndpoint.length > 0,
     azureOpenAiApiKeyConfigured: azureApiKey.length > 0,
     azureOpenAiDeploymentConfigured: azureDeployment.length > 0,
@@ -105,7 +114,7 @@ export function getAiReadiness(): AiReadiness {
     reasons.push("AI_AZURE_OPENAI_DEPLOYMENT is not configured");
   }
   if (checks.credentialsPathConfigured && !checks.credentialsFileReadable) {
-    reasons.push("GOOGLE_APPLICATION_CREDENTIALS points to a missing file");
+    reasons.push("GOOGLE_APPLICATION_CREDENTIALS points to a missing or unreadable file");
   }
 
   return {
