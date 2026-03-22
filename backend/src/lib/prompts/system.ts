@@ -1,5 +1,5 @@
-import type { Scenario } from "@/types/game";
-import type { InvestigationPhase } from "@/types/chat";
+import type { Scenario } from "../../../../shared/types/game";
+import type { InvestigationPhase } from "../../../../shared/types/chat";
 
 export function buildSystemPrompt(
   knowledgeBase: string,

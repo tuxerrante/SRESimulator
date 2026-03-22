@@ -1,7 +1,7 @@
 "use client";
 
 import { useGameStore } from "@/stores/gameStore";
-import { PHASE_ORDER, PHASE_LABELS, type InvestigationPhase } from "@/types/chat";
+import { PHASE_ORDER, PHASE_LABELS } from "@shared/types/chat";
 import { cn } from "@/lib/utils";
 import { Check } from "lucide-react";
 

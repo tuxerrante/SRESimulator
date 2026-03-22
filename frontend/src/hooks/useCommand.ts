@@ -2,7 +2,7 @@
 
 import { useCallback } from "react";
 import { useGameStore } from "@/stores/gameStore";
-import type { TerminalEntry } from "@/types/terminal";
+import type { TerminalEntry } from "@shared/types/terminal";
 
 export function useCommand() {
   const { scenario, addTerminalEntry, addScoringEvent, recalculateScore, setExecuting } =

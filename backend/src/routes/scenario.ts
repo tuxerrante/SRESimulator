@@ -1,26 +1,48 @@
-import { NextRequest, NextResponse } from "next/server";
-import { getClaudeClient, CLAUDE_MODEL } from "@/lib/claude";
-import { loadKnowledgeBase } from "@/lib/knowledge";
-import { createSession } from "@/lib/sessions";
-import type { Difficulty, Scenario } from "@/types/game";
+import { Router, type Request, type Response } from "express";
+import { loadKnowledgeBase } from "../lib/knowledge";
+import { createSession } from "../lib/sessions";
+import { getAiReadiness } from "../lib/ai-config";
+import { generateMockScenario } from "../lib/mock-ai";
+import { generateAiText } from "../lib/ai-runtime";
+import type { Difficulty, Scenario } from "../../../shared/types/game";
 
-export const runtime = "nodejs";
+export const scenarioRouter = Router();
+const VALID_DIFFICULTIES: Difficulty[] = ["easy", "medium", "hard"];
 
 interface ScenarioRequestBody {
   difficulty: Difficulty;
 }
 
-export async function POST(request: NextRequest) {
+scenarioRouter.post("/", async (req: Request, res: Response) => {
   try {
-    const body: ScenarioRequestBody = await request.json();
+    const body: ScenarioRequestBody = req.body;
     const { difficulty } = body;
 
-    const knowledgeBase = await loadKnowledgeBase();
-    const client = getClaudeClient();
+    if (!VALID_DIFFICULTIES.includes(difficulty)) {
+      res.status(400).json({
+        error: "Invalid difficulty. Must be easy, medium, or hard.",
+      });
+      return;
+    }
 
-    // Extract only scenario-relevant context from the knowledge base (alert names,
-    // incident types, cluster components) — skip detailed investigation steps and
-    // KQL queries which are only needed during chat.
+    const readiness = getAiReadiness();
+    if (readiness.mockMode) {
+      const scenario = generateMockScenario(difficulty);
+      const sessionToken = createSession(difficulty, scenario.title);
+      res.json({ scenario, sessionToken });
+      return;
+    }
+    if (!readiness.ready) {
+      res.status(503).json({
+        error: "AI runtime configuration is invalid",
+        details: readiness.reasons,
+      });
+      return;
+    }
+
+    const knowledgeBase = await loadKnowledgeBase();
+
+    // Extract only scenario-relevant context from the knowledge base
     const scenarioContext = knowledgeBase
       .split("\n")
       .filter((line) => {
@@ -42,11 +64,11 @@ export async function POST(request: NextRequest) {
       })
       .join("\n")
       .replace(/\n{3,}/g, "\n\n")
-      .slice(0, 12000);
+      // Keep scenario generation fast by limiting prompt context size.
+      .slice(0, 6000);
 
-    const response = await client.messages.create({
-      model: CLAUDE_MODEL,
-      max_tokens: 1024,
+    const responseText = await generateAiText({
+      maxTokens: 1024,
       system: `You are a scenario generator for an ARO (Azure Red Hat OpenShift) SRE training simulator.
 Generate a realistic incident scenario. Be concise.
 The scenario should be appropriate for the "${difficulty}" difficulty level.
@@ -96,21 +118,19 @@ ${scenarioContext}`,
       ],
     });
 
-    let text =
-      response.content[0].type === "text" ? response.content[0].text : "";
+    let text = responseText;
 
     // Strip markdown code fences if present
     text = text.replace(/^```(?:json)?\s*\n?/i, "").replace(/\n?```\s*$/i, "").trim();
 
-    // Parse the JSON response
     const scenario: Scenario = JSON.parse(text);
 
     const sessionToken = createSession(difficulty, scenario.title);
 
-    return NextResponse.json({ scenario, sessionToken });
+    res.json({ scenario, sessionToken });
   } catch (error) {
     const message =
       error instanceof Error ? error.message : "Scenario generation failed";
-    return NextResponse.json({ error: message }, { status: 500 });
+    res.status(500).json({ error: message });
   }
-}
+});

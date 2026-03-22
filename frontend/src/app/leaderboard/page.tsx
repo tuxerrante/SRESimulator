@@ -4,8 +4,8 @@ import { useState, useEffect } from "react";
 import Link from "next/link";
 import { Trophy, ArrowLeft, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import type { Difficulty } from "@/types/game";
-import type { LeaderboardEntry, HallOfFameEntry } from "@/types/leaderboard";
+import type { Difficulty } from "@shared/types/game";
+import type { LeaderboardEntry, HallOfFameEntry } from "@shared/types/leaderboard";
 
 type Tab = "all" | Difficulty;
 
@@ -249,6 +249,10 @@ export default function LeaderboardPage() {
 
       <footer className="text-center text-zinc-700 text-xs py-4">
         ARO SRE Simulator &mdash; Investigation training powered by AI
+        <span className="mx-2">&middot;</span>
+        <Link href="/about" className="hover:text-zinc-400 transition-colors">
+          About
+        </Link>
       </footer>
     </div>
   );

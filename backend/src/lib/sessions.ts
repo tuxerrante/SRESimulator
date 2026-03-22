@@ -1,4 +1,4 @@
-import type { Difficulty } from "@/types/game";
+import type { Difficulty } from "../../../shared/types/game";
 
 interface GameSession {
   token: string;
@@ -10,7 +10,6 @@ interface GameSession {
 
 const sessions = new Map<string, GameSession>();
 
-// Clean up sessions older than 24 hours on each access
 const SESSION_TTL_MS = 24 * 60 * 60 * 1000;
 
 function cleanup() {

@@ -1,5 +1,7 @@
 # Project: ARO SRE Simulator (The "Break-Fix" Game)
 
+For the living implementation view, also see `docs/ARCHITECTURE.md`.
+
 ## 1. Mission & Philosophy
 
 To gamify the Azure Red Hat OpenShift (ARO) reliability engineering experience. The system uses an AI Agent to "break" a cluster based on real-world incidents and guides a human user through the investigation using natural language, translating their intent into technical commands (`oc`, `KQL`).

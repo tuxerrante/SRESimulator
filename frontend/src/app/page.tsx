@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useGameStore } from "@/stores/gameStore";
-import type { Difficulty, Scenario } from "@/types/game";
+import type { Difficulty, Scenario } from "@shared/types/game";
 import { Shield, AlertTriangle, Zap, Flame, Loader2, Trophy } from "lucide-react";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
@@ -168,6 +168,10 @@ export default function HomePage() {
 
       <footer className="text-center text-zinc-700 text-xs py-4">
         ARO SRE Simulator &mdash; Investigation training powered by AI
+        <span className="mx-2">&middot;</span>
+        <Link href="/about" className="hover:text-zinc-400 transition-colors">
+          About
+        </Link>
       </footer>
     </div>
   );

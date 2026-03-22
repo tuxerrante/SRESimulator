@@ -1,0 +1,16 @@
+.git
+.github
+.idea
+.vscode
+.cursor
+.next
+**/node_modules
+**/dist
+**/build
+**/coverage
+data
+backend/.env.local
+frontend/.env.local
+*.pem
+*.key
+*.p12
