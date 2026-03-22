@@ -1,6 +1,6 @@
 "use client";
 
-import type { TerminalEntry } from "@/types/terminal";
+import type { TerminalEntry } from "@shared/types/terminal";
 import { cn } from "@/lib/utils";
 
 interface CommandBlockProps {

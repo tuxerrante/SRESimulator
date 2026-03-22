@@ -1,0 +1,8 @@
+---
+apiVersion: v2
+name: sre-simulator
+description: >-
+  ARO SRE Simulator - Break-Fix training game for Azure Red Hat OpenShift
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

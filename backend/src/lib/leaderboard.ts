@@ -1,10 +1,10 @@
 import { readFile, writeFile, mkdir, rename } from "fs/promises";
 import { existsSync } from "fs";
 import path from "path";
-import type { Difficulty } from "@/types/game";
-import type { LeaderboardEntry, HallOfFameEntry } from "@/types/leaderboard";
+import type { Difficulty } from "../../../shared/types/game";
+import type { LeaderboardEntry, HallOfFameEntry } from "../../../shared/types/leaderboard";
 
-const DATA_DIR = path.join(process.cwd(), "data");
+const DATA_DIR = process.env.DATA_DIR || path.join(process.cwd(), "data");
 const LEADERBOARD_FILE = path.join(DATA_DIR, "leaderboard.json");
 const MAX_ENTRIES_PER_DIFFICULTY = 10;
 const MAX_HALL_OF_FAME = 10;
@@ -51,7 +51,6 @@ export async function getLeaderboard(
 export async function getHallOfFame(): Promise<HallOfFameEntry[]> {
   const entries = await readEntries();
 
-  // Group by nickname, keep best score per difficulty
   const playerMap = new Map<
     string,
     { easy?: number; medium?: number; hard?: number }
@@ -82,7 +81,6 @@ export async function addEntry(
 ): Promise<LeaderboardEntry> {
   const entries = await readEntries();
 
-  // Best score per nickname per difficulty: replace if new score is higher
   const existingIdx = entries.findIndex(
     (e) => e.nickname === entry.nickname && e.difficulty === entry.difficulty
   );
@@ -91,12 +89,10 @@ export async function addEntry(
     if (entry.score.total > entries[existingIdx].score.total) {
       entries[existingIdx] = entry;
     }
-    // If existing score is higher or equal, don't add
   } else {
     entries.push(entry);
   }
 
-  // Trim to top 10 per difficulty
   const grouped: Record<string, LeaderboardEntry[]> = {};
   for (const e of entries) {
     if (!grouped[e.difficulty]) grouped[e.difficulty] = [];

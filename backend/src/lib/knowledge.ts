@@ -1,7 +1,8 @@
 import { readFile } from "fs/promises";
 import { join } from "path";
 
-const KNOWLEDGE_BASE_DIR = join(process.cwd(), "..", "knowledge_base");
+const KNOWLEDGE_BASE_DIR =
+  process.env.KNOWLEDGE_BASE_DIR || join(process.cwd(), "..", "knowledge_base");
 
 const FILES = [
   "sre-investigation-techniques.md",

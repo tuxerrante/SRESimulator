@@ -1,8 +1,8 @@
 import { create } from "zustand";
-import type { ChatMessage, InvestigationPhase } from "@/types/chat";
-import type { Scenario, GameStatus } from "@/types/game";
-import type { TerminalEntry } from "@/types/terminal";
-import type { Score, ScoringEvent } from "@/types/scoring";
+import type { ChatMessage, InvestigationPhase } from "@shared/types/chat";
+import type { Scenario, GameStatus } from "@shared/types/game";
+import type { TerminalEntry } from "@shared/types/terminal";
+import type { Score, ScoringEvent } from "@shared/types/scoring";
 
 interface GameState {
   // Session
@@ -60,7 +60,7 @@ const initialScore: Score = {
   total: 0,
 };
 
-export const useGameStore = create<GameState>((set, get) => ({
+export const useGameStore = create<GameState>((set) => ({
   status: "idle",
   scenario: null,
   sessionToken: null,

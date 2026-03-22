@@ -1,6 +1,6 @@
 "use client";
 
-import type { IncidentTicket as IncidentTicketType } from "@/types/game";
+import type { IncidentTicket as IncidentTicketType } from "@shared/types/game";
 import { cn } from "@/lib/utils";
 import { AlertTriangle } from "lucide-react";
 

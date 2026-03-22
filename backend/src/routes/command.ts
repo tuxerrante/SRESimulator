@@ -1,8 +1,11 @@
-import { NextRequest, NextResponse } from "next/server";
-import { getClaudeClient, CLAUDE_MODEL } from "@/lib/claude";
-import type { Scenario } from "@/types/game";
+import { Router, type Request, type Response } from "express";
+import { getAiReadiness } from "../lib/ai-config";
+import { generateMockCommandOutput } from "../lib/mock-ai";
+import { generateAiText } from "../lib/ai-runtime";
+import type { Scenario } from "../../../shared/types/game";
 
-export const runtime = "nodejs";
+export const commandRouter = Router();
+const VALID_COMMAND_TYPES = ["oc", "kql", "geneva"] as const;
 
 interface CommandRequestBody {
   command: string;
@@ -10,12 +13,33 @@ interface CommandRequestBody {
   scenario: Scenario | null;
 }
 
-export async function POST(request: NextRequest) {
+commandRouter.post("/", async (req: Request, res: Response) => {
   try {
-    const body: CommandRequestBody = await request.json();
+    const body: CommandRequestBody = req.body;
     const { command, type, scenario } = body;
 
-    const client = getClaudeClient();
+    if (!VALID_COMMAND_TYPES.includes(type)) {
+      res.status(400).json({
+        error: "Invalid command type. Must be oc, kql, or geneva.",
+      });
+      return;
+    }
+
+    const readiness = getAiReadiness();
+    if (readiness.mockMode) {
+      res.json({
+        output: generateMockCommandOutput(command, type),
+        exitCode: 0,
+      });
+      return;
+    }
+    if (!readiness.ready) {
+      res.status(503).json({
+        error: "AI runtime configuration is invalid",
+        details: readiness.reasons,
+      });
+      return;
+    }
 
     const scenarioContext = scenario
       ? `
@@ -29,7 +53,6 @@ Recent Events: ${scenario.clusterContext.recentEvents.join("; ")}
 `
       : "No specific scenario context available.";
 
-    // Derive "current" simulation time from the scenario's reported time + a realistic offset
     const reportedTime = scenario?.incidentTicket?.reportedTime;
     const simNow = reportedTime
       ? `The incident was reported at ${reportedTime}. The current simulation time is approximately 1-2 hours after the reported time. All timestamps in your output must be in the past relative to this current time.`
@@ -53,9 +76,8 @@ Rules:
 Scenario Context:
 ${scenarioContext}`;
 
-    const response = await client.messages.create({
-      model: CLAUDE_MODEL,
-      max_tokens: 2048,
+    const responseText = await generateAiText({
+      maxTokens: 2048,
       system: systemPrompt,
       messages: [
         {
@@ -65,16 +87,29 @@ ${scenarioContext}`;
       ],
     });
 
-    let output =
-      response.content[0].type === "text" ? response.content[0].text : "";
+    let output = responseText;
 
     // Strip markdown code fences if present
     output = output.replace(/^```(?:\w*)\s*\n?/i, "").replace(/\n?```\s*$/i, "").trim();
 
-    return NextResponse.json({ output, exitCode: 0 });
+    res.json({ output, exitCode: 0 });
   } catch (error) {
     const message =
       error instanceof Error ? error.message : "Command simulation failed";
-    return NextResponse.json({ error: message }, { status: 500 });
+
+    // gpt-5.x can occasionally exhaust reasoning tokens without emitting text.
+    // Keep gameplay flowing by returning deterministic mock output.
+    if (
+      message.includes("without output text") ||
+      message.includes("did not include text content")
+    ) {
+      res.json({
+        output: generateMockCommandOutput(req.body.command, req.body.type),
+        exitCode: 0,
+      });
+      return;
+    }
+
+    res.status(500).json({ error: message });
   }
-}
+});

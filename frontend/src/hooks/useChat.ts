@@ -2,8 +2,8 @@
 
 import { useCallback } from "react";
 import { useGameStore } from "@/stores/gameStore";
-import type { ChatMessage, InvestigationPhase } from "@/types/chat";
-import type { ScoringEvent } from "@/types/scoring";
+import type { ChatMessage, InvestigationPhase } from "@shared/types/chat";
+import type { ScoringEvent } from "@shared/types/scoring";
 
 const VALID_PHASES: InvestigationPhase[] = [
   "reading", "context", "facts", "theory", "action",

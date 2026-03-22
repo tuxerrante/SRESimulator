@@ -1,0 +1,15 @@
+---
+ai:
+  provider: azure-openai
+  mockMode: false
+  strictStartup: true
+  model: gpt-5.2
+  azureOpenai:
+    endpointFromSecret:
+      existingSecretName: azure-openai-creds
+      key: endpoint
+    deployment: gpt-5.2
+    apiVersion: 2024-10-21
+    credentials:
+      existingSecretName: azure-openai-creds
+      key: api-key
