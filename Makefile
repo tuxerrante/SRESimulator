@@ -10,11 +10,11 @@
 
 FRONTEND_DIR := frontend
 BACKEND_DIR := backend
-AZURE_SUBSCRIPTION_ID ?= fe16a035-e540-4ab7-80d9-373fa9a3d6ae
-ARO_RG ?= aasserzo-icmtest-rg
-ARO_CLUSTER ?= aasserzo-icmtest
-AOAI_RG ?= holmesgpt-haowang
-AOAI_ACCOUNT ?= haowa-mlachj9h-eastus2
+AZURE_SUBSCRIPTION_ID ?=
+ARO_RG ?=
+ARO_CLUSTER ?=
+AOAI_RG ?=
+AOAI_ACCOUNT ?=
 AOAI_DEPLOYMENT ?= gpt-5.2
 E2E_NAMESPACE_PREFIX ?= sre-manual-e2e
 E2E_RELEASE ?= sre-simulator
@@ -143,6 +143,10 @@ e2e-azure-route: e2e-azure-route-up ## Create temporary Azure OpenAI-backed rout
 
 e2e-azure-route-up: ## Build+deploy frontend/backend to ARO and print temporary UI route URL
 	@set -e; \
+	if [ -z "$(AZURE_SUBSCRIPTION_ID)" ] || [ -z "$(ARO_RG)" ] || [ -z "$(ARO_CLUSTER)" ] || [ -z "$(AOAI_RG)" ] || [ -z "$(AOAI_ACCOUNT)" ]; then \
+		echo "Missing required env vars. Export: AZURE_SUBSCRIPTION_ID, ARO_RG, ARO_CLUSTER, AOAI_RG, AOAI_ACCOUNT"; \
+		exit 1; \
+	fi; \
 	TS=$$(date +%Y%m%d-%H%M%S); \
 	NS="$(E2E_NAMESPACE_PREFIX)-$$TS"; \
 	TAG="e2e$$TS"; \

@@ -176,6 +176,16 @@ Open [http://localhost:3000](http://localhost:3000) in your browser.
 | `make all`       | Full CI pipeline                    |
 | `make clean`     | Remove build artifacts              |
 
+For `make e2e-azure-route-up`, export these runtime variables first:
+
+```bash
+export AZURE_SUBSCRIPTION_ID=<subscription-id>
+export ARO_RG=<aro-resource-group>
+export ARO_CLUSTER=<aro-cluster-name>
+export AOAI_RG=<azure-openai-resource-group>
+export AOAI_ACCOUNT=<azure-openai-account-name>
+```
+
 ---
 
 ## 📚 Documentation

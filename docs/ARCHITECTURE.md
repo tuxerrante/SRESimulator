@@ -2,14 +2,14 @@
 
 ## Tech Stack
 
-| Layer     | Technology                                        |
-| --------- | ------------------------------------------------- |
-| Framework | Next.js 16 (App Router, TypeScript)               |
-| Styling   | Tailwind CSS v4                                   |
-| State     | Zustand                                           |
-| LLM       | Claude via Vertex AI (`@anthropic-ai/vertex-sdk`) |
-| Markdown  | react-markdown + remark-gfm                       |
-| Icons     | Lucide React                                      |
+- **Framework:** Next.js 16 (App Router, TypeScript)
+- **API Backend:** Node.js + Express
+- **Styling:** Tailwind CSS v4
+- **State:** Zustand
+- **AI Providers:** Vertex AI (Anthropic SDK) + Azure OpenAI/Foundry (chat completions REST)
+- **AI Runtime:** Provider-agnostic adapter in `backend/src/lib/ai-runtime.ts`
+- **Markdown:** react-markdown + remark-gfm
+- **Icons:** Lucide React
 
 ---
 
@@ -146,15 +146,17 @@ In OpenShift, browser requests hit the frontend at `/api/*`; the frontend BFF pr
 
 ### `POST /api/scenario`
 
-Generates a scenario for the given difficulty. Calls Claude with the full knowledge base to produce a realistic incident ticket and cluster context. In `AI_MOCK_MODE=true`, returns a deterministic mock scenario.
+Generates a scenario for the given difficulty. Calls the configured AI provider with knowledge-base context to produce a realistic incident ticket and cluster context. In `AI_MOCK_MODE=true`, returns a deterministic mock scenario.
 
 ### `POST /api/chat`
 
-Streaming chat endpoint. Builds a system prompt with Dungeon Master persona, methodology enforcement, active scenario, and knowledge base. Returns SSE stream of Claude's response.
+Streaming chat endpoint. Builds a system prompt with Dungeon Master persona, methodology enforcement, active scenario, and knowledge base. Returns SSE stream from the configured provider (or a mock stream in mock mode).
 
 ### `POST /api/command`
 
-Simulates command execution. Given an `oc`, KQL, or Geneva command and the current scenario, Claude generates realistic output consistent with the incident. In `AI_MOCK_MODE=true`, returns mock command output.
+Simulates command execution. Given an `oc`, KQL, or Geneva command and the current scenario, the configured provider generates realistic output consistent with the incident. In `AI_MOCK_MODE=true`, returns mock command output.
+
+If a live provider response is empty (for example, some high-reasoning models can exhaust completion budget without emitting text), the backend falls back to deterministic mock command output to keep gameplay unblocked.
 
 ### `GET /api/ai/readiness`
 
@@ -162,16 +164,33 @@ Returns AI runtime readiness checks (safe diagnostics only, no secrets).
 
 ### `GET /api/ai/probe?live=true`
 
-Performs an active Claude-on-Vertex probe to validate in-cluster connectivity end-to-end.
+Performs an active live probe against the configured provider to validate in-cluster connectivity end-to-end.
 
 ---
 
-## Changing the model
+## Changing provider and model
 
-Set the model through the backend environment variable:
+Set runtime via backend env vars:
 
 ```bash
-CLAUDE_MODEL=claude-sonnet-4@20250514
+AI_PROVIDER=vertex              # or azure-openai
+AI_MODEL=claude-sonnet-4@20250514
 ```
 
-Use the Vertex AI model name format: `model-name@date` (with `@`, not `-`).
+For Vertex mode, set:
+
+```bash
+CLOUD_ML_REGION=us-east5
+ANTHROPIC_VERTEX_PROJECT_ID=<gcp-project-id>
+```
+
+For Azure OpenAI/Foundry mode, set:
+
+```bash
+AI_AZURE_OPENAI_ENDPOINT=https://<account>.cognitiveservices.azure.com
+AI_AZURE_OPENAI_DEPLOYMENT=<deployment-name>
+AI_AZURE_OPENAI_API_VERSION=2024-10-21
+AI_AZURE_OPENAI_API_KEY=<api-key>
+```
+
+`CLAUDE_MODEL` is still accepted as a backward-compatible alias, but `AI_MODEL` is the preferred variable.
