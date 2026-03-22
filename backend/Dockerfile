@@ -1,9 +1,13 @@
-FROM node:24-alpine AS deps
+FROM node:24-alpine AS base
+ARG NPM_VERSION
+RUN npm install --global "npm@${NPM_VERSION}"
+
+FROM base AS deps
 WORKDIR /app/backend
 COPY backend/package.json backend/package-lock.json ./
 RUN npm ci
 
-FROM node:24-alpine AS build
+FROM base AS build
 WORKDIR /app/backend
 COPY --from=deps /app/backend/node_modules ./node_modules
 COPY backend ./

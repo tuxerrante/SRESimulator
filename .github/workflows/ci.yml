@@ -28,6 +28,9 @@ jobs:
         uses: >-
           actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
 
+      - name: Load npm version
+        run: echo "NPM_VERSION=$(tr -d '\n' < .npm-version)" >> "$GITHUB_ENV"
+
       - name: Setup Node.js
         # v6.3.0
         uses: >-
@@ -38,6 +41,9 @@ jobs:
           cache-dependency-path: |
             frontend/package-lock.json
             backend/package-lock.json
+
+      - name: Update npm
+        run: npm install --global "npm@${NPM_VERSION}"
 
       - name: Ensure SHA-pinned actions
         # v5.0.3
