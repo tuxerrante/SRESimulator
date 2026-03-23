@@ -7,7 +7,8 @@ guideRouter.get("/", async (_req, res) => {
   try {
     const content = await loadGuideContent();
     res.json({ content });
-  } catch {
+  } catch (error) {
+    console.error("Error loading guide content:", error);
     res.status(500).json({ error: "Failed to load guide content" });
   }
 });
