@@ -6,7 +6,8 @@
        test smoke-local-vertex env-check e2e-azure-route e2e-azure-route-up e2e-azure-route-down \
        build dev start \
        docker-build-frontend docker-build-backend docker-build \
-       pre-commit all
+       pre-commit all \
+       tf-init tf-plan tf-apply tf-destroy tf-kubeconfig
 
 FRONTEND_DIR := frontend
 BACKEND_DIR := backend
@@ -320,3 +321,21 @@ pre-commit: ## Run pre-commit hooks on all files
 	pre-commit run --all-files
 
 all: validate security build ## Full CI pipeline: lint + typecheck + security + build
+
+# ──────────────────────────────────────────────
+# Infrastructure (delegates to infra/Makefile)
+# ──────────────────────────────────────────────
+tf-init: ## Terraform init (see infra/Makefile for options)
+	$(MAKE) -C infra tf-init
+
+tf-plan: ## Terraform plan
+	$(MAKE) -C infra tf-plan
+
+tf-apply: ## Terraform apply
+	$(MAKE) -C infra tf-apply
+
+tf-destroy: ## Terraform destroy
+	$(MAKE) -C infra tf-destroy
+
+tf-kubeconfig: ## Extract kubeconfig from ARO cluster
+	$(MAKE) -C infra tf-kubeconfig
