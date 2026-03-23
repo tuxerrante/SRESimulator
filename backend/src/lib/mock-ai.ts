@@ -8,7 +8,9 @@ function nowIso(offsetMinutes: number): string {
 }
 
 function recentDaysAgoIso(minDays = 1, maxDays = 7): string {
-  const days = minDays + Math.random() * (maxDays - minDays);
+  const lo = Math.max(0, Math.min(minDays, maxDays));
+  const hi = Math.max(minDays, maxDays);
+  const days = lo + Math.floor(Math.random() * (hi - lo + 1));
   return new Date(Date.now() - days * 86_400_000).toISOString();
 }
 

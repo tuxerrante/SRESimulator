@@ -82,7 +82,7 @@ Difficulty guidelines:
 
 Use currently supported ARO versions (4.16–4.20). For easy scenarios, you may use 4.15 (EOL) to test "upgrade your cluster" awareness.
 
-IMPORTANT — timestamps: The current date/time is ${currentDate}. All timestamps in the scenario (reportedTime, firingTime, event times, upgrade timestamps) MUST be realistic ISO 8601 strings within the last 1–7 days relative to the current date. Do NOT use placeholder or obviously fake dates.
+IMPORTANT — timestamps: The current date/time is ${currentDate}. Generate realistic ISO 8601 timestamps — the incident reportedTime should be within the past 1–7 days, while recentEvents and alert firingTimes should be more recent (minutes to hours ago) to feel like a live incident. Upgrade history timestamps can be older. Do NOT use placeholder or obviously fake dates.
 
 IMPORTANT: Respond with ONLY valid JSON matching this exact structure (no markdown, no code fences):
 {
