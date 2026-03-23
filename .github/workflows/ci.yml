@@ -83,15 +83,17 @@ jobs:
         with:
           node-version: 24
           cache: npm
-          cache-dependency-path: backend/package-lock.json
+          cache-dependency-path: |
+            frontend/package-lock.json
+            backend/package-lock.json
 
       - name: Update npm
         run: npm install --global "npm@${NPM_VERSION}"
 
-      - name: Install backend dependencies
-        run: make install-backend
+      - name: Install dependencies
+        run: make install
 
-      - name: Run backend tests with coverage
+      - name: Run tests with coverage
         run: make test
 
       - name: Compute coverage metadata
@@ -268,15 +270,35 @@ jobs:
           DOCKER_RESULT: ${{ needs.docker-build.result }}
         run: |
           failed=false
-          for r in "$LINT_RESULT" "$TEST_RESULT" \
-                   "$SECURITY_RESULT" "$HELM_RESULT" \
-                   "$DOCKER_RESULT"; do
-            if [[ "$r" != "success" ]]; then
+          failed_jobs=()
+
+          echo "CI job results:"
+          echo "  lint-typecheck: ${LINT_RESULT}"
+          echo "  test:           ${TEST_RESULT}"
+          echo "  security:       ${SECURITY_RESULT}"
+          echo "  helm-validate:  ${HELM_RESULT}"
+          echo "  docker-build:   ${DOCKER_RESULT}"
+
+          for name_result in \
+            "lint-typecheck:${LINT_RESULT}" \
+            "test:${TEST_RESULT}" \
+            "security:${SECURITY_RESULT}" \
+            "helm-validate:${HELM_RESULT}" \
+            "docker-build:${DOCKER_RESULT}"; do
+            name="${name_result%%:*}"
+            result="${name_result#*:}"
+            if [[ "$result" != "success" ]]; then
               failed=true
+              failed_jobs+=("${name} (${result})")
             fi
           done
+
           if [[ "$failed" == "true" ]]; then
-            echo "One or more CI jobs failed."
+            echo ""
+            echo "Failed jobs:"
+            for job in "${failed_jobs[@]}"; do
+              echo "  - ${job}"
+            done
             exit 1
           fi
           echo "All CI jobs passed."
