@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { extractPhase, extractScoreMarkers, extractResolved } from "@/lib/chat-markers";
 import type { InvestigationPhase } from "@shared/types/chat";
-import type { ScoringEvent } from "@shared/types/scoring";
 
 const VALID_PHASES: InvestigationPhase[] = [
   "reading",
@@ -9,38 +9,6 @@ const VALID_PHASES: InvestigationPhase[] = [
   "theory",
   "action",
 ];
-
-const VALID_DIMENSIONS = ["efficiency", "safety", "documentation", "accuracy"];
-
-function extractPhase(content: string): InvestigationPhase | null {
-  const match = content.match(/\[PHASE:(\w+)\]/);
-  if (!match) return null;
-  const phase = match[1] as InvestigationPhase;
-  return VALID_PHASES.includes(phase) ? phase : null;
-}
-
-function extractScoreMarkers(content: string): ScoringEvent[] {
-  const events: ScoringEvent[] = [];
-  const pattern = /\[SCORE:(\w+):([+-]\d+):([^\]]+)\]/g;
-  let m: RegExpExecArray | null;
-  while ((m = pattern.exec(content)) !== null) {
-    const dimension = m[1];
-    if (!VALID_DIMENSIONS.includes(dimension)) continue;
-    const points = parseInt(m[2], 10);
-    events.push({
-      type: points >= 0 ? "bonus" : "penalty",
-      dimension: dimension as ScoringEvent["dimension"],
-      points: Math.abs(points),
-      reason: m[3],
-      timestamp: Date.now(),
-    });
-  }
-  return events;
-}
-
-function extractResolved(content: string): boolean {
-  return content.includes("[RESOLVED]");
-}
 
 describe("extractPhase", () => {
   it("extracts a valid phase marker", () => {

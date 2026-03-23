@@ -49,18 +49,24 @@ async function httpGet(
   });
 }
 
+const ENV_KEYS = ["AI_MOCK_MODE", "CLOUD_ML_REGION", "ANTHROPIC_VERTEX_PROJECT_ID"] as const;
+
 describe("health routes", () => {
   const originalEnv: Record<string, string | undefined> = {};
 
   beforeEach(() => {
-    originalEnv.AI_MOCK_MODE = process.env.AI_MOCK_MODE;
+    for (const key of ENV_KEYS) {
+      originalEnv[key] = process.env[key];
+    }
   });
 
   afterEach(() => {
-    if (originalEnv.AI_MOCK_MODE === undefined) {
-      delete process.env.AI_MOCK_MODE;
-    } else {
-      process.env.AI_MOCK_MODE = originalEnv.AI_MOCK_MODE;
+    for (const key of ENV_KEYS) {
+      if (originalEnv[key] === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = originalEnv[key];
+      }
     }
   });
 
