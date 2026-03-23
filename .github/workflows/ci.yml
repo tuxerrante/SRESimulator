@@ -54,6 +54,10 @@ jobs:
       - name: Validate (lint + typecheck)
         run: make validate
 
+      - name: Check unused exports (hygiene, non-blocking)
+        continue-on-error: true
+        run: make lint-unused-exports
+
   test:
     runs-on: ubuntu-latest
     steps:

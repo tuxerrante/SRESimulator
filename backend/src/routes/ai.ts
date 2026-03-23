@@ -1,6 +1,7 @@
 import { Router, type Request, type Response } from "express";
 import { getAiReadiness } from "../lib/ai-config";
 import { generateAiText } from "../lib/ai-runtime";
+import { getTokenMetrics } from "../lib/token-logger";
 
 export const aiRouter = Router();
 
@@ -62,6 +63,7 @@ aiRouter.get("/probe", async (req: Request, res: Response) => {
       system:
         "You are a health probe assistant. Reply with exactly one word: pong.",
       messages: [{ role: "user", content: "ping" }],
+      route: "probe",
     });
 
     const latencyMs = Date.now() - start;
@@ -84,4 +86,16 @@ aiRouter.get("/probe", async (req: Request, res: Response) => {
       details: [message],
     });
   }
+});
+
+aiRouter.get("/token-metrics", (_req: Request, res: Response) => {
+  if (isProductionRuntime()) {
+    const expectedToken = process.env.AI_LIVE_PROBE_TOKEN?.trim() ?? "";
+    const receivedToken = _req.header("x-ai-probe-token")?.trim() ?? "";
+    if (!expectedToken || receivedToken !== expectedToken) {
+      res.status(403).json({ error: "Unauthorized" });
+      return;
+    }
+  }
+  res.json(getTokenMetrics());
 });
