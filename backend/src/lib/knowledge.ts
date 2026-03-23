@@ -11,6 +11,7 @@ const FILES = [
 ] as const;
 
 let cachedKnowledge: string | null = null;
+let cachedGuide: string | null = null;
 
 export async function loadKnowledgeBase(): Promise<string> {
   if (cachedKnowledge) return cachedKnowledge;
@@ -29,4 +30,17 @@ export async function loadKnowledgeBase(): Promise<string> {
 
   cachedKnowledge = sections.join("\n\n---\n\n");
   return cachedKnowledge;
+}
+
+const GUIDE_FILE = FILES[0];
+
+export async function loadGuideContent(): Promise<string> {
+  if (cachedGuide !== null) return cachedGuide;
+
+  cachedGuide = await readFile(
+    join(KNOWLEDGE_BASE_DIR, GUIDE_FILE),
+    "utf-8"
+  );
+
+  return cachedGuide;
 }
