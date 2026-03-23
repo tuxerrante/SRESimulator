@@ -25,6 +25,7 @@ export function estimateTokens(text: string): number {
   return Math.ceil(text.length / CHARS_PER_TOKEN_ESTIMATE);
 }
 
+// ts-unused-exports:disable-next-line
 export function estimateMessagesTokens(messages: AiTextMessage[]): number {
   let total = 0;
   for (const m of messages) {
