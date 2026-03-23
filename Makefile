@@ -7,7 +7,7 @@
        build dev start \
        docker-build-frontend docker-build-backend docker-build \
        pre-commit all \
-       tf-init tf-plan tf-apply tf-destroy tf-kubeconfig
+       tf-init tf-test tf-plan tf-apply tf-destroy tf-kubeconfig
 
 FRONTEND_DIR := frontend
 BACKEND_DIR := backend
@@ -327,6 +327,9 @@ all: validate security build ## Full CI pipeline: lint + typecheck + security + 
 # ──────────────────────────────────────────────
 tf-init: ## Terraform init (see infra/Makefile for options)
 	$(MAKE) -C infra tf-init
+
+tf-test: ## Run Terraform unit tests (no credentials needed)
+	$(MAKE) -C infra tf-test
 
 tf-plan: ## Terraform plan
 	$(MAKE) -C infra tf-plan

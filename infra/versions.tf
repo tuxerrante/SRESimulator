@@ -1,4 +1,5 @@
 terraform {
+  # Core config works with >= 1.5; tests with mock_provider require >= 1.7
   required_version = ">= 1.5"
 
   required_providers {

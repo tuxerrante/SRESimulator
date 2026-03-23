@@ -1,4 +1,4 @@
-.PHONY: help tf-bootstrap tf-init tf-validate tf-plan tf-apply tf-destroy tf-kubeconfig tf-fmt tf-output
+.PHONY: help tf-bootstrap tf-init tf-validate tf-test tf-plan tf-apply tf-destroy tf-kubeconfig tf-fmt tf-output
 
 OWNER_ALIAS ?=
 TF_VAR_FLAGS := $(if $(OWNER_ALIAS),-var owner_alias=$(OWNER_ALIAS),)
@@ -47,6 +47,16 @@ tf-validate: ## Validate Terraform configuration
 
 tf-fmt: ## Format Terraform files
 	terraform fmt -recursive
+
+tf-test: ## Run Terraform native tests (requires TF >= 1.7, no credentials needed)
+	@TF_VER=$$(terraform version -json 2>/dev/null | grep -o '"terraform_version":"[^"]*"' | cut -d'"' -f4); \
+	MAJOR=$$(echo "$$TF_VER" | cut -d. -f1); \
+	MINOR=$$(echo "$$TF_VER" | cut -d. -f2); \
+	if [ "$$MAJOR" -lt 1 ] || { [ "$$MAJOR" -eq 1 ] && [ "$$MINOR" -lt 7 ]; }; then \
+		echo "terraform test with mock_provider requires Terraform >= 1.7.0 (found $$TF_VER)"; \
+		exit 1; \
+	fi
+	terraform test
 
 tf-plan: ## Generate and show an execution plan
 	terraform plan $(TF_VAR_FLAGS) -out=tfplan
