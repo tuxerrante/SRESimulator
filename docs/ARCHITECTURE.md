@@ -199,12 +199,12 @@ All route-specific overrides are optional. When not set, all routes share the gl
 
 ## Token Observability
 
-The backend logs token usage per route and per request (`backend/src/lib/token-logger.ts`). Both Vertex (streaming and non-streaming) and Azure OpenAI requests emit structured log lines. When chat history was compacted before the request, the log includes the compacted message count:
+The backend logs token usage per route and per request (`backend/src/lib/token-logger.ts`). Both Vertex (streaming and non-streaming) and Azure OpenAI requests emit structured log lines. The `model` field is the configured model name; Azure logs also include a `deployment` field since deployment names may differ from the model. When chat history was compacted before the request, the log includes the compacted message count:
 
 ```text
-[token-usage] route=chat model=gpt-5.2 prompt=3200 completion=450 reasoning=0 total=3650 latency=1200ms
-[token-usage] route=chat model=gpt-5.2 prompt=1800 completion=500 reasoning=0 total=2300 latency=900ms compacted=14msgs
-[token-usage] route=command model=gpt-4o-mini prompt=800 completion=200 reasoning=0 total=1000 latency=600ms
+[token-usage] route=chat model=gpt-5.2 deployment=gpt5-eastus prompt=3200 completion=450 reasoning=0 total=3650 latency=1200ms
+[token-usage] route=chat model=gpt-5.2 deployment=gpt5-eastus prompt=1800 completion=500 reasoning=0 total=2300 latency=900ms compacted=14msgs
+[token-usage] route=command model=gpt-4o-mini deployment=gpt4o-mini-eastus prompt=800 completion=200 reasoning=0 total=1000 latency=600ms
 ```
 
 An admin endpoint is available for inspecting aggregated metrics:

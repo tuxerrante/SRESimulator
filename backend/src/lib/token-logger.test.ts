@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { logTokenUsage, logTokenError, getTokenMetrics, type TokenUsageEntry } from "./token-logger";
+import { logTokenUsage, logTokenError, getTokenMetrics, _resetForTests, type TokenUsageEntry } from "./token-logger";
 
 function makeEntry(overrides: Partial<TokenUsageEntry> = {}): TokenUsageEntry {
   return {
@@ -19,6 +19,7 @@ function makeEntry(overrides: Partial<TokenUsageEntry> = {}): TokenUsageEntry {
 
 describe("token-logger", () => {
   beforeEach(() => {
+    _resetForTests();
     vi.spyOn(console, "log").mockImplementation(() => {});
     vi.spyOn(console, "error").mockImplementation(() => {});
   });
@@ -33,9 +34,11 @@ describe("token-logger", () => {
     logTokenUsage(makeEntry({ route: "command", promptTokens: 80, completionTokens: 40 }));
 
     const metrics = getTokenMetrics();
-    expect(metrics.perRoute.chat.requests).toBeGreaterThanOrEqual(2);
-    expect(metrics.perRoute.command.requests).toBeGreaterThanOrEqual(1);
-    expect(metrics.recentEntries.length).toBeGreaterThanOrEqual(3);
+    expect(metrics.perRoute.chat.requests).toBe(2);
+    expect(metrics.perRoute.chat.promptTokens).toBe(300);
+    expect(metrics.perRoute.chat.completionTokens).toBe(150);
+    expect(metrics.perRoute.command.requests).toBe(1);
+    expect(metrics.recentEntries.length).toBe(3);
   });
 
   it("logs console output with route and model", () => {
@@ -48,11 +51,24 @@ describe("token-logger", () => {
     );
   });
 
+  it("includes deployment in log when present", () => {
+    logTokenUsage(makeEntry({ model: "gpt-5.2", deployment: "my-deploy" }));
+    expect(console.log).toHaveBeenCalledWith(
+      expect.stringContaining("deployment=my-deploy")
+    );
+  });
+
   it("tracks errors per route", () => {
-    const before = getTokenMetrics().perRoute.command.errors;
     logTokenError("command", "test error");
-    const after = getTokenMetrics().perRoute.command.errors;
-    expect(after).toBe(before + 1);
+    const metrics = getTokenMetrics();
+    expect(metrics.perRoute.command.errors).toBe(1);
+  });
+
+  it("sanitizes error strings to prevent log injection", () => {
+    logTokenError("chat", 'line1\nline2\r"injected"');
+    expect(console.error).toHaveBeenCalledWith(
+      expect.stringMatching(/error="line1 line2 {2}injected "/)
+    );
   });
 
   it("includes compaction info in log when compacted", () => {
@@ -60,5 +76,16 @@ describe("token-logger", () => {
     expect(console.log).toHaveBeenCalledWith(
       expect.stringContaining("compacted=12msgs")
     );
+  });
+
+  it("returns deep copies from getTokenMetrics", () => {
+    logTokenUsage(makeEntry());
+    const m1 = getTokenMetrics();
+    m1.perRoute.chat.requests = 999;
+    m1.recentEntries[0].promptTokens = 999;
+
+    const m2 = getTokenMetrics();
+    expect(m2.perRoute.chat.requests).toBe(1);
+    expect(m2.recentEntries[0].promptTokens).toBe(100);
   });
 });

@@ -25,12 +25,6 @@ interface AiTextRequest {
   compactionMeta?: AiCompactionMeta;
 }
 
-export interface AiTokenUsage {
-  promptTokens: number;
-  completionTokens: number;
-  reasoningTokens: number;
-}
-
 let vertexClient: AnthropicVertex | null = null;
 
 function getVertexClient(): AnthropicVertex {
@@ -259,7 +253,8 @@ async function callAzureOpenAi(request: AiTextRequest): Promise<string> {
   if (request.route) {
     logTokenUsage({
       route: request.route,
-      model: deployment,
+      model: getConfiguredModel(),
+      deployment,
       promptTokens,
       completionTokens,
       reasoningTokens,

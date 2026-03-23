@@ -3,6 +3,7 @@ export type AiRoute = "chat" | "command" | "scenario" | "probe";
 export interface TokenUsageEntry {
   route: AiRoute;
   model: string;
+  deployment?: string;
   promptTokens: number;
   completionTokens: number;
   reasoningTokens: number;
@@ -16,11 +17,23 @@ export interface TokenUsageEntry {
 const recentEntries: TokenUsageEntry[] = [];
 const MAX_ENTRIES = 200;
 
-const routeTotals: Record<AiRoute, { requests: number; promptTokens: number; completionTokens: number; reasoningTokens: number; errors: number }> = {
-  chat: { requests: 0, promptTokens: 0, completionTokens: 0, reasoningTokens: 0, errors: 0 },
-  command: { requests: 0, promptTokens: 0, completionTokens: 0, reasoningTokens: 0, errors: 0 },
-  scenario: { requests: 0, promptTokens: 0, completionTokens: 0, reasoningTokens: 0, errors: 0 },
-  probe: { requests: 0, promptTokens: 0, completionTokens: 0, reasoningTokens: 0, errors: 0 },
+interface RouteTotals {
+  requests: number;
+  promptTokens: number;
+  completionTokens: number;
+  reasoningTokens: number;
+  errors: number;
+}
+
+function emptyTotals(): RouteTotals {
+  return { requests: 0, promptTokens: 0, completionTokens: 0, reasoningTokens: 0, errors: 0 };
+}
+
+const routeTotals: Record<AiRoute, RouteTotals> = {
+  chat: emptyTotals(),
+  command: emptyTotals(),
+  scenario: emptyTotals(),
+  probe: emptyTotals(),
 };
 
 export function logTokenUsage(entry: TokenUsageEntry): void {
@@ -35,8 +48,9 @@ export function logTokenUsage(entry: TokenUsageEntry): void {
   totals.completionTokens += entry.completionTokens;
   totals.reasoningTokens += entry.reasoningTokens;
 
+  const deploymentTag = entry.deployment ? ` deployment=${entry.deployment}` : "";
   console.log(
-    `[token-usage] route=${entry.route} model=${entry.model} ` +
+    `[token-usage] route=${entry.route} model=${entry.model}${deploymentTag} ` +
     `prompt=${entry.promptTokens} completion=${entry.completionTokens} ` +
     `reasoning=${entry.reasoningTokens} total=${entry.totalTokens} ` +
     `latency=${entry.latencyMs}ms` +
@@ -44,9 +58,13 @@ export function logTokenUsage(entry: TokenUsageEntry): void {
   );
 }
 
+function sanitizeLogString(s: string): string {
+  return s.replace(/[\r\n"\\]/g, " ").slice(0, 200);
+}
+
 export function logTokenError(route: AiRoute, error: string): void {
   routeTotals[route].errors += 1;
-  console.error(`[token-usage] route=${route} error="${error}"`);
+  console.error(`[token-usage] route=${route} error="${sanitizeLogString(error)}"`);
 }
 
 export function getTokenMetrics(): {
@@ -54,7 +72,16 @@ export function getTokenMetrics(): {
   recentEntries: TokenUsageEntry[];
 } {
   return {
-    perRoute: { ...routeTotals },
-    recentEntries: [...recentEntries],
+    perRoute: Object.fromEntries(
+      Object.entries(routeTotals).map(([route, totals]) => [route, { ...totals }]),
+    ) as typeof routeTotals,
+    recentEntries: recentEntries.map((entry) => ({ ...entry })),
   };
+}
+
+export function _resetForTests(): void {
+  recentEntries.length = 0;
+  for (const route of Object.keys(routeTotals) as AiRoute[]) {
+    Object.assign(routeTotals[route], emptyTotals());
+  }
 }

@@ -191,7 +191,7 @@ export function compactHistory(
   const estimatedTokensBefore = estimateMessagesTokens(messages);
   const effectiveBudget = Math.max(budget - systemPromptTokens, 2000);
 
-  if (estimatedTokensBefore <= effectiveBudget || messages.length <= RETAINED_TAIL_MESSAGES + 2) {
+  if (estimatedTokensBefore <= effectiveBudget || messages.length <= RETAINED_TAIL_MESSAGES) {
     return {
       messages,
       compacted: false,
