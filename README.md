@@ -58,12 +58,14 @@ The backend supports two runtime modes and multiple providers:
 - **Providers** (`AI_PROVIDER`):
   - `vertex`
   - `azure-openai` (Azure OpenAI / Azure AI Foundry deployments)
+- **Context management:** Chat history is automatically compacted when token estimates exceed the budget, preserving key investigation state (phase, facts, hypotheses, mentioned commands) while reducing prompt size. Per-route Azure OpenAI deployment overrides allow cost/performance optimization across routes. Token usage (prompt, completion, reasoning) is logged per route for both Azure OpenAI and Vertex providers.
 
 Health and probe endpoints:
 
 - `GET /readyz` — readiness (returns `503` if AI runtime config is invalid)
 - `GET /api/ai/readiness` — detailed AI config checks (safe to expose, no secrets)
 - `GET /api/ai/probe?live=true` — active live probe to the configured provider (for end-to-end validation)
+- `GET /api/ai/token-metrics` — per-route token usage totals and recent history
 
 See `docs/ARO_AI_CONNECTIVITY_SPIKE.md` for the full ARO pod connectivity validation workflow.
 

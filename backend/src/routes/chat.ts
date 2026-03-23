@@ -4,6 +4,7 @@ import { buildSystemPrompt } from "../lib/prompts/system";
 import { getAiReadiness } from "../lib/ai-config";
 import { generateMockChatResponse } from "../lib/mock-ai";
 import { streamAiText } from "../lib/ai-runtime";
+import { compactHistory, estimateTokens } from "../lib/context-compactor";
 import type { Scenario } from "../../../shared/types/game";
 import type { InvestigationPhase } from "../../../shared/types/chat";
 
@@ -42,10 +43,27 @@ chatRouter.post("/", async (req: Request, res: Response) => {
 
     const knowledgeBase = await loadKnowledgeBase();
     const systemPrompt = buildSystemPrompt(knowledgeBase, scenario, currentPhase);
+    const systemPromptTokens = estimateTokens(systemPrompt);
+
+    const rawMessages = messages.map((m) => ({ role: m.role as "user" | "assistant", content: m.content }));
+    const compaction = compactHistory(rawMessages, systemPromptTokens);
+
+    if (compaction.compacted) {
+      console.log(
+        `[context-compactor] chat: compacted ${compaction.compactedCount}/${compaction.originalCount} messages, ` +
+        `tokens ${compaction.estimatedTokensBefore} -> ${compaction.estimatedTokensAfter}`
+      );
+    }
+
     const stream = streamAiText({
       maxTokens: 4096,
       system: systemPrompt,
-      messages: messages.map((m) => ({ role: m.role, content: m.content })),
+      messages: compaction.messages,
+      route: "chat",
+      compactionMeta: {
+        compacted: compaction.compacted,
+        compactedMessageCount: compaction.compactedCount,
+      },
     });
 
     res.setHeader("Content-Type", "text/event-stream");
