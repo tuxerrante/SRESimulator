@@ -1,6 +1,6 @@
 .PHONY: help install install-backend clean \
        fmt fmt-check \
-       lint lint-ts lint-backend lint-yaml lint-md \
+       lint lint-ts lint-backend lint-unused-exports lint-yaml lint-md \
        typecheck typecheck-backend validate \
        security audit lockfile-lint grype \
        test smoke-local-vertex env-check e2e-azure-route e2e-azure-route-up e2e-azure-route-down \
@@ -96,6 +96,14 @@ lint-yaml: ## Lint YAML files with yamllint
 
 lint-md: ## Lint Markdown files with markdownlint
 	npx markdownlint-cli '**/*.md' --ignore '**/node_modules/**'
+
+lint-unused-exports: ## Check for unused TypeScript exports (backend + shared)
+	cd $(BACKEND_DIR) && npx ts-unused-exports tsconfig.json \
+		--excludePathsFromReport='shared/types' \
+		--ignoreTestFiles \
+		--allowUnusedTypes \
+		--showLineNumber \
+		--exitWithCount
 
 # ──────────────────────────────────────────────
 # Type checking & validation

@@ -56,6 +56,10 @@ jobs:
       - name: Validate (lint + typecheck)
         run: make validate
 
+      - name: Check unused exports (hygiene, non-blocking)
+        continue-on-error: true
+        run: make lint-unused-exports
+
       - name: Run backend tests with coverage
         run: make test
 
