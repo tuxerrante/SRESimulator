@@ -6,6 +6,7 @@ import { scenarioRouter } from "./routes/scenario";
 import { scoresRouter } from "./routes/scores";
 import { healthRouter } from "./routes/health";
 import { aiRouter } from "./routes/ai";
+import { guideRouter } from "./routes/guide";
 import { getAiReadiness } from "./lib/ai-config";
 
 const app = express();
@@ -29,6 +30,7 @@ app.use("/api/command", commandRouter);
 app.use("/api/scenario", scenarioRouter);
 app.use("/api/scores", scoresRouter);
 app.use("/api/ai", aiRouter);
+app.use("/api/guide", guideRouter);
 app.use("/", healthRouter);
 
 app.listen(PORT, "0.0.0.0", () => {
