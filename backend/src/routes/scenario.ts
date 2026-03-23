@@ -67,6 +67,8 @@ scenarioRouter.post("/", async (req: Request, res: Response) => {
       // Keep scenario generation fast by limiting prompt context size.
       .slice(0, 6000);
 
+    const currentDate = new Date().toISOString();
+
     const responseText = await generateAiText({
       maxTokens: 1024,
       route: "scenario",
@@ -81,6 +83,8 @@ Difficulty guidelines:
 
 Use currently supported ARO versions (4.16–4.20). For easy scenarios, you may use 4.15 (EOL) to test "upgrade your cluster" awareness.
 
+IMPORTANT — timestamps: The current date/time is ${currentDate}. Generate realistic ISO 8601 timestamps — the incident reportedTime should be within the past 1–7 days, while recentEvents and alert firingTimes should be more recent (minutes to hours ago) to feel like a live incident. Upgrade history timestamps can be older. Do NOT use placeholder or obviously fake dates.
+
 IMPORTANT: Respond with ONLY valid JSON matching this exact structure (no markdown, no code fences):
 {
   "id": "scenario_xxx",
@@ -93,7 +97,7 @@ IMPORTANT: Respond with ONLY valid JSON matching this exact structure (no markdo
     "title": "Customer-facing incident title",
     "description": "What the customer or monitoring reported",
     "customerImpact": "Description of impact",
-    "reportedTime": "ISO timestamp or relative time",
+    "reportedTime": "ISO 8601 timestamp within the past 1–7 days",
     "clusterName": "realistic-cluster-name",
     "region": "azure-region"
   },
@@ -103,9 +107,9 @@ IMPORTANT: Respond with ONLY valid JSON matching this exact structure (no markdo
     "region": "same-azure-region",
     "nodeCount": number,
     "status": "current status",
-    "recentEvents": ["array of recent cluster events"],
-    "alerts": [{"name": "alert name", "severity": "critical|warning|info", "message": "alert message", "firingTime": "timestamp"}],
-    "upgradeHistory": [{"from": "4.x.x", "to": "4.x.x", "status": "completed|failed|in_progress", "timestamp": "timestamp"}]
+    "recentEvents": ["array of recent cluster events with ISO timestamps"],
+    "alerts": [{"name": "alert name", "severity": "critical|warning|info", "message": "alert message", "firingTime": "ISO timestamp"}],
+    "upgradeHistory": [{"from": "4.x.x", "to": "4.x.x", "status": "completed|failed|in_progress", "timestamp": "ISO timestamp"}]
   }
 }
 
