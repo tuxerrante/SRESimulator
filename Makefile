@@ -148,8 +148,9 @@ grype: ## Scan frontend/backend dependencies with Grype (high/critical)
 # ──────────────────────────────────────────────
 # Testing
 # ──────────────────────────────────────────────
-test: ## Run backend unit tests with coverage
+test: ## Run backend and frontend unit tests with coverage
 	cd $(BACKEND_DIR) && npm run test:coverage
+	cd $(FRONTEND_DIR) && npm run test:coverage
 
 smoke-local-vertex: ## Run local backend live probe using Vertex env from frontend/.env.local
 	@set -e; \
