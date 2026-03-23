@@ -1,0 +1,19 @@
+---
+description: Enforce isolated worktrees for agent changes
+alwaysApply: true
+---
+
+# Worktree Isolation
+
+- Do not implement code changes directly in the host checkout when it may contain unrelated edits or concurrent agent work.
+- Start each implementation task in an isolated git worktree on a dedicated branch.
+- Prefer Cursor isolated runners/worktree-backed execution when available before touching repository files.
+- Keep host checkout read-only for exploration, review, and context gathering.
+- Only include task-related files in commits and pull requests from the isolated branch.
+
+## Expected Workflow
+
+1. Create or enter a dedicated worktree for the task branch.
+2. Implement, test, and commit inside that isolated worktree only.
+3. Push branch and open PR from the isolated worktree.
+4. Avoid mixing changes from parallel efforts.
