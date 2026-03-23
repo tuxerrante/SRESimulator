@@ -79,6 +79,7 @@ export function getTokenMetrics(): {
   };
 }
 
+// ts-unused-exports:disable-next-line
 export function _resetForTests(): void {
   recentEntries.length = 0;
   for (const route of Object.keys(routeTotals) as AiRoute[]) {
