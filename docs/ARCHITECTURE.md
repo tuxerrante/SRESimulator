@@ -50,7 +50,13 @@ SRESimulator/
     └── src/
         ├── index.ts                      # API wiring and middleware
         ├── routes/                       # /api/chat, /api/command, /api/scenario, /api/scores, /api/ai
-        └── lib/                          # AI runtime, scoring, leaderboard, prompts
+        └── lib/
+            ├── ai-runtime.ts             # Provider-agnostic AI adapter (Vertex + Azure)
+            ├── ai-config.ts              # Provider detection, readiness checks
+            ├── context-compactor.ts       # Chat history compaction with retained-state
+            ├── token-logger.ts            # Per-route token usage observability
+            ├── knowledge.ts              # Knowledge base file loader
+            └── prompts/system.ts         # System prompt builder
 ```
 
 ---
@@ -140,6 +146,72 @@ You start at **0/100** and earn points through good investigation practices.
 
 ---
 
+## Context Management & Token Efficiency
+
+The backend manages AI context to prevent token exhaustion, especially with high-reasoning models (e.g. gpt-5.x) that can consume the entire completion budget on internal reasoning without producing output text.
+
+### Chat history compaction
+
+Long conversations are automatically compacted before each AI request. The compactor (`backend/src/lib/context-compactor.ts`) estimates message token counts and, when the total exceeds the budget (default ~12k tokens for messages, accounting for the system prompt), replaces older messages with a structured summary while keeping the most recent messages verbatim.
+
+**Retained-state schema** (preserved losslessly through compaction):
+
+| Field                  | Description                                      |
+| ---------------------- | ------------------------------------------------ |
+| `phase`                | Current investigation phase                      |
+| `knownFacts`           | Evidence confirmed during the investigation      |
+| `hypotheses`           | User theories about root cause                   |
+| `executedCommands`     | Commands suggested or run (`oc`, KQL, Geneva)    |
+| `unresolvedQuestions`  | Questions the user asked that remain unanswered  |
+| `summaryOfDiscussion`  | Scoring events and key discussion milestones     |
+
+The compactor uses a heuristic token estimator (~4 chars/token) rather than a tokenizer dependency to keep the backend lightweight.
+
+### Command simulation prompt optimization
+
+The command route (`/api/command`) builds system prompts from extracted helper functions rather than inline string literals. Only the scenario context and temporal rules are sent as dynamic content; the static instruction layer is shared across calls.
+
+### Fallback behavior
+
+If Azure OpenAI returns empty text (e.g. reasoning tokens consumed the completion budget), the command route falls back to deterministic mock output so gameplay continues unblocked.
+
+---
+
+## Per-Route AI Deployments
+
+Each API route can use a different Azure OpenAI deployment, allowing cost/performance optimization per workload. The runtime resolves deployments in this order:
+
+1. Route-specific env var (e.g. `AI_AZURE_OPENAI_DEPLOYMENT_CHAT`)
+2. Global fallback (`AI_AZURE_OPENAI_DEPLOYMENT`)
+
+| Route      | Env var override                          | Recommended model characteristics   |
+| ---------- | ----------------------------------------- | ----------------------------------- |
+| `chat`     | `AI_AZURE_OPENAI_DEPLOYMENT_CHAT`         | High quality, streaming support     |
+| `command`  | `AI_AZURE_OPENAI_DEPLOYMENT_COMMAND`      | Fast, good at structured output     |
+| `scenario` | `AI_AZURE_OPENAI_DEPLOYMENT_SCENARIO`     | Good at JSON generation             |
+| `probe`    | `AI_AZURE_OPENAI_DEPLOYMENT_PROBE`        | Cheapest/fastest available          |
+
+All route-specific overrides are optional. When not set, all routes share the global deployment.
+
+---
+
+## Token Observability
+
+The backend logs token usage per route and per request (`backend/src/lib/token-logger.ts`). Each AI request emits a structured log line:
+
+```text
+[token-usage] route=chat model=gpt-5.2 prompt=3200 completion=450 reasoning=0 total=3650 latency=1200ms
+[token-usage] route=chat model=gpt-5.2 prompt=1800 completion=500 reasoning=0 total=2300 latency=900ms compacted=14msgs
+```
+
+An admin endpoint is available for inspecting aggregated metrics:
+
+### `GET /api/ai/token-metrics`
+
+Returns per-route totals (requests, prompt/completion/reasoning tokens, errors) and recent request entries. Protected by `x-ai-probe-token` in production.
+
+---
+
 ## Backend API Routes
 
 In OpenShift, browser requests hit the frontend at `/api/*`; the frontend BFF proxy forwards them internally to this backend service.
@@ -150,7 +222,7 @@ Generates a scenario for the given difficulty. Calls the configured AI provider 
 
 ### `POST /api/chat`
 
-Streaming chat endpoint. Builds a system prompt with Dungeon Master persona, methodology enforcement, active scenario, and knowledge base. Returns SSE stream from the configured provider (or a mock stream in mock mode).
+Streaming chat endpoint. Builds a system prompt with Dungeon Master persona, methodology enforcement, active scenario, and knowledge base. Chat history is automatically compacted when token estimates exceed the budget. Returns SSE stream from the configured provider (or a mock stream in mock mode).
 
 ### `POST /api/command`
 
@@ -165,6 +237,8 @@ Returns AI runtime readiness checks (safe diagnostics only, no secrets).
 ### `GET /api/ai/probe?live=true`
 
 Performs an active live probe against the configured provider to validate in-cluster connectivity end-to-end.
+
+Token metrics are also available at `GET /api/ai/token-metrics` (see [Token Observability](#token-observability) above).
 
 ---
 
@@ -191,6 +265,14 @@ AI_AZURE_OPENAI_ENDPOINT=https://<account>.cognitiveservices.azure.com
 AI_AZURE_OPENAI_DEPLOYMENT=<deployment-name>
 AI_AZURE_OPENAI_API_VERSION=2024-10-21
 AI_AZURE_OPENAI_API_KEY=<api-key>
+```
+
+Optional per-route deployment overrides:
+
+```bash
+AI_AZURE_OPENAI_DEPLOYMENT_CHAT=gpt-5.2
+AI_AZURE_OPENAI_DEPLOYMENT_COMMAND=gpt-4o-mini
+AI_AZURE_OPENAI_DEPLOYMENT_SCENARIO=gpt-4o-mini
 ```
 
 `CLAUDE_MODEL` is still accepted as a backward-compatible alias, but `AI_MODEL` is the preferred variable.

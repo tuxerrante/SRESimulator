@@ -69,6 +69,7 @@ scenarioRouter.post("/", async (req: Request, res: Response) => {
 
     const responseText = await generateAiText({
       maxTokens: 1024,
+      route: "scenario",
       system: `You are a scenario generator for an ARO (Azure Red Hat OpenShift) SRE training simulator.
 Generate a realistic incident scenario. Be concise.
 The scenario should be appropriate for the "${difficulty}" difficulty level.
