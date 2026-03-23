@@ -4,6 +4,7 @@
 .vscode
 .cursor
 .next
+.worktrees
 **/node_modules
 **/dist
 **/build
