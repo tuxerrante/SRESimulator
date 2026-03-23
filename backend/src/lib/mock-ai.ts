@@ -7,6 +7,13 @@ function nowIso(offsetMinutes: number): string {
   return new Date(Date.now() + offsetMinutes * 60 * 1000).toISOString();
 }
 
+function recentDaysAgoIso(minDays = 1, maxDays = 7): string {
+  const lo = Math.max(0, Math.min(minDays, maxDays));
+  const hi = Math.max(minDays, maxDays);
+  const days = lo + Math.floor(Math.random() * (hi - lo + 1));
+  return new Date(Date.now() - days * 86_400_000).toISOString();
+}
+
 function severityForDifficulty(difficulty: Difficulty): "Sev2" | "Sev3" | "Sev4" {
   if (difficulty === "hard") return "Sev2";
   if (difficulty === "medium") return "Sev3";
@@ -29,7 +36,7 @@ export function generateMockScenario(difficulty: Difficulty): Scenario {
         "This ticket is generated in AI mock mode to validate end-to-end plumbing.",
       customerImpact:
         "No customer impact. This is a non-production mock validation scenario.",
-      reportedTime: nowIso(-30),
+      reportedTime: recentDaysAgoIso(),
       clusterName,
       region: REGION,
     },
