@@ -33,6 +33,11 @@ output "aoai_account_name" {
   value       = azurerm_cognitive_account.openai.name
 }
 
+output "prod_namespace" {
+  description = "Fixed namespace for the stable app deployment (shared AOAI, same cluster as e2e)."
+  value       = var.prod_namespace
+}
+
 output "env_file_snippet" {
   description = "Paste into backend/.env.local to connect to these resources."
   value       = <<-EOT
@@ -55,27 +60,34 @@ output "env_file_snippet" {
 }
 
 output "post_apply_checklist" {
-  description = "Post-apply steps (Geneva suppression, kubeconfig, etc.)."
+  description = "Post-apply steps (Geneva suppression, kubeconfig, namespace model)."
   value       = <<-EOT
 
-    ╔══════════════════════════════════════════════════════════════════╗
-    ║                    POST-APPLY CHECKLIST                         ║
-    ╠══════════════════════════════════════════════════════════════════╣
-    ║                                                                  ║
-    ║  1. SILENCE CLUSTER IN GENEVA HEALTH                             ║
-    ║     Create a suppression rule to avoid production alert noise:    ║
-    ║     • Scope: Cluster = "${local.cluster_name}"                   ║
-    ║     • Resource Group = "${azurerm_resource_group.main.name}"      ║
-    ║     • Suppression type = "Suppress all alerts"                   ║
-    ║     • Duration = Indefinite (or match cluster lifetime)          ║
-    ║     • Reason = "Test/development cluster – not production"       ║
-    ║                                                                  ║
-    ║  2. GET KUBECONFIG                                               ║
-    ║     make -C infra tf-kubeconfig                                  ║
-    ║                                                                  ║
-    ║  3. GENERATE .env.local                                          ║
-    ║     terraform -chdir=infra output -raw env_file_snippet           ║
-    ║                                                                  ║
-    ╚══════════════════════════════════════════════════════════════════╝
+    ╔══════════════════════════════════════════════════════════════════════╗
+    ║                       POST-APPLY CHECKLIST                          ║
+    ╠══════════════════════════════════════════════════════════════════════╣
+    ║                                                                      ║
+    ║  1. SILENCE CLUSTER IN GENEVA HEALTH                                 ║
+    ║     Create a suppression rule to avoid production alert noise:        ║
+    ║     • Scope: Cluster = "${local.cluster_name}"                       ║
+    ║     • Resource Group = "${azurerm_resource_group.main.name}"          ║
+    ║     • Suppression type = "Suppress all alerts"                       ║
+    ║     • Duration = Indefinite (or match cluster lifetime)              ║
+    ║     • Reason = "Test/development cluster – not production"           ║
+    ║                                                                      ║
+    ║  2. GET KUBECONFIG                                                   ║
+    ║     make tf-kubeconfig                                               ║
+    ║                                                                      ║
+    ║  3. GENERATE .env.local                                              ║
+    ║     terraform -chdir=infra output -raw env_file_snippet              ║
+    ║                                                                      ║
+    ║  4. NAMESPACE MODEL (shared cluster, shared AOAI)                    ║
+    ║     • Stable ("prod"):  make prod-up   → ns "${var.prod_namespace}"  ║
+    ║     • Ephemeral (e2e):  make e2e-azure-route-up → timestamped ns     ║
+    ║     • Both share the same Azure OpenAI account/deployment.           ║
+    ║     • prod-down requires typing the namespace name to confirm.       ║
+    ║     • e2e namespaces are disposable and auto-cleaned.                ║
+    ║                                                                      ║
+    ╚══════════════════════════════════════════════════════════════════════╝
   EOT
 }

@@ -23,7 +23,7 @@ rule in Geneva Health:
 ## 2. Extract Kubeconfig
 
 ```bash
-make -C infra tf-kubeconfig
+make tf-kubeconfig
 # or
 export KUBECONFIG=~/.kube/<owner_alias>-test
 ```
@@ -43,16 +43,55 @@ az cognitiveservices account keys list \
   --query key1 -o tsv
 ```
 
-## 4. Deploy the App
+## 4. Namespace Model (Shared Cluster + Shared AOAI)
+
+The ARO cluster and Azure OpenAI deployment are **shared** between the
+stable ("production") namespace and ephemeral e2e namespaces:
+
+```text
+┌─────────────────────────────────────────────┐
+│  ARO Cluster (<alias>-test)                 │
+│                                             │
+│  ┌─────────────────────┐  ┌──────────────┐  │
+│  │ sre-simulator (prod)│  │ sre-manual-  │  │
+│  │ ─ stable, protected │  │ e2e-<ts>     │  │    ┌────────────────────┐
+│  │ ─ make prod-up      │  │ ─ disposable │  │───▶│ Azure OpenAI       │
+│  │ ─ make prod-down    │  │ ─ make e2e-  │  │    │ (<alias>-test-aoai)│
+│  │   (requires confirm)│  │   azure-     │  │    │ shared by all ns   │
+│  └─────────────────────┘  │   route-up   │  │    └────────────────────┘
+│                           └──────────────┘  │
+└─────────────────────────────────────────────┘
+```
+
+### Deploy to production namespace
 
 ```bash
-make e2e-azure-route-up
+make prod-up
+```
+
+### Check production status
+
+```bash
+make prod-status
+```
+
+### Delete production namespace (requires typing namespace name)
+
+```bash
+make prod-down
+```
+
+### Deploy ephemeral e2e (disposable, no confirmation needed)
+
+```bash
+make e2e-azure-route-up    # creates timestamped namespace
+make e2e-azure-route-down  # deletes it (refuses if it matches prod namespace)
 ```
 
 ## 5. Tear Down (when done)
 
 ```bash
-make -C infra tf-destroy
+make tf-destroy
 ```
 
 All resources are in a single resource group, so you can also run:
@@ -60,3 +99,6 @@ All resources are in a single resource group, so you can also run:
 ```bash
 az group delete --name <owner_alias>-test-rg --yes --no-wait
 ```
+
+> **Note:** `tf-destroy` / `az group delete` removes the cluster and AOAI
+> account. Both prod and e2e namespaces disappear with the cluster.

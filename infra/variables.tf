@@ -62,9 +62,18 @@ variable "aoai_model_version" {
 }
 
 variable "aoai_capacity" {
-  description = "Provisioned capacity in thousands of tokens per minute (K TPM). 1 = 1K TPM."
+  description = "Rate limit in thousands of tokens per minute (K TPM). Cost is pay-per-token, not per capacity."
   type        = number
-  default     = 1
+  default     = 30
+
+  # Sizing rationale (from PR #31 real e2e measurements):
+  #   Chat route:     ~16K tokens/request (12K context + 4K completion), 2-3 req/min peak
+  #   Command route:  ~4K tokens/request, 1-2 req/min peak
+  #   Scenario route: ~2.3K tokens/request (burst on session start)
+  #   Single active user peak: ~50K TPM
+  #   With prod + e2e concurrent: ~80K TPM burst
+  #   30K TPM is comfortable for single-user testing; increase if throttled.
+  #   Standard (pay-as-you-go) means this only affects rate limit, not cost.
 }
 
 variable "vnet_address_space" {
@@ -83,6 +92,12 @@ variable "worker_subnet_cidr" {
   description = "CIDR for the ARO worker subnet (must be /23 within the VNet)."
   type        = string
   default     = "10.0.2.0/23"
+}
+
+variable "prod_namespace" {
+  description = "Fixed namespace for the stable ('production') app deployment. E2E namespaces are ephemeral and separate."
+  type        = string
+  default     = "sre-simulator"
 }
 
 variable "extra_tags" {
