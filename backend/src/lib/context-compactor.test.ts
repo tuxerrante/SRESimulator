@@ -120,7 +120,7 @@ describe("compactHistory", () => {
     ];
     const result = compactHistory(messages, 0, 500);
 
-    expect(result.retainedState?.executedCommands).toContain("oc get nodes");
+    expect(result.retainedState?.mentionedCommands).toContain("oc get nodes");
   });
 
   it("extracts hypotheses from user messages", () => {

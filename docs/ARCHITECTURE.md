@@ -154,16 +154,16 @@ The backend manages AI context to prevent token exhaustion, especially with high
 
 Long conversations are automatically compacted before each AI request. The compactor (`backend/src/lib/context-compactor.ts`) estimates message token counts and, when the total exceeds the budget (default ~12k tokens for messages, accounting for the system prompt), replaces older messages with a structured summary while keeping the most recent messages verbatim.
 
-**Retained-state schema** (preserved losslessly through compaction):
+**Retained-state schema** (best-effort heuristic extraction; may miss or simplify some details):
 
-| Field                  | Description                                      |
-| ---------------------- | ------------------------------------------------ |
-| `phase`                | Current investigation phase                      |
-| `knownFacts`           | Evidence confirmed during the investigation      |
-| `hypotheses`           | User theories about root cause                   |
-| `executedCommands`     | Commands suggested or run (`oc`, KQL, Geneva)    |
-| `unresolvedQuestions`  | Questions the user asked that remain unanswered  |
-| `summaryOfDiscussion`  | Scoring events and key discussion milestones     |
+| Field                  | Description                                               |
+| ---------------------- | --------------------------------------------------------- |
+| `phase`                | Current investigation phase                               |
+| `knownFacts`           | Evidence confirmed during the investigation               |
+| `hypotheses`           | User theories about root cause                            |
+| `mentionedCommands`    | Commands suggested by DM or referenced by user            |
+| `unresolvedQuestions`  | Questions the user asked that remain unanswered           |
+| `summaryOfDiscussion`  | Scoring events and key discussion milestones              |
 
 The compactor uses a heuristic token estimator (~4 chars/token) rather than a tokenizer dependency to keep the backend lightweight.
 
@@ -184,6 +184,8 @@ Each API route can use a different Azure OpenAI deployment, allowing cost/perfor
 1. Route-specific env var (e.g. `AI_AZURE_OPENAI_DEPLOYMENT_CHAT`)
 2. Global fallback (`AI_AZURE_OPENAI_DEPLOYMENT`)
 
+The global `AI_AZURE_OPENAI_DEPLOYMENT` is still required for readiness validation and serves as the default for any route without a specific override. If neither is set for a given route, the runtime throws a clear error.
+
 | Route      | Env var override                          | Recommended model characteristics   |
 | ---------- | ----------------------------------------- | ----------------------------------- |
 | `chat`     | `AI_AZURE_OPENAI_DEPLOYMENT_CHAT`         | High quality, streaming support     |
@@ -197,11 +199,12 @@ All route-specific overrides are optional. When not set, all routes share the gl
 
 ## Token Observability
 
-The backend logs token usage per route and per request (`backend/src/lib/token-logger.ts`). Each AI request emits a structured log line:
+The backend logs token usage per route and per request (`backend/src/lib/token-logger.ts`). Both Vertex (streaming and non-streaming) and Azure OpenAI requests emit structured log lines. When chat history was compacted before the request, the log includes the compacted message count:
 
 ```text
 [token-usage] route=chat model=gpt-5.2 prompt=3200 completion=450 reasoning=0 total=3650 latency=1200ms
 [token-usage] route=chat model=gpt-5.2 prompt=1800 completion=500 reasoning=0 total=2300 latency=900ms compacted=14msgs
+[token-usage] route=command model=gpt-4o-mini prompt=800 completion=200 reasoning=0 total=1000 latency=600ms
 ```
 
 An admin endpoint is available for inspecting aggregated metrics:

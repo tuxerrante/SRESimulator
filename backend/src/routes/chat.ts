@@ -60,6 +60,10 @@ chatRouter.post("/", async (req: Request, res: Response) => {
       system: systemPrompt,
       messages: compaction.messages,
       route: "chat",
+      compactionMeta: {
+        compacted: compaction.compacted,
+        compactedMessageCount: compaction.compactedCount,
+      },
     });
 
     res.setHeader("Content-Type", "text/event-stream");

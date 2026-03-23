@@ -1,15 +1,16 @@
 import type { AiTextMessage } from "./ai-runtime";
 
 /**
- * Lossless retained state that survives history compaction.
- * Compaction replaces older messages with a single summary message
- * while preserving all critical investigation state.
+ * Best-effort retained state extracted via heuristics during history
+ * compaction. The extraction uses regex patterns and truncation, so
+ * it may miss or simplify some details from the original conversation.
  */
 export interface RetainedState {
   phase: string;
   knownFacts: string[];
   hypotheses: string[];
-  executedCommands: string[];
+  /** Commands suggested by the DM or referenced by the user (may include unexecuted suggestions). */
+  mentionedCommands: string[];
   unresolvedQuestions: string[];
   summaryOfDiscussion: string;
 }
@@ -37,7 +38,7 @@ function extractRetainedState(messages: AiTextMessage[]): RetainedState {
     phase: "reading",
     knownFacts: [],
     hypotheses: [],
-    executedCommands: [],
+    mentionedCommands: [],
     unresolvedQuestions: [],
     summaryOfDiscussion: "",
   };
@@ -55,8 +56,8 @@ function extractRetainedState(messages: AiTextMessage[]): RetainedState {
       let cmdMatch;
       while ((cmdMatch = cmdPattern.exec(content)) !== null) {
         const cmd = cmdMatch[1].trim();
-        if (cmd && !state.executedCommands.includes(cmd)) {
-          state.executedCommands.push(cmd);
+        if (cmd && !state.mentionedCommands.includes(cmd)) {
+          state.mentionedCommands.push(cmd);
         }
       }
 
@@ -81,8 +82,8 @@ function extractRetainedState(messages: AiTextMessage[]): RetainedState {
       let cmdMatch;
       while ((cmdMatch = cmdPattern.exec(content)) !== null) {
         const cmd = cmdMatch[1].trim();
-        if (cmd && !state.executedCommands.includes(cmd)) {
-          state.executedCommands.push(cmd);
+        if (cmd && !state.mentionedCommands.includes(cmd)) {
+          state.mentionedCommands.push(cmd);
         }
       }
 
@@ -144,9 +145,9 @@ function buildCompactionMessage(state: RetainedState, compactedCount: number): s
     }
   }
 
-  if (state.executedCommands.length > 0) {
-    sections.push("", "**Commands run so far:**");
-    for (const c of state.executedCommands.slice(0, 20)) {
+  if (state.mentionedCommands.length > 0) {
+    sections.push("", "**Commands suggested or run:**");
+    for (const c of state.mentionedCommands.slice(0, 20)) {
       sections.push("- `" + c + "`");
     }
   }

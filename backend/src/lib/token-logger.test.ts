@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { logTokenUsage, logTokenError, getTokenMetrics, type TokenUsageEntry } from "./token-logger";
 
 function makeEntry(overrides: Partial<TokenUsageEntry> = {}): TokenUsageEntry {
@@ -21,6 +21,10 @@ describe("token-logger", () => {
   beforeEach(() => {
     vi.spyOn(console, "log").mockImplementation(() => {});
     vi.spyOn(console, "error").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
   });
 
   it("logs token usage and accumulates per-route totals", () => {

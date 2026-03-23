@@ -12,11 +12,17 @@ export interface AiTextMessage {
   content: string;
 }
 
+export interface AiCompactionMeta {
+  compacted: boolean;
+  compactedMessageCount: number;
+}
+
 interface AiTextRequest {
   system: string;
   messages: AiTextMessage[];
   maxTokens: number;
   route?: AiRoute;
+  compactionMeta?: AiCompactionMeta;
 }
 
 export interface AiTokenUsage {
@@ -40,15 +46,27 @@ function getVertexClient(): AnthropicVertex {
 /**
  * Resolve the Azure OpenAI deployment for a given route.
  * Falls back to the global AI_AZURE_OPENAI_DEPLOYMENT if no
- * route-specific override is configured.
+ * route-specific override is configured. Throws with clear
+ * diagnostics when neither is set.
  */
 function getDeploymentForRoute(route?: AiRoute): string {
+  let routeEnvKey: string | undefined;
+
   if (route) {
-    const envKey = `AI_AZURE_OPENAI_DEPLOYMENT_${route.toUpperCase()}`;
-    const routeDeployment = process.env[envKey]?.trim();
+    routeEnvKey = `AI_AZURE_OPENAI_DEPLOYMENT_${route.toUpperCase()}`;
+    const routeDeployment = process.env[routeEnvKey]?.trim();
     if (routeDeployment && routeDeployment.length > 0) return routeDeployment;
   }
-  return process.env.AI_AZURE_OPENAI_DEPLOYMENT!;
+
+  const globalDeployment = process.env.AI_AZURE_OPENAI_DEPLOYMENT?.trim();
+  if (globalDeployment && globalDeployment.length > 0) return globalDeployment;
+
+  const missingKeys = routeEnvKey
+    ? [routeEnvKey, "AI_AZURE_OPENAI_DEPLOYMENT"]
+    : ["AI_AZURE_OPENAI_DEPLOYMENT"];
+  throw new Error(
+    `Azure OpenAI deployment not configured. Set: ${missingKeys.join(" or ")}`
+  );
 }
 
 async function generateVertexText(request: AiTextRequest): Promise<string> {
@@ -81,8 +99,8 @@ async function generateVertexText(request: AiTextRequest): Promise<string> {
       totalTokens: (response.usage?.input_tokens ?? 0) + (response.usage?.output_tokens ?? 0),
       latencyMs: Date.now() - start,
       timestamp: Date.now(),
-      compacted: false,
-      compactedMessageCount: 0,
+      compacted: request.compactionMeta?.compacted ?? false,
+      compactedMessageCount: request.compactionMeta?.compactedMessageCount ?? 0,
     });
   }
 
@@ -93,8 +111,11 @@ async function* streamVertexText(
   request: AiTextRequest
 ): AsyncGenerator<string, void, void> {
   const client = getVertexClient();
+  const model = getConfiguredModel();
+  const start = Date.now();
+
   const stream = await client.messages.stream({
-    model: getConfiguredModel(),
+    model,
     max_tokens: request.maxTokens,
     system: request.system,
     messages: request.messages,
@@ -104,6 +125,22 @@ async function* streamVertexText(
     if (event.type === "content_block_delta" && event.delta.type === "text_delta") {
       yield event.delta.text;
     }
+  }
+
+  const finalMessage = await stream.finalMessage();
+  if (request.route) {
+    logTokenUsage({
+      route: request.route,
+      model,
+      promptTokens: finalMessage.usage?.input_tokens ?? 0,
+      completionTokens: finalMessage.usage?.output_tokens ?? 0,
+      reasoningTokens: 0,
+      totalTokens: (finalMessage.usage?.input_tokens ?? 0) + (finalMessage.usage?.output_tokens ?? 0),
+      latencyMs: Date.now() - start,
+      timestamp: Date.now(),
+      compacted: request.compactionMeta?.compacted ?? false,
+      compactedMessageCount: request.compactionMeta?.compactedMessageCount ?? 0,
+    });
   }
 }
 
@@ -229,8 +266,8 @@ async function callAzureOpenAi(request: AiTextRequest): Promise<string> {
       totalTokens,
       latencyMs,
       timestamp: Date.now(),
-      compacted: false,
-      compactedMessageCount: 0,
+      compacted: request.compactionMeta?.compacted ?? false,
+      compactedMessageCount: request.compactionMeta?.compactedMessageCount ?? 0,
     });
   }
 
@@ -255,12 +292,14 @@ async function callAzureOpenAi(request: AiTextRequest): Promise<string> {
     const finishedByLength = firstChoice?.finish_reason === "length";
 
     if (finishedByLength && completionTokens > 0 && reasoningTokens > 0) {
-      throw new Error(
-        "Azure OpenAI consumed completion tokens for reasoning without output text"
-      );
+      const msg = "Azure OpenAI consumed completion tokens for reasoning without output text";
+      if (request.route) logTokenError(request.route, msg);
+      throw new Error(msg);
     }
 
-    throw new Error("Azure OpenAI response did not include text content");
+    const msg = "Azure OpenAI response did not include text content";
+    if (request.route) logTokenError(request.route, msg);
+    throw new Error(msg);
   }
   return text;
 }
