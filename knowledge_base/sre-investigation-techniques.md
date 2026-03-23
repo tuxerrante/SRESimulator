@@ -7,7 +7,7 @@ A guide for the scientific problem investigator.
 Every investigation follows these phases **in order**. Skipping ahead costs you points and risks misdiagnosis.
 
 | # | Phase | Goal | You're done when… |
-|---|-------|------|-------------------|
+| --- | ------- | ------ | ------------------- |
 | 1 | **Reading** | Understand the incident ticket | You can list symptoms, timeline, and any inconsistencies |
 | 2 | **Context Gathering** | Get the big picture around the cluster | You've checked dashboards, history, and recent maintenance |
 | 3 | **Facts Gathering** | Collect targeted evidence | You have logs, metrics, or audit trails that narrow the cause |
@@ -110,7 +110,7 @@ Under pressure (Sev 2+), a partial theory may justify safe, well-known recovery 
 **Who acts?**
 
 | Situation | Actor |
-|-----------|-------|
+| ----------- | ------- |
 | Platform bug with clear SOP | SRE |
 | Only SREs have access (resize, maintenance) | SRE |
 | Credential rotation, customer workloads | Customer |
