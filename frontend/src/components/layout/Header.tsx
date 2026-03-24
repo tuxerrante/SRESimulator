@@ -50,11 +50,7 @@ export function Header() {
     prevEventsLength.current = scoringEvents.length;
   }, [scoringEvents, addPopup]);
 
-  useEffect(() => {
-    if (status !== "playing") {
-      setShowScore(false);
-    }
-  }, [status]);
+  const scoreOpen = showScore && status === "playing";
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
@@ -62,11 +58,11 @@ export function Header() {
         setShowScore(false);
       }
     }
-    if (showScore) {
+    if (scoreOpen) {
       document.addEventListener("mousedown", handleClickOutside);
       return () => document.removeEventListener("mousedown", handleClickOutside);
     }
-  }, [showScore]);
+  }, [scoreOpen]);
 
   return (
     <header className="flex items-center justify-between px-4 py-2 border-b border-zinc-700 bg-zinc-900 relative z-20">
@@ -118,7 +114,7 @@ export function Header() {
                   size={14}
                   className={cn(
                     "text-zinc-500 transition-transform",
-                    showScore && "rotate-180"
+                    scoreOpen && "rotate-180"
                   )}
                 />
               </button>
@@ -136,7 +132,7 @@ export function Header() {
                 </span>
               ))}
 
-              {showScore && (
+              {scoreOpen && (
                 <div className="absolute right-0 top-full mt-2 bg-zinc-900 border border-zinc-700 rounded-lg p-3 shadow-xl min-w-[240px]">
                   <div className="text-xs font-semibold text-zinc-400 mb-2 flex items-center justify-between">
                     <span>SCORE BREAKDOWN</span>
