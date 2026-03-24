@@ -84,6 +84,10 @@ export function useChat() {
             try {
               const parsed = JSON.parse(data);
               if (parsed.error) throw new Error(parsed.error);
+              if (parsed.reasoning) {
+                updateLastAssistantMessage("_The AI is thinking deeper..._");
+                continue;
+              }
               if (parsed.text) {
                 accumulated += parsed.text;
                 updateLastAssistantMessage(accumulated);

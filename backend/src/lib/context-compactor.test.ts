@@ -53,8 +53,8 @@ describe("compactHistory", () => {
     expect(result.retainedState).toBeNull();
   });
 
-  it("compacts with 7+ messages when over budget (no +2 padding)", () => {
-    const messages = makeMessages(7, 5000);
+  it("compacts with 5+ messages when over budget (default tail=4)", () => {
+    const messages = makeMessages(5, 5000);
     const result = compactHistory(messages, 0, 100);
 
     expect(result.compacted).toBe(true);
@@ -62,7 +62,7 @@ describe("compactHistory", () => {
   });
 
   it("skips compaction with <= RETAINED_TAIL_MESSAGES even if over budget", () => {
-    const messages = makeMessages(6, 5000);
+    const messages = makeMessages(4, 5000);
     const result = compactHistory(messages, 0, 100);
 
     expect(result.compacted).toBe(false);

@@ -17,9 +17,16 @@ export interface RetainedState {
 
 const CHARS_PER_TOKEN_ESTIMATE = 4;
 
-const COMPACTION_TOKEN_BUDGET = 12_000;
+function envInt(key: string, fallback: number): number {
+  const raw = process.env[key];
+  if (!raw) return fallback;
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
 
-const RETAINED_TAIL_MESSAGES = 6;
+const COMPACTION_TOKEN_BUDGET = envInt("COMPACTION_TOKEN_BUDGET", 12_000);
+
+const RETAINED_TAIL_MESSAGES = envInt("COMPACTION_TAIL_MESSAGES", 4);
 
 export function estimateTokens(text: string): number {
   return Math.ceil(text.length / CHARS_PER_TOKEN_ESTIMATE);

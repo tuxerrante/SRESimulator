@@ -48,6 +48,15 @@ interface AiTextRequest {
   maxTokens: number;
   route?: AiRoute;
   compactionMeta?: AiCompactionMeta;
+  cacheKey?: string;
+  /** @internal Set by the retry path when reasoning exhausted the completion budget. */
+  _reasoningRetried?: boolean;
+  /** @internal Override reasoning_effort on retry. */
+  _reasoningEffortOverride?: string;
+}
+
+export class AiReasoningRetryEvent {
+  readonly type = "reasoning-retry" as const;
 }
 
 let vertexClient: AnthropicVertex | null = null;
@@ -115,6 +124,7 @@ async function generateVertexText(request: AiTextRequest): Promise<string> {
       promptTokens: response.usage?.input_tokens ?? 0,
       completionTokens: response.usage?.output_tokens ?? 0,
       reasoningTokens: 0,
+      cachedTokens: 0,
       totalTokens: (response.usage?.input_tokens ?? 0) + (response.usage?.output_tokens ?? 0),
       latencyMs: Date.now() - start,
       timestamp: Date.now(),
@@ -154,6 +164,7 @@ async function* streamVertexText(
       promptTokens: finalMessage.usage?.input_tokens ?? 0,
       completionTokens: finalMessage.usage?.output_tokens ?? 0,
       reasoningTokens: 0,
+      cachedTokens: 0,
       totalTokens: (finalMessage.usage?.input_tokens ?? 0) + (finalMessage.usage?.output_tokens ?? 0),
       latencyMs: Date.now() - start,
       timestamp: Date.now(),
@@ -178,6 +189,9 @@ interface AzureChatResponse {
     completion_tokens_details?: {
       reasoning_tokens?: number;
     };
+    prompt_tokens_details?: {
+      cached_tokens?: number;
+    };
   };
 }
 
@@ -189,7 +203,12 @@ async function runAzureOpenAiRequest(
   request: AiTextRequest,
   useLegacyMaxTokens: boolean
 ): Promise<Response> {
-  const body = {
+  const reasoningEffort =
+    request._reasoningEffortOverride
+    ?? process.env.AI_REASONING_EFFORT
+    ?? "medium";
+
+  const body: Record<string, unknown> = {
     messages: [
       { role: "system", content: request.system },
       ...request.messages.map((message) => ({
@@ -198,10 +217,15 @@ async function runAzureOpenAiRequest(
       })),
     ],
     temperature: 0,
+    reasoning_effort: reasoningEffort,
     ...(useLegacyMaxTokens
       ? { max_tokens: request.maxTokens }
       : { max_completion_tokens: request.maxTokens }),
   };
+
+  if (request.cacheKey) {
+    body.prompt_cache_key = request.cacheKey;
+  }
 
   return fetch(
     `${endpoint}/openai/deployments/${deployment}/chat/completions?api-version=${apiVersion}`,
@@ -292,6 +316,7 @@ async function callAzureOpenAi(request: AiTextRequest): Promise<string> {
   const promptTokens = payload.usage?.prompt_tokens ?? 0;
   const completionTokens = payload.usage?.completion_tokens ?? 0;
   const reasoningTokens = payload.usage?.completion_tokens_details?.reasoning_tokens ?? 0;
+  const cachedTokens = payload.usage?.prompt_tokens_details?.cached_tokens ?? 0;
   const totalTokens = payload.usage?.total_tokens ?? (promptTokens + completionTokens);
 
   if (request.route) {
@@ -302,6 +327,7 @@ async function callAzureOpenAi(request: AiTextRequest): Promise<string> {
       promptTokens,
       completionTokens,
       reasoningTokens,
+      cachedTokens,
       totalTokens,
       latencyMs,
       timestamp: Date.now(),
@@ -331,6 +357,16 @@ async function callAzureOpenAi(request: AiTextRequest): Promise<string> {
     const finishedByLength = firstChoice?.finish_reason === "length";
 
     if (finishedByLength && completionTokens > 0 && reasoningTokens > 0) {
+      if (!request._reasoningRetried) {
+        console.warn(
+          "[ai-runtime] Reasoning exhausted completion budget, retrying with reasoning_effort=low",
+        );
+        return callAzureOpenAi({
+          ...request,
+          _reasoningRetried: true,
+          _reasoningEffortOverride: "low",
+        });
+      }
       const msg = "Azure OpenAI consumed completion tokens for reasoning without output text";
       if (request.route) logTokenError(request.route, msg);
       throw new Error(msg);
@@ -353,11 +389,28 @@ export async function generateAiText(request: AiTextRequest): Promise<string> {
 
 export async function* streamAiText(
   request: AiTextRequest
-): AsyncGenerator<string, void, void> {
+): AsyncGenerator<string | AiReasoningRetryEvent, void, void> {
   const readiness = assertAiReadyForRuntime();
   if (readiness.provider === "azure-openai") {
-    const text = await callAzureOpenAi(request);
-    yield text;
+    try {
+      const text = await callAzureOpenAi(request);
+      yield text;
+    } catch (error) {
+      const isReasoningExhausted =
+        error instanceof Error &&
+        error.message.includes("reasoning without output text");
+      if (isReasoningExhausted && !request._reasoningRetried) {
+        yield new AiReasoningRetryEvent();
+        const text = await callAzureOpenAi({
+          ...request,
+          _reasoningRetried: true,
+          _reasoningEffortOverride: "low",
+        });
+        yield text;
+      } else {
+        throw error;
+      }
+    }
     return;
   }
   yield* streamVertexText(request);
