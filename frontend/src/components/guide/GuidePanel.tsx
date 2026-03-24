@@ -54,7 +54,7 @@ function parseSections(md: string): GuideSection[] {
   const out: GuideSection[] = [];
   const parts = md.split(/^## /m);
 
-  const intro = parts[0].replace(/^#\s+.+\n+/, "").replace(/---/g, "").trim();
+  const intro = parts[0].replace(/^#\s+.+\n+/, "").replace(/^---\s*$/gm, "").trim();
   if (intro) out.push({ kind: "intro", heading: "", body: intro });
 
   for (let i = 1; i < parts.length; i++) {
@@ -270,11 +270,12 @@ export function GuidePanel() {
       </div>
 
       <div ref={containerRef} className="flex-1 overflow-y-auto p-4 space-y-3">
-        {sections.map((s, i) => {
+        {sections.map((s) => {
+          const key = s.num ? `${s.kind}-${s.num}` : s.kind;
           switch (s.kind) {
             case "intro":
               return (
-                <div key={i} className="px-1">
+                <div key={key} className="px-1">
                   <ReactMarkdown
                     remarkPlugins={[remarkGfm]}
                     components={mdComponents}
@@ -287,7 +288,7 @@ export function GuidePanel() {
             case "phases": {
               const textBeforeTable = s.body.split(/\n\|/)[0].trim();
               return (
-                <div key={i} className="space-y-3">
+                <div key={key} className="space-y-3">
                   {textBeforeTable && (
                     <div className="px-1">
                       <ReactMarkdown
@@ -305,13 +306,14 @@ export function GuidePanel() {
 
             case "phase": {
               const meta = PHASE_META[s.num!];
+              if (!meta) return null;
               const isActive = s.num === activeNum;
               const done = parseInt(s.num!) < parseInt(activeNum);
               const Icon = meta.icon;
 
               return (
                 <section
-                  key={i}
+                  key={key}
                   data-phase={s.num}
                   className={cn(
                     "rounded-lg border transition-all scroll-mt-4 overflow-hidden",
@@ -377,7 +379,7 @@ export function GuidePanel() {
             case "quickref":
               return (
                 <section
-                  key={i}
+                  key={key}
                   className="rounded-lg border border-amber-500/15 bg-amber-950/10 overflow-hidden"
                 >
                   <div className="flex items-center gap-2 px-3 py-2 border-b border-amber-500/10 bg-amber-900/10">
