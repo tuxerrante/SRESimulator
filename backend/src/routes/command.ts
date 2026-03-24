@@ -1,7 +1,7 @@
 import { Router, type Request, type Response } from "express";
 import { getAiReadiness } from "../lib/ai-config";
 import { generateMockCommandOutput } from "../lib/mock-ai";
-import { generateAiText } from "../lib/ai-runtime";
+import { generateAiText, AiThrottledError } from "../lib/ai-runtime";
 import type { Scenario } from "../../../shared/types/game";
 
 export const commandRouter = Router();
@@ -109,6 +109,11 @@ commandRouter.post("/", async (req: Request, res: Response) => {
         output: generateMockCommandOutput(req.body.command, req.body.type),
         exitCode: 0,
       });
+      return;
+    }
+
+    if (error instanceof AiThrottledError) {
+      res.status(429).json({ error: error.message });
       return;
     }
 

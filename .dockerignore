@@ -5,6 +5,7 @@
 .cursor
 .next
 .worktrees
+infra
 **/node_modules
 **/dist
 **/build

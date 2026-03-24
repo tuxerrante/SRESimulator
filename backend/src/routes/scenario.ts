@@ -3,7 +3,7 @@ import { loadKnowledgeBase } from "../lib/knowledge";
 import { createSession } from "../lib/sessions";
 import { getAiReadiness } from "../lib/ai-config";
 import { generateMockScenario } from "../lib/mock-ai";
-import { generateAiText } from "../lib/ai-runtime";
+import { generateAiText, AiThrottledError } from "../lib/ai-runtime";
 import type { Difficulty, Scenario } from "../../../shared/types/game";
 
 export const scenarioRouter = Router();
@@ -134,6 +134,10 @@ ${scenarioContext}`,
 
     res.json({ scenario, sessionToken });
   } catch (error) {
+    if (error instanceof AiThrottledError) {
+      res.status(429).json({ error: error.message });
+      return;
+    }
     const message =
       error instanceof Error ? error.message : "Scenario generation failed";
     res.status(500).json({ error: message });

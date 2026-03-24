@@ -51,6 +51,14 @@ coverage/
 # Data (leaderboard storage)
 data/
 
+# Terraform
+infra/.terraform/
+infra/.terraform.lock.hcl
+infra/tfplan
+infra/*.tfstate*
+infra/terraform.tfvars
+infra/crash.log
+
 # Misc
 *.tmp
 *.bak

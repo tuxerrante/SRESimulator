@@ -9,6 +9,14 @@ const LEADERBOARD_FILE = path.join(DATA_DIR, "leaderboard.json");
 const MAX_ENTRIES_PER_DIFFICULTY = 10;
 const MAX_HALL_OF_FAME = 10;
 
+let writeLock: Promise<void> = Promise.resolve();
+
+function withWriteLock<T>(fn: () => Promise<T>): Promise<T> {
+  const next = writeLock.then(fn, fn);
+  writeLock = next.then(() => {}, () => {});
+  return next;
+}
+
 async function ensureFile(): Promise<void> {
   if (!existsSync(DATA_DIR)) {
     await mkdir(DATA_DIR, { recursive: true });
@@ -76,35 +84,37 @@ export async function getHallOfFame(): Promise<HallOfFameEntry[]> {
   return hallOfFame.slice(0, MAX_HALL_OF_FAME);
 }
 
-export async function addEntry(
+export function addEntry(
   entry: LeaderboardEntry
 ): Promise<LeaderboardEntry> {
-  const entries = await readEntries();
+  return withWriteLock(async () => {
+    const entries = await readEntries();
 
-  const existingIdx = entries.findIndex(
-    (e) => e.nickname === entry.nickname && e.difficulty === entry.difficulty
-  );
+    const existingIdx = entries.findIndex(
+      (e) => e.nickname === entry.nickname && e.difficulty === entry.difficulty
+    );
 
-  if (existingIdx !== -1) {
-    if (entry.score.total > entries[existingIdx].score.total) {
-      entries[existingIdx] = entry;
+    if (existingIdx !== -1) {
+      if (entry.score.total > entries[existingIdx].score.total) {
+        entries[existingIdx] = entry;
+      }
+    } else {
+      entries.push(entry);
     }
-  } else {
-    entries.push(entry);
-  }
 
-  const grouped: Record<string, LeaderboardEntry[]> = {};
-  for (const e of entries) {
-    if (!grouped[e.difficulty]) grouped[e.difficulty] = [];
-    grouped[e.difficulty].push(e);
-  }
+    const grouped: Record<string, LeaderboardEntry[]> = {};
+    for (const e of entries) {
+      if (!grouped[e.difficulty]) grouped[e.difficulty] = [];
+      grouped[e.difficulty].push(e);
+    }
 
-  const trimmed: LeaderboardEntry[] = [];
-  for (const difficulty of Object.keys(grouped)) {
-    const sorted = sortEntries(grouped[difficulty]);
-    trimmed.push(...sorted.slice(0, MAX_ENTRIES_PER_DIFFICULTY));
-  }
+    const trimmed: LeaderboardEntry[] = [];
+    for (const difficulty of Object.keys(grouped)) {
+      const sorted = sortEntries(grouped[difficulty]);
+      trimmed.push(...sorted.slice(0, MAX_ENTRIES_PER_DIFFICULTY));
+    }
 
-  await writeEntries(trimmed);
-  return entry;
+    await writeEntries(trimmed);
+    return entry;
+  });
 }
