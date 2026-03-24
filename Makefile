@@ -3,7 +3,7 @@
        lint lint-ts lint-backend lint-unused-exports lint-yaml lint-md \
        typecheck typecheck-backend validate \
        security audit lockfile-lint grype \
-       test smoke-local-vertex env-check e2e-azure-route e2e-azure-route-up e2e-azure-route-down \
+       test smoke-local-vertex env-check e2e-azure-route e2e-azure-route-up e2e-azure-route-refresh e2e-azure-route-down \
        prod-up prod-down prod-status \
        build dev start \
        docker-build-frontend docker-build-backend docker-build \
@@ -30,6 +30,10 @@ E2E_METADATA_FILE ?= data/e2e-azure-route.env
 E2E_REQUIRED_VARS := AZURE_SUBSCRIPTION_ID ARO_RG ARO_CLUSTER AOAI_RG AOAI_ACCOUNT AOAI_DEPLOYMENT
 PROD_NAMESPACE ?= sre-simulator
 PROD_METADATA_FILE ?= data/prod-route.env
+
+export AZURE_SUBSCRIPTION_ID ARO_RG ARO_CLUSTER
+export AOAI_RG AOAI_ACCOUNT AOAI_DEPLOYMENT
+export E2E_RELEASE NPM_VERSION
 
 define e2e_var_source
 $(if $(findstring environment,$(origin $(1))),shell,$(if $(findstring command line,$(origin $(1))),shell (command line),$(if $(filter file,$(origin $(1))),$(E2E_ENV_FILE),make ($(origin $(1))))))
@@ -213,68 +217,84 @@ e2e-azure-route-up: env-check ## Build+deploy frontend/backend to ARO and print 
 		echo "Missing required env vars. Export: AZURE_SUBSCRIPTION_ID, ARO_RG, ARO_CLUSTER, AOAI_RG, AOAI_ACCOUNT, AOAI_DEPLOYMENT (or set them in $(E2E_ENV_FILE))."; \
 		exit 1; \
 	fi; \
+	. scripts/aro-deploy.sh; \
 	TS=$$(date +%Y%m%d-%H%M%S); \
 	NS="$(E2E_NAMESPACE_PREFIX)-$$TS"; \
 	TAG="e2e$$TS"; \
 	PROBE_TOKEN="probe-$$TS"; \
 	echo "Using namespace: $$NS"; \
-	az account set -s "$(AZURE_SUBSCRIPTION_ID)" >/dev/null; \
-	API=$$(az aro show -g "$(ARO_RG)" -n "$(ARO_CLUSTER)" --query apiserverProfile.url -o tsv); \
-	PASS=$$(az aro list-credentials -g "$(ARO_RG)" -n "$(ARO_CLUSTER)" --query kubeadminPassword -o tsv); \
-	oc login "$$API" -u kubeadmin -p "$$PASS" --insecure-skip-tls-verify=true >/dev/null; \
-	AOAI_ENDPOINT=$$(az cognitiveservices account show -g "$(AOAI_RG)" -n "$(AOAI_ACCOUNT)" --query properties.endpoint -o tsv | sed 's:/*$$::'); \
-	AOAI_KEY=$$(az cognitiveservices account keys list -g "$(AOAI_RG)" -n "$(AOAI_ACCOUNT)" --query key1 -o tsv); \
+	aro_login; \
+	aoai_fetch_creds; \
 	oc create namespace "$$NS" >/dev/null; \
-	oc -n "$$NS" create secret generic azure-openai-creds --from-literal=endpoint="$$AOAI_ENDPOINT" --from-literal=api-key="$$AOAI_KEY" >/dev/null; \
+	oc -n "$$NS" create secret generic azure-openai-creds \
+		--from-literal=endpoint="$$AOAI_ENDPOINT" --from-literal=api-key="$$AOAI_KEY" >/dev/null; \
 	oc -n "$$NS" new-build --name=sre-simulator-frontend --binary=true --strategy=docker --to=sre-simulator-frontend:$$TAG >/dev/null; \
 	oc -n "$$NS" new-build --name=sre-simulator-backend --binary=true --strategy=docker --to=sre-simulator-backend:$$TAG >/dev/null; \
-	oc -n "$$NS" patch bc/sre-simulator-frontend --type=merge -p '{"spec":{"strategy":{"dockerStrategy":{"dockerfilePath":"frontend/Dockerfile","buildArgs":[{"name":"NPM_VERSION","value":"$(NPM_VERSION)"}]}}}}' >/dev/null; \
-	oc -n "$$NS" patch bc/sre-simulator-backend --type=merge -p '{"spec":{"strategy":{"dockerStrategy":{"dockerfilePath":"backend/Dockerfile","buildArgs":[{"name":"NPM_VERSION","value":"$(NPM_VERSION)"}]}}}}' >/dev/null; \
-	oc -n "$$NS" start-build sre-simulator-frontend --from-dir=. --follow --wait >/dev/null; \
-	oc -n "$$NS" start-build sre-simulator-backend --from-dir=. --follow --wait >/dev/null; \
-	DOMAIN=$$(oc get ingresses.config/cluster -o jsonpath='{.spec.domain}'); \
-	HOST="$$NS.$${DOMAIN}"; \
-	helm upgrade --install "$(E2E_RELEASE)" ./helm/sre-simulator -n "$$NS" \
-		--set route.host="$$HOST" \
-		--set frontend.image.repository="image-registry.openshift-image-registry.svc:5000/$$NS/sre-simulator-frontend" \
-		--set frontend.image.tag="$$TAG" \
-		--set frontend.image.pullPolicy=Always \
-		--set backend.image.repository="image-registry.openshift-image-registry.svc:5000/$$NS/sre-simulator-backend" \
-		--set backend.image.tag="$$TAG" \
-		--set backend.image.pullPolicy=Always \
-		--set ai.provider=azure-openai \
-		--set ai.mockMode=false \
-		--set ai.strictStartup=true \
-		--set ai.model="$(AOAI_DEPLOYMENT)" \
-		--set-string ai.liveProbeToken="$$PROBE_TOKEN" \
-		--set ai.azureOpenai.endpointFromSecret.existingSecretName=azure-openai-creds \
-		--set ai.azureOpenai.endpointFromSecret.key=endpoint \
-		--set ai.azureOpenai.deployment="$(AOAI_DEPLOYMENT)" \
-		--set ai.azureOpenai.apiVersion=2024-10-21 \
-		--set ai.azureOpenai.credentials.existingSecretName=azure-openai-creds \
-		--set ai.azureOpenai.credentials.key=api-key \
-		--wait --timeout 15m >/dev/null; \
-	oc -n "$$NS" rollout status deployment/$(E2E_RELEASE)-frontend --timeout=6m >/dev/null; \
-	oc -n "$$NS" rollout status deployment/$(E2E_RELEASE)-backend --timeout=6m >/dev/null; \
+	patch_bc_strategy "$$NS" sre-simulator-frontend frontend/Dockerfile; \
+	patch_bc_strategy "$$NS" sre-simulator-backend backend/Dockerfile; \
+	oc_build_timed "$$NS" sre-simulator-frontend; \
+	oc_build_timed "$$NS" sre-simulator-backend; \
+	helm_deploy_sre "$$NS" "$$TAG" "$$PROBE_TOKEN"; \
+	wait_for_rollout "$$NS"; \
 	mkdir -p "$$(dirname "$(E2E_METADATA_FILE)")"; \
-	printf 'NS=%s\nRELEASE=%s\nURL=%s\nTAG=%s\n' "$$NS" "$(E2E_RELEASE)" "https://$$HOST" "$$TAG" > "$(E2E_METADATA_FILE)"; \
-	PROBE_CODE=""; \
-	i=0; \
-	while [ $$i -lt 10 ]; do \
-		PROBE_CODE=$$(curl -ksS -H "x-ai-probe-token: $$PROBE_TOKEN" -o /dev/null -w '%{http_code}' "https://$$HOST/api/ai/probe?live=true" || true); \
-		if [ "$$PROBE_CODE" = "200" ]; then break; fi; \
-		i=$$((i + 1)); \
-		sleep 2; \
-	done; \
-	if [ "$$PROBE_CODE" != "200" ]; then \
-		echo "Probe failed with status $$PROBE_CODE"; \
-		curl -ksS -H "x-ai-probe-token: $$PROBE_TOKEN" "https://$$HOST/api/ai/probe?live=true" || true; \
-		echo; \
+	printf 'NS=%s\nRELEASE=%s\nURL=%s\nTAG=%s\n' "$$NS" "$(E2E_RELEASE)" "https://$$DEPLOY_HOST" "$$TAG" > "$(E2E_METADATA_FILE)"; \
+	probe_readiness "$$DEPLOY_HOST" "$$PROBE_TOKEN"; \
+	echo "Manual E2E environment is ready."; \
+	echo "URL: https://$$DEPLOY_HOST"; \
+	echo "Probe status: 200"; \
+	echo "Metadata saved to $(E2E_METADATA_FILE)"
+
+e2e-azure-route-refresh: env-check ## Rebuild+helm upgrade into existing e2e ns (NS=... or $(E2E_METADATA_FILE))
+	@set -e; \
+	if [ -n "$(E2E_MISSING_VARS)" ]; then \
+		echo "Missing required env vars. Export: AZURE_SUBSCRIPTION_ID, ARO_RG, ARO_CLUSTER, AOAI_RG, AOAI_ACCOUNT, AOAI_DEPLOYMENT (or set them in $(E2E_ENV_FILE))."; \
 		exit 1; \
 	fi; \
-	echo "Manual e2e environment is ready."; \
-	echo "URL: https://$$HOST"; \
-	echo "Probe status: $$PROBE_CODE"; \
+	if [ -n "$${NS:-}" ]; then \
+		TARGET_NS="$$NS"; \
+	elif [ -f "$(E2E_METADATA_FILE)" ]; then \
+		. "$(E2E_METADATA_FILE)"; \
+		TARGET_NS="$$NS"; \
+	else \
+		echo "Set NS=<namespace> or run e2e-azure-route-up first (needs $(E2E_METADATA_FILE))."; \
+		exit 1; \
+	fi; \
+	. scripts/aro-deploy.sh; \
+	TS=$$(date +%Y%m%d-%H%M%S); \
+	TAG="e2e$$TS"; \
+	PROBE_TOKEN="probe-$$TS"; \
+	echo "Refreshing namespace: $$TARGET_NS (image tag $$TAG)"; \
+	aro_login; \
+	if ! oc get "namespace/$$TARGET_NS" >/dev/null 2>&1; then \
+		echo "Namespace $$TARGET_NS does not exist. Run make e2e-azure-route-up first."; \
+		exit 1; \
+	fi; \
+	aoai_fetch_creds; \
+	oc -n "$$TARGET_NS" create secret generic azure-openai-creds \
+		--from-literal=endpoint="$$AOAI_ENDPOINT" --from-literal=api-key="$$AOAI_KEY" \
+		--dry-run=client -o yaml | oc apply -f - >/dev/null; \
+	for BC in sre-simulator-frontend sre-simulator-backend; do \
+		if ! oc -n "$$TARGET_NS" get "bc/$$BC" >/dev/null 2>&1; then \
+			echo "BuildConfig $$BC not found in $$TARGET_NS. Use e2e-azure-route-up for a new environment."; \
+			exit 1; \
+		fi; \
+	done; \
+	oc -n "$$TARGET_NS" patch bc/sre-simulator-frontend --type=merge \
+		-p "{\"spec\":{\"output\":{\"to\":{\"kind\":\"ImageStreamTag\",\"name\":\"sre-simulator-frontend:$$TAG\"}}}}" >/dev/null; \
+	patch_bc_strategy "$$TARGET_NS" sre-simulator-frontend frontend/Dockerfile; \
+	oc -n "$$TARGET_NS" patch bc/sre-simulator-backend --type=merge \
+		-p "{\"spec\":{\"output\":{\"to\":{\"kind\":\"ImageStreamTag\",\"name\":\"sre-simulator-backend:$$TAG\"}}}}" >/dev/null; \
+	patch_bc_strategy "$$TARGET_NS" sre-simulator-backend backend/Dockerfile; \
+	oc_build_timed "$$TARGET_NS" sre-simulator-frontend; \
+	oc_build_timed "$$TARGET_NS" sre-simulator-backend; \
+	helm_deploy_sre "$$TARGET_NS" "$$TAG" "$$PROBE_TOKEN"; \
+	wait_for_rollout "$$TARGET_NS"; \
+	mkdir -p "$$(dirname "$(E2E_METADATA_FILE)")"; \
+	printf 'NS=%s\nRELEASE=%s\nURL=%s\nTAG=%s\n' "$$TARGET_NS" "$(E2E_RELEASE)" "https://$$DEPLOY_HOST" "$$TAG" > "$(E2E_METADATA_FILE)"; \
+	probe_readiness "$$DEPLOY_HOST" "$$PROBE_TOKEN"; \
+	echo "E2E namespace refreshed."; \
+	echo "URL: https://$$DEPLOY_HOST"; \
+	echo "Probe status: 200"; \
 	echo "Metadata saved to $(E2E_METADATA_FILE)"
 
 e2e-azure-route-down: ## Delete temporary Azure OpenAI e2e namespace (uses NS=... or metadata file)
@@ -304,57 +324,33 @@ e2e-azure-route-down: ## Delete temporary Azure OpenAI e2e namespace (uses NS=..
 # ──────────────────────────────────────────────
 prod-up: env-check ## Deploy to stable production namespace (same cluster + AOAI as e2e)
 	@set -e; \
+	. scripts/aro-deploy.sh; \
 	NS="$(PROD_NAMESPACE)"; \
 	TAG="prod$$(date +%Y%m%d-%H%M%S)"; \
 	PROBE_TOKEN="probe-prod-$$(date +%s)"; \
 	echo "Deploying to PRODUCTION namespace: $$NS"; \
-	az account set -s "$(AZURE_SUBSCRIPTION_ID)" >/dev/null; \
-	API=$$(az aro show -g "$(ARO_RG)" -n "$(ARO_CLUSTER)" --query apiserverProfile.url -o tsv); \
-	PASS=$$(az aro list-credentials -g "$(ARO_RG)" -n "$(ARO_CLUSTER)" --query kubeadminPassword -o tsv); \
-	oc login "$$API" -u kubeadmin -p "$$PASS" --insecure-skip-tls-verify=true >/dev/null; \
-	AOAI_ENDPOINT=$$(az cognitiveservices account show -g "$(AOAI_RG)" -n "$(AOAI_ACCOUNT)" --query properties.endpoint -o tsv | sed 's:/*$$::'); \
-	AOAI_KEY=$$(az cognitiveservices account keys list -g "$(AOAI_RG)" -n "$(AOAI_ACCOUNT)" --query key1 -o tsv); \
+	aro_login; \
+	aoai_fetch_creds; \
 	oc create namespace "$$NS" 2>/dev/null || true; \
 	oc -n "$$NS" delete secret azure-openai-creds 2>/dev/null || true; \
-	oc -n "$$NS" create secret generic azure-openai-creds --from-literal=endpoint="$$AOAI_ENDPOINT" --from-literal=api-key="$$AOAI_KEY" >/dev/null; \
+	oc -n "$$NS" create secret generic azure-openai-creds \
+		--from-literal=endpoint="$$AOAI_ENDPOINT" --from-literal=api-key="$$AOAI_KEY" >/dev/null; \
 	if ! oc -n "$$NS" get bc/sre-simulator-frontend >/dev/null 2>&1; then \
 		oc -n "$$NS" new-build --name=sre-simulator-frontend --binary=true --strategy=docker --to=sre-simulator-frontend:$$TAG >/dev/null; \
 	fi; \
 	if ! oc -n "$$NS" get bc/sre-simulator-backend >/dev/null 2>&1; then \
 		oc -n "$$NS" new-build --name=sre-simulator-backend --binary=true --strategy=docker --to=sre-simulator-backend:$$TAG >/dev/null; \
 	fi; \
-	oc -n "$$NS" patch bc/sre-simulator-frontend --type=merge -p '{"spec":{"strategy":{"dockerStrategy":{"dockerfilePath":"frontend/Dockerfile","buildArgs":[{"name":"NPM_VERSION","value":"$(NPM_VERSION)"}]}}}}' >/dev/null; \
-	oc -n "$$NS" patch bc/sre-simulator-backend --type=merge -p '{"spec":{"strategy":{"dockerStrategy":{"dockerfilePath":"backend/Dockerfile","buildArgs":[{"name":"NPM_VERSION","value":"$(NPM_VERSION)"}]}}}}' >/dev/null; \
-	oc -n "$$NS" start-build sre-simulator-frontend --from-dir=. --follow --wait >/dev/null; \
-	oc -n "$$NS" start-build sre-simulator-backend --from-dir=. --follow --wait >/dev/null; \
-	DOMAIN=$$(oc get ingresses.config/cluster -o jsonpath='{.spec.domain}'); \
-	HOST="$$NS.$${DOMAIN}"; \
-	helm upgrade --install "$(E2E_RELEASE)" ./helm/sre-simulator -n "$$NS" \
-		--set route.host="$$HOST" \
-		--set frontend.image.repository="image-registry.openshift-image-registry.svc:5000/$$NS/sre-simulator-frontend" \
-		--set frontend.image.tag="$$TAG" \
-		--set frontend.image.pullPolicy=Always \
-		--set backend.image.repository="image-registry.openshift-image-registry.svc:5000/$$NS/sre-simulator-backend" \
-		--set backend.image.tag="$$TAG" \
-		--set backend.image.pullPolicy=Always \
-		--set ai.provider=azure-openai \
-		--set ai.mockMode=false \
-		--set ai.strictStartup=true \
-		--set ai.model="$(AOAI_DEPLOYMENT)" \
-		--set-string ai.liveProbeToken="$$PROBE_TOKEN" \
-		--set ai.azureOpenai.endpointFromSecret.existingSecretName=azure-openai-creds \
-		--set ai.azureOpenai.endpointFromSecret.key=endpoint \
-		--set ai.azureOpenai.deployment="$(AOAI_DEPLOYMENT)" \
-		--set ai.azureOpenai.apiVersion=2024-10-21 \
-		--set ai.azureOpenai.credentials.existingSecretName=azure-openai-creds \
-		--set ai.azureOpenai.credentials.key=api-key \
-		--wait --timeout 15m >/dev/null; \
-	oc -n "$$NS" rollout status deployment/$(E2E_RELEASE)-frontend --timeout=6m >/dev/null; \
-	oc -n "$$NS" rollout status deployment/$(E2E_RELEASE)-backend --timeout=6m >/dev/null; \
+	patch_bc_strategy "$$NS" sre-simulator-frontend frontend/Dockerfile; \
+	patch_bc_strategy "$$NS" sre-simulator-backend backend/Dockerfile; \
+	oc_build_timed "$$NS" sre-simulator-frontend; \
+	oc_build_timed "$$NS" sre-simulator-backend; \
+	helm_deploy_sre "$$NS" "$$TAG" "$$PROBE_TOKEN"; \
+	wait_for_rollout "$$NS"; \
 	mkdir -p "$$(dirname "$(PROD_METADATA_FILE)")"; \
-	printf 'NS=%s\nRELEASE=%s\nURL=%s\nTAG=%s\n' "$$NS" "$(E2E_RELEASE)" "https://$$HOST" "$$TAG" > "$(PROD_METADATA_FILE)"; \
+	printf 'NS=%s\nRELEASE=%s\nURL=%s\nTAG=%s\n' "$$NS" "$(E2E_RELEASE)" "https://$$DEPLOY_HOST" "$$TAG" > "$(PROD_METADATA_FILE)"; \
 	echo "Production deployment ready."; \
-	echo "URL: https://$$HOST"; \
+	echo "URL: https://$$DEPLOY_HOST"; \
 	echo "Metadata saved to $(PROD_METADATA_FILE)"
 
 prod-down: ## Delete production namespace (REQUIRES CONFIRMATION – type namespace name)
