@@ -8,7 +8,7 @@
        build dev start \
        docker-build-frontend docker-build-backend docker-build \
        pre-commit all \
-       tf-init tf-test tf-plan tf-apply tf-destroy tf-kubeconfig
+       tf-bootstrap tf-init tf-validate tf-fmt tf-test tf-plan tf-apply tf-destroy tf-kubeconfig tf-output
 
 FRONTEND_DIR := frontend
 BACKEND_DIR := backend
@@ -431,8 +431,17 @@ all: validate security build ## Full CI pipeline: lint + typecheck + security + 
 # ──────────────────────────────────────────────
 # Infrastructure (delegates to infra/Makefile)
 # ──────────────────────────────────────────────
+tf-bootstrap: ## Create Azure Storage for Terraform remote state (one-time)
+	$(MAKE) -C infra tf-bootstrap
+
 tf-init: ## Terraform init (see infra/Makefile for options)
 	$(MAKE) -C infra tf-init
+
+tf-validate: ## Validate Terraform configuration
+	$(MAKE) -C infra tf-validate
+
+tf-fmt: ## Format Terraform files
+	$(MAKE) -C infra tf-fmt
 
 tf-test: ## Run Terraform unit tests (no credentials needed)
 	$(MAKE) -C infra tf-test
@@ -448,3 +457,6 @@ tf-destroy: ## Terraform destroy
 
 tf-kubeconfig: ## Extract kubeconfig from ARO cluster
 	$(MAKE) -C infra tf-kubeconfig
+
+tf-output: ## Show all Terraform outputs
+	$(MAKE) -C infra tf-output

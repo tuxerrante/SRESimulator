@@ -91,7 +91,10 @@ resource "azapi_resource" "aro_cluster" {
   body = {
     properties = {
       clusterProfile = {
-        domain          = local.prefix
+        domain = local.prefix
+        # The ARO RP auto-creates this resource group to hold cluster-internal
+        # resources (VMs, disks, LBs).  It is hidden in the portal and fully
+        # managed by the RP — we only specify the desired name here.
         resourceGroupId = "/subscriptions/${data.azurerm_client_config.current.subscription_id}/resourceGroups/${local.prefix}-cluster-rg"
         version         = var.aro_version != "" ? var.aro_version : null
         pullSecret      = var.pull_secret_path != "" ? file(var.pull_secret_path) : null

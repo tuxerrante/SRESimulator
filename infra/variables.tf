@@ -100,6 +100,18 @@ variable "prod_namespace" {
   default     = "sre-simulator"
 }
 
+variable "budget_amount" {
+  description = "Monthly budget cap in the subscription's billing currency (e.g. EUR). An email alert fires at 80% forecasted and 100% actual. Set to 0 to disable."
+  type        = number
+  default     = 200
+}
+
+variable "budget_alert_emails" {
+  description = "Email addresses that receive budget alerts when spending approaches budget_amount. Budget resource is only created when at least one email is provided."
+  type        = list(string)
+  default     = []
+}
+
 variable "extra_tags" {
   description = "Additional tags to merge onto all resources."
   type        = map(string)

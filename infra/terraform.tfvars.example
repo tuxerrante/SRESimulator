@@ -14,7 +14,8 @@ location    = "eastus"
 # aro_version = "4.17.27"
 
 # Red Hat pull secret (optional but recommended)
-# pull_secret_path = "~/pull-secret.txt"
+# NOTE: Terraform does not expand "~"; use an absolute path.
+# pull_secret_path = "/absolute/path/to/pull-secret.txt"
 
 # Azure OpenAI model (gpt-4o-mini is cheapest; see PR #31 for per-route sizing)
 # aoai_model_name    = "gpt-4o-mini"
@@ -23,6 +24,10 @@ location    = "eastus"
 
 # Stable namespace for the app (shared cluster + AOAI with e2e namespaces)
 # prod_namespace = "sre-simulator"
+
+# Budget alert – sends email when monthly RG spend reaches threshold
+budget_alert_emails = ["your-email@example.com"]
+# budget_amount       = 200  # monthly cap in billing currency (default 200)
 
 # Additional tags to apply to all resources
 # extra_tags = {
