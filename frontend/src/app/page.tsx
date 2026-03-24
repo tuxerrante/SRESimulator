@@ -4,7 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useGameStore } from "@/stores/gameStore";
 import type { Difficulty, Scenario } from "@shared/types/game";
-import { Shield, AlertTriangle, Zap, Flame, Loader2, Trophy } from "lucide-react";
+import { Shield, AlertTriangle, Zap, Flame, Loader2, Trophy, Github, Heart } from "lucide-react";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
 
@@ -166,12 +166,34 @@ export default function HomePage() {
         )}
       </div>
 
-      <footer className="text-center text-zinc-700 text-xs py-4">
-        ARO SRE Simulator &mdash; Investigation training powered by AI
-        <span className="mx-2">&middot;</span>
-        <Link href="/about" className="hover:text-zinc-400 transition-colors">
-          About
-        </Link>
+      <footer className="flex flex-col items-center gap-4 py-6 px-6">
+        <a
+          href="https://github.com/tuxerrante"
+          target="_blank"
+          rel="noopener noreferrer"
+          className={cn(
+            "group flex items-center gap-3 px-5 py-3 rounded-xl border transition-all",
+            "border-zinc-800 bg-zinc-900/60 hover:border-amber-700/50 hover:bg-zinc-900"
+          )}
+        >
+          <Github size={20} className="text-zinc-400 group-hover:text-zinc-200 transition-colors" />
+          <div className="flex flex-col">
+            <span className="text-sm font-semibold text-zinc-300 group-hover:text-zinc-100 transition-colors">
+              tuxerrante
+            </span>
+            <span className="text-[11px] text-zinc-600 group-hover:text-zinc-500 transition-colors flex items-center gap-1">
+              Built with <Heart size={10} className="text-red-500/70" /> by Alessandro Affinito
+            </span>
+          </div>
+        </a>
+
+        <div className="text-zinc-700 text-xs">
+          ARO SRE Simulator &mdash; Investigation training powered by AI
+          <span className="mx-2">&middot;</span>
+          <Link href="/about" className="hover:text-zinc-400 transition-colors">
+            About
+          </Link>
+        </div>
       </footer>
     </div>
   );
