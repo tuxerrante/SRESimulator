@@ -74,8 +74,8 @@ run "default_aoai_capacity" {
   command = plan
 
   assert {
-    condition     = var.aoai_capacity == 30
-    error_message = "Default AOAI capacity should be 30 (30K TPM – comfortable for single user, room for concurrent e2e)."
+    condition     = var.aoai_capacity == 80
+    error_message = "Default AOAI capacity should be 80 (80K TPM – covers single-user peak plus concurrent e2e)."
   }
 }
 

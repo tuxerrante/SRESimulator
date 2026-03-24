@@ -20,7 +20,7 @@ location    = "eastus"
 # Azure OpenAI model (gpt-4o-mini is cheapest; see PR #31 for per-route sizing)
 # aoai_model_name    = "gpt-4o-mini"
 # aoai_model_version = "2024-07-18"
-# aoai_capacity      = 30  # 30K TPM rate limit (pay-per-token, not per capacity)
+# aoai_capacity      = 80  # 80K TPM rate limit (pay-per-token, not per capacity)
 
 # Stable namespace for the app (shared cluster + AOAI with e2e namespaces)
 # prod_namespace = "sre-simulator"

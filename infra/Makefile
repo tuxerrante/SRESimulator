@@ -31,16 +31,23 @@ tf-bootstrap: ## Create Azure Storage Account for Terraform remote state (one-ti
 		--name "$(TF_STATE_CONTAINER)" \
 		--account-name "$(TF_STATE_ACCOUNT)"
 	@echo "Terraform backend storage ready."
-	@echo "Update infra/backend.tf with: storage_account_name = \"$(TF_STATE_ACCOUNT)\""
+	@echo "To use this storage account for the Terraform backend, run:"
+	@echo "  make tf-init TF_STATE_ACCOUNT=\"$(TF_STATE_ACCOUNT)\""
 
-tf-init: ## Initialize Terraform (use TF_STATE_ACCOUNT to override backend)
-	$(if $(TF_STATE_ACCOUNT), \
-		terraform init \
-			-backend-config="storage_account_name=$(TF_STATE_ACCOUNT)" \
-			-backend-config="resource_group_name=$(TF_STATE_RG)" \
-			-backend-config="container_name=$(TF_STATE_CONTAINER)" \
-			-backend-config="key=$(TF_STATE_KEY)", \
-		terraform init)
+tf-init: ## Initialize Terraform (requires TF_STATE_ACCOUNT for remote state)
+	@if [ -z "$(TF_STATE_ACCOUNT)" ]; then \
+		echo "TF_STATE_ACCOUNT is required. Run 'make tf-bootstrap' first, then:"; \
+		echo "  make tf-init TF_STATE_ACCOUNT=<your-storage-account>"; \
+		echo ""; \
+		echo "To skip remote state (local-only dev), run:"; \
+		echo "  terraform init -backend=false"; \
+		exit 1; \
+	fi
+	terraform init \
+		-backend-config="storage_account_name=$(TF_STATE_ACCOUNT)" \
+		-backend-config="resource_group_name=$(TF_STATE_RG)" \
+		-backend-config="container_name=$(TF_STATE_CONTAINER)" \
+		-backend-config="key=$(TF_STATE_KEY)"
 
 tf-validate: ## Validate Terraform configuration
 	terraform validate

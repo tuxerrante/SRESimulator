@@ -319,10 +319,12 @@ prod-up: env-check ## Deploy to stable production namespace (same cluster + AOAI
 	oc -n "$$NS" create secret generic azure-openai-creds --from-literal=endpoint="$$AOAI_ENDPOINT" --from-literal=api-key="$$AOAI_KEY" >/dev/null; \
 	if ! oc -n "$$NS" get bc/sre-simulator-frontend >/dev/null 2>&1; then \
 		oc -n "$$NS" new-build --name=sre-simulator-frontend --binary=true --strategy=docker --to=sre-simulator-frontend:$$TAG >/dev/null; \
-		oc -n "$$NS" new-build --name=sre-simulator-backend --binary=true --strategy=docker --to=sre-simulator-backend:$$TAG >/dev/null; \
-		oc -n "$$NS" patch bc/sre-simulator-frontend --type=merge -p '{"spec":{"strategy":{"dockerStrategy":{"dockerfilePath":"frontend/Dockerfile","buildArgs":[{"name":"NPM_VERSION","value":"$(NPM_VERSION)"}]}}}}' >/dev/null; \
-		oc -n "$$NS" patch bc/sre-simulator-backend --type=merge -p '{"spec":{"strategy":{"dockerStrategy":{"dockerfilePath":"backend/Dockerfile","buildArgs":[{"name":"NPM_VERSION","value":"$(NPM_VERSION)"}]}}}}' >/dev/null; \
 	fi; \
+	if ! oc -n "$$NS" get bc/sre-simulator-backend >/dev/null 2>&1; then \
+		oc -n "$$NS" new-build --name=sre-simulator-backend --binary=true --strategy=docker --to=sre-simulator-backend:$$TAG >/dev/null; \
+	fi; \
+	oc -n "$$NS" patch bc/sre-simulator-frontend --type=merge -p '{"spec":{"strategy":{"dockerStrategy":{"dockerfilePath":"frontend/Dockerfile","buildArgs":[{"name":"NPM_VERSION","value":"$(NPM_VERSION)"}]}}}}' >/dev/null; \
+	oc -n "$$NS" patch bc/sre-simulator-backend --type=merge -p '{"spec":{"strategy":{"dockerStrategy":{"dockerfilePath":"backend/Dockerfile","buildArgs":[{"name":"NPM_VERSION","value":"$(NPM_VERSION)"}]}}}}' >/dev/null; \
 	oc -n "$$NS" start-build sre-simulator-frontend --from-dir=. --follow --wait >/dev/null; \
 	oc -n "$$NS" start-build sre-simulator-backend --from-dir=. --follow --wait >/dev/null; \
 	DOMAIN=$$(oc get ingresses.config/cluster -o jsonpath='{.spec.domain}'); \

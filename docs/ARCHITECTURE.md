@@ -279,3 +279,36 @@ AI_AZURE_OPENAI_DEPLOYMENT_SCENARIO=gpt-4o-mini
 ```
 
 `CLAUDE_MODEL` is still accepted as a backward-compatible alias, but `AI_MODEL` is the preferred variable.
+
+---
+
+## Multiplayer Scaling & Resilience
+
+### Concurrency model
+
+The backend is stateless per-request for AI calls (chat, command, scenario). All conversation state lives in the browser and is sent with each request. This means multiple users can play independently against the same backend without session affinity.
+
+Two pieces of server-side state exist:
+
+- **Score tokens**: in-memory `Map` with 24h TTL (`backend/src/lib/sessions.ts`). Lost on pod restart; acceptable since they are ephemeral anti-cheat tokens.
+- **Leaderboard**: JSON file on PVC (`backend/src/lib/leaderboard.ts`). Writes are serialized through an in-process async mutex to prevent concurrent read-modify-write races.
+
+### Rate limiting
+
+AI-backed routes (`/api/chat`, `/api/command`, `/api/scenario`) are rate-limited per IP using `express-rate-limit` (15 req/min per client). This prevents a single user from exhausting the shared AOAI TPM quota and affecting other users.
+
+### Azure OpenAI throttle handling
+
+When Azure OpenAI returns HTTP 429, the backend retries with exponential backoff and jitter (up to 3 attempts, respecting the `Retry-After` header). If all retries are exhausted, the client receives a 429 with a user-friendly message instead of a generic 500 error.
+
+### AOAI capacity sizing
+
+The `aoai_capacity` Terraform variable (default 80K TPM) controls the rate limit on the shared Azure OpenAI deployment. On Standard (pay-as-you-go) deployments, this only affects throttling — not cost. Per-route token consumption measured in PR #31:
+
+| Route | Tokens/request | Peak rate (1 user) | Peak TPM |
+|-------|---------------|-------------------|----------|
+| Chat | ~16K | 2-3/min | ~48K |
+| Command | ~4K | 1-2/min | ~8K |
+| Scenario | ~2.3K | burst | ~2K |
+
+For multi-user deployments, multiply the single-user peak (~50K TPM) by the number of concurrent users and increase `aoai_capacity` accordingly. Creating or modifying Azure OpenAI deployments takes 1-2 hours, so always pre-provision capacity.

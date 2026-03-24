@@ -64,7 +64,7 @@ variable "aoai_model_version" {
 variable "aoai_capacity" {
   description = "Rate limit in thousands of tokens per minute (K TPM). Cost is pay-per-token, not per capacity."
   type        = number
-  default     = 30
+  default     = 80
 
   # Sizing rationale (from PR #31 real e2e measurements):
   #   Chat route:     ~16K tokens/request (12K context + 4K completion), 2-3 req/min peak
@@ -72,8 +72,13 @@ variable "aoai_capacity" {
   #   Scenario route: ~2.3K tokens/request (burst on session start)
   #   Single active user peak: ~50K TPM
   #   With prod + e2e concurrent: ~80K TPM burst
-  #   30K TPM is comfortable for single-user testing; increase if throttled.
+  #   80K TPM handles a single active user at peak plus concurrent e2e.
   #   Standard (pay-as-you-go) means this only affects rate limit, not cost.
+
+  validation {
+    condition     = var.aoai_capacity >= 1 && var.aoai_capacity <= 500
+    error_message = "aoai_capacity must be between 1 and 500 (K TPM). For test environments, 500K TPM is the safe upper bound."
+  }
 }
 
 variable "vnet_address_space" {
@@ -107,7 +112,7 @@ variable "budget_amount" {
 }
 
 variable "budget_alert_emails" {
-  description = "Email addresses that receive budget alerts when spending approaches budget_amount. Budget resource is only created when at least one email is provided."
+  description = "Email addresses that receive budget alerts when spending approaches budget_amount. Budget resource is only created when budget_amount > 0 and at least one email is provided."
   type        = list(string)
   default     = []
 }

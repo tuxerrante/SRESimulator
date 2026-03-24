@@ -3,7 +3,7 @@ import { loadKnowledgeBase } from "../lib/knowledge";
 import { buildSystemPrompt } from "../lib/prompts/system";
 import { getAiReadiness } from "../lib/ai-config";
 import { generateMockChatResponse } from "../lib/mock-ai";
-import { streamAiText } from "../lib/ai-runtime";
+import { streamAiText, AiThrottledError } from "../lib/ai-runtime";
 import { compactHistory, estimateTokens } from "../lib/context-compactor";
 import type { Scenario } from "../../../shared/types/game";
 import type { InvestigationPhase } from "../../../shared/types/chat";
@@ -85,6 +85,10 @@ chatRouter.post("/", async (req: Request, res: Response) => {
       res.end();
     }
   } catch (error) {
+    if (error instanceof AiThrottledError) {
+      res.status(429).json({ error: error.message });
+      return;
+    }
     const message =
       error instanceof Error ? error.message : "Internal server error";
     res.status(500).json({ error: message });
