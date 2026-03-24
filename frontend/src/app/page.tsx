@@ -187,7 +187,7 @@ export default function HomePage() {
           </div>
         </a>
 
-        <div className="text-zinc-700 text-xs">
+        <div className="text-zinc-700 text-xs text-center">
           ARO SRE Simulator &mdash; Investigation training powered by AI
           <span className="mx-2">&middot;</span>
           <Link href="/about" className="hover:text-zinc-400 transition-colors">

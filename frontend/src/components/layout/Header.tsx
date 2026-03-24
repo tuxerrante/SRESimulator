@@ -51,6 +51,12 @@ export function Header() {
   }, [scoringEvents, addPopup]);
 
   useEffect(() => {
+    if (status !== "playing") {
+      setShowScore(false);
+    }
+  }, [status]);
+
+  useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
       if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
         setShowScore(false);
@@ -197,8 +203,9 @@ export function Header() {
           href="https://github.com/tuxerrante"
           target="_blank"
           rel="noopener noreferrer"
-          className="text-zinc-600 hover:text-zinc-300 transition-colors p-1 rounded hover:bg-zinc-800"
+          className="text-zinc-600 hover:text-zinc-300 transition-colors p-2 rounded hover:bg-zinc-800"
           title="tuxerrante on GitHub"
+          aria-label="Visit tuxerrante on GitHub"
         >
           <Github size={16} />
         </a>
