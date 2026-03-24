@@ -149,6 +149,16 @@ describe("queryKnowledgeSections", () => {
     const sections = await loadKnowledgeSections();
     const result = queryKnowledgeSections(sections, ["everything"], 500);
 
-    expect(result.length).toBeLessThanOrEqual(600);
+    expect(result.length).toBeLessThanOrEqual(500);
+  });
+
+  it("truncates investigation text when it alone exceeds maxChars", async () => {
+    setupMocks();
+
+    const { loadKnowledgeSections, queryKnowledgeSections } = await import("./knowledge");
+    const sections = await loadKnowledgeSections();
+    const result = queryKnowledgeSections(sections, ["NetworkPolicy 503"], 30);
+
+    expect(result.length).toBeLessThanOrEqual(30);
   });
 });

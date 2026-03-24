@@ -17,16 +17,21 @@ export interface RetainedState {
 
 const CHARS_PER_TOKEN_ESTIMATE = 4;
 
-function envInt(key: string, fallback: number): number {
+function envInt(key: string, fallback: number, min: number = 1): number {
   const raw = process.env[key];
   if (!raw) return fallback;
   const parsed = Number(raw);
-  return Number.isFinite(parsed) ? parsed : fallback;
+  if (!Number.isFinite(parsed)) return fallback;
+  if (parsed < min) {
+    console.warn(`[context-compactor] ${key}=${parsed} is below minimum ${min}, using ${min}`);
+    return min;
+  }
+  return parsed;
 }
 
-const COMPACTION_TOKEN_BUDGET = envInt("COMPACTION_TOKEN_BUDGET", 12_000);
+const COMPACTION_TOKEN_BUDGET = envInt("COMPACTION_TOKEN_BUDGET", 12_000, 1000);
 
-const RETAINED_TAIL_MESSAGES = envInt("COMPACTION_TAIL_MESSAGES", 4);
+const RETAINED_TAIL_MESSAGES = envInt("COMPACTION_TAIL_MESSAGES", 4, 1);
 
 export function estimateTokens(text: string): number {
   return Math.ceil(text.length / CHARS_PER_TOKEN_ESTIMATE);

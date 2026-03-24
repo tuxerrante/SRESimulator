@@ -8,7 +8,14 @@ import { compactHistory, estimateTokens } from "../lib/context-compactor";
 import type { Scenario } from "../../../shared/types/game";
 import type { InvestigationPhase } from "../../../shared/types/chat";
 
-const MAX_CHAT_TOKENS = parseInt(process.env.AI_MAX_CHAT_TOKENS ?? "16384", 10);
+const MAX_CHAT_TOKENS_RAW = Number.parseInt(
+  process.env.AI_MAX_CHAT_TOKENS ?? "16384",
+  10,
+);
+const MAX_CHAT_TOKENS =
+  Number.isFinite(MAX_CHAT_TOKENS_RAW) && MAX_CHAT_TOKENS_RAW > 0
+    ? MAX_CHAT_TOKENS_RAW
+    : 16384;
 
 export const chatRouter = Router();
 

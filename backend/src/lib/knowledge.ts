@@ -42,11 +42,29 @@ export async function loadKnowledgeBase(): Promise<string> {
   return cachedKnowledge;
 }
 
+const KB_TECH_TERMS: readonly string[] = [
+  "etcd", "kubelet", "cri-o", "kube-apiserver", "oauth", "mco",
+  "pvc", "scc", "rbac", "dns", "nsg", "hive", "pucm",
+  "oomkill(?:ed)?", "crashloop(?:backoff)?", "imagepu(?:ll(?:backoff)?)?",
+  "networkpolicy", "egressip", "coreDNS", "fdatasync", "webhook",
+  "machine[\\s-]?config", "pull[\\s-]?secret", "cluster[\\s-]?version",
+  "node[\\s-]?(?:not)?ready", "disk[\\s-]?pressure",
+  "cpu[\\s-]?throttl(?:ing|e)?", "resource[\\s-]?quota", "taint(?:ed)?",
+  "networking", "storage", "registry", "authentication",
+  "control[\\s-]?plane", "upgrade", "install", "certificate",
+  "compliance", "partition", "cosmos[\\s-]?db", "monitor", "alert",
+  "operator", "deployment", "route", "ingress",
+  "503", "429", "137", "410",
+];
+
+const KB_TERMS_REGEX = new RegExp(
+  `\\b(?:${KB_TECH_TERMS.join("|")})\\b`,
+  "gi",
+);
+
 function extractKeywords(title: string, content: string): string[] {
   const combined = `${title} ${content}`.toLowerCase();
-  const techTerms = combined.match(
-    /\b(?:etcd|kubelet|cri-o|kube-apiserver|oauth|mco|pvc|scc|rbac|dns|nsg|hive|pucm|oomkill(?:ed)?|crashloop(?:backoff)?|imagepu(?:ll(?:backoff)?)?|networkpolicy|egressip|coreDNS|fdatasync|webhook|machine[\s-]?config|pull[\s-]?secret|cluster[\s-]?version|node[\s-]?(?:not)?ready|disk[\s-]?pressure|cpu[\s-]?throttl(?:ing|e)?|resource[\s-]?quota|taint(?:ed)?|networking|storage|registry|authentication|control[\s-]?plane|upgrade|install|certificate|compliance|partition|cosmos[\s-]?db|monitor|alert|operator|deployment|route|ingress|503|429|137|410)\b/gi
-  ) ?? [];
+  const techTerms = combined.match(KB_TERMS_REGEX) ?? [];
   const uniqueTerms = [...new Set(techTerms.map((t) => t.toLowerCase()))];
   return uniqueTerms;
 }
@@ -152,6 +170,10 @@ export function queryKnowledgeSections(
   const investigationText = investigationSections
     .map((s) => s.content)
     .join("\n\n");
+
+  if (investigationText.length >= maxChars) {
+    return investigationText.slice(0, maxChars);
+  }
 
   let remaining = maxChars - investigationText.length;
   const selectedParts = [investigationText];
