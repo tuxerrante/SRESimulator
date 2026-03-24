@@ -97,13 +97,13 @@ Short answer: **only the frontend is internet-exposed; backend stays private ins
 
 The game enforces the SRE "Scientific Method of Investigation":
 
-| Phase                 | What to do                         | Example prompt from DM               |
+| Phase | What to do | Example prompt from DM |
 | --------------------- | ---------------------------------- | ------------------------------------ |
-| **Reading**           | Read the incident ticket carefully | _"What inconsistencies do you see?"_ |
-| **Context Gathering** | Check dashboards, cluster history  | _"Have you checked Geneva first?"_   |
-| **Facts Gathering**   | Run commands, collect evidence     | `oc get nodes`, KQL queries          |
-| **Theory Building**   | Form a hypothesis                  | _"What do you think is happening?"_  |
-| **Action**            | Apply the fix (safely)             | _"Is this reversible?"_              |
+| **Reading** | Read the incident ticket carefully | _"What inconsistencies do you see?"_ |
+| **Context Gathering** | Check dashboards, cluster history | _"Have you checked Geneva first?"_ |
+| **Facts Gathering** | Run commands, collect evidence | `oc get nodes`, KQL queries |
+| **Theory Building** | Form a hypothesis | _"What do you think is happening?"_ |
+| **Action** | Apply the fix (safely) | _"Is this reversible?"_ |
 
 The AI Dungeon Master enforces phase ordering and pushes back if you try to skip ahead.
 
@@ -115,12 +115,12 @@ You start at **0/100** and earn points through good investigation practices.
 
 ### Dimensions
 
-| Dimension     | Max | What earns points                             | What loses points                    |
+| Dimension | Max | What earns points | What loses points |
 | ------------- | --- | --------------------------------------------- | ------------------------------------ |
-| Efficiency    | 25  | Focused, targeted investigation               | Excessive or irrelevant commands     |
-| Safety        | 25  | Checking dashboards first, suggesting backups | Running commands without context     |
-| Documentation | 25  | Following phases in order, thorough analysis  | Skipping phases, jumping to action   |
-| Accuracy      | 25  | Correct hypotheses, proper root cause         | Wrong theories, misidentified causes |
+| Efficiency | 25 | Focused, targeted investigation | Excessive or irrelevant commands |
+| Safety | 25 | Checking dashboards first, suggesting backups | Running commands without context |
+| Documentation | 25 | Following phases in order, thorough analysis | Skipping phases, jumping to action |
+| Accuracy | 25 | Correct hypotheses, proper root cause | Wrong theories, misidentified causes |
 
 ### How scoring works
 
@@ -138,11 +138,11 @@ You start at **0/100** and earn points through good investigation practices.
 
 | Grade | Score |
 | ----- | ----- |
-| A     | 90+   |
-| B     | 80+   |
-| C     | 70+   |
-| D     | 60+   |
-| F     | < 60  |
+| A | 90+ |
+| B | 80+ |
+| C | 70+ |
+| D | 60+ |
+| F | < 60 |
 
 ---
 
@@ -156,14 +156,14 @@ Long conversations are automatically compacted before each AI request. The compa
 
 **Retained-state schema** (best-effort heuristic extraction; may miss or simplify some details):
 
-| Field                  | Description                                               |
+| Field | Description |
 | ---------------------- | --------------------------------------------------------- |
-| `phase`                | Current investigation phase                               |
-| `knownFacts`           | Evidence confirmed during the investigation               |
-| `hypotheses`           | User theories about root cause                            |
-| `mentionedCommands`    | Commands suggested by DM or referenced by user            |
-| `unresolvedQuestions`  | Questions the user asked that remain unanswered           |
-| `summaryOfDiscussion`  | Scoring events and key discussion milestones              |
+| `phase` | Current investigation phase |
+| `knownFacts` | Evidence confirmed during the investigation |
+| `hypotheses` | User theories about root cause |
+| `mentionedCommands` | Commands suggested by DM or referenced by user |
+| `unresolvedQuestions` | Questions the user asked that remain unanswered |
+| `summaryOfDiscussion` | Scoring events and key discussion milestones |
 
 The compactor uses a heuristic token estimator (~4 chars/token) rather than a tokenizer dependency to keep the backend lightweight.
 
@@ -186,12 +186,12 @@ Each API route can use a different Azure OpenAI deployment, allowing cost/perfor
 
 The global `AI_AZURE_OPENAI_DEPLOYMENT` is still required for readiness validation and serves as the default for any route without a specific override. If neither is set for a given route, the runtime throws a clear error.
 
-| Route      | Env var override                          | Recommended model characteristics   |
+| Route | Env var override | Recommended model characteristics |
 | ---------- | ----------------------------------------- | ----------------------------------- |
-| `chat`     | `AI_AZURE_OPENAI_DEPLOYMENT_CHAT`         | High quality, streaming support     |
-| `command`  | `AI_AZURE_OPENAI_DEPLOYMENT_COMMAND`      | Fast, good at structured output     |
-| `scenario` | `AI_AZURE_OPENAI_DEPLOYMENT_SCENARIO`     | Good at JSON generation             |
-| `probe`    | `AI_AZURE_OPENAI_DEPLOYMENT_PROBE`        | Cheapest/fastest available          |
+| `chat` | `AI_AZURE_OPENAI_DEPLOYMENT_CHAT` | High quality, streaming support |
+| `command` | `AI_AZURE_OPENAI_DEPLOYMENT_COMMAND` | Fast, good at structured output |
+| `scenario` | `AI_AZURE_OPENAI_DEPLOYMENT_SCENARIO` | Good at JSON generation |
+| `probe` | `AI_AZURE_OPENAI_DEPLOYMENT_PROBE` | Cheapest/fastest available |
 
 All route-specific overrides are optional. When not set, all routes share the global deployment.
 
@@ -306,7 +306,7 @@ When Azure OpenAI returns HTTP 429, the backend retries with exponential backoff
 The `aoai_capacity` Terraform variable (default 80K TPM) controls the rate limit on the shared Azure OpenAI deployment. On Standard (pay-as-you-go) deployments, this only affects throttling — not cost. Per-route token consumption measured in PR #31:
 
 | Route | Tokens/request | Peak rate (1 user) | Peak TPM |
-|-------|---------------|-------------------|----------|
+| ------- | --------------- | ------------------- | ---------- |
 | Chat | ~16K | 2-3/min | ~48K |
 | Command | ~4K | 1-2/min | ~8K |
 | Scenario | ~2.3K | burst | ~2K |

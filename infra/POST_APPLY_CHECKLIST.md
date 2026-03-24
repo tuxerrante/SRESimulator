@@ -109,7 +109,7 @@ concurrent users; increase `aoai_capacity` if you see 429 errors.
 ### Multiplayer sizing reference
 
 | Concurrent users | Recommended TPM | Notes |
-|----------------:|----------------:|-------|
+| ----------------: | ----------------: | ------- |
 | 1 | 80K | Default — covers peak + concurrent e2e |
 | 2-3 | 150K | Comfortable headroom |
 | 5+ | 250K+ | Consider Global Standard for 2M+ TPM ceiling |
@@ -121,7 +121,7 @@ minutes (it only updates the rate limit on the existing deployment).
 ### Documented Azure limits
 
 | Limit | Value |
-|-------|-------|
+| ------- | ------- |
 | Max standard deployments per AOAI resource | 32 |
 | Max AOAI resources per region per subscription | 30 |
 | `gpt-4o-mini` Tier 1 quota (Standard) | 6M TPM |
