@@ -8,6 +8,7 @@ import { healthRouter } from "./routes/health";
 import { aiRouter } from "./routes/ai";
 import { guideRouter } from "./routes/guide";
 import { getAiReadiness } from "./lib/ai-config";
+import { aiRateLimit } from "./lib/rate-limit";
 
 const app = express();
 const PORT = parseInt(process.env.PORT || "8080", 10);
@@ -24,10 +25,10 @@ app.use(cors({
 }));
 app.use(express.json());
 
-// Routes
-app.use("/api/chat", chatRouter);
-app.use("/api/command", commandRouter);
-app.use("/api/scenario", scenarioRouter);
+// Routes (AI-backed routes are rate-limited per IP)
+app.use("/api/chat", aiRateLimit, chatRouter);
+app.use("/api/command", aiRateLimit, commandRouter);
+app.use("/api/scenario", aiRateLimit, scenarioRouter);
 app.use("/api/scores", scoresRouter);
 app.use("/api/ai", aiRouter);
 app.use("/api/guide", guideRouter);

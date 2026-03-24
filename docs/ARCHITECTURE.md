@@ -97,13 +97,13 @@ Short answer: **only the frontend is internet-exposed; backend stays private ins
 
 The game enforces the SRE "Scientific Method of Investigation":
 
-| Phase                 | What to do                         | Example prompt from DM               |
+| Phase | What to do | Example prompt from DM |
 | --------------------- | ---------------------------------- | ------------------------------------ |
-| **Reading**           | Read the incident ticket carefully | _"What inconsistencies do you see?"_ |
-| **Context Gathering** | Check dashboards, cluster history  | _"Have you checked Geneva first?"_   |
-| **Facts Gathering**   | Run commands, collect evidence     | `oc get nodes`, KQL queries          |
-| **Theory Building**   | Form a hypothesis                  | _"What do you think is happening?"_  |
-| **Action**            | Apply the fix (safely)             | _"Is this reversible?"_              |
+| **Reading** | Read the incident ticket carefully | _"What inconsistencies do you see?"_ |
+| **Context Gathering** | Check dashboards, cluster history | _"Have you checked Geneva first?"_ |
+| **Facts Gathering** | Run commands, collect evidence | `oc get nodes`, KQL queries |
+| **Theory Building** | Form a hypothesis | _"What do you think is happening?"_ |
+| **Action** | Apply the fix (safely) | _"Is this reversible?"_ |
 
 The AI Dungeon Master enforces phase ordering and pushes back if you try to skip ahead.
 
@@ -115,12 +115,12 @@ You start at **0/100** and earn points through good investigation practices.
 
 ### Dimensions
 
-| Dimension     | Max | What earns points                             | What loses points                    |
+| Dimension | Max | What earns points | What loses points |
 | ------------- | --- | --------------------------------------------- | ------------------------------------ |
-| Efficiency    | 25  | Focused, targeted investigation               | Excessive or irrelevant commands     |
-| Safety        | 25  | Checking dashboards first, suggesting backups | Running commands without context     |
-| Documentation | 25  | Following phases in order, thorough analysis  | Skipping phases, jumping to action   |
-| Accuracy      | 25  | Correct hypotheses, proper root cause         | Wrong theories, misidentified causes |
+| Efficiency | 25 | Focused, targeted investigation | Excessive or irrelevant commands |
+| Safety | 25 | Checking dashboards first, suggesting backups | Running commands without context |
+| Documentation | 25 | Following phases in order, thorough analysis | Skipping phases, jumping to action |
+| Accuracy | 25 | Correct hypotheses, proper root cause | Wrong theories, misidentified causes |
 
 ### How scoring works
 
@@ -138,11 +138,11 @@ You start at **0/100** and earn points through good investigation practices.
 
 | Grade | Score |
 | ----- | ----- |
-| A     | 90+   |
-| B     | 80+   |
-| C     | 70+   |
-| D     | 60+   |
-| F     | < 60  |
+| A | 90+ |
+| B | 80+ |
+| C | 70+ |
+| D | 60+ |
+| F | < 60 |
 
 ---
 
@@ -156,14 +156,14 @@ Long conversations are automatically compacted before each AI request. The compa
 
 **Retained-state schema** (best-effort heuristic extraction; may miss or simplify some details):
 
-| Field                  | Description                                               |
+| Field | Description |
 | ---------------------- | --------------------------------------------------------- |
-| `phase`                | Current investigation phase                               |
-| `knownFacts`           | Evidence confirmed during the investigation               |
-| `hypotheses`           | User theories about root cause                            |
-| `mentionedCommands`    | Commands suggested by DM or referenced by user            |
-| `unresolvedQuestions`  | Questions the user asked that remain unanswered           |
-| `summaryOfDiscussion`  | Scoring events and key discussion milestones              |
+| `phase` | Current investigation phase |
+| `knownFacts` | Evidence confirmed during the investigation |
+| `hypotheses` | User theories about root cause |
+| `mentionedCommands` | Commands suggested by DM or referenced by user |
+| `unresolvedQuestions` | Questions the user asked that remain unanswered |
+| `summaryOfDiscussion` | Scoring events and key discussion milestones |
 
 The compactor uses a heuristic token estimator (~4 chars/token) rather than a tokenizer dependency to keep the backend lightweight.
 
@@ -186,14 +186,24 @@ Each API route can use a different Azure OpenAI deployment, allowing cost/perfor
 
 The global `AI_AZURE_OPENAI_DEPLOYMENT` is still required for readiness validation and serves as the default for any route without a specific override. If neither is set for a given route, the runtime throws a clear error.
 
-| Route      | Env var override                          | Recommended model characteristics   |
+| Route | Env var override | Recommended model characteristics |
 | ---------- | ----------------------------------------- | ----------------------------------- |
-| `chat`     | `AI_AZURE_OPENAI_DEPLOYMENT_CHAT`         | High quality, streaming support     |
-| `command`  | `AI_AZURE_OPENAI_DEPLOYMENT_COMMAND`      | Fast, good at structured output     |
-| `scenario` | `AI_AZURE_OPENAI_DEPLOYMENT_SCENARIO`     | Good at JSON generation             |
-| `probe`    | `AI_AZURE_OPENAI_DEPLOYMENT_PROBE`        | Cheapest/fastest available          |
+| `chat` | `AI_AZURE_OPENAI_DEPLOYMENT_CHAT` | High quality, streaming support |
+| `command` | `AI_AZURE_OPENAI_DEPLOYMENT_COMMAND` | Fast, good at structured output |
+| `scenario` | `AI_AZURE_OPENAI_DEPLOYMENT_SCENARIO` | Good at JSON generation |
+| `probe` | `AI_AZURE_OPENAI_DEPLOYMENT_PROBE` | Cheapest/fastest available |
 
 All route-specific overrides are optional. When not set, all routes share the global deployment.
+
+### How per-route deployments work with multiplayer
+
+Per-route overrides reference **pre-provisioned** Azure OpenAI deployments by name -- the app never creates or modifies Azure deployments at runtime. The flow is:
+
+1. **Infrastructure time** (once, via Terraform or portal): create multiple model deployments on the same AOAI account. For example, `gpt-4o` for chat and `gpt-4o-mini` for command/scenario/probe. Each deployment takes 1-2 hours to provision.
+2. **Application deploy time** (via Helm values or env vars): set `AI_AZURE_OPENAI_DEPLOYMENT_CHAT=gpt-4o` and `AI_AZURE_OPENAI_DEPLOYMENT_COMMAND=gpt-4o-mini`.
+3. **Runtime**: `getDeploymentForRoute()` reads the env var and inserts the deployment name into the API URL path. No Azure resource creation occurs.
+
+All concurrent users share the same set of pre-provisioned deployments. Each deployment has its own independent TPM rate limit, so using separate deployments for chat vs. command/probe effectively gives you separate rate limit pools -- reducing the risk that heavy chat usage throttles command execution.
 
 ---
 
@@ -279,3 +289,36 @@ AI_AZURE_OPENAI_DEPLOYMENT_SCENARIO=gpt-4o-mini
 ```
 
 `CLAUDE_MODEL` is still accepted as a backward-compatible alias, but `AI_MODEL` is the preferred variable.
+
+---
+
+## Multiplayer Scaling & Resilience
+
+### Concurrency model
+
+The backend is stateless per-request for AI calls (chat, command, scenario). All conversation state lives in the browser and is sent with each request. This means multiple users can play independently against the same backend without session affinity.
+
+Two pieces of server-side state exist:
+
+- **Score tokens**: in-memory `Map` with 24h TTL (`backend/src/lib/sessions.ts`). Lost on pod restart; acceptable since they are ephemeral anti-cheat tokens.
+- **Leaderboard**: JSON file on PVC (`backend/src/lib/leaderboard.ts`). Writes are serialized through an in-process async mutex to prevent concurrent read-modify-write races.
+
+### Rate limiting
+
+AI-backed routes (`/api/chat`, `/api/command`, `/api/scenario`) are rate-limited per IP using `express-rate-limit` (15 req/min per client). This prevents a single user from exhausting the shared AOAI TPM quota and affecting other users.
+
+### Azure OpenAI throttle handling
+
+When Azure OpenAI returns HTTP 429, the backend retries with exponential backoff and jitter (up to 3 attempts, respecting the `Retry-After` header). If all retries are exhausted, the client receives a 429 with a user-friendly message instead of a generic 500 error.
+
+### AOAI capacity sizing
+
+The `aoai_capacity` Terraform variable (default 80K TPM) controls the rate limit on the shared Azure OpenAI deployment. On Standard (pay-as-you-go) deployments, this only affects throttling — not cost. Per-route token consumption measured in PR #31:
+
+| Route | Tokens/request | Peak rate (1 user) | Peak TPM |
+| ------- | --------------- | ------------------- | ---------- |
+| Chat | ~16K | 2-3/min | ~48K |
+| Command | ~4K | 1-2/min | ~8K |
+| Scenario | ~2.3K | burst | ~2K |
+
+For multi-user deployments, multiply the single-user peak (~50K TPM) by the number of concurrent users and increase `aoai_capacity` accordingly. Creating or modifying Azure OpenAI deployments takes 1-2 hours, so always pre-provision capacity.

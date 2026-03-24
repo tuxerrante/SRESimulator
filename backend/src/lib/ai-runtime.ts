@@ -7,6 +7,31 @@ import {
 import type { AiRoute } from "./token-logger";
 import { logTokenUsage, logTokenError } from "./token-logger";
 
+const RETRY_MAX_ATTEMPTS = 3;
+const RETRY_BASE_DELAY_MS = 1000;
+const RETRY_MAX_DELAY_MS = 8000;
+
+export class AiThrottledError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "AiThrottledError";
+  }
+}
+
+function retryDelayMs(attempt: number, retryAfterHeader?: string | null): number {
+  if (retryAfterHeader) {
+    const seconds = parseFloat(retryAfterHeader);
+    if (!isNaN(seconds) && seconds > 0) return Math.min(seconds * 1000, RETRY_MAX_DELAY_MS);
+  }
+  const exponential = RETRY_BASE_DELAY_MS * Math.pow(2, attempt);
+  const jitter = Math.random() * RETRY_BASE_DELAY_MS;
+  return Math.min(exponential + jitter, RETRY_MAX_DELAY_MS);
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 export interface AiTextMessage {
   role: "user" | "assistant";
   content: string;
@@ -191,42 +216,26 @@ async function runAzureOpenAiRequest(
   );
 }
 
-async function callAzureOpenAi(request: AiTextRequest): Promise<string> {
-  const endpoint = process.env.AI_AZURE_OPENAI_ENDPOINT!;
-  const key = process.env.AI_AZURE_OPENAI_API_KEY!;
-  const deployment = getDeploymentForRoute(request.route);
-  const apiVersion = getAzureOpenAiApiVersion();
-  const start = Date.now();
-
-  const base = endpoint.replace(/\/+$/, "");
+async function executeAzureRequest(
+  base: string,
+  key: string,
+  deployment: string,
+  apiVersion: string,
+  request: AiTextRequest,
+): Promise<Response> {
   let response = await runAzureOpenAiRequest(
-    base,
-    key,
-    deployment,
-    apiVersion,
-    request,
-    false
+    base, key, deployment, apiVersion, request, false,
   );
 
-  if (!response.ok) {
+  if (!response.ok && response.status !== 429) {
     const firstError = await response.text();
     if (firstError.includes("max_completion_tokens")) {
       response = await runAzureOpenAiRequest(
-        base,
-        key,
-        deployment,
-        apiVersion,
-        request,
-        true
+        base, key, deployment, apiVersion, request, true,
       );
     } else if (firstError.includes("max_tokens")) {
       response = await runAzureOpenAiRequest(
-        base,
-        key,
-        deployment,
-        apiVersion,
-        request,
-        false
+        base, key, deployment, apiVersion, request, false,
       );
     } else {
       if (request.route) logTokenError(request.route, firstError.slice(0, 200));
@@ -236,13 +245,48 @@ async function callAzureOpenAi(request: AiTextRequest): Promise<string> {
     }
   }
 
-  if (!response.ok) {
-    const details = await response.text();
-    if (request.route) logTokenError(request.route, details.slice(0, 200));
-    throw new Error(`Azure OpenAI request failed (${response.status}): ${details}`);
+  return response;
+}
+
+async function callAzureOpenAi(request: AiTextRequest): Promise<string> {
+  const endpoint = process.env.AI_AZURE_OPENAI_ENDPOINT!;
+  const key = process.env.AI_AZURE_OPENAI_API_KEY!;
+  const deployment = getDeploymentForRoute(request.route);
+  const apiVersion = getAzureOpenAiApiVersion();
+  const start = Date.now();
+
+  const base = endpoint.replace(/\/+$/, "");
+
+  let response: Response | undefined;
+  for (let attempt = 0; attempt < RETRY_MAX_ATTEMPTS; attempt++) {
+    response = await executeAzureRequest(base, key, deployment, apiVersion, request);
+
+    if (response.status === 429) {
+      if (attempt < RETRY_MAX_ATTEMPTS - 1) {
+        const delay = retryDelayMs(attempt, response.headers.get("retry-after"));
+        const route = request.route ?? "unknown";
+        console.warn(
+          `[ai-runtime] 429 throttled on route=${route} attempt=${attempt + 1}/${RETRY_MAX_ATTEMPTS}, retrying in ${Math.round(delay)}ms`,
+        );
+        await sleep(delay);
+        continue;
+      }
+      if (request.route) logTokenError(request.route, "429 throttled after max retries");
+      throw new AiThrottledError(
+        "Azure OpenAI is currently rate-limited. Please wait a moment and try again.",
+      );
+    }
+
+    break;
   }
 
-  const payload = (await response.json()) as AzureChatResponse;
+  if (!response!.ok) {
+    const details = await response!.text();
+    if (request.route) logTokenError(request.route, details.slice(0, 200));
+    throw new Error(`Azure OpenAI request failed (${response!.status}): ${details}`);
+  }
+
+  const payload = (await response!.json()) as AzureChatResponse;
 
   const latencyMs = Date.now() - start;
   const promptTokens = payload.usage?.prompt_tokens ?? 0;
