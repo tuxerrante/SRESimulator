@@ -195,6 +195,16 @@ The global `AI_AZURE_OPENAI_DEPLOYMENT` is still required for readiness validati
 
 All route-specific overrides are optional. When not set, all routes share the global deployment.
 
+### How per-route deployments work with multiplayer
+
+Per-route overrides reference **pre-provisioned** Azure OpenAI deployments by name -- the app never creates or modifies Azure deployments at runtime. The flow is:
+
+1. **Infrastructure time** (once, via Terraform or portal): create multiple model deployments on the same AOAI account. For example, `gpt-4o` for chat and `gpt-4o-mini` for command/scenario/probe. Each deployment takes 1-2 hours to provision.
+2. **Application deploy time** (via Helm values or env vars): set `AI_AZURE_OPENAI_DEPLOYMENT_CHAT=gpt-4o` and `AI_AZURE_OPENAI_DEPLOYMENT_COMMAND=gpt-4o-mini`.
+3. **Runtime**: `getDeploymentForRoute()` reads the env var and inserts the deployment name into the API URL path. No Azure resource creation occurs.
+
+All concurrent users share the same set of pre-provisioned deployments. Each deployment has its own independent TPM rate limit, so using separate deployments for chat vs. command/probe effectively gives you separate rate limit pools -- reducing the risk that heavy chat usage throttles command execution.
+
 ---
 
 ## Token Observability
