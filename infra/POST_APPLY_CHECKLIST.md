@@ -30,8 +30,25 @@ export KUBECONFIG=~/.kube/<owner_alias>-test
 
 ## 3. Generate `.env.local`
 
+> **Warning:** Do NOT blindly redirect into an existing `.env.local` — it will
+> overwrite any manually-added values (API keys, custom endpoints, etc.).
+
+Preview the generated snippet first:
+
+```bash
+terraform -chdir=infra output -raw env_file_snippet
+```
+
+If `backend/.env.local` does not exist yet, you can write it:
+
 ```bash
 terraform -chdir=infra output -raw env_file_snippet > backend/.env.local
+```
+
+If the file already exists, compare and merge manually:
+
+```bash
+diff <(terraform -chdir=infra output -raw env_file_snippet) backend/.env.local
 ```
 
 Then fill in the API key:
