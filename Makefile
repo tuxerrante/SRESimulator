@@ -3,7 +3,7 @@
        lint lint-ts lint-backend lint-unused-exports lint-yaml lint-md \
        typecheck typecheck-backend validate \
        security audit lockfile-lint grype \
-       test smoke-local-vertex env-check e2e-azure-route e2e-azure-route-up e2e-azure-route-down \
+       test smoke-local-vertex env-check e2e-azure-route e2e-azure-route-up e2e-azure-route-refresh e2e-azure-route-down \
        prod-up prod-down prod-status \
        build dev start \
        docker-build-frontend docker-build-backend docker-build \
@@ -230,8 +230,14 @@ e2e-azure-route-up: env-check ## Build+deploy frontend/backend to ARO and print 
 	oc -n "$$NS" new-build --name=sre-simulator-backend --binary=true --strategy=docker --to=sre-simulator-backend:$$TAG >/dev/null; \
 	oc -n "$$NS" patch bc/sre-simulator-frontend --type=merge -p '{"spec":{"strategy":{"dockerStrategy":{"dockerfilePath":"frontend/Dockerfile","buildArgs":[{"name":"NPM_VERSION","value":"$(NPM_VERSION)"}]}}}}' >/dev/null; \
 	oc -n "$$NS" patch bc/sre-simulator-backend --type=merge -p '{"spec":{"strategy":{"dockerStrategy":{"dockerfilePath":"backend/Dockerfile","buildArgs":[{"name":"NPM_VERSION","value":"$(NPM_VERSION)"}]}}}}' >/dev/null; \
+	echo "Building frontend image (upload + build)..."; \
+	BUILD_T0=$$SECONDS; \
 	oc -n "$$NS" start-build sre-simulator-frontend --from-dir=. --follow --wait >/dev/null; \
+	echo "  frontend build completed in $$(( SECONDS - BUILD_T0 ))s"; \
+	echo "Building backend image (upload + build)..."; \
+	BUILD_T0=$$SECONDS; \
 	oc -n "$$NS" start-build sre-simulator-backend --from-dir=. --follow --wait >/dev/null; \
+	echo "  backend build completed in $$(( SECONDS - BUILD_T0 ))s"; \
 	DOMAIN=$$(oc get ingresses.config/cluster -o jsonpath='{.spec.domain}'); \
 	HOST="$$NS.$${DOMAIN}"; \
 	helm upgrade --install "$(E2E_RELEASE)" ./helm/sre-simulator -n "$$NS" \
@@ -273,6 +279,103 @@ e2e-azure-route-up: env-check ## Build+deploy frontend/backend to ARO and print 
 		exit 1; \
 	fi; \
 	echo "Manual e2e environment is ready."; \
+	echo "URL: https://$$HOST"; \
+	echo "Probe status: $$PROBE_CODE"; \
+	echo "Metadata saved to $(E2E_METADATA_FILE)"
+
+e2e-azure-route-refresh: env-check ## Rebuild+helm upgrade into existing e2e ns (NS=... or $(E2E_METADATA_FILE))
+	@set -e; \
+	if [ -n "$(E2E_MISSING_VARS)" ]; then \
+		echo "Missing required env vars. Export: AZURE_SUBSCRIPTION_ID, ARO_RG, ARO_CLUSTER, AOAI_RG, AOAI_ACCOUNT, AOAI_DEPLOYMENT (or set them in $(E2E_ENV_FILE))."; \
+		exit 1; \
+	fi; \
+	if [ -n "$${NS:-}" ]; then \
+		TARGET_NS="$$NS"; \
+	elif [ -f "$(E2E_METADATA_FILE)" ]; then \
+		. "$(E2E_METADATA_FILE)"; \
+		TARGET_NS="$$NS"; \
+	else \
+		echo "Set NS=<namespace> or run e2e-azure-route-up first (needs $(E2E_METADATA_FILE))."; \
+		exit 1; \
+	fi; \
+	if ! oc get "namespace/$$TARGET_NS" >/dev/null 2>&1; then \
+		echo "Namespace $$TARGET_NS does not exist. Run make e2e-azure-route-up first."; \
+		exit 1; \
+	fi; \
+	TS=$$(date +%Y%m%d-%H%M%S); \
+	TAG="e2e$$TS"; \
+	PROBE_TOKEN="probe-$$TS"; \
+	echo "Refreshing namespace: $$TARGET_NS (image tag $$TAG)"; \
+	az account set -s "$(AZURE_SUBSCRIPTION_ID)" >/dev/null; \
+	API=$$(az aro show -g "$(ARO_RG)" -n "$(ARO_CLUSTER)" --query apiserverProfile.url -o tsv); \
+	PASS=$$(az aro list-credentials -g "$(ARO_RG)" -n "$(ARO_CLUSTER)" --query kubeadminPassword -o tsv); \
+	oc login "$$API" -u kubeadmin -p "$$PASS" --insecure-skip-tls-verify=true >/dev/null; \
+	AOAI_ENDPOINT=$$(az cognitiveservices account show -g "$(AOAI_RG)" -n "$(AOAI_ACCOUNT)" --query properties.endpoint -o tsv | sed 's:/*$$::'); \
+	AOAI_KEY=$$(az cognitiveservices account keys list -g "$(AOAI_RG)" -n "$(AOAI_ACCOUNT)" --query key1 -o tsv); \
+	oc -n "$$TARGET_NS" create secret generic azure-openai-creds \
+		--from-literal=endpoint="$$AOAI_ENDPOINT" --from-literal=api-key="$$AOAI_KEY" \
+		--dry-run=client -o yaml | oc apply -f - >/dev/null; \
+	for BC in sre-simulator-frontend sre-simulator-backend; do \
+		if ! oc -n "$$TARGET_NS" get "bc/$$BC" >/dev/null 2>&1; then \
+			echo "BuildConfig $$BC not found in $$TARGET_NS. Use e2e-azure-route-up for a new environment."; \
+			exit 1; \
+		fi; \
+	done; \
+	oc -n "$$TARGET_NS" patch bc/sre-simulator-frontend --type=merge \
+		-p "{\"spec\":{\"output\":{\"to\":{\"kind\":\"ImageStreamTag\",\"name\":\"sre-simulator-frontend:$$TAG\"}}}}" >/dev/null; \
+	oc -n "$$TARGET_NS" patch bc/sre-simulator-frontend --type=merge -p '{"spec":{"strategy":{"dockerStrategy":{"dockerfilePath":"frontend/Dockerfile","buildArgs":[{"name":"NPM_VERSION","value":"$(NPM_VERSION)"}]}}}}' >/dev/null; \
+	oc -n "$$TARGET_NS" patch bc/sre-simulator-backend --type=merge \
+		-p "{\"spec\":{\"output\":{\"to\":{\"kind\":\"ImageStreamTag\",\"name\":\"sre-simulator-backend:$$TAG\"}}}}" >/dev/null; \
+	oc -n "$$TARGET_NS" patch bc/sre-simulator-backend --type=merge -p '{"spec":{"strategy":{"dockerStrategy":{"dockerfilePath":"backend/Dockerfile","buildArgs":[{"name":"NPM_VERSION","value":"$(NPM_VERSION)"}]}}}}' >/dev/null; \
+	echo "Building frontend image (upload + build)..."; \
+	BUILD_T0=$$SECONDS; \
+	oc -n "$$TARGET_NS" start-build sre-simulator-frontend --from-dir=. --follow --wait >/dev/null; \
+	echo "  frontend build completed in $$(( SECONDS - BUILD_T0 ))s"; \
+	echo "Building backend image (upload + build)..."; \
+	BUILD_T0=$$SECONDS; \
+	oc -n "$$TARGET_NS" start-build sre-simulator-backend --from-dir=. --follow --wait >/dev/null; \
+	echo "  backend build completed in $$(( SECONDS - BUILD_T0 ))s"; \
+	DOMAIN=$$(oc get ingresses.config/cluster -o jsonpath='{.spec.domain}'); \
+	HOST="$$TARGET_NS.$${DOMAIN}"; \
+	helm upgrade --install "$(E2E_RELEASE)" ./helm/sre-simulator -n "$$TARGET_NS" \
+		--set route.host="$$HOST" \
+		--set frontend.image.repository="image-registry.openshift-image-registry.svc:5000/$$TARGET_NS/sre-simulator-frontend" \
+		--set frontend.image.tag="$$TAG" \
+		--set frontend.image.pullPolicy=Always \
+		--set backend.image.repository="image-registry.openshift-image-registry.svc:5000/$$TARGET_NS/sre-simulator-backend" \
+		--set backend.image.tag="$$TAG" \
+		--set backend.image.pullPolicy=Always \
+		--set ai.provider=azure-openai \
+		--set ai.mockMode=false \
+		--set ai.strictStartup=true \
+		--set ai.model="$(AOAI_DEPLOYMENT)" \
+		--set-string ai.liveProbeToken="$$PROBE_TOKEN" \
+		--set ai.azureOpenai.endpointFromSecret.existingSecretName=azure-openai-creds \
+		--set ai.azureOpenai.endpointFromSecret.key=endpoint \
+		--set ai.azureOpenai.deployment="$(AOAI_DEPLOYMENT)" \
+		--set ai.azureOpenai.apiVersion=2024-10-21 \
+		--set ai.azureOpenai.credentials.existingSecretName=azure-openai-creds \
+		--set ai.azureOpenai.credentials.key=api-key \
+		--wait --timeout 15m >/dev/null; \
+	oc -n "$$TARGET_NS" rollout status deployment/$(E2E_RELEASE)-frontend --timeout=6m >/dev/null; \
+	oc -n "$$TARGET_NS" rollout status deployment/$(E2E_RELEASE)-backend --timeout=6m >/dev/null; \
+	mkdir -p "$$(dirname "$(E2E_METADATA_FILE)")"; \
+	printf 'NS=%s\nRELEASE=%s\nURL=%s\nTAG=%s\n' "$$TARGET_NS" "$(E2E_RELEASE)" "https://$$HOST" "$$TAG" > "$(E2E_METADATA_FILE)"; \
+	PROBE_CODE=""; \
+	i=0; \
+	while [ $$i -lt 10 ]; do \
+		PROBE_CODE=$$(curl -ksS -H "x-ai-probe-token: $$PROBE_TOKEN" -o /dev/null -w '%{http_code}' "https://$$HOST/api/ai/probe?live=true" || true); \
+		if [ "$$PROBE_CODE" = "200" ]; then break; fi; \
+		i=$$((i + 1)); \
+		sleep 2; \
+	done; \
+	if [ "$$PROBE_CODE" != "200" ]; then \
+		echo "Probe failed with status $$PROBE_CODE"; \
+		curl -ksS -H "x-ai-probe-token: $$PROBE_TOKEN" "https://$$HOST/api/ai/probe?live=true" || true; \
+		echo; \
+		exit 1; \
+	fi; \
+	echo "E2e namespace refreshed."; \
 	echo "URL: https://$$HOST"; \
 	echo "Probe status: $$PROBE_CODE"; \
 	echo "Metadata saved to $(E2E_METADATA_FILE)"
@@ -325,8 +428,14 @@ prod-up: env-check ## Deploy to stable production namespace (same cluster + AOAI
 	fi; \
 	oc -n "$$NS" patch bc/sre-simulator-frontend --type=merge -p '{"spec":{"strategy":{"dockerStrategy":{"dockerfilePath":"frontend/Dockerfile","buildArgs":[{"name":"NPM_VERSION","value":"$(NPM_VERSION)"}]}}}}' >/dev/null; \
 	oc -n "$$NS" patch bc/sre-simulator-backend --type=merge -p '{"spec":{"strategy":{"dockerStrategy":{"dockerfilePath":"backend/Dockerfile","buildArgs":[{"name":"NPM_VERSION","value":"$(NPM_VERSION)"}]}}}}' >/dev/null; \
+	echo "Building frontend image (upload + build)..."; \
+	BUILD_T0=$$SECONDS; \
 	oc -n "$$NS" start-build sre-simulator-frontend --from-dir=. --follow --wait >/dev/null; \
+	echo "  frontend build completed in $$(( SECONDS - BUILD_T0 ))s"; \
+	echo "Building backend image (upload + build)..."; \
+	BUILD_T0=$$SECONDS; \
 	oc -n "$$NS" start-build sre-simulator-backend --from-dir=. --follow --wait >/dev/null; \
+	echo "  backend build completed in $$(( SECONDS - BUILD_T0 ))s"; \
 	DOMAIN=$$(oc get ingresses.config/cluster -o jsonpath='{.spec.domain}'); \
 	HOST="$$NS.$${DOMAIN}"; \
 	helm upgrade --install "$(E2E_RELEASE)" ./helm/sre-simulator -n "$$NS" \
