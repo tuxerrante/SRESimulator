@@ -222,6 +222,9 @@ async function runAzureOpenAiRequest(
     request._reasoningEffortOverride ?? process.env.AI_REASONING_EFFORT,
   );
 
+  const model = getConfiguredModel().toLowerCase();
+  const isReasoningModel = /^o\d/.test(model);
+
   const body: Record<string, unknown> = {
     messages: [
       { role: "system", content: request.system },
@@ -230,8 +233,8 @@ async function runAzureOpenAiRequest(
         content: message.content,
       })),
     ],
-    temperature: 0,
-    reasoning_effort: reasoningEffort,
+    ...(isReasoningModel ? {} : { temperature: 0 }),
+    ...(isReasoningModel ? { reasoning_effort: reasoningEffort } : {}),
     ...(useLegacyMaxTokens
       ? { max_tokens: request.maxTokens }
       : { max_completion_tokens: request.maxTokens }),
