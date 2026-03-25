@@ -18,6 +18,7 @@ interface GameState {
   // Player identity (persisted in localStorage, never sent to LLM)
   nickname: string | null;
   setNickname: (name: string) => void;
+  hydrateNickname: () => void;
 
   // Session
   status: GameStatus;
@@ -75,13 +76,21 @@ const initialScore: Score = {
 };
 
 export const useGameStore = create<GameState>((set) => ({
-  nickname: loadNickname(),
+  nickname: null,
+  hydrateNickname: () => {
+    const saved = loadNickname();
+    if (saved) set({ nickname: saved });
+  },
   setNickname: (name: string) => {
-    const trimmed = name.slice(0, 20);
+    const normalized = name.trim().slice(0, 20);
     try {
-      globalThis.localStorage?.setItem(NICKNAME_KEY, trimmed);
+      if (normalized === "") {
+        globalThis.localStorage?.removeItem(NICKNAME_KEY);
+      } else {
+        globalThis.localStorage?.setItem(NICKNAME_KEY, normalized);
+      }
     } catch { /* SSR / restricted storage */ }
-    set({ nickname: trimmed });
+    set({ nickname: normalized === "" ? null : normalized });
   },
 
   status: "idle",

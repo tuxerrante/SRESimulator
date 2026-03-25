@@ -1,4 +1,4 @@
-import { describe, expect, it, beforeEach, vi } from "vitest";
+import { describe, expect, it, beforeEach } from "vitest";
 import { useGameStore } from "./gameStore";
 import type { Scenario } from "@shared/types/game";
 import type { ChatMessage } from "@shared/types/chat";
@@ -266,10 +266,22 @@ describe("gameStore", () => {
   });
 
   describe("nickname", () => {
+    beforeEach(() => {
+      useGameStore.setState({ nickname: null });
+    });
+
     it("setNickname updates the store", () => {
       useGameStore.getState().setNickname("onCallHero");
 
       expect(useGameStore.getState().nickname).toBe("onCallHero");
+    });
+
+    it("trims whitespace and normalizes empty to null", () => {
+      useGameStore.getState().setNickname("  hero  ");
+      expect(useGameStore.getState().nickname).toBe("hero");
+
+      useGameStore.getState().setNickname("   ");
+      expect(useGameStore.getState().nickname).toBeNull();
     });
 
     it("truncates nicknames longer than 20 characters", () => {
@@ -277,6 +289,11 @@ describe("gameStore", () => {
       useGameStore.getState().setNickname(longName);
 
       expect(useGameStore.getState().nickname).toHaveLength(20);
+    });
+
+    it("hydrateNickname is safe to call when localStorage is unavailable", () => {
+      useGameStore.getState().hydrateNickname();
+      expect(useGameStore.getState().nickname).toBeNull();
     });
 
     it("resetGame preserves the nickname", () => {

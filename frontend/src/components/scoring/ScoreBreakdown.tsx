@@ -22,6 +22,7 @@ export function ScoreBreakdown() {
   const sessionToken = useGameStore((s) => s.sessionToken);
   const resetGame = useGameStore((s) => s.resetGame);
   const storedNickname = useGameStore((s) => s.nickname);
+  const updateNickname = useGameStore((s) => s.setNickname);
 
   const [nickname, setNickname] = useState(storedNickname ?? "");
   const [submitState, setSubmitState] = useState<"idle" | "submitting" | "submitted">("idle");
@@ -52,6 +53,7 @@ export function ScoreBreakdown() {
           commandCount,
         }),
       });
+      updateNickname(nickname);
       setSubmitState("submitted");
     } catch {
       setSubmitState("idle");

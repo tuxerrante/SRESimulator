@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useGameStore } from "@/stores/gameStore";
 import type { Difficulty, Scenario } from "@shared/types/game";
@@ -50,9 +50,12 @@ export default function HomePage() {
   const startGame = useGameStore((s) => s.startGame);
   const nickname = useGameStore((s) => s.nickname);
   const setNickname = useGameStore((s) => s.setNickname);
+  const hydrateNickname = useGameStore((s) => s.hydrateNickname);
   const [loading, setLoading] = useState<Difficulty | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const hasCallsign = Boolean(nickname?.trim());
+  const hasCallsign = Boolean(nickname);
+
+  useEffect(() => { hydrateNickname(); }, [hydrateNickname]);
 
   const handleSelect = async (difficulty: Difficulty) => {
     setLoading(difficulty);
@@ -102,6 +105,7 @@ export default function HomePage() {
             value={nickname ?? ""}
             onChange={(e) => setNickname(e.target.value)}
             placeholder="Enter your callsign"
+            aria-label="Callsign"
             maxLength={20}
             className="flex-1 px-3 py-2 rounded-lg bg-zinc-900 border border-zinc-700 text-sm text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-amber-600 transition-colors"
           />
