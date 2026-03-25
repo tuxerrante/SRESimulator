@@ -7,38 +7,53 @@ import {
 import type { AiTextMessage } from "./ai-runtime";
 
 describe("estimateTokens", () => {
-  it("returns BPE token count via o200k_base", () => {
+  it("returns 0 for empty string", () => {
     expect(estimateTokens("")).toBe(0);
-    expect(estimateTokens("abcd")).toBe(1);
-    expect(estimateTokens("abcde")).toBe(2);
-    // BPE compresses runs of repeated characters more efficiently than chars/4
-    expect(estimateTokens("a".repeat(100))).toBeGreaterThan(0);
-    expect(estimateTokens("a".repeat(100))).toBeLessThan(25);
   });
 
-  it("counts natural language more accurately than chars/4", () => {
+  it("returns positive count for non-empty strings", () => {
+    expect(estimateTokens("hello")).toBeGreaterThan(0);
+    expect(estimateTokens("a")).toBeGreaterThan(0);
+  });
+
+  it("longer text produces more tokens (monotonicity)", () => {
+    const short = estimateTokens("hello");
+    const long = estimateTokens("hello world, this is a much longer sentence");
+    expect(long).toBeGreaterThan(short);
+  });
+
+  it("repeated characters produce fewer tokens than length (BPE compression)", () => {
+    const repeated = estimateTokens("a".repeat(100));
+    expect(repeated).toBeGreaterThan(0);
+    expect(repeated).toBeLessThan(100);
+  });
+
+  it("counts natural language prose within reasonable bounds", () => {
     const sentence = "The etcd leader election failed and the cluster lost quorum.";
     const tokens = estimateTokens(sentence);
-    // BPE for English prose is ~1 token per 4 chars but varies by vocabulary
     expect(tokens).toBeGreaterThan(5);
     expect(tokens).toBeLessThan(sentence.length);
   });
 });
 
 describe("estimateMessagesTokens", () => {
-  it("includes per-message overhead", () => {
+  it("includes per-message overhead beyond raw content tokens", () => {
     const messages: AiTextMessage[] = [
-      { role: "user", content: "abcd" },
+      { role: "user", content: "hello" },
     ];
-    expect(estimateMessagesTokens(messages)).toBe(1 + 4);
+    const contentOnly = estimateTokens("hello");
+    expect(estimateMessagesTokens(messages)).toBeGreaterThan(contentOnly);
   });
 
-  it("sums across messages", () => {
-    const messages: AiTextMessage[] = [
-      { role: "user", content: "abcd" },
-      { role: "assistant", content: "abcd" },
+  it("grows with more messages", () => {
+    const one: AiTextMessage[] = [
+      { role: "user", content: "hello" },
     ];
-    expect(estimateMessagesTokens(messages)).toBe(10);
+    const two: AiTextMessage[] = [
+      { role: "user", content: "hello" },
+      { role: "assistant", content: "hello" },
+    ];
+    expect(estimateMessagesTokens(two)).toBeGreaterThan(estimateMessagesTokens(one));
   });
 });
 

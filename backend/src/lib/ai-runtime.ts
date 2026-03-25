@@ -234,7 +234,7 @@ async function runAzureOpenAiRequest(
       })),
     ],
     ...(isReasoningModel ? {} : { temperature: 0 }),
-    ...(isReasoningModel ? { reasoning_effort: reasoningEffort } : {}),
+    ...(reasoningEffort ? { reasoning_effort: reasoningEffort } : {}),
     ...(useLegacyMaxTokens
       ? { max_tokens: request.maxTokens }
       : { max_completion_tokens: request.maxTokens }),

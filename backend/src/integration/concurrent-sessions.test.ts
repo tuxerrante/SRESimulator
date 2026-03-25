@@ -143,8 +143,8 @@ describe("SSE stream integrity under concurrent sessions", () => {
   });
 });
 
-describe("independent compaction across sessions", () => {
-  it("two sessions with different histories compact independently", async () => {
+describe("independent session responses", () => {
+  it("two sessions with different histories receive independent responses", async () => {
     const sessionA = buildChatBody(2, "reading");
     sessionA.messages = [
       { role: "user", content: "I think the root cause is etcd failure." },
@@ -170,11 +170,14 @@ describe("independent compaction across sessions", () => {
       sessionB,
     ]);
 
-    // Both should get a response (200 or 429 from rate limit)
-    expect([200, 429]).toContain(resultA.status);
-    expect([200, 429]).toContain(resultB.status);
+    if (isExternalTarget()) {
+      expect([200, 429]).toContain(resultA.status);
+      expect([200, 429]).toContain(resultB.status);
+    } else {
+      expect(resultA.status).toBe(200);
+      expect(resultB.status).toBe(200);
+    }
 
-    // If both succeeded, the responses should be different (independent sessions)
     if (resultA.status === 200 && resultB.status === 200) {
       expect(resultA.chunks.length).toBeGreaterThan(0);
       expect(resultB.chunks.length).toBeGreaterThan(0);
@@ -190,7 +193,6 @@ describe("independent compaction across sessions", () => {
       const textA = extractText(resultA.chunks);
       const textB = extractText(resultB.chunks);
 
-      // Both should produce non-empty AI responses
       if (textA.length > 0 && textB.length > 0) {
         expect(textA).not.toBe(textB);
       }

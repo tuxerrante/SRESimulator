@@ -11,15 +11,14 @@ const HYPOTHESIS_TERMS =
  */
 export function extractFacts(text: string): string[] {
   const doc = nlp(text);
-  const sentences = doc.sentences().out("array") as string[];
+  const sentences = doc.sentences();
   const facts: string[] = [];
 
-  for (const sentence of sentences) {
-    const s = nlp(sentence);
+  sentences.forEach((s) => {
     if (s.has(EVIDENTIAL_VERBS)) {
-      facts.push(sentence.trim().slice(0, 150));
+      facts.push(s.text().trim().slice(0, 150));
     }
-  }
+  });
 
   return facts;
 }
@@ -30,15 +29,14 @@ export function extractFacts(text: string): string[] {
  */
 export function extractHypotheses(text: string): string[] {
   const doc = nlp(text);
-  const sentences = doc.sentences().out("array") as string[];
+  const sentences = doc.sentences();
   const hypotheses: string[] = [];
 
-  for (const sentence of sentences) {
-    const s = nlp(sentence);
+  sentences.forEach((s) => {
     if (s.has(HYPOTHESIS_TERMS)) {
-      hypotheses.push(sentence.trim().slice(0, 200));
+      hypotheses.push(s.text().trim().slice(0, 200));
     }
-  }
+  });
 
   return hypotheses;
 }
