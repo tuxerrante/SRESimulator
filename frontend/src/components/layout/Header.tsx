@@ -3,7 +3,7 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { useGameStore } from "@/stores/gameStore";
 import { PhaseTracker } from "@/components/scoring/PhaseTracker";
-import { Shield, ArrowLeft, ChevronDown, Target, FileText, Crosshair, Github } from "lucide-react";
+import { Shield, ArrowLeft, ChevronDown, Target, FileText, Crosshair, Github, HelpCircle } from "lucide-react";
 import Link from "next/link";
 
 interface ScorePopup {
@@ -19,7 +19,11 @@ const DIMENSIONS = [
   { key: "accuracy" as const, label: "Accuracy", icon: Crosshair, color: "text-amber-400" },
 ];
 
-export function Header() {
+interface HeaderProps {
+  onTourRestart?: () => void;
+}
+
+export function Header({ onTourRestart }: HeaderProps) {
   const scenario = useGameStore((s) => s.scenario);
   const score = useGameStore((s) => s.score);
   const status = useGameStore((s) => s.status);
@@ -101,6 +105,19 @@ export function Header() {
         {status === "playing" && (
           <>
             <PhaseTracker />
+            {onTourRestart && (
+              <>
+                <div className="w-px h-5 bg-zinc-700" />
+                <button
+                  onClick={onTourRestart}
+                  className="flex items-center justify-center w-7 h-7 rounded-lg text-zinc-500 hover:text-amber-400 hover:bg-zinc-800 transition-colors"
+                  aria-label="Show UI tour"
+                  title="Show UI tour"
+                >
+                  <HelpCircle size={16} />
+                </button>
+              </>
+            )}
             <div className="w-px h-5 bg-zinc-700" />
             <div className="relative" ref={dropdownRef}>
               <button

@@ -1,13 +1,14 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { useGameStore } from "@/stores/gameStore";
 import { GameLayout } from "@/components/layout/GameLayout";
 import { ChatPanel } from "@/components/chat/ChatPanel";
-import { RightPanel } from "@/components/layout/RightPanel";
+import { RightPanel, type RightPanelTab } from "@/components/layout/RightPanel";
 import { ScoreBreakdown } from "@/components/scoring/ScoreBreakdown";
 import { IncidentTicket } from "@/components/shared/IncidentTicket";
+import { OnboardingTour, resetOnboardingTour, hasSeenOnboardingTour } from "@/components/onboarding/OnboardingTour";
 import { useCommand } from "@/hooks/useCommand";
 
 export default function GamePage() {
@@ -16,11 +17,24 @@ export default function GamePage() {
   const status = useGameStore((s) => s.status);
   const { executeCommand } = useCommand();
 
+  const [activeTab, setActiveTab] = useState<RightPanelTab>("terminal");
+  const [showTour, setShowTour] = useState(() => !hasSeenOnboardingTour());
+
   useEffect(() => {
     if (!scenario || status === "idle") {
       router.push("/");
     }
   }, [scenario, status, router]);
+
+  const handleTourComplete = useCallback(({ completed }: { completed: boolean }) => {
+    setShowTour(false);
+    if (completed) setActiveTab("guide");
+  }, []);
+
+  const handleTourRestart = useCallback(() => {
+    resetOnboardingTour();
+    setShowTour(true);
+  }, []);
 
   if (!scenario) return null;
 
@@ -31,6 +45,7 @@ export default function GamePage() {
   return (
     <>
       <GameLayout
+        onTourRestart={handleTourRestart}
         chatPanel={
           <div className="flex flex-col h-full bg-zinc-900 border-r border-zinc-700">
             <IncidentTicket ticket={scenario.incidentTicket} />
@@ -39,9 +54,12 @@ export default function GamePage() {
             </div>
           </div>
         }
-        rightPanel={<RightPanel />}
+        rightPanel={
+          <RightPanel activeTab={activeTab} onTabChange={setActiveTab} />
+        }
       />
       {status === "completed" && <ScoreBreakdown />}
+      {showTour && <OnboardingTour onComplete={handleTourComplete} />}
     </>
   );
 }

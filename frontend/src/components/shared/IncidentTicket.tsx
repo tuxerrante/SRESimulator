@@ -17,7 +17,7 @@ const SEV_COLORS: Record<string, string> = {
 
 export function IncidentTicket({ ticket }: IncidentTicketProps) {
   return (
-    <div className="border-b border-zinc-700 bg-zinc-800/50 overflow-hidden">
+    <div data-tour="incident-ticket" className="border-b border-zinc-700 bg-zinc-800/50 overflow-hidden">
       <div className="flex items-center gap-2 px-3 py-2 bg-zinc-800 border-b border-zinc-700">
         <AlertTriangle size={14} className="text-amber-500" />
         <span className="text-xs font-semibold text-zinc-300">
