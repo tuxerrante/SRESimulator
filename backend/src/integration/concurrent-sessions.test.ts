@@ -63,28 +63,33 @@ describe("SSE stream integrity under concurrent sessions", () => {
     );
 
     const results = await fireParallelChats(baseUrl, bodies);
-    const okResults = results.filter((r) => r.status === 200);
 
-    // At least one must succeed
-    expect(okResults.length).toBeGreaterThanOrEqual(1);
+    if (isExternalTarget()) {
+      const okResults = results.filter((r) => r.status === 200);
+      expect(okResults.length).toBeGreaterThanOrEqual(1);
 
-    for (const result of okResults) {
-      expect(result.done).toBe(true);
-      expect(result.chunks.length).toBeGreaterThan(0);
-
-      for (const chunk of result.chunks) {
-        const parsed = JSON.parse(chunk);
-        // Chunks can be { text: ... } or { reasoning: true } or { error: ... }
-        expect(
-          "text" in parsed || "reasoning" in parsed || "error" in parsed,
-        ).toBe(true);
+      for (const result of okResults) {
+        expect(result.done).toBe(true);
+        expect(result.chunks.length).toBeGreaterThan(0);
       }
-    }
 
-    // Non-200 responses should be throttling, not server errors
-    for (const result of results) {
-      if (result.status !== 200) {
-        expect([429, 502, 503]).toContain(result.status);
+      for (const result of results) {
+        if (result.status !== 200) {
+          expect([429, 502, 503]).toContain(result.status);
+        }
+      }
+    } else {
+      for (const result of results) {
+        expect(result.status).toBe(200);
+        expect(result.done).toBe(true);
+        expect(result.chunks.length).toBeGreaterThan(0);
+
+        for (const chunk of result.chunks) {
+          const parsed = JSON.parse(chunk);
+          expect(
+            "text" in parsed || "reasoning" in parsed || "error" in parsed,
+          ).toBe(true);
+        }
       }
     }
   });
@@ -97,15 +102,24 @@ describe("SSE stream integrity under concurrent sessions", () => {
     ];
 
     const results = await fireParallelChats(baseUrl, bodies);
-    const successfulResults = results.filter((r) => r.status === 200);
 
-    // At least one should succeed; check SSE format on those
-    expect(successfulResults.length).toBeGreaterThanOrEqual(1);
+    if (isExternalTarget()) {
+      const successfulResults = results.filter((r) => r.status === 200);
+      expect(successfulResults.length).toBeGreaterThanOrEqual(1);
 
-    for (const result of successfulResults) {
-      const lines = result.rawBody.split("\n").filter((l) => l.length > 0);
-      for (const line of lines) {
-        expect(line).toMatch(/^data: /);
+      for (const result of successfulResults) {
+        const lines = result.rawBody.split("\n").filter((l) => l.length > 0);
+        for (const line of lines) {
+          expect(line).toMatch(/^data: /);
+        }
+      }
+    } else {
+      for (const result of results) {
+        expect(result.status).toBe(200);
+        const lines = result.rawBody.split("\n").filter((l) => l.length > 0);
+        for (const line of lines) {
+          expect(line).toMatch(/^data: /);
+        }
       }
     }
   });
@@ -114,13 +128,17 @@ describe("SSE stream integrity under concurrent sessions", () => {
     const bodies = Array.from({ length: 10 }, () => buildChatBody(3));
     const results = await fireParallelChats(baseUrl, bodies);
 
-    const successful = results.filter((r) => r.status === 200 && r.done);
-
-    // At least some should succeed
-    expect(successful.length).toBeGreaterThanOrEqual(1);
-    // The rest are expected throttling/gateway responses under load
-    for (const r of results) {
-      expect([200, 429, 502, 503]).toContain(r.status);
+    if (isExternalTarget()) {
+      const successful = results.filter((r) => r.status === 200 && r.done);
+      expect(successful.length).toBeGreaterThanOrEqual(1);
+      for (const r of results) {
+        expect([200, 429, 502, 503]).toContain(r.status);
+      }
+    } else {
+      for (const r of results) {
+        expect(r.status).toBe(200);
+        expect(r.done).toBe(true);
+      }
     }
   });
 });

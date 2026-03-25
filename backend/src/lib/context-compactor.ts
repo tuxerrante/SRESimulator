@@ -1,4 +1,4 @@
-import { encode } from "gpt-tokenizer/encoding/o200k_base";
+import { encode } from "gpt-tokenizer";
 import type { AiTextMessage } from "./ai-runtime";
 import { extractFacts, extractHypotheses } from "./nlp-extract";
 
@@ -132,7 +132,7 @@ function extractRetainedState(messages: AiTextMessage[]): RetainedState {
     knownFacts: keepNewest(factsList, 15),
     hypotheses: keepNewest(hypothesesList, 5),
     mentionedCommands: keepNewest([...commandsSet], 20),
-    unresolvedQuestions: questionsList.filter(q => !resolvedQuestions.has(q)),
+    unresolvedQuestions: keepNewest(questionsList.filter(q => !resolvedQuestions.has(q)), 10),
     summaryOfDiscussion: summaryParts.join("; "),
   };
 }

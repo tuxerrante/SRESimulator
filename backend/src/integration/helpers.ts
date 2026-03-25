@@ -20,8 +20,9 @@ export interface ChatRequestBody {
 }
 
 /**
- * Resolve the backend URL. When E2E_BACKEND_URL is set (e.g. an ARO route),
- * use it. Otherwise fall back to a local server on a random port.
+ * Return the external backend URL from E2E_BACKEND_URL.
+ * When unset, returns "" — the test setup in each suite handles
+ * spinning up a local server via `startLocalServer()` instead.
  */
 export function getBackendUrl(): string {
   return process.env.E2E_BACKEND_URL ?? "";
@@ -107,7 +108,18 @@ export async function getTokenMetrics(
   }
 
   const response = await fetch(`${baseUrl}/api/ai/token-metrics`, { headers });
-  const body = await response.json();
+  const text = await response.text();
+  let body: unknown = text;
+
+  const contentType = response.headers.get("content-type") ?? "";
+  if (contentType.includes("application/json")) {
+    try {
+      body = text ? JSON.parse(text) : null;
+    } catch {
+      body = text;
+    }
+  }
+
   return { status: response.status, body };
 }
 
