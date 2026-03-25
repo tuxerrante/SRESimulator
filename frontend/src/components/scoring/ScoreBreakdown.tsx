@@ -21,8 +21,9 @@ export function ScoreBreakdown() {
   const commandCount = useGameStore((s) => s.commandCount);
   const sessionToken = useGameStore((s) => s.sessionToken);
   const resetGame = useGameStore((s) => s.resetGame);
+  const storedNickname = useGameStore((s) => s.nickname);
 
-  const [nickname, setNickname] = useState("");
+  const [nickname, setNickname] = useState(storedNickname ?? "");
   const [submitState, setSubmitState] = useState<"idle" | "submitting" | "submitted">("idle");
 
   const handleClose = () => {

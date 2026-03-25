@@ -1,4 +1,4 @@
-import { describe, expect, it, beforeEach } from "vitest";
+import { describe, expect, it, beforeEach, vi } from "vitest";
 import { useGameStore } from "./gameStore";
 import type { Scenario } from "@shared/types/game";
 import type { ChatMessage } from "@shared/types/chat";
@@ -262,6 +262,38 @@ describe("gameStore", () => {
 
       const score = useGameStore.getState().score;
       expect(score.total).toBe(50);
+    });
+  });
+
+  describe("nickname", () => {
+    it("setNickname updates the store", () => {
+      useGameStore.getState().setNickname("onCallHero");
+
+      expect(useGameStore.getState().nickname).toBe("onCallHero");
+    });
+
+    it("truncates nicknames longer than 20 characters", () => {
+      const longName = "abcdefghij".repeat(5);
+      useGameStore.getState().setNickname(longName);
+
+      expect(useGameStore.getState().nickname).toHaveLength(20);
+    });
+
+    it("resetGame preserves the nickname", () => {
+      useGameStore.getState().setNickname("keeper");
+      useGameStore.getState().startGame(mockScenario, "tok-1");
+      useGameStore.getState().resetGame();
+
+      expect(useGameStore.getState().nickname).toBe("keeper");
+      expect(useGameStore.getState().status).toBe("idle");
+    });
+
+    it("startGame preserves the nickname", () => {
+      useGameStore.getState().setNickname("player1");
+      useGameStore.getState().startGame(mockScenario, "tok-2");
+
+      expect(useGameStore.getState().nickname).toBe("player1");
+      expect(useGameStore.getState().status).toBe("playing");
     });
   });
 });

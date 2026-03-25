@@ -4,7 +4,21 @@ import type { Scenario, GameStatus } from "@shared/types/game";
 import type { TerminalEntry } from "@shared/types/terminal";
 import type { Score, ScoringEvent } from "@shared/types/scoring";
 
+const NICKNAME_KEY = "sre-nickname";
+
+function loadNickname(): string | null {
+  try {
+    return globalThis.localStorage?.getItem(NICKNAME_KEY) ?? null;
+  } catch {
+    return null;
+  }
+}
+
 interface GameState {
+  // Player identity (persisted in localStorage, never sent to LLM)
+  nickname: string | null;
+  setNickname: (name: string) => void;
+
   // Session
   status: GameStatus;
   scenario: Scenario | null;
@@ -61,6 +75,15 @@ const initialScore: Score = {
 };
 
 export const useGameStore = create<GameState>((set) => ({
+  nickname: loadNickname(),
+  setNickname: (name: string) => {
+    const trimmed = name.slice(0, 20);
+    try {
+      globalThis.localStorage?.setItem(NICKNAME_KEY, trimmed);
+    } catch { /* SSR / restricted storage */ }
+    set({ nickname: trimmed });
+  },
+
   status: "idle",
   scenario: null,
   sessionToken: null,

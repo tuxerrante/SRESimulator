@@ -3,7 +3,7 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { useGameStore } from "@/stores/gameStore";
 import { PhaseTracker } from "@/components/scoring/PhaseTracker";
-import { Shield, ArrowLeft, ChevronDown, Target, FileText, Crosshair, Github, HelpCircle } from "lucide-react";
+import { Shield, ArrowLeft, ChevronDown, Target, FileText, Crosshair, Github, HelpCircle, User } from "lucide-react";
 import Link from "next/link";
 
 interface ScorePopup {
@@ -25,6 +25,7 @@ interface HeaderProps {
 
 export function Header({ onTourRestart }: HeaderProps) {
   const scenario = useGameStore((s) => s.scenario);
+  const nickname = useGameStore((s) => s.nickname);
   const score = useGameStore((s) => s.score);
   const status = useGameStore((s) => s.status);
   const commandCount = useGameStore((s) => s.commandCount);
@@ -96,6 +97,15 @@ export function Header({ onTourRestart }: HeaderProps) {
               )}
             >
               {scenario.difficulty}
+            </span>
+          </>
+        )}
+        {status === "playing" && nickname && (
+          <>
+            <div className="w-px h-5 bg-zinc-700" />
+            <span className="flex items-center gap-1 text-xs text-zinc-400">
+              <User size={12} />
+              {nickname}
             </span>
           </>
         )}
