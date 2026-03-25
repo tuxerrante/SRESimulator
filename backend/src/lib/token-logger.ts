@@ -7,6 +7,7 @@ export interface TokenUsageEntry {
   promptTokens: number;
   completionTokens: number;
   reasoningTokens: number;
+  cachedTokens: number;
   totalTokens: number;
   latencyMs: number;
   timestamp: number;
@@ -22,11 +23,12 @@ interface RouteTotals {
   promptTokens: number;
   completionTokens: number;
   reasoningTokens: number;
+  cachedTokens: number;
   errors: number;
 }
 
 function emptyTotals(): RouteTotals {
-  return { requests: 0, promptTokens: 0, completionTokens: 0, reasoningTokens: 0, errors: 0 };
+  return { requests: 0, promptTokens: 0, completionTokens: 0, reasoningTokens: 0, cachedTokens: 0, errors: 0 };
 }
 
 const routeTotals: Record<AiRoute, RouteTotals> = {
@@ -47,12 +49,14 @@ export function logTokenUsage(entry: TokenUsageEntry): void {
   totals.promptTokens += entry.promptTokens;
   totals.completionTokens += entry.completionTokens;
   totals.reasoningTokens += entry.reasoningTokens;
+  totals.cachedTokens += entry.cachedTokens;
 
   const deploymentTag = entry.deployment ? ` deployment=${entry.deployment}` : "";
+  const cachedTag = entry.cachedTokens > 0 ? ` cached=${entry.cachedTokens}` : "";
   console.log(
     `[token-usage] route=${entry.route} model=${entry.model}${deploymentTag} ` +
     `prompt=${entry.promptTokens} completion=${entry.completionTokens} ` +
-    `reasoning=${entry.reasoningTokens} total=${entry.totalTokens} ` +
+    `reasoning=${entry.reasoningTokens}${cachedTag} total=${entry.totalTokens} ` +
     `latency=${entry.latencyMs}ms` +
     (entry.compacted ? ` compacted=${entry.compactedMessageCount}msgs` : "")
   );
