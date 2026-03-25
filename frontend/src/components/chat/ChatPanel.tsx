@@ -26,7 +26,7 @@ export function ChatPanel({ onRunCommand }: ChatPanelProps) {
   }, [storeMessages.length, lastContent]);
 
   return (
-    <div className="flex flex-col h-full">
+    <div data-tour="chat-panel" className="flex flex-col h-full">
       <div className="px-4 py-2 border-b border-zinc-700 bg-zinc-800">
         <h2 className="text-sm font-semibold text-zinc-200">
           Investigation Chat

@@ -1,6 +1,5 @@
 "use client";
 
-import { useState } from "react";
 import { TerminalPanel } from "@/components/terminal/TerminalPanel";
 import { DashboardPanel } from "@/components/dashboard/DashboardPanel";
 import { GuidePanel } from "@/components/guide/GuidePanel";
@@ -8,10 +7,15 @@ import { useGameStore } from "@/stores/gameStore";
 import { cn } from "@/lib/utils";
 import { Terminal, LayoutDashboard, Loader2, BookOpen } from "lucide-react";
 
-type Tab = "terminal" | "dashboard" | "guide";
+export type RightPanelTab = "terminal" | "dashboard" | "guide";
 
-export function RightPanel() {
-  const [activeTab, setActiveTab] = useState<Tab>("terminal");
+interface RightPanelProps {
+  activeTab: RightPanelTab;
+  onTabChange: (tab: RightPanelTab) => void;
+}
+
+export function RightPanel({ activeTab, onTabChange }: RightPanelProps) {
+  const setActiveTab = onTabChange;
   const isExecuting = useGameStore((s) => s.isExecuting);
 
   return (
@@ -34,6 +38,7 @@ export function RightPanel() {
           Terminal
         </button>
         <button
+          data-tour="dashboard-tab"
           onClick={() => setActiveTab("dashboard")}
           className={cn(
             "flex items-center gap-1.5 px-4 py-2 text-xs font-medium transition-colors border-b-2",
@@ -46,6 +51,7 @@ export function RightPanel() {
           Dashboard
         </button>
         <button
+          data-tour="guide-tab"
           onClick={() => setActiveTab("guide")}
           className={cn(
             "flex items-center gap-1.5 px-4 py-2 text-xs font-medium transition-colors border-b-2",
