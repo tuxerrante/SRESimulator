@@ -8,6 +8,7 @@ function makeEntry(overrides: Partial<TokenUsageEntry> = {}): TokenUsageEntry {
     promptTokens: 100,
     completionTokens: 50,
     reasoningTokens: 0,
+    cachedTokens: 0,
     totalTokens: 150,
     latencyMs: 500,
     timestamp: Date.now(),
@@ -76,6 +77,15 @@ describe("token-logger", () => {
     expect(console.log).toHaveBeenCalledWith(
       expect.stringContaining("compacted=12msgs")
     );
+  });
+
+  it("includes cached tokens in log when present", () => {
+    logTokenUsage(makeEntry({ cachedTokens: 1024 }));
+    expect(console.log).toHaveBeenCalledWith(
+      expect.stringContaining("cached=1024")
+    );
+    const metrics = getTokenMetrics();
+    expect(metrics.perRoute.chat.cachedTokens).toBe(1024);
   });
 
   it("returns deep copies from getTokenMetrics", () => {
