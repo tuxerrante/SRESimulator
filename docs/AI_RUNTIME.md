@@ -223,17 +223,108 @@ message.
 ### AOAI capacity sizing
 
 The `aoai_capacity` Terraform variable (default 80K TPM) controls the
-rate limit on the shared Azure OpenAI deployment. Per-route token
-consumption measured empirically:
+rate limit on the shared Azure OpenAI deployment.
 
-| Route | Tokens/request | Peak rate (1 user) | Peak TPM |
-| ------- | --------------- | ------------------- | ---------- |
-| Chat | ~16K | 2-3/min | ~48K |
-| Command | ~4K | 1-2/min | ~8K |
-| Scenario | ~2.3K | burst | ~2K |
+Per-request token consumption measured on gpt-5.2 (March 2026, with
+section-based KB retrieval and prompt caching active):
 
-For multi-user deployments, multiply the single-user peak (~50K TPM) by
-the number of concurrent users and increase `aoai_capacity` accordingly.
+| Route | Prompt tokens | Completion tokens | Reasoning tokens | Total |
+| ------- | ------------- | ----------------- | ---------------- | ----- |
+| Chat | ~2 500 | ~450 | ~70 | ~3 000 |
+| Command | ~4 000 | ~200 | — | ~4 200 |
+| Scenario | ~2 300 | ~800 | — | ~3 100 |
+| Probe | 26 | 16 | 5 | 42 |
+
+Prompt caching is highly effective: **~74 % of prompt tokens** served from
+cache across 81 test requests. This reduces effective input compute
+significantly.
+
+For multi-user deployments, multiply per-request totals by expected
+concurrent request rate and increase `aoai_capacity` accordingly.
+
+---
+
+## Concurrent Load Test Results (March 2026)
+
+Tested against live ARO deployment with gpt-5.2, 80K TPM, single
+deployment, 15 req/min/IP rate limit.
+
+| Concurrent requests | Result | Latency range |
+| ------------------- | ----------------------------------- | ------------- |
+| 1 | 1/1 OK | ~10 s |
+| 3 | 3/3 OK | 7–11 s |
+| 5 | 5/5 OK | 7–15 s |
+| 10 | 10/10 OK | 11–18 s |
+| 15 | 15/15 OK | 8–12 s |
+| 20 | 5 OK, 15 throttled (429) | 10–16 s |
+
+All integration tests pass against the live environment (SSE integrity,
+session isolation, rate-limit enforcement, token-metrics recording).
+
+---
+
+## Known Limitations
+
+### Single-IP rate limit affects all concurrent players behind NAT/proxy
+
+The 15 req/min/IP rate limit applies per source IP. When multiple
+players share an IP (corporate proxy, NAT, OpenShift router), they
+collectively share the same rate-limit bucket. This means 2–3 active
+players behind the same IP can trigger throttling during normal
+gameplay (each player may send 4–6 requests per minute across chat,
+command, and scenario routes).
+
+**Mitigation:** Consider per-session rate limiting (e.g., keyed by a
+session token or browser fingerprint) instead of per-IP.
+
+### No server-side streaming for Azure OpenAI
+
+Azure OpenAI chat completions are consumed as a single response and
+then yielded as one SSE chunk. The frontend receives the full response
+at once rather than token-by-token. This means:
+
+- Users see no incremental output during the 7–18s response time.
+- Long responses feel slower than they would with true streaming.
+
+**Mitigation:** Implement Azure SSE streaming by consuming the
+`stream: true` response incrementally.
+
+### Reasoning models consume unpredictable token budgets
+
+Reasoning models (o-series, gpt-5) allocate completion tokens between
+internal chain-of-thought and output text. The split is non-deterministic:
+
+- The same prompt may produce 30 reasoning tokens one time and 300 the
+  next, causing variable latency (7–18s observed for the same request).
+- With low `max_completion_tokens`, the model can exhaust the budget on
+  reasoning without producing any output text. The retry with
+  `reasoning_effort=low` mitigates this but adds latency.
+
+### Token metrics are process-local and volatile
+
+The in-memory ring buffer (200 entries) and route aggregates are lost on
+pod restart. In a multi-replica deployment, each pod tracks its own
+metrics independently — there is no aggregated view across replicas.
+
+**Mitigation:** Export structured logs to an external observability stack
+(e.g., Azure Monitor, Prometheus) for durable, cross-replica metrics.
+
+### Leaderboard writes serialize on a single process
+
+The leaderboard JSON file on PVC uses an in-process async mutex. In a
+multi-replica deployment, concurrent writes from different pods can
+race. The current architecture expects a single backend replica.
+
+**Mitigation:** Move leaderboard storage to a shared database (e.g.,
+CosmosDB, Redis) or use a distributed lock.
+
+### Context compaction is best-effort
+
+The hybrid regex + NLP extraction can miss facts or hypotheses that
+don't match the expected sentence patterns. Compaction summaries may
+lose nuance from the original conversation, potentially causing the
+AI to repeat questions or miss context from earlier in the
+investigation.
 
 ---
 
