@@ -223,7 +223,7 @@ async function runAzureOpenAiRequest(
   );
 
   const model = getConfiguredModel().toLowerCase();
-  const isReasoningModel = /^o\d/.test(model);
+  const isReasoningModel = /^o\d/.test(model) || /^gpt-5/.test(model);
 
   const body: Record<string, unknown> = {
     messages: [

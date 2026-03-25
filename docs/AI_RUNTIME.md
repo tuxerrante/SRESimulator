@@ -28,11 +28,14 @@ all live-provider requirements and returns deterministic fixtures.
 Azure OpenAI o-series models (o1, o3, o4-mini, etc.) differ from GPT-series
 in two ways the runtime handles automatically:
 
-- **temperature** is omitted (o-series only supports the default value of 1).
-- **reasoning_effort** is sent instead (`low` / `medium` / `high`, configurable
-  via `AI_REASONING_EFFORT`, default `medium`).
+- **temperature** is omitted (these models only support the default value of 1).
+- **reasoning_effort** is sent (`low` / `medium` / `high`, configurable
+  via `AI_REASONING_EFFORT`, default `medium`). This parameter is also
+  sent to non-reasoning models when configured, as a forward-compatible
+  hint that the API silently ignores if unsupported.
 
-Detection is model-name based (`/^o\d/`); no manual flag is needed.
+Detection is model-name based (`/^o\d/` or `/^gpt-5/`); no manual flag
+is needed.
 
 ### Reasoning effort control
 
