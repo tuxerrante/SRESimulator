@@ -3,7 +3,7 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { useGameStore } from "@/stores/gameStore";
 import { PhaseTracker } from "@/components/scoring/PhaseTracker";
-import { Shield, ArrowLeft, ChevronDown, Target, FileText, Crosshair } from "lucide-react";
+import { Shield, ArrowLeft, ChevronDown, Target, FileText, Crosshair, Github } from "lucide-react";
 import Link from "next/link";
 
 interface ScorePopup {
@@ -50,17 +50,19 @@ export function Header() {
     prevEventsLength.current = scoringEvents.length;
   }, [scoringEvents, addPopup]);
 
+  const scoreOpen = showScore && status === "playing";
+
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
       if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
         setShowScore(false);
       }
     }
-    if (showScore) {
+    if (scoreOpen) {
       document.addEventListener("mousedown", handleClickOutside);
       return () => document.removeEventListener("mousedown", handleClickOutside);
     }
-  }, [showScore]);
+  }, [scoreOpen]);
 
   return (
     <header className="flex items-center justify-between px-4 py-2 border-b border-zinc-700 bg-zinc-900 relative z-20">
@@ -95,102 +97,115 @@ export function Header() {
         )}
       </div>
 
-      {status === "playing" && (
-        <div className="flex items-center gap-4">
-          <PhaseTracker />
-          <div className="w-px h-5 bg-zinc-700" />
-          <div className="relative" ref={dropdownRef}>
-            <button
-              onClick={() => setShowScore(!showScore)}
-              className="flex items-center gap-1.5 text-sm font-mono px-2 py-1 rounded hover:bg-zinc-800 transition-colors"
-            >
-              <span className="text-zinc-500">Score:</span>
-              <span className="text-amber-400 font-bold">{score.total}</span>
-              <span className="text-zinc-600">/100</span>
-              <ChevronDown
-                size={14}
-                className={cn(
-                  "text-zinc-500 transition-transform",
-                  showScore && "rotate-180"
-                )}
-              />
-            </button>
-
-            {scorePopups.map((popup, i) => (
-              <span
-                key={popup.id}
-                className={cn(
-                  "absolute top-full mt-1 right-0 text-xs font-bold font-mono pointer-events-none animate-score-pop whitespace-nowrap",
-                  popup.positive ? "text-emerald-400" : "text-red-400"
-                )}
-                style={{ right: `${i * 28}px` }}
+      <div className="flex items-center gap-4">
+        {status === "playing" && (
+          <>
+            <PhaseTracker />
+            <div className="w-px h-5 bg-zinc-700" />
+            <div className="relative" ref={dropdownRef}>
+              <button
+                onClick={() => setShowScore(!showScore)}
+                className="flex items-center gap-1.5 text-sm font-mono px-2 py-1 rounded hover:bg-zinc-800 transition-colors"
               >
-                {popup.text}
-              </span>
-            ))}
+                <span className="text-zinc-500">Score:</span>
+                <span className="text-amber-400 font-bold">{score.total}</span>
+                <span className="text-zinc-600">/100</span>
+                <ChevronDown
+                  size={14}
+                  className={cn(
+                    "text-zinc-500 transition-transform",
+                    scoreOpen && "rotate-180"
+                  )}
+                />
+              </button>
 
-            {showScore && (
-              <div className="absolute right-0 top-full mt-2 bg-zinc-900 border border-zinc-700 rounded-lg p-3 shadow-xl min-w-[240px]">
-                <div className="text-xs font-semibold text-zinc-400 mb-2 flex items-center justify-between">
-                  <span>SCORE BREAKDOWN</span>
-                  <span className="text-zinc-600">{commandCount} cmds</span>
-                </div>
-                <div className="space-y-1.5">
-                  {DIMENSIONS.map((d) => {
-                    const Icon = d.icon;
-                    const value = score[d.key];
-                    return (
-                      <div key={d.key} className="flex items-center gap-2">
-                        <Icon size={12} className={d.color} />
-                        <span className="text-xs text-zinc-500 w-20">{d.label}</span>
-                        <div className="flex-1 h-1.5 bg-zinc-800 rounded-full overflow-hidden">
-                          <div
-                            className={cn(
-                              "h-full rounded-full transition-all",
-                              value >= 20 ? "bg-emerald-500" :
-                              value >= 10 ? "bg-amber-500" : "bg-red-500"
-                            )}
-                            style={{ width: `${(value / 25) * 100}%` }}
-                          />
-                        </div>
-                        <span className="text-xs text-zinc-400 font-mono w-6 text-right">
-                          {value}
-                        </span>
-                      </div>
-                    );
-                  })}
-                </div>
-                <div className="mt-2 pt-2 border-t border-zinc-700 flex items-center justify-between">
-                  <span className="text-xs font-semibold text-zinc-300">Total</span>
-                  <span className="text-sm font-bold text-amber-400">{score.total}/100</span>
-                </div>
-                {scoringEvents.length > 0 && (
-                  <div className="mt-2 pt-2 border-t border-zinc-700">
-                    <div className="text-[10px] font-semibold text-zinc-500 uppercase mb-1">
-                      Recent Events
-                    </div>
-                    <div className="space-y-0.5 max-h-32 overflow-y-auto">
-                      {scoringEvents.slice(-8).reverse().map((event, i) => (
-                        <div key={i} className="flex items-center gap-1.5 text-[11px]">
-                          <span
-                            className={cn(
-                              "font-mono font-bold",
-                              event.type === "bonus" ? "text-emerald-400" : "text-red-400"
-                            )}
-                          >
-                            {event.type === "bonus" ? "+" : "-"}{event.points}
-                          </span>
-                          <span className="text-zinc-400 truncate">{event.reason}</span>
-                        </div>
-                      ))}
-                    </div>
+              {scorePopups.map((popup, i) => (
+                <span
+                  key={popup.id}
+                  className={cn(
+                    "absolute top-full mt-1 right-0 text-xs font-bold font-mono pointer-events-none animate-score-pop whitespace-nowrap",
+                    popup.positive ? "text-emerald-400" : "text-red-400"
+                  )}
+                  style={{ right: `${i * 28}px` }}
+                >
+                  {popup.text}
+                </span>
+              ))}
+
+              {scoreOpen && (
+                <div className="absolute right-0 top-full mt-2 bg-zinc-900 border border-zinc-700 rounded-lg p-3 shadow-xl min-w-[240px]">
+                  <div className="text-xs font-semibold text-zinc-400 mb-2 flex items-center justify-between">
+                    <span>SCORE BREAKDOWN</span>
+                    <span className="text-zinc-600">{commandCount} cmds</span>
                   </div>
-                )}
-              </div>
-            )}
-          </div>
-        </div>
-      )}
+                  <div className="space-y-1.5">
+                    {DIMENSIONS.map((d) => {
+                      const Icon = d.icon;
+                      const value = score[d.key];
+                      return (
+                        <div key={d.key} className="flex items-center gap-2">
+                          <Icon size={12} className={d.color} />
+                          <span className="text-xs text-zinc-500 w-20">{d.label}</span>
+                          <div className="flex-1 h-1.5 bg-zinc-800 rounded-full overflow-hidden">
+                            <div
+                              className={cn(
+                                "h-full rounded-full transition-all",
+                                value >= 20 ? "bg-emerald-500" :
+                                value >= 10 ? "bg-amber-500" : "bg-red-500"
+                              )}
+                              style={{ width: `${(value / 25) * 100}%` }}
+                            />
+                          </div>
+                          <span className="text-xs text-zinc-400 font-mono w-6 text-right">
+                            {value}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <div className="mt-2 pt-2 border-t border-zinc-700 flex items-center justify-between">
+                    <span className="text-xs font-semibold text-zinc-300">Total</span>
+                    <span className="text-sm font-bold text-amber-400">{score.total}/100</span>
+                  </div>
+                  {scoringEvents.length > 0 && (
+                    <div className="mt-2 pt-2 border-t border-zinc-700">
+                      <div className="text-[10px] font-semibold text-zinc-500 uppercase mb-1">
+                        Recent Events
+                      </div>
+                      <div className="space-y-0.5 max-h-32 overflow-y-auto">
+                        {scoringEvents.slice(-8).reverse().map((event, i) => (
+                          <div key={i} className="flex items-center gap-1.5 text-[11px]">
+                            <span
+                              className={cn(
+                                "font-mono font-bold",
+                                event.type === "bonus" ? "text-emerald-400" : "text-red-400"
+                              )}
+                            >
+                              {event.type === "bonus" ? "+" : "-"}{event.points}
+                            </span>
+                            <span className="text-zinc-400 truncate">{event.reason}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+            <div className="w-px h-5 bg-zinc-700" />
+          </>
+        )}
+        <a
+          href="https://github.com/tuxerrante"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-zinc-600 hover:text-zinc-300 transition-colors p-2 rounded hover:bg-zinc-800"
+          title="tuxerrante on GitHub"
+          aria-label="Visit tuxerrante on GitHub"
+        >
+          <Github size={16} />
+        </a>
+      </div>
     </header>
   );
 }
