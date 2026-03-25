@@ -69,6 +69,22 @@ function extractKeywords(title: string, content: string): string[] {
   return uniqueTerms;
 }
 
+function pushSection(
+  sections: KBSection[],
+  title: string,
+  lines: string[],
+  source: string,
+): void {
+  const body = lines.join("\n").trim();
+  if (!body) return;
+  sections.push({
+    title,
+    content: `## ${title}\n\n${body}`,
+    source,
+    keywords: extractKeywords(title, body),
+  });
+}
+
 function parseFileIntoSections(content: string, source: string): KBSection[] {
   const lines = content.split("\n");
   const sections: KBSection[] = [];
@@ -76,17 +92,9 @@ function parseFileIntoSections(content: string, source: string): KBSection[] {
   let currentLines: string[] = [];
 
   for (const line of lines) {
-    const headerMatch = line.match(/^(#{2,3})\s+(.+)/);
+    const headerMatch = line.match(/^(#{1,3})\s+(.+)/);
     if (headerMatch) {
-      if (currentTitle && currentLines.length > 0) {
-        const body = currentLines.join("\n").trim();
-        sections.push({
-          title: currentTitle,
-          content: `## ${currentTitle}\n\n${body}`,
-          source,
-          keywords: extractKeywords(currentTitle, body),
-        });
-      }
+      pushSection(sections, currentTitle || "Preamble", currentLines, source);
       currentTitle = headerMatch[2].trim();
       currentLines = [];
     } else {
@@ -94,15 +102,7 @@ function parseFileIntoSections(content: string, source: string): KBSection[] {
     }
   }
 
-  if (currentTitle && currentLines.length > 0) {
-    const body = currentLines.join("\n").trim();
-    sections.push({
-      title: currentTitle,
-      content: `## ${currentTitle}\n\n${body}`,
-      source,
-      keywords: extractKeywords(currentTitle, body),
-    });
-  }
+  pushSection(sections, currentTitle || "Preamble", currentLines, source);
 
   return sections;
 }
@@ -167,6 +167,7 @@ export function queryKnowledgeSections(
 
   scoredSections.sort((a, b) => b.score - a.score);
 
+  const SEPARATOR = "\n\n---\n\n";
   const investigationText = investigationSections
     .map((s) => s.content)
     .join("\n\n");
@@ -176,17 +177,23 @@ export function queryKnowledgeSections(
   }
 
   let remaining = maxChars - investigationText.length;
-  const selectedParts = [investigationText];
+  const selectedParts: string[] = [];
+
+  if (investigationText.length > 0) {
+    selectedParts.push(investigationText);
+  }
 
   for (const { section } of scoredSections) {
     if (remaining <= 0) break;
-    if (section.content.length <= remaining) {
+    const separatorCost = selectedParts.length > 0 ? SEPARATOR.length : 0;
+    const totalCost = section.content.length + separatorCost;
+    if (totalCost <= remaining) {
       selectedParts.push(section.content);
-      remaining -= section.content.length;
+      remaining -= totalCost;
     }
   }
 
-  return selectedParts.join("\n\n---\n\n");
+  return selectedParts.join(SEPARATOR);
 }
 
 const GUIDE_FILE = INVESTIGATION_FILE;

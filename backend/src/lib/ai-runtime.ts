@@ -200,6 +200,16 @@ interface AzureChatResponse {
   };
 }
 
+const VALID_REASONING_EFFORTS = new Set(["low", "medium", "high"]);
+
+function validReasoningEffort(raw: string | undefined): "low" | "medium" | "high" {
+  const normalized = raw?.trim().toLowerCase();
+  if (normalized && VALID_REASONING_EFFORTS.has(normalized)) {
+    return normalized as "low" | "medium" | "high";
+  }
+  return "medium";
+}
+
 async function runAzureOpenAiRequest(
   endpoint: string,
   key: string,
@@ -208,10 +218,9 @@ async function runAzureOpenAiRequest(
   request: AiTextRequest,
   useLegacyMaxTokens: boolean
 ): Promise<Response> {
-  const reasoningEffort =
-    request._reasoningEffortOverride
-    ?? process.env.AI_REASONING_EFFORT
-    ?? "medium";
+  const reasoningEffort = validReasoningEffort(
+    request._reasoningEffortOverride ?? process.env.AI_REASONING_EFFORT,
+  );
 
   const body: Record<string, unknown> = {
     messages: [

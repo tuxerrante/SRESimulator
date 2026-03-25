@@ -20,7 +20,7 @@ const CHARS_PER_TOKEN_ESTIMATE = 4;
 function envInt(key: string, fallback: number, min: number = 1): number {
   const raw = process.env[key];
   if (!raw) return fallback;
-  const parsed = Number(raw);
+  const parsed = Number.parseInt(raw, 10);
   if (!Number.isFinite(parsed)) return fallback;
   if (parsed < min) {
     console.warn(`[context-compactor] ${key}=${parsed} is below minimum ${min}, using ${min}`);
