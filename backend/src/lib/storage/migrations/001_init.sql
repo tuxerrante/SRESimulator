@@ -8,6 +8,7 @@ CREATE TABLE IF NOT EXISTS sessions (
 );
 
 CREATE INDEX IF NOT EXISTS idx_sessions_created ON sessions (created_at);
+CREATE INDEX IF NOT EXISTS idx_sessions_start_time ON sessions (start_time);
 
 CREATE TABLE IF NOT EXISTS leaderboard_entries (
   id                   UUID PRIMARY KEY,

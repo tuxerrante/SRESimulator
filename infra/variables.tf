@@ -137,6 +137,20 @@ variable "pg_admin_password" {
   type        = string
   default     = ""
   sensitive   = true
+
+  validation {
+    condition = (
+      var.enable_postgres == false ||
+      (
+        length(var.pg_admin_password) >= 8 &&
+        can(regex("[A-Z]", var.pg_admin_password)) &&
+        can(regex("[a-z]", var.pg_admin_password)) &&
+        can(regex("[0-9]", var.pg_admin_password)) &&
+        can(regex("[^A-Za-z0-9]", var.pg_admin_password))
+      )
+    )
+    error_message = "When enable_postgres is true, pg_admin_password must be at least 8 characters and include uppercase, lowercase, numeric, and special characters."
+  }
 }
 
 # ---------------------------------------------------------------------------

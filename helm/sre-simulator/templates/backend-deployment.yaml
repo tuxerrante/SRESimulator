@@ -51,10 +51,10 @@ spec:
             - name: PG_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: {{ .Values.postgresql.existingSecretName }}
+                  name: {{ required "postgresql.existingSecretName is required when postgresql.enabled is true" .Values.postgresql.existingSecretName }}
                   key: {{ .Values.postgresql.secretPasswordKey }}
             - name: DATABASE_URL
-              value: "postgresql://{{ .Values.postgresql.username }}:$(PG_PASSWORD)@{{ .Values.postgresql.host }}:{{ .Values.postgresql.port }}/{{ .Values.postgresql.database }}?sslmode=require"
+              value: "postgresql://{{ .Values.postgresql.username }}:$(PG_PASSWORD)@{{ required "postgresql.host is required when postgresql.enabled is true" .Values.postgresql.host }}:{{ .Values.postgresql.port }}/{{ .Values.postgresql.database }}?sslmode=require"
             {{- end }}
           envFrom:
             - configMapRef:

@@ -9,6 +9,17 @@ describe("profanity filter", () => {
     expect(isCleanNickname("k8s-hero").clean).toBe(true);
   });
 
+  it("does not false-positive on innocent words containing short blocklist substrings", () => {
+    expect(isCleanNickname("classy").clean).toBe(true);
+    expect(isCleanNickname("hello").clean).toBe(true);
+    expect(isCleanNickname("analysis").clean).toBe(true);
+    expect(isCleanNickname("peacock").clean).toBe(true);
+    expect(isCleanNickname("scrapbook").clean).toBe(true);
+    expect(isCleanNickname("document").clean).toBe(true);
+    expect(isCleanNickname("raccoon").clean).toBe(true);
+    expect(isCleanNickname("grape").clean).toBe(true);
+  });
+
   it("rejects obvious profanity", () => {
     const result = isCleanNickname("fuck");
     expect(result.clean).toBe(false);

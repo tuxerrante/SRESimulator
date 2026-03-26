@@ -38,9 +38,9 @@ resource "azurerm_postgresql_flexible_server_database" "app" {
   collation = "en_US.utf8"
 }
 
-# Allow connections from ARO worker egress IPs.
-# start/end = 0.0.0.0 enables "Allow access to Azure services".
-# Tighten to specific egress IPs or use VNet private endpoint in production.
+# Allow connections from Azure services (including ARO worker nodes via their egress IPs).
+# Note: start/end = 0.0.0.0 enables the special "Allow access to Azure services" rule.
+# For production, restrict to specific egress IPs or use a VNet private endpoint instead.
 resource "azurerm_postgresql_flexible_server_firewall_rule" "azure_services" {
   count            = var.enable_postgres ? 1 : 0
   name             = "allow-azure-services"

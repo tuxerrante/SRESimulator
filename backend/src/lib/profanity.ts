@@ -1,3 +1,11 @@
+// Short/ambiguous words that appear as substrings in innocent words
+// (e.g. "ass" in "classy", "hell" in "hello", "anal" in "analysis").
+// Only flagged when the entire normalized nickname matches exactly.
+const EXACT_ONLY: ReadonlySet<string> = new Set([
+  "ass", "anal", "cock", "coon", "crap", "cum", "damn", "dick",
+  "dyke", "fag", "hell", "homo", "piss", "poon", "rape", "scum", "wop",
+]);
+
 const BLOCKLIST: ReadonlySet<string> = new Set([
   "ass", "asshole", "bastard", "bitch", "blowjob", "bollocks", "bullshit",
   "cock", "coon", "crap", "cum", "cunt", "damn", "dick", "dildo", "douche",
@@ -56,7 +64,11 @@ export function isCleanNickname(name: string): NicknameCheck {
   const normalized = normalize(name);
 
   for (const word of BLOCKLIST) {
-    if (normalized.includes(word)) {
+    if (EXACT_ONLY.has(word)) {
+      if (normalized === word) {
+        return { clean: false, reason: "Nickname contains inappropriate language" };
+      }
+    } else if (normalized.includes(word)) {
       return { clean: false, reason: "Nickname contains inappropriate language" };
     }
   }
