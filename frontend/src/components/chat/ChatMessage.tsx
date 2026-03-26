@@ -5,7 +5,7 @@ import remarkGfm from "remark-gfm";
 import type { ChatMessage as ChatMessageType } from "@shared/types/chat";
 import { CodeBlock } from "@/components/shared/CodeBlock";
 import { cn } from "@/lib/utils";
-import { User, Bot } from "lucide-react";
+import { User, Bot, ExternalLink } from "lucide-react";
 
 interface ChatMessageProps {
   message: ChatMessageType;
@@ -49,6 +49,20 @@ export function ChatMessage({ message, onRunCommand }: ChatMessageProps) {
           <ReactMarkdown
             remarkPlugins={[remarkGfm]}
             components={{
+              a({ href, children, ...props }) {
+                return (
+                  <a
+                    href={href}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1 text-blue-400 hover:text-blue-300 underline"
+                    {...props}
+                  >
+                    {children}
+                    <ExternalLink size={12} className="inline flex-shrink-0" />
+                  </a>
+                );
+              },
               code({ className, children, ...props }) {
                 const match = /language-(\w+)/.exec(className || "");
                 const lang = match ? match[1] : "";
