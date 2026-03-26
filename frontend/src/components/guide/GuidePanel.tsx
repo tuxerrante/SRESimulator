@@ -219,8 +219,13 @@ export function GuidePanel() {
   const containerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
+    let timedOut = false;
+    let unmounted = false;
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 10_000);
+    const timeout = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, 10_000);
 
     fetch("/api/guide", { signal: controller.signal })
       .then((r) => {
@@ -229,18 +234,20 @@ export function GuidePanel() {
       })
       .then((d) => {
         if (!d.content) throw new Error("Guide content is empty");
-        setContent(d.content);
+        if (!unmounted) setContent(d.content);
       })
       .catch((e) => {
-        if (controller.signal.aborted) {
+        if (unmounted) return;
+        if (timedOut) {
           setError("Guide request timed out — is the backend running?");
-        } else {
+        } else if (!controller.signal.aborted) {
           setError(e.message);
         }
       })
       .finally(() => clearTimeout(timeout));
 
     return () => {
+      unmounted = true;
       controller.abort();
       clearTimeout(timeout);
     };
