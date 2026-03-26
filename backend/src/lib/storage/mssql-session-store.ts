@@ -21,12 +21,17 @@ export class MssqlSessionStore implements ISessionStore {
         VALUES (@token, @difficulty, @scenarioTitle, @startTime)
       `);
 
-    this.cleanupStale().catch(() => {});
+    this.cleanupStale().catch((err) => {
+      console.error("[session] failed to cleanup stale sessions", err);
+    });
 
     return token;
   }
 
   async validateAndConsume(token: string): Promise<GameSession | null> {
+    const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (!uuidRe.test(token)) return null;
+
     const cutoff = Date.now() - SESSION_TTL_MS;
 
     const result = await this.pool.request()

@@ -38,19 +38,25 @@ export async function initStorage(): Promise<void> {
     const { MssqlLeaderboardStore } = await import("./mssql-leaderboard-store");
     const { MssqlMetricsStore } = await import("./mssql-metrics-store");
 
-    mssqlPool = new mssql.default.ConnectionPool(databaseUrl);
-    await mssqlPool.connect();
+    const pool = new mssql.default.ConnectionPool(databaseUrl);
+    try {
+      await pool.connect();
 
-    await mssqlPool.request().query("SELECT 1");
-    console.log("[storage] Azure SQL connection verified");
+      await pool.request().query("SELECT 1");
+      console.log("[storage] Azure SQL connection verified");
 
-    await runMigrations(mssqlPool);
-    console.log("[storage] migrations complete");
+      await runMigrations(pool);
+      console.log("[storage] migrations complete");
 
-    sessionStore = new MssqlSessionStore(mssqlPool);
-    leaderboardStore = new MssqlLeaderboardStore(mssqlPool);
-    metricsStore = new MssqlMetricsStore(mssqlPool);
-    console.log("[storage] backend=mssql ready");
+      mssqlPool = pool;
+      sessionStore = new MssqlSessionStore(pool);
+      leaderboardStore = new MssqlLeaderboardStore(pool);
+      metricsStore = new MssqlMetricsStore(pool);
+      console.log("[storage] backend=mssql ready");
+    } catch (error) {
+      try { await pool.close(); } catch { /* ignore close errors on failed pool */ }
+      throw error;
+    }
   } else {
     sessionStore = new JsonSessionStore();
     leaderboardStore = new JsonLeaderboardStore();

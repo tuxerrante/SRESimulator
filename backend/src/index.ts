@@ -43,7 +43,10 @@ async function main() {
     console.log(`Backend listening on port ${PORT}`);
   });
 
+  let shuttingDown = false;
   const shutdown = async () => {
+    if (shuttingDown) return;
+    shuttingDown = true;
     console.log("[shutdown] closing server...");
     await new Promise<void>((resolve, reject) => {
       server.close((err?: Error) => {
@@ -58,8 +61,15 @@ async function main() {
     process.exit(0);
   };
 
-  process.on("SIGTERM", shutdown);
-  process.on("SIGINT", shutdown);
+  const onSignal = () => {
+    shutdown().catch((err) => {
+      console.error("[shutdown] fatal error:", err);
+      process.exit(1);
+    });
+  };
+
+  process.once("SIGTERM", onSignal);
+  process.once("SIGINT", onSignal);
 }
 
 main().catch((err) => {

@@ -47,8 +47,9 @@ describe("MssqlSessionStore", () => {
   });
 
   it("validateAndConsume() returns mapped session on match", async () => {
+    const validUuid = "a1b2c3d4-e5f6-7890-abcd-ef1234567890";
     const row = {
-      token: "abc-123",
+      token: validUuid,
       difficulty: "hard" as const,
       scenario_title: "Etcd Quorum Loss",
       start_time: 1700000000000,
@@ -57,15 +58,20 @@ describe("MssqlSessionStore", () => {
     const mock = createMockPool([row]);
     store = new MssqlSessionStore(mock.pool);
 
-    const result = await store.validateAndConsume("abc-123");
+    const result = await store.validateAndConsume(validUuid);
 
     expect(result).toEqual({
-      token: "abc-123",
+      token: validUuid,
       difficulty: "hard",
       scenarioTitle: "Etcd Quorum Loss",
       startTime: 1700000000000,
       used: true,
     });
+  });
+
+  it("validateAndConsume() returns null for non-UUID tokens", async () => {
+    const result = await store.validateAndConsume("not-a-uuid");
+    expect(result).toBeNull();
   });
 
   it("validateAndConsume() returns null when no rows match", async () => {

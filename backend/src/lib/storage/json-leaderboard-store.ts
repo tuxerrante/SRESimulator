@@ -98,7 +98,13 @@ export class JsonLeaderboardStore implements ILeaderboardStore {
       );
 
       if (existingIdx !== -1) {
-        if (entry.score.total > entries[existingIdx].score.total) {
+        const existing = entries[existingIdx];
+        const hasBetterScore = entry.score.total > existing.score.total;
+        const hasBetterDuration =
+          entry.score.total === existing.score.total &&
+          entry.durationMs < existing.durationMs;
+
+        if (hasBetterScore || hasBetterDuration) {
           entries[existingIdx] = entry;
         }
       } else {
