@@ -59,11 +59,12 @@ aiRouter.get("/probe", async (req: Request, res: Response) => {
   try {
     const start = Date.now();
     const preview = await generateAiText({
-      maxTokens: 16,
+      maxTokens: 256,
       system:
         "You are a health probe assistant. Reply with exactly one word: pong.",
       messages: [{ role: "user", content: "ping" }],
       route: "probe",
+      _reasoningEffortOverride: "low",
     });
 
     const latencyMs = Date.now() - start;
