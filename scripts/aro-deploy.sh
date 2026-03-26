@@ -39,8 +39,7 @@ oc_build_timed() {
   local ns=$1 name=$2
   echo "Building $name image (upload + build)..."
   local t0 t1 archive
-  archive=$(mktemp "${TMPDIR:-/tmp}/oc-build-XXXXXX.tar.gz")
-  trap 'rm -f "$archive"' RETURN
+  archive="$(mktemp "${TMPDIR:-/tmp}/oc-build-XXXXXX").tar.gz"
   tar czf "$archive" --exclude-from=.dockerignore .
   local size
   size=$(du -h "$archive" | cut -f1)
@@ -48,6 +47,7 @@ oc_build_timed() {
   t0=$(date +%s)
   oc -n "$ns" start-build "$name" --from-archive="$archive" --follow --wait >/dev/null
   t1=$(date +%s)
+  rm -f "$archive"
   echo "  $name build completed in $(( t1 - t0 ))s"
 }
 
