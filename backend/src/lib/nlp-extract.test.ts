@@ -67,8 +67,8 @@ describe("extractHypotheses", () => {
     const text = "Let me think about the next step and check the logs.";
     const hypotheses = extractHypotheses(text);
     // compromise sees "think" but the sentence still matches -- this is
-    // acceptable since the NLP approach captures the whole sentence
-    // rather than a truncated 200-char substring
+    // acceptable since the NLP approach reasons over the whole sentence,
+    // even though the extracted hypothesis is later capped at 200 characters
     expect(hypotheses.length).toBeLessThanOrEqual(1);
   });
 

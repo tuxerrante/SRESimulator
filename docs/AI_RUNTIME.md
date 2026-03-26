@@ -95,8 +95,9 @@ is always included. Relevant sections are selected by keyword scoring
 against the scenario title, description, alerts, and the user's latest
 message, capped at 8000 characters (~2K tokens).
 
-This reduces per-request input tokens from ~32K to ~10K, enabling roughly
-3x more concurrent players within the same Azure OpenAI TPM quota.
+This reduces per-request *prompt* tokens from ~32K to ~2.5K (measured on
+gpt-5.2 with prompt caching active), enabling roughly 10x more concurrent
+players within the same Azure OpenAI TPM quota.
 
 ### Prompt caching
 

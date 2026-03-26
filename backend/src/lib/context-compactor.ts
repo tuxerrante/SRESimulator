@@ -53,7 +53,10 @@ function extractCommandsFromContent(content: string, cmdSet: Set<string>): void 
   let cmdMatch;
   while ((cmdMatch = CMD_PATTERN.exec(content)) !== null) {
     const cmd = cmdMatch[1].trim();
-    if (cmd) cmdSet.add(cmd);
+    if (cmd) {
+      cmdSet.delete(cmd);
+      cmdSet.add(cmd);
+    }
   }
   CMD_PATTERN.lastIndex = 0;
 }
@@ -167,7 +170,8 @@ function buildCompactionMessage(state: RetainedState, compactedCount: number): s
   if (state.mentionedCommands.length > 0) {
     sections.push("", "**Commands suggested or run:**");
     for (const c of state.mentionedCommands) {
-      sections.push("- `" + c + "`");
+      const normalized = c.replace(/\s+/g, " ").trim();
+      sections.push("- `" + normalized + "`");
     }
   }
 
