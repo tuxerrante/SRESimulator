@@ -38,9 +38,15 @@ patch_bc_strategy() {
 oc_build_timed() {
   local ns=$1 name=$2
   echo "Building $name image (upload + build)..."
-  local t0 t1
+  local t0 t1 archive
+  archive=$(mktemp "${TMPDIR:-/tmp}/oc-build-XXXXXX.tar.gz")
+  trap 'rm -f "$archive"' RETURN
+  tar czf "$archive" --exclude-from=.dockerignore .
+  local size
+  size=$(du -h "$archive" | cut -f1)
+  echo "  Archive: $size (filtered via .dockerignore)"
   t0=$(date +%s)
-  oc -n "$ns" start-build "$name" --from-dir=. --follow --wait >/dev/null
+  oc -n "$ns" start-build "$name" --from-archive="$archive" --follow --wait >/dev/null
   t1=$(date +%s)
   echo "  $name build completed in $(( t1 - t0 ))s"
 }
