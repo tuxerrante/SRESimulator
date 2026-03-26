@@ -40,7 +40,9 @@ oc_build_timed() {
   echo "Building $name image (upload + build)..."
   local t0 t1 archive
   archive="$(mktemp "${TMPDIR:-/tmp}/oc-build-XXXXXX").tar.gz"
-  tar czf "$archive" --exclude-from=.dockerignore .
+  COPYFILE_DISABLE=1 tar czf "$archive" \
+    --no-mac-metadata --no-xattrs --no-fflags \
+    --exclude-from=.dockerignore .
   local size
   size=$(du -h "$archive" | cut -f1)
   echo "  Archive: $size (filtered via .dockerignore)"
