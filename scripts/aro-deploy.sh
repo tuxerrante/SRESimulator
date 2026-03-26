@@ -40,8 +40,12 @@ oc_build_timed() {
   echo "Building $name image (upload + build)..."
   local t0 t1 archive
   archive="$(mktemp "${TMPDIR:-/tmp}/oc-build-XXXXXX").tar.gz"
+  local tar_extra_flags=()
+  if tar --help 2>&1 | grep -q -- '--no-mac-metadata'; then
+    tar_extra_flags+=(--no-mac-metadata --no-xattrs --no-fflags)
+  fi
   COPYFILE_DISABLE=1 tar czf "$archive" \
-    --no-mac-metadata --no-xattrs --no-fflags \
+    "${tar_extra_flags[@]}" \
     --exclude-from=.dockerignore .
   local size
   size=$(du -h "$archive" | cut -f1)
