@@ -14,7 +14,7 @@ alwaysApply: true
 ## Required Workflow
 
 1. **Check open PRs first**: Run `gh pr list --state open` to identify parallel work that may conflict. Avoid branches that touch the same files.
-2. **Create worktree**: `git worktree add .worktrees/<task-name> -b <branch-name>` from the host checkout. Always branch from `main`.
+2. **Create worktree**: `git worktree add .worktrees/<task-name> -b <branch-name> main` from the host checkout. Always branch from `main`.
 3. **Implement** inside that isolated worktree only. Never edit host checkout files.
 4. **Validate locally** before committing (run from the worktree root). The root `Makefile` is the single source of truth for all quality gates:
    - `make test` (unit tests — backend + frontend)
@@ -32,7 +32,7 @@ alwaysApply: true
 ## Checklist (agent must complete ALL before finishing a task)
 
 - [ ] Checked `gh pr list --state open` for conflicts
-- [ ] Worktree created from `main` (verified with `git merge-base HEAD main`)
+- [ ] Worktree created from `main` (verify with `git merge-base --is-ancestor main HEAD`)
 - [ ] All changes are inside the worktree, not the host checkout
 - [ ] `make validate` passes (lint + typecheck)
 - [ ] `make test` passes (unit tests)
