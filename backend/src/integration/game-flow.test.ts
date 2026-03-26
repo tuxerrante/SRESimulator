@@ -2,16 +2,39 @@ import { describe, expect, it, beforeAll, afterAll } from "vitest";
 import type { Server } from "http";
 import type { Express } from "express";
 import type { Scenario } from "../../../shared/types/game";
+import type { LeaderboardEntry } from "../../../shared/types/leaderboard";
 import {
   getBackendUrl,
   isExternalTarget,
   startLocalServer,
+  postChatSSE,
 } from "./helpers";
+
+interface ScenarioResponse {
+  scenario: Scenario;
+  sessionToken: string;
+}
+
+interface CommandResponse {
+  output: string;
+  exitCode: number;
+}
+
+interface LeaderboardResponse {
+  entries: LeaderboardEntry[];
+  hallOfFame: unknown[];
+}
+
+interface ErrorResponse {
+  error: string;
+}
 
 let baseUrl: string;
 let localServer: Server | null = null;
+let savedMockMode: string | undefined;
 
 async function createFullApp(): Promise<Express> {
+  savedMockMode = process.env.AI_MOCK_MODE;
   process.env.AI_MOCK_MODE = "true";
   const { default: express } = await import("express");
   const { default: cors } = await import("cors");
@@ -50,20 +73,25 @@ afterAll(() => {
     localServer.close();
     localServer = null;
   }
+  if (savedMockMode === undefined) {
+    delete process.env.AI_MOCK_MODE;
+  } else {
+    process.env.AI_MOCK_MODE = savedMockMode;
+  }
 });
 
 describe("health endpoints", () => {
   it("GET /healthz returns ok", async () => {
     const res = await fetch(`${baseUrl}/healthz`);
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body = (await res.json()) as { status: string };
     expect(body.status).toBe("ok");
   });
 
   it("GET /readyz returns ready in mock mode", async () => {
     const res = await fetch(`${baseUrl}/readyz`);
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body = (await res.json()) as { status: string };
     expect(body.status).toBe("ready");
   });
 });
@@ -80,7 +108,7 @@ describe("full game flow: scenario -> chat -> command -> scores", () => {
     });
     expect(res.status).toBe(200);
 
-    const body = await res.json();
+    const body = (await res.json()) as ScenarioResponse;
     expect(body.scenario).toBeDefined();
     expect(body.sessionToken).toBeDefined();
     expect(typeof body.sessionToken).toBe("string");
@@ -97,59 +125,43 @@ describe("full game flow: scenario -> chat -> command -> scores", () => {
   });
 
   it("POST /api/chat responds with SSE stream", async () => {
-    const res = await fetch(`${baseUrl}/api/chat`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        messages: [
-          { role: "user", content: "What do I see in the incident ticket?" },
-        ],
-        scenario,
-        currentPhase: "reading",
-      }),
+    const result = await postChatSSE(baseUrl, {
+      messages: [
+        { role: "user", content: "What do I see in the incident ticket?" },
+      ],
+      scenario,
+      currentPhase: "reading",
     });
-    expect(res.status).toBe(200);
+    expect(result.status).toBe(200);
+    expect(result.done).toBe(true);
+    expect(result.chunks.length).toBeGreaterThan(0);
 
-    const rawBody = await res.text();
-    const lines = rawBody.split("\n").filter((l) => l.startsWith("data: "));
-    expect(lines.length).toBeGreaterThan(0);
-
-    const lastDataLine = lines[lines.length - 1];
-    expect(lastDataLine).toBe("data: [DONE]");
-
-    const contentLines = lines.filter((l) => l !== "data: [DONE]");
-    for (const line of contentLines) {
-      const payload = JSON.parse(line.slice(6));
+    for (const chunk of result.chunks) {
+      const parsed = JSON.parse(chunk) as Record<string, unknown>;
       expect(
-        "text" in payload || "reasoning" in payload || "error" in payload,
+        "text" in parsed || "reasoning" in parsed || "error" in parsed,
       ).toBe(true);
     }
   });
 
   it("POST /api/chat with follow-up preserves conversation", async () => {
-    const res = await fetch(`${baseUrl}/api/chat`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        messages: [
-          { role: "user", content: "What do I see in the incident ticket?" },
-          {
-            role: "assistant",
-            content: "The ticket shows a cluster issue. [PHASE:reading]",
-          },
-          {
-            role: "user",
-            content: "Let me check the Geneva dashboard for cluster history.",
-          },
-        ],
-        scenario,
-        currentPhase: "context",
-      }),
+    const result = await postChatSSE(baseUrl, {
+      messages: [
+        { role: "user", content: "What do I see in the incident ticket?" },
+        {
+          role: "assistant",
+          content: "The ticket shows a cluster issue. [PHASE:reading]",
+        },
+        {
+          role: "user",
+          content: "Let me check the Geneva dashboard for cluster history.",
+        },
+      ],
+      scenario,
+      currentPhase: "context",
     });
-    expect(res.status).toBe(200);
-
-    const rawBody = await res.text();
-    expect(rawBody).toContain("data: [DONE]");
+    expect(result.status).toBe(200);
+    expect(result.done).toBe(true);
   });
 
   it("POST /api/command simulates oc command output", async () => {
@@ -164,7 +176,7 @@ describe("full game flow: scenario -> chat -> command -> scores", () => {
     });
     expect(res.status).toBe(200);
 
-    const body = await res.json();
+    const body = (await res.json()) as CommandResponse;
     expect(body.output).toBeDefined();
     expect(typeof body.output).toBe("string");
     expect(body.output.length).toBeGreaterThan(0);
@@ -184,7 +196,7 @@ describe("full game flow: scenario -> chat -> command -> scores", () => {
     });
     expect(res.status).toBe(200);
 
-    const body = await res.json();
+    const body = (await res.json()) as CommandResponse;
     expect(body.output).toBeDefined();
     expect(body.exitCode).toBe(0);
   });
@@ -193,7 +205,7 @@ describe("full game flow: scenario -> chat -> command -> scores", () => {
     const res = await fetch(`${baseUrl}/api/scores`);
     expect(res.status).toBe(200);
 
-    const body = await res.json();
+    const body = (await res.json()) as LeaderboardResponse;
     expect(body.entries).toBeInstanceOf(Array);
     expect(body.hallOfFame).toBeInstanceOf(Array);
   });
@@ -218,7 +230,7 @@ describe("full game flow: scenario -> chat -> command -> scores", () => {
     });
     expect(res.status).toBe(201);
 
-    const body = await res.json();
+    const body = (await res.json()) as LeaderboardEntry;
     expect(body.id).toBeDefined();
     expect(body.nickname).toBe("TestSRE");
     expect(body.difficulty).toBe("easy");
@@ -245,7 +257,7 @@ describe("full game flow: scenario -> chat -> command -> scores", () => {
     });
     expect(res.status).toBe(403);
 
-    const body = await res.json();
+    const body = (await res.json()) as ErrorResponse;
     expect(body.error).toContain("Invalid or already used");
   });
 });
@@ -269,7 +281,7 @@ describe("scenario validation", () => {
       });
       expect(res.status).toBe(200);
 
-      const body = await res.json();
+      const body = (await res.json()) as ScenarioResponse;
       expect(body.scenario.difficulty).toBe(difficulty);
       expect(body.sessionToken).toBeDefined();
     });
@@ -296,7 +308,7 @@ describe("guide endpoint", () => {
     const res = await fetch(`${baseUrl}/api/guide`);
     expect(res.status).toBe(200);
 
-    const body = await res.json();
+    const body = (await res.json()) as Record<string, unknown>;
     expect(body).toBeDefined();
   });
 });

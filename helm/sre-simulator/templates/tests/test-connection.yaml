@@ -1,12 +1,12 @@
 apiVersion: v1
 kind: Pod
 metadata:
-  name: {{ include "sre-simulator.fullname" . }}-test
+  name: {{ printf "%s-test" (include "sre-simulator.fullname" .) | trunc 63 | trimSuffix "-" }}
   labels:
     {{- include "sre-simulator.labels" . | nindent 4 }}
   annotations:
     helm.sh/hook: test
-    helm.sh/hook-delete-policy: before-hook-creation
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded,hook-failed
 spec:
   restartPolicy: Never
   containers:
@@ -47,7 +47,7 @@ spec:
             echo "FAIL: no sessionToken in scenario response"
             exit 1
           fi
-          echo "Session token obtained: ${TOKEN:0:8}..."
+          echo "Session token obtained: $(printf '%.8s' "${TOKEN}")..."
 
           echo "=== API guide endpoint ==="
           curl -fsS "http://${BACKEND}/api/guide" | head -c 100
