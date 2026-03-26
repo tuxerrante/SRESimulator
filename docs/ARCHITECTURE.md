@@ -68,10 +68,10 @@ SRESimulator/
             ├── prompts/system.ts         # System prompt builder
             └── storage/                  # Pluggable persistence layer
                 ├── types.ts              # ISessionStore, ILeaderboardStore, IMetricsStore
-                ├── index.ts              # Factory (selects JSON or PostgreSQL)
-                ├── migrate.ts            # SQL migration runner
+                ├── index.ts              # Factory (selects JSON or Azure SQL)
+                ├── migrate.ts            # T-SQL migration runner
                 ├── json-*-store.ts       # JSON/in-memory implementations
-                ├── pg-*-store.ts         # PostgreSQL implementations
+                ├── mssql-*-store.ts      # Azure SQL (T-SQL) implementations
                 └── migrations/           # Numbered .sql migration files
 ```
 
@@ -222,7 +222,7 @@ Returns per-route token usage totals and recent request entries. See [AI_RUNTIME
 ## Persistence & Storage Backends
 
 The backend supports two storage modes, selected via the `STORAGE_BACKEND`
-environment variable (`json` or `postgres`).
+environment variable (`json` or `mssql`).
 
 ### JSON mode (default)
 
@@ -238,28 +238,41 @@ Constraints:
 - Single backend replica only (PVC is `ReadWriteOnce`, sessions are in-process).
 - No data survives pod restarts (except leaderboard file on PVC).
 
-### PostgreSQL mode
+### Azure SQL mode
 
-Required for multi-replica deployments and production use.
+Required for multi-replica deployments and production use.  Uses Azure SQL
+Database free tier (100K vCore-seconds/month, 32 GB storage, $0/month).
 
 - **Sessions**: Stored in `sessions` table. Shared across replicas.
   Stale entries (>24h) are cleaned up opportunistically.
-- **Leaderboard**: Stored in `leaderboard_entries` table. Uses `ON CONFLICT`
-  upsert to atomically keep the best score per (nickname, difficulty).
+- **Leaderboard**: Stored in `leaderboard_entries` table. Uses `MERGE`
+  to atomically keep the best score per (nickname, difficulty).
   Per-difficulty trim to 10 entries happens after each insert.
 - **Metrics**: Stored in `gameplay_metrics` table. Captures per-session
   analytics (commands executed, scoring events, AI token consumption) with
-  an open `metadata` JSONB column for future extensibility.
+  an open JSON `metadata` column for future extensibility.
 
 To enable:
 
 ```bash
-STORAGE_BACKEND=postgres
-DATABASE_URL=postgresql://user:pass@host:5432/dbname?sslmode=require
+STORAGE_BACKEND=mssql
+DATABASE_URL="Server=<fqdn>;Database=sresimulator;User Id=sresimadmin;Password=<pwd>;Encrypt=true"
 ```
 
-Migrations run automatically on startup. Schema is managed via numbered
-`.sql` files in `backend/src/lib/storage/migrations/`.
+Migrations run automatically on startup using `sp_getapplock` for
+cross-replica serialization. Schema is managed via numbered `.sql` files
+in `backend/src/lib/storage/migrations/`.
+
+### Why Azure SQL free tier
+
+- **Zero cost**: 100K vCore-seconds/month + 32 GB included permanently.
+- **Zero maintenance**: HA, backups, patching handled by Azure.
+- **Auto-pause**: Database sleeps after 60 min idle; resumes on next request.
+- **Point-in-time restore**: Built-in backup retention (7 days default).
+
+When the monthly free allocation is exhausted the database auto-pauses
+until the next billing cycle (configurable to continue with pay-as-you-go
+instead).
 
 ### Storage interface pattern
 
@@ -281,25 +294,25 @@ without session affinity.
 
 ### Scaling by storage mode
 
-| Concern | JSON mode | PostgreSQL mode |
+| Concern | JSON mode | Azure SQL mode |
 | --- | --- | --- |
 | Backend replicas | **1 only** | **N (horizontal)** |
 | Session survival | Lost on restart | Survives restarts |
-| Leaderboard consistency | Single-writer mutex | Database UPSERT |
+| Leaderboard consistency | Single-writer mutex | Database MERGE |
 | Sticky sessions needed | No | No |
-| Connection pooling | N/A | `pg.Pool` (10 connections/pod) |
+| Connection pooling | N/A | `mssql.ConnectionPool` |
 
-When using PostgreSQL, increase `backend.replicas` in Helm values as needed.
+When using Azure SQL, increase `backend.replicas` in Helm values as needed.
 No sticky sessions or session affinity are required since all state is in
 the database.
 
-### Infrastructure options
+### Infrastructure
 
-- **Azure Database for PostgreSQL Flexible Server** (Burstable B1ms, ~$13/month):
-  Provisioned via `infra/postgres.tf` when `enable_postgres = true`.
+- **Azure SQL Database free tier** ($0/month):
+  Provisioned via `infra/sql-database.tf` when `enable_database = true`.
   Protected by `prevent_destroy` lifecycle rule.
-- **In-cluster PostgreSQL** (zero extra cost): Deploy via Bitnami Helm subchart
-  on existing ARO compute. No managed backups/HA but uses existing resources.
+  Serverless General Purpose (GP_S_Gen5_2) with auto-pause after 60 min idle.
+  Free offer includes 100K vCore-seconds/month and 32 GB storage.
 
 ### Rate limiting & throttle handling
 

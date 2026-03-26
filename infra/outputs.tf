@@ -39,22 +39,22 @@ output "prod_namespace" {
 }
 
 # ---------------------------------------------------------------------------
-# PostgreSQL outputs (only when enable_postgres = true)
+# Azure SQL Database outputs (only when enable_database = true)
 # ---------------------------------------------------------------------------
-output "pg_host" {
-  description = "PostgreSQL Flexible Server FQDN."
-  value       = var.enable_postgres ? azurerm_postgresql_flexible_server.main[0].fqdn : ""
+output "sql_server_fqdn" {
+  description = "Azure SQL Server FQDN."
+  value       = var.enable_database ? azurerm_mssql_server.main[0].fully_qualified_domain_name : ""
 }
 
-output "pg_database" {
-  description = "PostgreSQL database name."
-  value       = var.enable_postgres ? azurerm_postgresql_flexible_server_database.app[0].name : ""
+output "sql_database_name" {
+  description = "Azure SQL Database name."
+  value       = var.enable_database ? azurerm_mssql_database.app[0].name : ""
 }
 
-output "pg_connection_hint" {
-  description = "DATABASE_URL template (replace <PASSWORD> with the admin password)."
+output "sql_connection_hint" {
+  description = "DATABASE_URL template (replace <PASSWORD> with the admin password). Uses mssql:// connection string format."
   sensitive   = true
-  value = var.enable_postgres ? "postgresql://sresimadmin:<PASSWORD>@${azurerm_postgresql_flexible_server.main[0].fqdn}:5432/${azurerm_postgresql_flexible_server_database.app[0].name}?sslmode=require" : ""
+  value = var.enable_database ? "Server=${azurerm_mssql_server.main[0].fully_qualified_domain_name};Database=${azurerm_mssql_database.app[0].name};User Id=sresimadmin;Password=<PASSWORD>;Encrypt=true;TrustServerCertificate=false" : ""
 }
 
 output "env_file_snippet" {

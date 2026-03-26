@@ -45,16 +45,14 @@ spec:
             - name: GOOGLE_APPLICATION_CREDENTIALS
               value: "{{ .Values.ai.vertex.credentials.mountPath }}/{{ .Values.ai.vertex.credentials.key }}"
             {{- end }}
-            {{- if .Values.postgresql.enabled }}
+            {{- if .Values.database.enabled }}
             - name: STORAGE_BACKEND
-              value: postgres
-            - name: PG_PASSWORD
+              value: mssql
+            - name: DATABASE_URL
               valueFrom:
                 secretKeyRef:
-                  name: {{ required "postgresql.existingSecretName is required when postgresql.enabled is true" .Values.postgresql.existingSecretName }}
-                  key: {{ .Values.postgresql.secretPasswordKey }}
-            - name: DATABASE_URL
-              value: "postgresql://{{ .Values.postgresql.username }}:$(PG_PASSWORD)@{{ required "postgresql.host is required when postgresql.enabled is true" .Values.postgresql.host }}:{{ .Values.postgresql.port }}/{{ .Values.postgresql.database }}?sslmode=require"
+                  name: {{ required "database.existingSecretName is required when database.enabled is true" .Values.database.existingSecretName }}
+                  key: {{ .Values.database.secretConnectionStringKey }}
             {{- end }}
           envFrom:
             - configMapRef:

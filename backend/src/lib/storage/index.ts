@@ -1,4 +1,4 @@
-import type { Pool } from "pg";
+import type sql from "mssql";
 import type { ISessionStore, ILeaderboardStore, IMetricsStore } from "./types";
 import { JsonSessionStore } from "./json-session-store";
 import { JsonLeaderboardStore } from "./json-leaderboard-store";
@@ -9,14 +9,14 @@ export type { ISessionStore, ILeaderboardStore, IMetricsStore, GameSession, Game
 let sessionStore: ISessionStore;
 let leaderboardStore: ILeaderboardStore;
 let metricsStore: IMetricsStore;
-let pgPool: Pool | undefined;
+let mssqlPool: sql.ConnectionPool | undefined;
 
-export type StorageBackend = "json" | "postgres";
+export type StorageBackend = "json" | "mssql";
 
 export function getStorageBackend(): StorageBackend {
   const value = process.env.STORAGE_BACKEND ?? "json";
-  if (value !== "json" && value !== "postgres") {
-    throw new Error(`Invalid STORAGE_BACKEND: ${value}. Must be "json" or "postgres".`);
+  if (value !== "json" && value !== "mssql") {
+    throw new Error(`Invalid STORAGE_BACKEND: ${value}. Must be "json" or "mssql".`);
   }
   return value;
 }
@@ -24,33 +24,31 @@ export function getStorageBackend(): StorageBackend {
 export async function initStorage(): Promise<void> {
   const backend = getStorageBackend();
 
-  if (backend === "postgres") {
+  if (backend === "mssql") {
     const databaseUrl = process.env.DATABASE_URL;
     if (!databaseUrl) {
-      throw new Error("DATABASE_URL is required when STORAGE_BACKEND=postgres");
+      throw new Error("DATABASE_URL is required when STORAGE_BACKEND=mssql");
     }
 
-    const pg = await import("pg");
+    const mssql = await import("mssql");
     const { runMigrations } = await import("./migrate");
-    const { PgSessionStore } = await import("./pg-session-store");
-    const { PgLeaderboardStore } = await import("./pg-leaderboard-store");
-    const { PgMetricsStore } = await import("./pg-metrics-store");
+    const { MssqlSessionStore } = await import("./mssql-session-store");
+    const { MssqlLeaderboardStore } = await import("./mssql-leaderboard-store");
+    const { MssqlMetricsStore } = await import("./mssql-metrics-store");
 
-    pgPool = new pg.Pool({
-      connectionString: databaseUrl,
-      max: 10,
-    });
+    mssqlPool = new mssql.default.ConnectionPool(databaseUrl);
+    await mssqlPool.connect();
 
-    await pgPool.query("SELECT 1");
-    console.log("[storage] PostgreSQL connection verified");
+    await mssqlPool.request().query("SELECT 1");
+    console.log("[storage] Azure SQL connection verified");
 
-    await runMigrations(pgPool);
+    await runMigrations(mssqlPool);
     console.log("[storage] migrations complete");
 
-    sessionStore = new PgSessionStore(pgPool);
-    leaderboardStore = new PgLeaderboardStore(pgPool);
-    metricsStore = new PgMetricsStore(pgPool);
-    console.log("[storage] backend=postgres ready");
+    sessionStore = new MssqlSessionStore(mssqlPool);
+    leaderboardStore = new MssqlLeaderboardStore(mssqlPool);
+    metricsStore = new MssqlMetricsStore(mssqlPool);
+    console.log("[storage] backend=mssql ready");
   } else {
     sessionStore = new JsonSessionStore();
     leaderboardStore = new JsonLeaderboardStore();
@@ -75,9 +73,9 @@ export function getMetricsStore(): IMetricsStore {
 }
 
 export async function shutdownStorage(): Promise<void> {
-  if (pgPool) {
-    await pgPool.end();
-    pgPool = undefined;
-    console.log("[storage] PostgreSQL pool closed");
+  if (mssqlPool) {
+    await mssqlPool.close();
+    mssqlPool = undefined;
+    console.log("[storage] Azure SQL pool closed");
   }
 }

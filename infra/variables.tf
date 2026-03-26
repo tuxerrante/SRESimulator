@@ -124,32 +124,32 @@ variable "extra_tags" {
 }
 
 # ---------------------------------------------------------------------------
-# PostgreSQL (optional, default off)
+# Azure SQL Database (optional, default off)
 # ---------------------------------------------------------------------------
-variable "enable_postgres" {
-  description = "Whether to provision Azure PostgreSQL Flexible Server for persistent game data."
+variable "enable_database" {
+  description = "Whether to provision Azure SQL Database (free tier) for persistent game data."
   type        = bool
   default     = false
 }
 
-variable "pg_admin_password" {
-  description = "Administrator password for PostgreSQL (required when enable_postgres = true). Must meet Azure complexity requirements."
+variable "sql_admin_password" {
+  description = "Administrator password for Azure SQL Server (required when enable_database = true). Must meet Azure complexity requirements."
   type        = string
   default     = ""
   sensitive   = true
 
   validation {
     condition = (
-      var.enable_postgres == false ||
+      var.enable_database == false ||
       (
-        length(var.pg_admin_password) >= 8 &&
-        can(regex("[A-Z]", var.pg_admin_password)) &&
-        can(regex("[a-z]", var.pg_admin_password)) &&
-        can(regex("[0-9]", var.pg_admin_password)) &&
-        can(regex("[^A-Za-z0-9]", var.pg_admin_password))
+        length(var.sql_admin_password) >= 8 &&
+        can(regex("[A-Z]", var.sql_admin_password)) &&
+        can(regex("[a-z]", var.sql_admin_password)) &&
+        can(regex("[0-9]", var.sql_admin_password)) &&
+        can(regex("[^A-Za-z0-9]", var.sql_admin_password))
       )
     )
-    error_message = "When enable_postgres is true, pg_admin_password must be at least 8 characters and include uppercase, lowercase, numeric, and special characters."
+    error_message = "When enable_database is true, sql_admin_password must be at least 8 characters and include uppercase, lowercase, numeric, and special characters."
   }
 }
 

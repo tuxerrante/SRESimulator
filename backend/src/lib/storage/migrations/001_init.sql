@@ -1,18 +1,23 @@
-CREATE TABLE IF NOT EXISTS sessions (
-  token            UUID PRIMARY KEY,
+IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'sessions')
+CREATE TABLE sessions (
+  token            UNIQUEIDENTIFIER PRIMARY KEY,
   difficulty       VARCHAR(10) NOT NULL CHECK (difficulty IN ('easy','medium','hard')),
-  scenario_title   VARCHAR(255) NOT NULL,
+  scenario_title   NVARCHAR(255) NOT NULL,
   start_time       BIGINT NOT NULL,
-  used             BOOLEAN NOT NULL DEFAULT FALSE,
-  created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  used             BIT NOT NULL DEFAULT 0,
+  created_at       DATETIMEOFFSET NOT NULL DEFAULT SYSDATETIMEOFFSET()
 );
 
-CREATE INDEX IF NOT EXISTS idx_sessions_created ON sessions (created_at);
-CREATE INDEX IF NOT EXISTS idx_sessions_start_time ON sessions (start_time);
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'idx_sessions_created')
+  CREATE INDEX idx_sessions_created ON sessions (created_at);
 
-CREATE TABLE IF NOT EXISTS leaderboard_entries (
-  id                   UUID PRIMARY KEY,
-  nickname             VARCHAR(20) NOT NULL CHECK (char_length(trim(nickname)) > 0),
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'idx_sessions_start_time')
+  CREATE INDEX idx_sessions_start_time ON sessions (start_time);
+
+IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'leaderboard_entries')
+CREATE TABLE leaderboard_entries (
+  id                   UNIQUEIDENTIFIER PRIMARY KEY,
+  nickname             NVARCHAR(20) NOT NULL CHECK (LEN(LTRIM(RTRIM(nickname))) > 0),
   difficulty           VARCHAR(10) NOT NULL CHECK (difficulty IN ('easy','medium','hard')),
   score_efficiency     INT NOT NULL DEFAULT 0,
   score_safety         INT NOT NULL DEFAULT 0,
@@ -22,27 +27,31 @@ CREATE TABLE IF NOT EXISTS leaderboard_entries (
   grade                VARCHAR(5) NOT NULL,
   command_count        INT NOT NULL DEFAULT 0,
   duration_ms          BIGINT NOT NULL,
-  scenario_title       VARCHAR(255) NOT NULL,
-  created_at           TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  UNIQUE (nickname, difficulty)
+  scenario_title       NVARCHAR(255) NOT NULL,
+  created_at           DATETIMEOFFSET NOT NULL DEFAULT SYSDATETIMEOFFSET(),
+  CONSTRAINT uq_nickname_difficulty UNIQUE (nickname, difficulty)
 );
 
-CREATE TABLE IF NOT EXISTS gameplay_metrics (
-  id                     UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  session_token          UUID REFERENCES sessions(token) ON DELETE SET NULL,
-  nickname               VARCHAR(20),
+IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'gameplay_metrics')
+CREATE TABLE gameplay_metrics (
+  id                     UNIQUEIDENTIFIER PRIMARY KEY DEFAULT NEWID(),
+  session_token          UNIQUEIDENTIFIER NULL REFERENCES sessions(token) ON DELETE SET NULL,
+  nickname               NVARCHAR(20),
   difficulty             VARCHAR(10),
-  scenario_title         VARCHAR(255),
-  commands_executed      JSONB DEFAULT '[]',
-  scoring_events         JSONB DEFAULT '[]',
+  scenario_title         NVARCHAR(255),
+  commands_executed      NVARCHAR(MAX) DEFAULT '[]',
+  scoring_events         NVARCHAR(MAX) DEFAULT '[]',
   chat_message_count     INT DEFAULT 0,
   ai_prompt_tokens       INT DEFAULT 0,
   ai_completion_tokens   INT DEFAULT 0,
   duration_ms            BIGINT,
-  completed              BOOLEAN DEFAULT FALSE,
-  metadata               JSONB DEFAULT '{}',
-  created_at             TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  completed              BIT DEFAULT 0,
+  metadata               NVARCHAR(MAX) DEFAULT '{}',
+  created_at             DATETIMEOFFSET NOT NULL DEFAULT SYSDATETIMEOFFSET()
 );
 
-CREATE INDEX IF NOT EXISTS idx_metrics_nickname ON gameplay_metrics (nickname);
-CREATE INDEX IF NOT EXISTS idx_metrics_created ON gameplay_metrics (created_at);
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'idx_metrics_nickname')
+  CREATE INDEX idx_metrics_nickname ON gameplay_metrics (nickname);
+
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'idx_metrics_created')
+  CREATE INDEX idx_metrics_created ON gameplay_metrics (created_at);

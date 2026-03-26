@@ -59,14 +59,12 @@ route:
   tls:
     termination: edge
 
-postgresql:
+database:
   enabled: false
-  host: ""
-  port: 5432
-  database: "sresimulator"
-  username: "sresimadmin"
+  # Full ADO.NET-style connection string stored in a K8s Secret.
+  # Format: Server=<fqdn>;Database=sresimulator;User Id=sresimadmin;Password=<pwd>;Encrypt=true
   existingSecretName: ""
-  secretPasswordKey: "password"
+  secretConnectionStringKey: "connection-string"
 
 storage:
   storageClass: azurefile-csi
