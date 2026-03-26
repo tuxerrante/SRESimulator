@@ -120,7 +120,7 @@ export class MssqlLeaderboardStore implements ILeaderboardStore {
         MERGE leaderboard_entries AS target
         USING (SELECT @nickname AS nickname, @difficulty AS difficulty) AS source
         ON target.nickname = source.nickname AND target.difficulty = source.difficulty
-        WHEN MATCHED AND @scoreTotal > target.score_total THEN
+        WHEN MATCHED AND (@scoreTotal > target.score_total OR (@scoreTotal = target.score_total AND @durationMs < target.duration_ms)) THEN
           UPDATE SET
             id = @id,
             score_efficiency = @scoreEfficiency,

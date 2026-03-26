@@ -45,7 +45,15 @@ async function main() {
 
   const shutdown = async () => {
     console.log("[shutdown] closing server...");
-    server.close();
+    await new Promise<void>((resolve, reject) => {
+      server.close((err?: Error) => {
+        if (err) {
+          console.error("[shutdown] error while closing server:", err);
+          return reject(err);
+        }
+        resolve();
+      });
+    });
     await shutdownStorage();
     process.exit(0);
   };
