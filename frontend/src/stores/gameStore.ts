@@ -78,8 +78,10 @@ const initialScore: Score = {
 export const useGameStore = create<GameState>((set) => ({
   nickname: null,
   hydrateNickname: () => {
-    const saved = loadNickname();
-    if (saved) set({ nickname: saved });
+    const raw = loadNickname();
+    if (!raw) return;
+    const normalized = raw.trim().slice(0, 20);
+    if (normalized) set({ nickname: normalized });
   },
   setNickname: (name: string) => {
     const normalized = name.trim().slice(0, 20);

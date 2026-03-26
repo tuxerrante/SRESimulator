@@ -42,7 +42,7 @@ export function ScoreBreakdown() {
     if (!nickname.trim() || submitState !== "idle") return;
     setSubmitState("submitting");
     try {
-      await fetch("/api/scores", {
+      const response = await fetch("/api/scores", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -53,6 +53,7 @@ export function ScoreBreakdown() {
           commandCount,
         }),
       });
+      if (!response.ok) throw new Error("Submission failed");
       updateNickname(nickname);
       setSubmitState("submitted");
     } catch {
