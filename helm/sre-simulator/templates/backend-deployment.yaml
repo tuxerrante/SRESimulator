@@ -45,6 +45,17 @@ spec:
             - name: GOOGLE_APPLICATION_CREDENTIALS
               value: "{{ .Values.ai.vertex.credentials.mountPath }}/{{ .Values.ai.vertex.credentials.key }}"
             {{- end }}
+            {{- if .Values.postgresql.enabled }}
+            - name: STORAGE_BACKEND
+              value: postgres
+            - name: PG_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.postgresql.existingSecretName }}
+                  key: {{ .Values.postgresql.secretPasswordKey }}
+            - name: DATABASE_URL
+              value: "postgresql://{{ .Values.postgresql.username }}:$(PG_PASSWORD)@{{ .Values.postgresql.host }}:{{ .Values.postgresql.port }}/{{ .Values.postgresql.database }}?sslmode=require"
+            {{- end }}
           envFrom:
             - configMapRef:
                 name: {{ include "sre-simulator.fullname" . }}-config

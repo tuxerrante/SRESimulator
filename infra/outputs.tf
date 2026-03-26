@@ -38,6 +38,25 @@ output "prod_namespace" {
   value       = var.prod_namespace
 }
 
+# ---------------------------------------------------------------------------
+# PostgreSQL outputs (only when enable_postgres = true)
+# ---------------------------------------------------------------------------
+output "pg_host" {
+  description = "PostgreSQL Flexible Server FQDN."
+  value       = var.enable_postgres ? azurerm_postgresql_flexible_server.main[0].fqdn : ""
+}
+
+output "pg_database" {
+  description = "PostgreSQL database name."
+  value       = var.enable_postgres ? azurerm_postgresql_flexible_server_database.app[0].name : ""
+}
+
+output "pg_connection_hint" {
+  description = "DATABASE_URL template (replace <PASSWORD> with the admin password)."
+  sensitive   = true
+  value = var.enable_postgres ? "postgresql://sresimadmin:<PASSWORD>@${azurerm_postgresql_flexible_server.main[0].fqdn}:5432/${azurerm_postgresql_flexible_server_database.app[0].name}?sslmode=require" : ""
+}
+
 output "env_file_snippet" {
   description = "Paste into backend/.env.local to connect to these resources."
   value       = <<-EOT

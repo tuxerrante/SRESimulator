@@ -1,6 +1,6 @@
 import { Router, type Request, type Response } from "express";
-import { addEntry, getLeaderboard, getHallOfFame } from "../lib/leaderboard";
-import { validateAndConsumeSession } from "../lib/sessions";
+import { getLeaderboardStore, getSessionStore } from "../lib/storage";
+import { isCleanNickname } from "../lib/profanity";
 import type { Difficulty } from "../../../shared/types/game";
 import type { LeaderboardEntry } from "../../../shared/types/leaderboard";
 
@@ -19,8 +19,9 @@ scoresRouter.get("/", async (req: Request, res: Response) => {
       return;
     }
 
-    const entries = await getLeaderboard(difficulty);
-    const hallOfFame = await getHallOfFame();
+    const leaderboard = getLeaderboardStore();
+    const entries = await leaderboard.getLeaderboard(difficulty);
+    const hallOfFame = await leaderboard.getHallOfFame();
 
     res.json({ entries, hallOfFame });
   } catch (error) {
@@ -38,7 +39,7 @@ scoresRouter.post("/", async (req: Request, res: Response) => {
       res.status(400).json({ error: "Session token is required" });
       return;
     }
-    const session = validateAndConsumeSession(sessionToken);
+    const session = await getSessionStore().validateAndConsume(sessionToken);
     if (!session) {
       res.status(403).json({
         error: "Invalid or already used session token",
@@ -52,6 +53,11 @@ scoresRouter.post("/", async (req: Request, res: Response) => {
     }
     if (nickname.length > 20) {
       res.status(400).json({ error: "Nickname must be 20 characters or less" });
+      return;
+    }
+    const nicknameCheck = isCleanNickname(nickname);
+    if (!nicknameCheck.clean) {
+      res.status(400).json({ error: nicknameCheck.reason });
       return;
     }
     if (!score || typeof score.total !== "number") {
@@ -73,7 +79,7 @@ scoresRouter.post("/", async (req: Request, res: Response) => {
       timestamp: Date.now(),
     };
 
-    const saved = await addEntry(entry);
+    const saved = await getLeaderboardStore().addEntry(entry);
     res.status(201).json(saved);
   } catch (error) {
     const message =

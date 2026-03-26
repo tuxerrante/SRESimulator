@@ -59,6 +59,15 @@ route:
   tls:
     termination: edge
 
+postgresql:
+  enabled: false
+  host: ""
+  port: 5432
+  database: "sresimulator"
+  username: "sresimadmin"
+  existingSecretName: ""
+  secretPasswordKey: "password"
+
 storage:
   storageClass: azurefile-csi
   size: 1Gi

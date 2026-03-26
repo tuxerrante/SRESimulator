@@ -124,6 +124,22 @@ variable "extra_tags" {
 }
 
 # ---------------------------------------------------------------------------
+# PostgreSQL (optional, default off)
+# ---------------------------------------------------------------------------
+variable "enable_postgres" {
+  description = "Whether to provision Azure PostgreSQL Flexible Server for persistent game data."
+  type        = bool
+  default     = false
+}
+
+variable "pg_admin_password" {
+  description = "Administrator password for PostgreSQL (required when enable_postgres = true). Must meet Azure complexity requirements."
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
+# ---------------------------------------------------------------------------
 # Locals – derived names and shared tags
 # ---------------------------------------------------------------------------
 locals {

@@ -1,6 +1,6 @@
 import { Router, type Request, type Response } from "express";
 import { loadKnowledgeBase } from "../lib/knowledge";
-import { createSession } from "../lib/sessions";
+import { getSessionStore } from "../lib/storage";
 import { getAiReadiness } from "../lib/ai-config";
 import { generateMockScenario } from "../lib/mock-ai";
 import { generateAiText, AiThrottledError } from "../lib/ai-runtime";
@@ -28,7 +28,7 @@ scenarioRouter.post("/", async (req: Request, res: Response) => {
     const readiness = getAiReadiness();
     if (readiness.mockMode) {
       const scenario = generateMockScenario(difficulty);
-      const sessionToken = createSession(difficulty, scenario.title);
+      const sessionToken = await getSessionStore().create(difficulty, scenario.title);
       res.json({ scenario, sessionToken });
       return;
     }
@@ -130,7 +130,7 @@ ${scenarioContext}`,
 
     const scenario: Scenario = JSON.parse(text);
 
-    const sessionToken = createSession(difficulty, scenario.title);
+    const sessionToken = await getSessionStore().create(difficulty, scenario.title);
 
     res.json({ scenario, sessionToken });
   } catch (error) {

@@ -61,10 +61,18 @@ SRESimulator/
             ├── ai-config.ts              # Provider detection, readiness checks
             ├── context-compactor.ts       # Chat history compaction with retained-state
             ├── nlp-extract.ts            # Compromise-based fact/hypothesis extraction
+            ├── profanity.ts              # Nickname profanity filter (static blocklist)
             ├── token-logger.ts            # Per-route token usage observability
             ├── rate-limit.ts             # Per-IP rate limiting for AI routes
             ├── knowledge.ts              # Knowledge base file loader
-            └── prompts/system.ts         # System prompt builder
+            ├── prompts/system.ts         # System prompt builder
+            └── storage/                  # Pluggable persistence layer
+                ├── types.ts              # ISessionStore, ILeaderboardStore, IMetricsStore
+                ├── index.ts              # Factory (selects JSON or PostgreSQL)
+                ├── migrate.ts            # SQL migration runner
+                ├── json-*-store.ts       # JSON/in-memory implementations
+                ├── pg-*-store.ts         # PostgreSQL implementations
+                └── migrations/           # Numbered .sql migration files
 ```
 
 ---
@@ -211,16 +219,87 @@ Returns per-route token usage totals and recent request entries. See [AI_RUNTIME
 
 ---
 
+## Persistence & Storage Backends
+
+The backend supports two storage modes, selected via the `STORAGE_BACKEND`
+environment variable (`json` or `postgres`).
+
+### JSON mode (default)
+
+Best for local development and single-replica deployments.
+
+- **Sessions**: In-memory `Map` with 24h TTL. Lost on pod restart.
+- **Leaderboard**: JSON file on PVC (`data/leaderboard.json`). Writes are
+  serialized through an in-process async mutex.
+- **Metrics**: Log-only (no persistent storage).
+
+Constraints:
+
+- Single backend replica only (PVC is `ReadWriteOnce`, sessions are in-process).
+- No data survives pod restarts (except leaderboard file on PVC).
+
+### PostgreSQL mode
+
+Required for multi-replica deployments and production use.
+
+- **Sessions**: Stored in `sessions` table. Shared across replicas.
+  Stale entries (>24h) are cleaned up opportunistically.
+- **Leaderboard**: Stored in `leaderboard_entries` table. Uses `ON CONFLICT`
+  upsert to atomically keep the best score per (nickname, difficulty).
+  Per-difficulty trim to 10 entries happens after each insert.
+- **Metrics**: Stored in `gameplay_metrics` table. Captures per-session
+  analytics (commands executed, scoring events, AI token consumption) with
+  an open `metadata` JSONB column for future extensibility.
+
+To enable:
+
+```bash
+STORAGE_BACKEND=postgres
+DATABASE_URL=postgresql://user:pass@host:5432/dbname?sslmode=require
+```
+
+Migrations run automatically on startup. Schema is managed via numbered
+`.sql` files in `backend/src/lib/storage/migrations/`.
+
+### Storage interface pattern
+
+All persistence is abstracted behind three interfaces (`ISessionStore`,
+`ILeaderboardStore`, `IMetricsStore`) in `backend/src/lib/storage/types.ts`.
+The factory in `backend/src/lib/storage/index.ts` selects the implementation
+at startup based on `STORAGE_BACKEND`.
+
+---
+
 ## Multiplayer Scaling & Resilience
 
 ### Concurrency model
 
-The backend is stateless per-request for AI calls (chat, command, scenario). All conversation state lives in the browser and is sent with each request. This means multiple users can play independently against the same backend without session affinity.
+The backend is stateless per-request for AI calls (chat, command, scenario).
+All conversation state lives in the browser and is sent with each request.
+This means multiple users can play independently against the same backend
+without session affinity.
 
-Two pieces of server-side state exist:
+### Scaling by storage mode
 
-- **Score tokens**: in-memory `Map` with 24h TTL (`backend/src/lib/sessions.ts`). Lost on pod restart; acceptable since they are ephemeral anti-cheat tokens.
-- **Leaderboard**: JSON file on PVC (`backend/src/lib/leaderboard.ts`). Writes are serialized through an in-process async mutex to prevent concurrent read-modify-write races.
+| Concern | JSON mode | PostgreSQL mode |
+| --- | --- | --- |
+| Backend replicas | **1 only** | **N (horizontal)** |
+| Session survival | Lost on restart | Survives restarts |
+| Leaderboard consistency | Single-writer mutex | Database UPSERT |
+| Sticky sessions needed | No | No |
+| Connection pooling | N/A | `pg.Pool` (10 connections/pod) |
+
+When using PostgreSQL, increase `backend.replicas` in Helm values as needed.
+No sticky sessions or session affinity are required since all state is in
+the database.
+
+### Infrastructure options
+
+- **Azure Database for PostgreSQL Flexible Server** (Burstable B1ms, ~$13/month):
+  Provisioned via `infra/postgres.tf` when `enable_postgres = true`.
+  Protected by `prevent_destroy` lifecycle rule.
+- **In-cluster PostgreSQL** (zero extra cost): Deploy via Bitnami Helm subchart
+  on existing ARO compute. No managed backups/HA but uses existing resources.
 
 ### Rate limiting & throttle handling
 
