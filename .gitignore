@@ -59,6 +59,9 @@ infra/*.tfstate*
 infra/terraform.tfvars
 infra/crash.log
 
+# Worktrees (agent-managed isolated checkouts)
+.worktrees/
+
 # Misc
 *.tmp
 *.bak
