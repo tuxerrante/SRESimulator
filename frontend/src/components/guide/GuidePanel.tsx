@@ -219,13 +219,31 @@ export function GuidePanel() {
   const containerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    fetch("/api/guide")
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10_000);
+
+    fetch("/api/guide", { signal: controller.signal })
       .then((r) => {
         if (!r.ok) throw new Error("Failed to load guide");
         return r.json();
       })
-      .then((d) => setContent(d.content))
-      .catch((e) => setError(e.message));
+      .then((d) => {
+        if (!d.content) throw new Error("Guide content is empty");
+        setContent(d.content);
+      })
+      .catch((e) => {
+        if (controller.signal.aborted) {
+          setError("Guide request timed out — is the backend running?");
+        } else {
+          setError(e.message);
+        }
+      })
+      .finally(() => clearTimeout(timeout));
+
+    return () => {
+      controller.abort();
+      clearTimeout(timeout);
+    };
   }, []);
 
   const sections = useMemo(
