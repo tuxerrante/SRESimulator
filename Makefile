@@ -3,7 +3,7 @@
        lint lint-ts lint-backend lint-unused-exports lint-yaml lint-md \
        typecheck typecheck-backend validate \
        security audit lockfile-lint grype \
-       test smoke-local-vertex env-check e2e-azure-route e2e-azure-route-up e2e-azure-route-refresh e2e-azure-route-down \
+       test test-integration smoke-local-vertex env-check e2e-azure-route e2e-azure-route-up e2e-azure-route-refresh e2e-azure-route-down \
        prod-up prod-down prod-status \
        build dev start \
        docker-build-frontend docker-build-backend docker-build \
@@ -159,6 +159,9 @@ grype: ## Scan frontend/backend dependencies with Grype (high/critical)
 test: ## Run backend and frontend unit tests with coverage
 	cd $(BACKEND_DIR) && npm run test:coverage
 	cd $(FRONTEND_DIR) && npm run test:coverage
+
+test-integration: ## Run backend integration tests (full API game flow, mock mode)
+	cd $(BACKEND_DIR) && npm run test:integration
 
 smoke-local-vertex: ## Run local backend live probe using Vertex env from frontend/.env.local
 	@set -e; \

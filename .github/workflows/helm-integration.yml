@@ -1,0 +1,118 @@
+---
+name: Helm Integration Test
+
+"on":
+  push:
+    branches: [main]
+    paths:
+      - "helm/**"
+      - "backend/**"
+      - "frontend/**"
+      - ".github/workflows/helm-integration.yml"
+  schedule:
+    - cron: "0 4 * * 1-5"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  helm-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Harden runner
+        # v2.16.0
+        uses: >-
+          step-security/harden-runner@fa2e9d605c4eeb9fcad4c99c224cee0c6c7f3594
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        # v6.0.2
+        uses: >-
+          actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+
+      - name: Load npm version
+        run: echo "NPM_VERSION=$(tr -d '\n' < .npm-version)" >> "$GITHUB_ENV"
+
+      - name: Install Helm
+        run: |
+          set -euo pipefail
+          HELM_VERSION="v3.14.4"
+          HELM_URL="https://get.helm.sh"
+          HELM_TAR="helm-${HELM_VERSION}-linux-amd64.tar.gz"
+          curl -fsSL "${HELM_URL}/${HELM_TAR}" \
+            -o /tmp/helm.tar.gz
+          tar -C /tmp -zxvf /tmp/helm.tar.gz
+          sudo mv /tmp/linux-amd64/helm /usr/local/bin/helm
+          helm version
+
+      - name: Create kind cluster
+        run: |
+          set -euo pipefail
+          KIND_VERSION="v0.29.0"
+          KIND_URL="https://kind.sigs.k8s.io/dl"
+          curl -fsSL "${KIND_URL}/${KIND_VERSION}/kind-linux-amd64" \
+            -o /tmp/kind
+          chmod +x /tmp/kind
+          sudo mv /tmp/kind /usr/local/bin/kind
+          kind create cluster --name helm-test --wait 60s
+          kubectl cluster-info
+
+      - name: Build and load Docker images into kind
+        run: |
+          set -euo pipefail
+          docker build \
+            --build-arg NPM_VERSION="${NPM_VERSION}" \
+            -f frontend/Dockerfile \
+            -t sre-simulator-frontend:test .
+          docker build \
+            --build-arg NPM_VERSION="${NPM_VERSION}" \
+            -f backend/Dockerfile \
+            -t sre-simulator-backend:test .
+          kind load docker-image sre-simulator-frontend:test --name helm-test
+          kind load docker-image sre-simulator-backend:test --name helm-test
+
+      - name: Deploy chart with mock AI mode
+        run: |
+          set -euo pipefail
+          helm install sre-simulator ./helm/sre-simulator \
+            --set frontend.image.repository=sre-simulator-frontend \
+            --set frontend.image.tag=test \
+            --set frontend.image.pullPolicy=Never \
+            --set backend.image.repository=sre-simulator-backend \
+            --set backend.image.tag=test \
+            --set backend.image.pullPolicy=Never \
+            --set ai.mockMode=true \
+            --set ai.strictStartup=false \
+            --set storage.storageClass=standard \
+            --set route.enabled=false \
+            --wait --timeout 3m
+
+      - name: Verify pods are running
+        run: |
+          set -euo pipefail
+          kubectl get pods
+          SELECTOR="app.kubernetes.io/component"
+          kubectl wait --for=condition=ready \
+            pod -l "${SELECTOR}=backend" --timeout=120s
+          kubectl wait --for=condition=ready \
+            pod -l "${SELECTOR}=frontend" --timeout=120s
+
+      - name: Run helm test
+        run: helm test sre-simulator --timeout 2m
+
+      - name: Show test pod logs on failure
+        if: failure()
+        run: |
+          kubectl logs sre-simulator-test || true
+          kubectl describe pod sre-simulator-test || true
+          echo "--- Backend logs ---"
+          kubectl logs -l app.kubernetes.io/component=backend --tail=50 || true
+          echo "--- Frontend logs ---"
+          kubectl logs -l app.kubernetes.io/component=frontend --tail=50 || true
+
+      - name: Cleanup
+        if: always()
+        run: kind delete cluster --name helm-test

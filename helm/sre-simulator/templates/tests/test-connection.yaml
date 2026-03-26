@@ -1,0 +1,61 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: {{ include "sre-simulator.fullname" . }}-test
+  labels:
+    {{- include "sre-simulator.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/hook: test
+    helm.sh/hook-delete-policy: before-hook-creation
+spec:
+  restartPolicy: Never
+  containers:
+    - name: test
+      image: curlimages/curl:8.13.0
+      command: ["/bin/sh", "-c"]
+      args:
+        - |
+          set -e
+          BACKEND="{{ include "sre-simulator.fullname" . }}-backend:{{ .Values.backend.port }}"
+          FRONTEND="{{ include "sre-simulator.fullname" . }}-frontend:{{ .Values.frontend.port }}"
+
+          echo "=== Backend health check ==="
+          curl -fsS "http://${BACKEND}/healthz"
+          echo ""
+
+          echo "=== Backend readiness check ==="
+          curl -fsS "http://${BACKEND}/readyz"
+          echo ""
+
+          echo "=== Frontend reachability ==="
+          STATUS=$(curl -o /dev/null -s -w "%{http_code}" "http://${FRONTEND}/")
+          echo "Frontend status: ${STATUS}"
+          if [ "${STATUS}" -lt 200 ] || [ "${STATUS}" -ge 400 ]; then
+            echo "FAIL: frontend returned ${STATUS}"
+            exit 1
+          fi
+
+          echo "=== API scenario generation (mock mode) ==="
+          SCENARIO_RESP=$(curl -fsS -X POST "http://${BACKEND}/api/scenario" \
+            -H "Content-Type: application/json" \
+            -d '{"difficulty":"easy"}')
+          echo "${SCENARIO_RESP}" | head -c 200
+          echo ""
+
+          TOKEN=$(echo "${SCENARIO_RESP}" | sed -n 's/.*"sessionToken":"\([^"]*\)".*/\1/p')
+          if [ -z "${TOKEN}" ]; then
+            echo "FAIL: no sessionToken in scenario response"
+            exit 1
+          fi
+          echo "Session token obtained: ${TOKEN:0:8}..."
+
+          echo "=== API guide endpoint ==="
+          curl -fsS "http://${BACKEND}/api/guide" | head -c 100
+          echo ""
+
+          echo "=== API leaderboard ==="
+          curl -fsS "http://${BACKEND}/api/scores" | head -c 200
+          echo ""
+
+          echo ""
+          echo "All helm tests passed."
