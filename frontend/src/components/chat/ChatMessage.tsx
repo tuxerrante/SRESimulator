@@ -49,21 +49,29 @@ export function ChatMessage({ message, onRunCommand }: ChatMessageProps) {
           <ReactMarkdown
             remarkPlugins={[remarkGfm]}
             components={{
-              a({ href, children, ...props }) {
+              a({ href, children, node, className, ...props }) {
                 return (
                   <a
+                    {...props}
                     href={href}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1 text-blue-400 hover:text-blue-300 underline"
-                    {...props}
+                    className={cn(
+                      "inline-flex items-center gap-1 text-blue-400 hover:text-blue-300 underline",
+                      className
+                    )}
                   >
                     {children}
-                    <ExternalLink size={12} className="inline flex-shrink-0" />
+                    <ExternalLink
+                      size={12}
+                      className="inline flex-shrink-0"
+                      aria-hidden="true"
+                      focusable="false"
+                    />
                   </a>
                 );
               },
-              code({ className, children, ...props }) {
+              code({ className, children, node, ...props }) {
                 const match = /language-(\w+)/.exec(className || "");
                 const lang = match ? match[1] : "";
                 const codeStr = String(children).replace(/\n$/, "");
