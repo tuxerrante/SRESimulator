@@ -1,8 +1,19 @@
-import { describe, expect, it, beforeEach } from "vitest";
+import { describe, expect, it, beforeEach, vi } from "vitest";
 import { useGameStore } from "./gameStore";
 import type { Scenario } from "@shared/types/game";
 import type { ChatMessage } from "@shared/types/chat";
 import type { ScoringEvent } from "@shared/types/scoring";
+
+const mockStorage = new Map<string, string>();
+const localStorageMock: Storage = {
+  getItem: vi.fn((key: string) => mockStorage.get(key) ?? null),
+  setItem: vi.fn((key: string, value: string) => { mockStorage.set(key, value); }),
+  removeItem: vi.fn((key: string) => { mockStorage.delete(key); }),
+  clear: vi.fn(() => { mockStorage.clear(); }),
+  get length() { return mockStorage.size; },
+  key: vi.fn((i: number) => [...mockStorage.keys()][i] ?? null),
+};
+Object.defineProperty(globalThis, "localStorage", { value: localStorageMock, writable: true });
 
 const mockScenario: Scenario = {
   id: "scenario_test",
@@ -262,6 +273,71 @@ describe("gameStore", () => {
 
       const score = useGameStore.getState().score;
       expect(score.total).toBe(50);
+    });
+  });
+
+  describe("nickname", () => {
+    beforeEach(() => {
+      mockStorage.clear();
+      vi.clearAllMocks();
+      useGameStore.setState({ nickname: null });
+    });
+
+    it("setNickname updates the store and writes to localStorage", () => {
+      useGameStore.getState().setNickname("onCallHero");
+
+      expect(useGameStore.getState().nickname).toBe("onCallHero");
+      expect(localStorageMock.setItem).toHaveBeenCalledWith("sre-nickname", "onCallHero");
+      expect(mockStorage.get("sre-nickname")).toBe("onCallHero");
+    });
+
+    it("trims whitespace and normalizes empty to null", () => {
+      useGameStore.getState().setNickname("  hero  ");
+      expect(useGameStore.getState().nickname).toBe("hero");
+      expect(mockStorage.get("sre-nickname")).toBe("hero");
+
+      useGameStore.getState().setNickname("   ");
+      expect(useGameStore.getState().nickname).toBeNull();
+      expect(localStorageMock.removeItem).toHaveBeenCalledWith("sre-nickname");
+      expect(mockStorage.has("sre-nickname")).toBe(false);
+    });
+
+    it("truncates nicknames longer than 20 characters", () => {
+      const longName = "abcdefghij".repeat(5);
+      useGameStore.getState().setNickname(longName);
+
+      expect(useGameStore.getState().nickname).toHaveLength(20);
+      expect(mockStorage.get("sre-nickname")).toHaveLength(20);
+    });
+
+    it("hydrateNickname reads from localStorage and normalizes", () => {
+      mockStorage.set("sre-nickname", "  hero  ");
+      useGameStore.setState({ nickname: null });
+      useGameStore.getState().hydrateNickname();
+      expect(useGameStore.getState().nickname).toBe("hero");
+
+      const longName = "abcdefghij".repeat(5);
+      mockStorage.set("sre-nickname", longName);
+      useGameStore.setState({ nickname: null });
+      useGameStore.getState().hydrateNickname();
+      expect(useGameStore.getState().nickname).toHaveLength(20);
+    });
+
+    it("resetGame preserves the nickname", () => {
+      useGameStore.getState().setNickname("keeper");
+      useGameStore.getState().startGame(mockScenario, "tok-1");
+      useGameStore.getState().resetGame();
+
+      expect(useGameStore.getState().nickname).toBe("keeper");
+      expect(useGameStore.getState().status).toBe("idle");
+    });
+
+    it("startGame preserves the nickname", () => {
+      useGameStore.getState().setNickname("player1");
+      useGameStore.getState().startGame(mockScenario, "tok-2");
+
+      expect(useGameStore.getState().nickname).toBe("player1");
+      expect(useGameStore.getState().status).toBe("playing");
     });
   });
 });

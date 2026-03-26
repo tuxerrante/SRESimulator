@@ -1,10 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useGameStore } from "@/stores/gameStore";
 import type { Difficulty, Scenario } from "@shared/types/game";
-import { Shield, AlertTriangle, Zap, Flame, Loader2, Trophy, Github, Heart } from "lucide-react";
+import { Shield, AlertTriangle, Zap, Flame, Loader2, Trophy, Github, Heart, User } from "lucide-react";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
 
@@ -48,8 +48,14 @@ const DIFFICULTIES: {
 export default function HomePage() {
   const router = useRouter();
   const startGame = useGameStore((s) => s.startGame);
+  const nickname = useGameStore((s) => s.nickname);
+  const setNickname = useGameStore((s) => s.setNickname);
+  const hydrateNickname = useGameStore((s) => s.hydrateNickname);
   const [loading, setLoading] = useState<Difficulty | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const hasCallsign = Boolean(nickname);
+
+  useEffect(() => { hydrateNickname(); }, [hydrateNickname]);
 
   const handleSelect = async (difficulty: Difficulty) => {
     setLoading(difficulty);
@@ -87,17 +93,30 @@ export default function HomePage() {
         <p className="text-zinc-500 text-center mb-2 max-w-lg">
           The Break-Fix Game for Azure Red Hat OpenShift
         </p>
-        <p className="text-zinc-600 text-sm text-center mb-12 max-w-md">
+        <p className="text-zinc-600 text-sm text-center mb-10 max-w-md">
           An AI Dungeon Master will break a cluster. Your job is to investigate
           and fix it using the proper SRE methodology.
         </p>
+
+        <div className="flex items-center gap-2 mb-8 w-full max-w-xs">
+          <User size={18} className="text-zinc-500 shrink-0" />
+          <input
+            type="text"
+            value={nickname ?? ""}
+            onChange={(e) => setNickname(e.target.value)}
+            placeholder="Enter your callsign"
+            aria-label="Callsign"
+            maxLength={20}
+            className="flex-1 px-3 py-2 rounded-lg bg-zinc-900 border border-zinc-700 text-sm text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-amber-600 transition-colors"
+          />
+        </div>
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 w-full max-w-3xl">
           {DIFFICULTIES.map((d) => (
             <button
               key={d.level}
               onClick={() => handleSelect(d.level)}
-              disabled={loading !== null}
+              disabled={loading !== null || !hasCallsign}
               className={cn(
                 "flex flex-col items-start p-5 rounded-xl border transition-all text-left",
                 "hover:scale-[1.02] active:scale-[0.98]",

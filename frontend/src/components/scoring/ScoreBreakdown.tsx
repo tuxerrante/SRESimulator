@@ -21,8 +21,10 @@ export function ScoreBreakdown() {
   const commandCount = useGameStore((s) => s.commandCount);
   const sessionToken = useGameStore((s) => s.sessionToken);
   const resetGame = useGameStore((s) => s.resetGame);
+  const storedNickname = useGameStore((s) => s.nickname);
+  const updateNickname = useGameStore((s) => s.setNickname);
 
-  const [nickname, setNickname] = useState("");
+  const [nickname, setNickname] = useState(storedNickname ?? "");
   const [submitState, setSubmitState] = useState<"idle" | "submitting" | "submitted">("idle");
 
   const handleClose = () => {
@@ -40,7 +42,7 @@ export function ScoreBreakdown() {
     if (!nickname.trim() || submitState !== "idle") return;
     setSubmitState("submitting");
     try {
-      await fetch("/api/scores", {
+      const response = await fetch("/api/scores", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -51,6 +53,8 @@ export function ScoreBreakdown() {
           commandCount,
         }),
       });
+      if (!response.ok) throw new Error("Submission failed");
+      updateNickname(nickname);
       setSubmitState("submitted");
     } catch {
       setSubmitState("idle");
