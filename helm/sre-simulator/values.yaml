@@ -54,6 +54,7 @@ ai:
       key: api-key
 
 route:
+  enabled: true
   host: sre-simulator.apps.example.com
   tls:
     termination: edge
