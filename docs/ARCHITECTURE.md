@@ -1,5 +1,8 @@
 # Architecture & Game Design
 
+> AI provider integration, token management, and context compaction are
+> documented in [AI_RUNTIME.md](AI_RUNTIME.md).
+
 ## Tech Stack
 
 - **Framework:** Next.js 16 (App Router, TypeScript)
@@ -8,6 +11,8 @@
 - **State:** Zustand
 - **AI Providers:** Vertex AI (Anthropic SDK) + Azure OpenAI/Foundry (chat completions REST)
 - **AI Runtime:** Provider-agnostic adapter in `backend/src/lib/ai-runtime.ts`
+- **NLP:** compromise (sentence-level fact/hypothesis extraction for context compaction)
+- **Tokenizer:** gpt-tokenizer (o200k_base BPE, used for compaction budget estimation)
 - **Markdown:** react-markdown + remark-gfm
 - **Icons:** Lucide React
 
@@ -26,7 +31,8 @@ SRESimulator/
 │   ├── Openshift-clusters-alerts-resolutions.md
 │   └── Community-reported-issues.md
 ├── docs/
-│   └── ARCHITECTURE.md                   # This file
+│   ├── ARCHITECTURE.md                   # This file
+│   └── AI_RUNTIME.md                     # AI provider, compaction, token management
 ├── frontend/                             # Next.js application (UI only)
 │   ├── src/
 │   │   ├── app/
@@ -54,7 +60,9 @@ SRESimulator/
             ├── ai-runtime.ts             # Provider-agnostic AI adapter (Vertex + Azure)
             ├── ai-config.ts              # Provider detection, readiness checks
             ├── context-compactor.ts       # Chat history compaction with retained-state
+            ├── nlp-extract.ts            # Compromise-based fact/hypothesis extraction
             ├── token-logger.ts            # Per-route token usage observability
+            ├── rate-limit.ts             # Per-IP rate limiting for AI routes
             ├── knowledge.ts              # Knowledge base file loader
             └── prompts/system.ts         # System prompt builder
 ```
@@ -146,98 +154,30 @@ You start at **0/100** and earn points through good investigation practices.
 
 ---
 
-## Context Management & Token Efficiency
+## AI Integration
 
-The backend manages AI context to prevent token exhaustion, especially with high-reasoning models (e.g. gpt-5.x) that can consume the entire completion budget on internal reasoning without producing output text.
+The backend integrates with LLM providers for chat, command simulation,
+and scenario generation. See **[AI_RUNTIME.md](AI_RUNTIME.md)** for full
+details on provider abstraction, context compaction, token management,
+per-route deployments, and environment variable reference.
 
-### Reasoning effort control
+Key design highlights:
 
-Azure OpenAI reasoning models (o-series, gpt-5.x) share `max_completion_tokens` between internal chain-of-thought and output text. The runtime sends `reasoning_effort` (default `"medium"`, configurable via `AI_REASONING_EFFORT`) to limit how many tokens the model spends reasoning, reserving budget for actual output.
-
-If the model exhausts its completion budget on reasoning (`finish_reason: "length"` with reasoning tokens but no output), the runtime retries once with `reasoning_effort: "low"`. During this retry, the frontend displays a "thinking deeper..." indicator so the user knows the AI is still working.
-
-### Section-based knowledge base retrieval
-
-Instead of sending the entire knowledge base (~75 KB, ~18K tokens) on every chat request, the backend parses KB files into sections at startup and selects only the sections relevant to the current scenario and user message. The investigation methodology (`sre-investigation-techniques.md`) is always included. Relevant sections are selected by keyword scoring against the scenario title, description, alerts, and the user's latest message, capped at 8000 characters (~2K tokens).
-
-This reduces per-request input tokens from ~32K to ~10K, enabling roughly 3x more concurrent players within the same Azure OpenAI TPM quota.
-
-### Azure OpenAI prompt caching
-
-Azure OpenAI automatically caches prompt token computations when the first 1024+ tokens of a request are identical across requests. The system prompt is structured with the static instruction block first (before scenario and KB content) to maximize cache hits. The runtime also sends `prompt_cache_key` keyed by scenario title so all players on the same scenario share the same cache bucket. Cached tokens appear in the `[token-usage]` log lines.
-
-### Chat history compaction
-
-Long conversations are automatically compacted before each AI request. The compactor (`backend/src/lib/context-compactor.ts`) estimates message token counts and, when the total exceeds the budget (default 12K tokens, configurable via `COMPACTION_TOKEN_BUDGET`), replaces older messages with a structured summary while keeping the most recent messages (default 4, configurable via `COMPACTION_TAIL_MESSAGES`) verbatim.
-
-**Retained-state schema** (best-effort heuristic extraction; may miss or simplify some details):
-
-| Field | Description |
-| ---------------------- | --------------------------------------------------------- |
-| `phase` | Current investigation phase |
-| `knownFacts` | Evidence confirmed during the investigation |
-| `hypotheses` | User theories about root cause |
-| `mentionedCommands` | Commands suggested by DM or referenced by user |
-| `unresolvedQuestions` | Questions the user asked that remain unanswered |
-| `summaryOfDiscussion` | Scoring events and key discussion milestones |
-
-The compactor uses a heuristic token estimator (~4 chars/token) rather than a tokenizer dependency to keep the backend lightweight.
-
-### Command simulation prompt optimization
-
-The command route (`/api/command`) builds system prompts from extracted helper functions rather than inline string literals. Only the scenario context and temporal rules are sent as dynamic content; the static instruction layer is shared across calls.
-
-### Fallback behavior
-
-If Azure OpenAI returns empty text (e.g. reasoning tokens consumed the completion budget), the command route falls back to deterministic mock output so gameplay continues unblocked. The chat route retries with reduced reasoning effort before surfacing an error.
-
----
-
-## Per-Route AI Deployments
-
-Each API route can use a different Azure OpenAI deployment, allowing cost/performance optimization per workload. The runtime resolves deployments in this order:
-
-1. Route-specific env var (e.g. `AI_AZURE_OPENAI_DEPLOYMENT_CHAT`)
-2. Global fallback (`AI_AZURE_OPENAI_DEPLOYMENT`)
-
-The global `AI_AZURE_OPENAI_DEPLOYMENT` is still required for readiness validation and serves as the default for any route without a specific override. If neither is set for a given route, the runtime throws a clear error.
-
-| Route | Env var override | Recommended model characteristics |
-| ---------- | ----------------------------------------- | ----------------------------------- |
-| `chat` | `AI_AZURE_OPENAI_DEPLOYMENT_CHAT` | High quality, streaming support |
-| `command` | `AI_AZURE_OPENAI_DEPLOYMENT_COMMAND` | Fast, good at structured output |
-| `scenario` | `AI_AZURE_OPENAI_DEPLOYMENT_SCENARIO` | Good at JSON generation |
-| `probe` | `AI_AZURE_OPENAI_DEPLOYMENT_PROBE` | Cheapest/fastest available |
-
-All route-specific overrides are optional. When not set, all routes share the global deployment.
-
-### How per-route deployments work with multiplayer
-
-Per-route overrides reference **pre-provisioned** Azure OpenAI deployments by name -- the app never creates or modifies Azure deployments at runtime. The flow is:
-
-1. **Infrastructure time** (once, via Terraform or portal): create multiple model deployments on the same AOAI account. For example, `gpt-4o` for chat and `gpt-4o-mini` for command/scenario/probe. Each deployment takes 1-2 hours to provision.
-2. **Application deploy time** (via Helm values or env vars): set `AI_AZURE_OPENAI_DEPLOYMENT_CHAT=gpt-4o` and `AI_AZURE_OPENAI_DEPLOYMENT_COMMAND=gpt-4o-mini`.
-3. **Runtime**: `getDeploymentForRoute()` reads the env var and inserts the deployment name into the API URL path. No Azure resource creation occurs.
-
-All concurrent users share the same set of pre-provisioned deployments. Each deployment has its own independent TPM rate limit, so using separate deployments for chat vs. command/probe effectively gives you separate rate limit pools -- reducing the risk that heavy chat usage throttles command execution.
-
----
-
-## Token Observability
-
-The backend logs token usage per route and per request (`backend/src/lib/token-logger.ts`). Both Vertex (streaming and non-streaming) and Azure OpenAI requests emit structured log lines. The `model` field is the configured model name; Azure logs also include a `deployment` field since deployment names may differ from the model. When prompt caching is active, `cached=N` shows how many prompt tokens were served from cache. When chat history was compacted before the request, the log includes the compacted message count:
-
-```text
-[token-usage] route=chat model=gpt-5.2 deployment=gpt5-eastus prompt=3200 completion=450 reasoning=120 cached=1408 total=3650 latency=1200ms
-[token-usage] route=chat model=gpt-5.2 deployment=gpt5-eastus prompt=1800 completion=500 reasoning=0 total=2300 latency=900ms compacted=14msgs
-[token-usage] route=command model=gpt-4o-mini deployment=gpt4o-mini-eastus prompt=800 completion=200 reasoning=0 total=1000 latency=600ms
-```
-
-An admin endpoint is available for inspecting aggregated metrics:
-
-### `GET /api/ai/token-metrics`
-
-Returns per-route totals (requests, prompt/completion/reasoning/cached tokens, errors) and recent request entries. Protected by `x-ai-probe-token` in production.
+- **Dual-provider support** — Vertex AI (Claude) and Azure OpenAI behind a
+  single adapter, switchable via `AI_PROVIDER` env var.
+- **Hybrid context compaction** — regex for structured markers + NLP
+  (compromise library) for fact/hypothesis extraction, with BPE token
+  estimation for accurate budget tracking.
+- **Reasoning-model compatibility** — automatic o-series detection skips
+  unsupported parameters and manages `reasoning_effort`.
+- **Section-based KB retrieval** — only scenario-relevant knowledge base
+  sections are sent (~10K tokens vs ~32K full KB).
+- **Prompt caching** — static instruction block first in system prompt to
+  maximize Azure OpenAI cache hits across players.
+- **Per-route deployments** — separate Azure OpenAI deployments per route
+  for independent rate-limit pools.
+- **Graceful degradation** — retries with reduced reasoning effort, then
+  falls back to mock output if the model exhausts its budget.
 
 ---
 
@@ -255,9 +195,7 @@ Streaming chat endpoint. Builds a system prompt with Dungeon Master persona, met
 
 ### `POST /api/command`
 
-Simulates command execution. Given an `oc`, KQL, or Geneva command and the current scenario, the configured provider generates realistic output consistent with the incident. In `AI_MOCK_MODE=true`, returns mock command output.
-
-If a live provider response is empty (for example, some high-reasoning models can exhaust completion budget without emitting text), the backend falls back to deterministic mock command output to keep gameplay unblocked.
+Simulates command execution. Given an `oc`, KQL, or Geneva command and the current scenario, the configured provider generates realistic output consistent with the incident. In `AI_MOCK_MODE=true`, returns mock command output. Falls back to mock output when reasoning models exhaust the completion budget.
 
 ### `GET /api/ai/readiness`
 
@@ -267,53 +205,9 @@ Returns AI runtime readiness checks (safe diagnostics only, no secrets).
 
 Performs an active live probe against the configured provider to validate in-cluster connectivity end-to-end.
 
-Token metrics are also available at `GET /api/ai/token-metrics` (see [Token Observability](#token-observability) above).
+### `GET /api/ai/token-metrics`
 
----
-
-## Changing provider and model
-
-Set runtime via backend env vars:
-
-```bash
-AI_PROVIDER=vertex              # or azure-openai
-AI_MODEL=claude-sonnet-4@20250514
-```
-
-For Vertex mode, set:
-
-```bash
-CLOUD_ML_REGION=us-east5
-ANTHROPIC_VERTEX_PROJECT_ID=<gcp-project-id>
-```
-
-For Azure OpenAI/Foundry mode, set:
-
-```bash
-AI_AZURE_OPENAI_ENDPOINT=https://<account>.cognitiveservices.azure.com
-AI_AZURE_OPENAI_DEPLOYMENT=<deployment-name>
-AI_AZURE_OPENAI_API_VERSION=2024-10-21
-AI_AZURE_OPENAI_API_KEY=<api-key>
-```
-
-Optional per-route deployment overrides:
-
-```bash
-AI_AZURE_OPENAI_DEPLOYMENT_CHAT=gpt-5.2
-AI_AZURE_OPENAI_DEPLOYMENT_COMMAND=gpt-4o-mini
-AI_AZURE_OPENAI_DEPLOYMENT_SCENARIO=gpt-4o-mini
-```
-
-Token budget and reasoning tuning:
-
-```bash
-AI_REASONING_EFFORT=medium          # low | medium | high (default: medium)
-AI_MAX_CHAT_TOKENS=16384            # max_completion_tokens for chat route
-COMPACTION_TOKEN_BUDGET=12000       # token budget for chat history compaction
-COMPACTION_TAIL_MESSAGES=4          # recent messages kept verbatim during compaction
-```
-
-`CLAUDE_MODEL` is still accepted as a backward-compatible alias, but `AI_MODEL` is the preferred variable.
+Returns per-route token usage totals and recent request entries. See [AI_RUNTIME.md — Token Observability](AI_RUNTIME.md#token-observability).
 
 ---
 
@@ -328,26 +222,6 @@ Two pieces of server-side state exist:
 - **Score tokens**: in-memory `Map` with 24h TTL (`backend/src/lib/sessions.ts`). Lost on pod restart; acceptable since they are ephemeral anti-cheat tokens.
 - **Leaderboard**: JSON file on PVC (`backend/src/lib/leaderboard.ts`). Writes are serialized through an in-process async mutex to prevent concurrent read-modify-write races.
 
-### Rate limiting
+### Rate limiting & throttle handling
 
-AI-backed routes (`/api/chat`, `/api/command`, `/api/scenario`) are rate-limited per IP using `express-rate-limit` (15 req/min per client). This prevents a single user from exhausting the shared AOAI TPM quota and affecting other users.
-
-### Azure OpenAI throttle handling
-
-When Azure OpenAI returns HTTP 429, the backend retries with exponential backoff and jitter (up to 3 attempts, respecting the `Retry-After` header). If all retries are exhausted, the client receives a 429 with a user-friendly message instead of a generic 500 error.
-
-### AOAI capacity sizing
-
-The `aoai_capacity` Terraform variable (default 80K TPM) controls the rate limit on the shared Azure OpenAI deployment. On Standard (pay-as-you-go) deployments, this only affects throttling — not cost.
-
-Per-route token consumption after section-based KB retrieval and prompt trimming (PR #31 baseline in parentheses):
-
-| Route | Tokens/request | Peak rate (1 user) | Peak TPM |
-| ------- | --------------- | ------------------- | ---------- |
-| Chat | ~10K (was ~16K) | 2-3/min | ~30K |
-| Command | ~4K | 1-2/min | ~8K |
-| Scenario | ~2.3K | burst | ~2K |
-
-With prompt caching active (common for players on the same scenario), effective input cost is further reduced since cached tokens receive a pricing discount and lower latency.
-
-For multi-user deployments, multiply the single-user peak (~35K TPM) by the number of concurrent users and increase `aoai_capacity` accordingly. Creating or modifying Azure OpenAI deployments takes 1-2 hours, so always pre-provision capacity.
+See [AI_RUNTIME.md — Rate Limiting](AI_RUNTIME.md#rate-limiting--throttle-handling) for per-IP rate limits, Azure 429 retry strategy, and AOAI capacity sizing guidelines.

@@ -8,13 +8,16 @@
     "start": "node dist/backend/src/index.js",
     "lint": "eslint .",
     "test": "vitest run",
-    "test:coverage": "vitest run --coverage"
+    "test:coverage": "vitest run --coverage",
+    "test:integration": "vitest run -c vitest.integration.config.ts"
   },
   "dependencies": {
     "@anthropic-ai/vertex-sdk": "^0.14.3",
+    "compromise": "^14.15.0",
     "cors": "^2.8.5",
     "express": "^5.2.1",
-    "express-rate-limit": "^8.3.1"
+    "express-rate-limit": "^8.3.1",
+    "gpt-tokenizer": "^3.4.0"
   },
   "devDependencies": {
     "@types/cors": "^2.8.17",
