@@ -25,6 +25,8 @@ export async function initStorage(): Promise<void> {
   const backend = getStorageBackend();
 
   if (backend === "mssql") {
+    if (mssqlPool) return;
+
     const databaseUrl = process.env.DATABASE_URL;
     if (!databaseUrl) {
       throw new Error("DATABASE_URL is required when STORAGE_BACKEND=mssql");

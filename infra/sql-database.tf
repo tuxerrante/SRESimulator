@@ -50,7 +50,10 @@ resource "azurerm_mssql_database" "app" {
   }
 }
 
-# Allow connections from Azure services (including ARO worker nodes).
+# Allow connections from Azure services (including ARO worker nodes via their
+# egress IPs).  start/end = 0.0.0.0 enables the special "Allow access to Azure
+# services" rule.  This is intentionally broad for a dev/training tool.
+# For production, replace with a VNet private endpoint or explicit egress IPs.
 resource "azurerm_mssql_firewall_rule" "azure_services" {
   count            = var.enable_database ? 1 : 0
   name             = "allow-azure-services"

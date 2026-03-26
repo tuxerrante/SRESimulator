@@ -5,21 +5,24 @@ import type sql from "mssql";
 const MIGRATIONS_DIR = path.join(__dirname, "migrations");
 
 export async function runMigrations(pool: sql.ConnectionPool): Promise<void> {
-  const request = pool.request();
-
-  // Serialize migrations across replicas via application lock
-  await request.query(`
-    DECLARE @result INT;
-    EXEC @result = sp_getapplock
-      @Resource = 'SRESimMigrations',
-      @LockMode = 'Exclusive',
-      @LockOwner = 'Session',
-      @LockTimeout = 30000;
-    IF @result < 0
-      THROW 50001, 'Could not acquire migration lock', 1;
-  `);
+  const tx = pool.transaction();
+  await tx.begin();
 
   try {
+    const request = tx.request();
+
+    // Serialize migrations across replicas via transaction-scoped application lock
+    await request.query(`
+      DECLARE @result INT;
+      EXEC @result = sp_getapplock
+        @Resource = 'SRESimMigrations',
+        @LockMode = 'Exclusive',
+        @LockOwner = 'Transaction',
+        @LockTimeout = 30000;
+      IF @result < 0
+        THROW 50001, 'Could not acquire migration lock', 1;
+    `);
+
     await request.query(`
       IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = '_migrations')
       CREATE TABLE _migrations (
@@ -51,25 +54,16 @@ export async function runMigrations(pool: sql.ConnectionPool): Promise<void> {
       const migrationSql = await readFile(path.join(MIGRATIONS_DIR, file), "utf-8");
       console.log(`[migrate] applying ${file}...`);
 
-      const tx = pool.transaction();
-      await tx.begin();
-      try {
-        await tx.request().query(migrationSql);
-        await tx.request()
-          .input("name", file)
-          .query("INSERT INTO _migrations (name) VALUES (@name)");
-        await tx.commit();
-        console.log(`[migrate] applied ${file}`);
-      } catch (err) {
-        await tx.rollback();
-        throw new Error(`Migration ${file} failed: ${err}`);
-      }
+      await tx.request().query(migrationSql);
+      await tx.request()
+        .input("name", file)
+        .query("INSERT INTO _migrations (name) VALUES (@name)");
+      console.log(`[migrate] applied ${file}`);
     }
-  } finally {
-    await request.query(`
-      EXEC sp_releaseapplock
-        @Resource = 'SRESimMigrations',
-        @LockOwner = 'Session';
-    `);
+
+    await tx.commit();
+  } catch (err) {
+    await tx.rollback();
+    throw err;
   }
 }

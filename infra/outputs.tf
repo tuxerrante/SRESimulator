@@ -52,7 +52,7 @@ output "sql_database_name" {
 }
 
 output "sql_connection_hint" {
-  description = "DATABASE_URL template (replace <PASSWORD> with the admin password). Uses mssql:// connection string format."
+  description = "DATABASE_URL template (replace <PASSWORD> with the admin password). Uses ADO.NET-style 'Server=...;Database=...;User Id=...;Password=...' connection string format."
   sensitive   = true
   value = var.enable_database ? "Server=${azurerm_mssql_server.main[0].fully_qualified_domain_name};Database=${azurerm_mssql_database.app[0].name};User Id=sresimadmin;Password=<PASSWORD>;Encrypt=true;TrustServerCertificate=false" : ""
 }

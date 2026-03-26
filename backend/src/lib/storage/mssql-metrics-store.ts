@@ -59,7 +59,7 @@ export class MssqlMetricsStore implements IMetricsStore {
       id: r.id,
       sessionToken: r.session_token ?? undefined,
       nickname: r.nickname ?? undefined,
-      difficulty: r.difficulty as GameplayRecord["difficulty"],
+      difficulty: (r.difficulty ?? undefined) as GameplayRecord["difficulty"],
       scenarioTitle: r.scenario_title ?? undefined,
       commandsExecuted: JSON.parse(r.commands_executed || "[]") as string[],
       scoringEvents: JSON.parse(r.scoring_events || "[]") as unknown[],
