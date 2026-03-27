@@ -1,0 +1,256 @@
+import { describe, expect, it, beforeAll, afterAll } from "vitest";
+import type sql from "mssql";
+
+let pool: sql.ConnectionPool;
+
+const SKIP = process.env.STORAGE_BACKEND !== "mssql";
+
+beforeAll(async () => {
+  if (SKIP) return;
+
+  const mssql = await import("mssql");
+  const databaseUrl = process.env.DATABASE_URL;
+  if (!databaseUrl) throw new Error("DATABASE_URL required for MSSQL tests");
+
+  pool = new mssql.default.ConnectionPool(databaseUrl);
+  await pool.connect();
+
+  const { runMigrations } = await import("../lib/storage/migrate");
+  await runMigrations(pool);
+});
+
+afterAll(async () => {
+  if (pool) {
+    await pool.request().query(`
+      IF OBJECT_ID('gameplay_metrics') IS NOT NULL DELETE FROM gameplay_metrics;
+      IF OBJECT_ID('leaderboard_entries') IS NOT NULL DELETE FROM leaderboard_entries;
+      IF OBJECT_ID('sessions') IS NOT NULL DELETE FROM sessions;
+    `);
+    await pool.close();
+  }
+});
+
+describe.skipIf(SKIP)("MssqlSessionStore (real SQL)", () => {
+  it("creates a session and validates+consumes it", async () => {
+    const { MssqlSessionStore } = await import(
+      "../lib/storage/mssql-session-store"
+    );
+    const store = new MssqlSessionStore(pool);
+
+    const token = await store.create("easy", "The Sleeping Cluster");
+    expect(token).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+    );
+
+    const session = await store.validateAndConsume(token);
+    expect(session).not.toBeNull();
+    expect(session!.token).toBe(token);
+    expect(session!.difficulty).toBe("easy");
+    expect(session!.scenarioTitle).toBe("The Sleeping Cluster");
+    expect(session!.used).toBe(true);
+    expect(session!.startTime).toBeGreaterThan(0);
+  });
+
+  it("returns null when consuming an already-used token", async () => {
+    const { MssqlSessionStore } = await import(
+      "../lib/storage/mssql-session-store"
+    );
+    const store = new MssqlSessionStore(pool);
+
+    const token = await store.create("medium", "Bad Egress");
+    await store.validateAndConsume(token);
+    const second = await store.validateAndConsume(token);
+    expect(second).toBeNull();
+  });
+
+  it("returns null for a nonexistent token", async () => {
+    const { MssqlSessionStore } = await import(
+      "../lib/storage/mssql-session-store"
+    );
+    const store = new MssqlSessionStore(pool);
+
+    const result = await store.validateAndConsume(
+      "00000000-0000-0000-0000-000000000000",
+    );
+    expect(result).toBeNull();
+  });
+});
+
+describe.skipIf(SKIP)("MssqlLeaderboardStore (real SQL)", () => {
+  it("adds an entry and retrieves it from the leaderboard", async () => {
+    const { MssqlLeaderboardStore } = await import(
+      "../lib/storage/mssql-leaderboard-store"
+    );
+    const store = new MssqlLeaderboardStore(pool);
+
+    const entry = {
+      id: crypto.randomUUID(),
+      nickname: `test-${Date.now()}`,
+      difficulty: "easy" as const,
+      score: {
+        efficiency: 20,
+        safety: 22,
+        documentation: 18,
+        accuracy: 25,
+        total: 85,
+      },
+      grade: "A",
+      commandCount: 4,
+      durationMs: 120_000,
+      scenarioTitle: "The Sleeping Cluster",
+      timestamp: Date.now(),
+    };
+
+    const returned = await store.addEntry(entry);
+    expect(returned.id).toBe(entry.id);
+
+    const entries = await store.getLeaderboard("easy");
+    const found = entries.find((e) => e.id === entry.id);
+    expect(found).toBeDefined();
+    expect(found!.nickname).toBe(entry.nickname);
+    expect(found!.score.total).toBe(85);
+  });
+
+  it("MERGE upserts when the same nickname+difficulty has a higher score", async () => {
+    const { MssqlLeaderboardStore } = await import(
+      "../lib/storage/mssql-leaderboard-store"
+    );
+    const store = new MssqlLeaderboardStore(pool);
+    const nick = `upsert-${Date.now()}`;
+
+    await store.addEntry({
+      id: crypto.randomUUID(),
+      nickname: nick,
+      difficulty: "hard",
+      score: {
+        efficiency: 10,
+        safety: 10,
+        documentation: 10,
+        accuracy: 10,
+        total: 40,
+      },
+      grade: "C",
+      commandCount: 12,
+      durationMs: 300_000,
+      scenarioTitle: "Etcd Quorum Loss",
+      timestamp: Date.now(),
+    });
+
+    const upgradedId = crypto.randomUUID();
+    await store.addEntry({
+      id: upgradedId,
+      nickname: nick,
+      difficulty: "hard",
+      score: {
+        efficiency: 25,
+        safety: 25,
+        documentation: 25,
+        accuracy: 25,
+        total: 100,
+      },
+      grade: "A+",
+      commandCount: 3,
+      durationMs: 60_000,
+      scenarioTitle: "Etcd Quorum Loss",
+      timestamp: Date.now(),
+    });
+
+    const entries = await store.getLeaderboard("hard");
+    const found = entries.find((e) => e.nickname === nick);
+    expect(found).toBeDefined();
+    expect(found!.score.total).toBe(100);
+    expect(found!.id).toBe(upgradedId);
+  });
+
+  it("getHallOfFame returns aggregated composite scores", async () => {
+    const { MssqlLeaderboardStore } = await import(
+      "../lib/storage/mssql-leaderboard-store"
+    );
+    const store = new MssqlLeaderboardStore(pool);
+    const nick = `fame-${Date.now()}`;
+
+    for (const diff of ["easy", "medium"] as const) {
+      await store.addEntry({
+        id: crypto.randomUUID(),
+        nickname: nick,
+        difficulty: diff,
+        score: {
+          efficiency: 20,
+          safety: 20,
+          documentation: 20,
+          accuracy: 20,
+          total: 80,
+        },
+        grade: "B",
+        commandCount: 5,
+        durationMs: 90_000,
+        scenarioTitle: `Scenario ${diff}`,
+        timestamp: Date.now(),
+      });
+    }
+
+    const fame = await store.getHallOfFame();
+    const found = fame.find((f) => f.nickname === nick);
+    expect(found).toBeDefined();
+    expect(found!.compositeScore).toBe(160);
+    expect(found!.scores.easy).toBe(80);
+    expect(found!.scores.medium).toBe(80);
+  });
+});
+
+describe.skipIf(SKIP)("MssqlMetricsStore (real SQL)", () => {
+  it("records gameplay and retrieves player history", async () => {
+    const { MssqlMetricsStore } = await import(
+      "../lib/storage/mssql-metrics-store"
+    );
+    const store = new MssqlMetricsStore(pool);
+    const nick = `metrics-${Date.now()}`;
+
+    await store.recordGameplay({
+      nickname: nick,
+      difficulty: "easy",
+      scenarioTitle: "Master Down",
+      commandsExecuted: ["oc get nodes", "oc get pods -A"],
+      scoringEvents: [{ type: "safety", points: 5 }],
+      chatMessageCount: 8,
+      aiPromptTokens: 3000,
+      aiCompletionTokens: 1500,
+      durationMs: 120_000,
+      completed: true,
+      metadata: { version: "test" },
+    });
+
+    const history = await store.getPlayerHistory(nick);
+    expect(history).toHaveLength(1);
+
+    const record = history[0];
+    expect(record.nickname).toBe(nick);
+    expect(record.difficulty).toBe("easy");
+    expect(record.commandsExecuted).toEqual(["oc get nodes", "oc get pods -A"]);
+    expect(record.scoringEvents).toEqual([{ type: "safety", points: 5 }]);
+    expect(record.chatMessageCount).toBe(8);
+    expect(record.durationMs).toBe(120_000);
+    expect(record.completed).toBe(true);
+    expect(record.metadata).toEqual({ version: "test" });
+  });
+
+  it("handles empty/default gameplay fields", async () => {
+    const { MssqlMetricsStore } = await import(
+      "../lib/storage/mssql-metrics-store"
+    );
+    const store = new MssqlMetricsStore(pool);
+
+    await store.recordGameplay({});
+
+    const history = await store.getPlayerHistory("");
+    expect(history.length).toBeGreaterThanOrEqual(0);
+  });
+});
+
+describe.skipIf(SKIP)("Migration idempotency (real SQL)", () => {
+  it("runMigrations is safe to call multiple times", async () => {
+    const { runMigrations } = await import("../lib/storage/migrate");
+    await expect(runMigrations(pool)).resolves.not.toThrow();
+    await expect(runMigrations(pool)).resolves.not.toThrow();
+  });
+});

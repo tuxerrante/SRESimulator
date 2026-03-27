@@ -3,7 +3,7 @@
        lint lint-ts lint-backend lint-unused-exports lint-yaml lint-md \
        typecheck typecheck-backend validate \
        security audit lockfile-lint grype \
-       test test-integration smoke-local-vertex env-check e2e-azure-route e2e-azure-route-up e2e-azure-route-refresh e2e-azure-route-down \
+       test test-integration test-mssql dev-db smoke-local-vertex env-check e2e-azure-route e2e-azure-route-up e2e-azure-route-refresh e2e-azure-route-down \
        prod-up prod-down prod-status \
        build dev start \
        docker-build-frontend docker-build-backend docker-build \
@@ -162,6 +162,26 @@ test: ## Run backend and frontend unit tests with coverage
 
 test-integration: ## Run backend integration tests (full API game flow, mock mode)
 	cd $(BACKEND_DIR) && npm run test:integration
+
+MSSQL_SA_PASSWORD ?= DevPass@123!
+MSSQL_DATABASE_URL ?= Server=localhost;Database=sresimulator;User Id=sa;Password=$(MSSQL_SA_PASSWORD);TrustServerCertificate=true
+
+dev-db: ## Start Azure SQL Edge container for local development
+	docker compose up -d sqlserver
+	@echo "Waiting for SQL Edge to accept connections..."
+	@until docker compose exec sqlserver /opt/mssql-tools/bin/sqlcmd \
+		-S localhost -U sa -P '$(MSSQL_SA_PASSWORD)' -Q 'SELECT 1' \
+		>/dev/null 2>&1; do sleep 2; done
+	@docker compose exec sqlserver /opt/mssql-tools/bin/sqlcmd \
+		-S localhost -U sa -P '$(MSSQL_SA_PASSWORD)' \
+		-Q "IF DB_ID('sresimulator') IS NULL CREATE DATABASE sresimulator" \
+		>/dev/null 2>&1
+	@echo "SQL Edge ready on localhost:1433 (database: sresimulator)"
+
+test-mssql: dev-db ## Run MSSQL integration tests against local SQL Edge container
+	cd $(BACKEND_DIR) && STORAGE_BACKEND=mssql \
+		DATABASE_URL="$(MSSQL_DATABASE_URL)" \
+		npx vitest run -c vitest.integration.config.ts
 
 smoke-local-vertex: ## Run local backend live probe using Vertex env from frontend/.env.local
 	@set -e; \
