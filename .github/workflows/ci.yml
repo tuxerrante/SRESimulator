@@ -11,6 +11,25 @@ permissions:
   contents: read
 
 jobs:
+  direct-push-check:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Harden runner
+        # v2.16.0
+        uses: >-
+          step-security/harden-runner@fa2e9d605c4eeb9fcad4c99c224cee0c6c7f3594
+        with:
+          egress-policy: audit
+
+      - name: Flag direct push to main
+        env:
+          ACTOR: ${{ github.actor }}
+          SHA: ${{ github.sha }}
+        run: |
+          echo "::warning::Direct push to main detected — use a PR instead."
+          echo "Pushed by: ${ACTOR} (${SHA})"
+
   lint-typecheck:
     runs-on: ubuntu-latest
     steps:
