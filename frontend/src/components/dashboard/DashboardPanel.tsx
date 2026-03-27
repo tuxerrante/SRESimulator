@@ -1,7 +1,7 @@
 "use client";
 
 import { useGameStore } from "@/stores/gameStore";
-import { cn } from "@/lib/utils";
+import { cn, formatRelativeTime, formatShortDateTime } from "@/lib/utils";
 import {
   Activity,
   AlertCircle,
@@ -51,11 +51,8 @@ export function DashboardPanel() {
           <InfoCard
             label="Status"
             value={clusterContext.status}
-            valueClass={
-              clusterContext.status.toLowerCase().includes("healthy")
-                ? "text-emerald-400"
-                : "text-red-400"
-            }
+            valueClass={statusColor(clusterContext.status)}
+            className="col-span-2"
           />
         </div>
       </section>
@@ -107,8 +104,11 @@ export function DashboardPanel() {
                   <div className="text-xs text-zinc-500 mt-0.5">
                     {alert.message}
                   </div>
-                  <div className="text-[10px] text-zinc-600 mt-0.5">
-                    Firing since {alert.firingTime}
+                  <div
+                    className="text-[10px] text-zinc-600 mt-0.5"
+                    title={alert.firingTime}
+                  >
+                    Firing since {formatRelativeTime(alert.firingTime)}
                   </div>
                 </div>
               </div>
@@ -127,7 +127,10 @@ export function DashboardPanel() {
           {clusterContext.recentEvents.map((event, i) => (
             <div
               key={i}
-              className="text-xs text-zinc-400 px-3 py-1.5 rounded bg-zinc-900 border border-zinc-800"
+              className={cn(
+                "text-xs px-3 py-1.5 rounded bg-zinc-900 border border-zinc-800",
+                eventColor(event),
+              )}
             >
               {event}
             </div>
@@ -150,26 +153,36 @@ export function DashboardPanel() {
             {clusterContext.upgradeHistory.map((upgrade, i) => (
               <div
                 key={i}
-                className="flex items-center gap-2 px-3 py-2 rounded-lg border border-zinc-800 bg-zinc-900 text-xs"
+                className="px-3 py-2 rounded-lg border border-zinc-800 bg-zinc-900 text-xs"
               >
-                <span className="text-zinc-400 font-mono">
-                  {upgrade.from}
-                </span>
-                <span className="text-zinc-600">&rarr;</span>
-                <span className="text-zinc-300 font-mono">{upgrade.to}</span>
-                <span
-                  className={cn(
-                    "ml-auto px-1.5 py-0.5 rounded font-medium",
-                    upgrade.status === "completed" &&
-                      "bg-emerald-600/20 text-emerald-400",
-                    upgrade.status === "failed" &&
-                      "bg-red-600/20 text-red-400",
-                    upgrade.status === "in_progress" &&
-                      "bg-amber-600/20 text-amber-400"
-                  )}
-                >
-                  {upgrade.status}
-                </span>
+                <div className="flex items-center gap-2">
+                  <span className="text-zinc-400 font-mono">
+                    {upgrade.from}
+                  </span>
+                  <span className="text-zinc-600">&rarr;</span>
+                  <span className="text-zinc-300 font-mono">{upgrade.to}</span>
+                  <span
+                    className={cn(
+                      "ml-auto px-1.5 py-0.5 rounded font-medium",
+                      upgrade.status === "completed" &&
+                        "bg-emerald-600/20 text-emerald-400",
+                      upgrade.status === "failed" &&
+                        "bg-red-600/20 text-red-400",
+                      upgrade.status === "in_progress" &&
+                        "bg-amber-600/20 text-amber-400"
+                    )}
+                  >
+                    {upgrade.status}
+                  </span>
+                </div>
+                {upgrade.timestamp && (
+                  <div
+                    className="text-[10px] text-zinc-600 mt-1"
+                    title={upgrade.timestamp}
+                  >
+                    {formatShortDateTime(upgrade.timestamp)} ({formatRelativeTime(upgrade.timestamp)})
+                  </div>
+                )}
               </div>
             ))}
           </div>
@@ -179,17 +192,35 @@ export function DashboardPanel() {
   );
 }
 
+const DEGRADED_KEYWORDS = ["degraded", "error", "failed", "notready", "not ready", "down", "unavailable", "critical"];
+
+function statusColor(status: string): string {
+  const lower = status.toLowerCase();
+  if (DEGRADED_KEYWORDS.some((kw) => lower.includes(kw))) return "text-red-400";
+  if (lower.includes("healthy") || lower.includes("ready") || lower.includes("available")) return "text-emerald-400";
+  return "text-amber-400";
+}
+
+function eventColor(event: string): string {
+  const lower = event.toLowerCase();
+  if (/\berror\b|failed|crashloop|oom/i.test(lower)) return "text-red-400 border-red-900/40";
+  if (/\bwarning\b|unhealthy|backoff|evict/i.test(lower)) return "text-amber-400 border-amber-900/40";
+  return "text-zinc-400";
+}
+
 function InfoCard({
   label,
   value,
   valueClass,
+  className,
 }: {
   label: string;
   value: string;
   valueClass?: string;
+  className?: string;
 }) {
   return (
-    <div className="px-3 py-2 rounded-lg border border-zinc-800 bg-zinc-900">
+    <div className={cn("px-3 py-2 rounded-lg border border-zinc-800 bg-zinc-900", className)}>
       <div className="text-[10px] text-zinc-600 uppercase">{label}</div>
       <div className={cn("text-sm font-mono text-zinc-300", valueClass)}>
         {value}
