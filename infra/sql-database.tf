@@ -39,14 +39,27 @@ resource "azurerm_mssql_database" "app" {
   auto_pause_delay_in_minutes = 60
   max_size_gb                 = 32
 
-  # Enable Azure SQL free offer (100K vCore-seconds/month, 32 GB)
-  free_limit                     = true
-  free_limit_exhaustion_behavior = "AutoPause"
-
   tags = local.tags
 
   lifecycle {
     prevent_destroy = true
+  }
+}
+
+# Enable Azure SQL free offer (100K vCore-seconds/month, 32 GB).
+# The azurerm provider does not yet expose use_free_limit /
+# free_limit_exhaustion_behavior (hashicorp/terraform-provider-azurerm#32055),
+# so we overlay them via azapi_update_resource.
+resource "azapi_update_resource" "sql_free_tier" {
+  count       = var.enable_database ? 1 : 0
+  type        = "Microsoft.Sql/servers/databases@2023-08-01-preview"
+  resource_id = azurerm_mssql_database.app[0].id
+
+  body = {
+    properties = {
+      useFreeLimit                = true
+      freeLimitExhaustionBehavior = "AutoPause"
+    }
   }
 }
 
