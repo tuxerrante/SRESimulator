@@ -35,8 +35,11 @@ patch_bc_strategy() {
 }
 
 # Usage: oc_build_timed <namespace> <bc-name>
+# Retries up to OC_BUILD_MAX_RETRIES (default 3) to work around intermittent
+# FetchSourceFailed errors from the cluster image registry.
 oc_build_timed() {
   local ns=$1 name=$2
+  local max_retries=${OC_BUILD_MAX_RETRIES:-3}
   echo "Building $name image (upload + build)..."
   local t0 t1 archive
   archive="$(mktemp "${TMPDIR:-/tmp}/oc-build-XXXXXX").tar.gz"
@@ -51,10 +54,24 @@ oc_build_timed() {
   size=$(du -h "$archive" | cut -f1)
   echo "  Archive: $size (filtered via .dockerignore)"
   t0=$(date +%s)
-  oc -n "$ns" start-build "$name" --from-archive="$archive" --follow --wait >/dev/null
+  local attempt=1
+  while true; do
+    if oc -n "$ns" start-build "$name" --from-archive="$archive" --follow --wait >/dev/null; then
+      break
+    fi
+    if [ "$attempt" -ge "$max_retries" ]; then
+      echo "  $name build failed after $max_retries attempt(s)"
+      rm -f "$archive"
+      return 1
+    fi
+    local delay=$(( attempt * 10 ))
+    echo "  Attempt $attempt/$max_retries failed, retrying in ${delay}s..."
+    sleep "$delay"
+    attempt=$(( attempt + 1 ))
+  done
   t1=$(date +%s)
   rm -f "$archive"
-  echo "  $name build completed in $(( t1 - t0 ))s"
+  echo "  $name build completed in $(( t1 - t0 ))s (attempt $attempt/$max_retries)"
 }
 
 # Usage: helm_deploy_sre <namespace> <tag> <probe-token>
