@@ -122,4 +122,76 @@ describe("POST /api/command", () => {
     expect(res.status).toBe(400);
     expect(res.body.error).toContain("Invalid command type");
   });
+
+  it("accepts commandHistory field without error", async () => {
+    const app = createApp();
+    const res = await postJson(app, "/api/command", {
+      command: "oc get nodes",
+      type: "oc",
+      scenario: null,
+      commandHistory: [
+        { command: "oc get pods", output: "NAME  READY  STATUS\npod-1  1/1  Running", type: "oc" },
+      ],
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body.exitCode).toBe(0);
+  });
+
+  it("returns describe output for oc describe node in mock mode", async () => {
+    const app = createApp();
+    const res = await postJson(app, "/api/command", {
+      command: "oc describe node master-0",
+      type: "oc",
+      scenario: null,
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body.output).toContain("Name:");
+    expect(res.body.output).toContain("Conditions:");
+    expect(res.body.output).toContain("master-0");
+  });
+
+  it("returns delete confirmation for oc delete in mock mode", async () => {
+    const app = createApp();
+    const res = await postJson(app, "/api/command", {
+      command: "oc delete machine aro-worker-0",
+      type: "oc",
+      scenario: null,
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body.output).toBe('machine "aro-worker-0" deleted');
+  });
+
+  it("handles commandHistory with null/malformed entries without crashing", async () => {
+    const app = createApp();
+    const res = await postJson(app, "/api/command", {
+      command: "oc get nodes",
+      type: "oc",
+      scenario: null,
+      commandHistory: [
+        null,
+        { command: 123, output: null, type: "oc" },
+        { command: "oc get pods", output: "Running", type: "oc" },
+        "not-an-object",
+      ],
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body.exitCode).toBe(0);
+  });
+
+  it("handles commandHistory that is not an array", async () => {
+    const app = createApp();
+    const res = await postJson(app, "/api/command", {
+      command: "oc get nodes",
+      type: "oc",
+      scenario: null,
+      commandHistory: "invalid",
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body.exitCode).toBe(0);
+  });
 });

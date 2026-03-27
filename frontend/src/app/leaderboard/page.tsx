@@ -74,9 +74,16 @@ export default function LeaderboardPage() {
       try {
         const param = activeTab === "all" ? "" : `?difficulty=${activeTab}`;
         const res = await fetch(`/api/scores${param}`);
-        const data = await res.json();
-        setEntries(data.entries);
-        setHallOfFame(data.hallOfFame);
+        const raw = await res.text();
+        let data: Record<string, unknown>;
+        try {
+          data = JSON.parse(raw);
+        } catch {
+          throw new Error(`Server error (${res.status}): ${raw.slice(0, 120)}`);
+        }
+        if (!res.ok) throw new Error((data.error as string) || "Failed to load scores");
+        setEntries(data.entries as LeaderboardEntry[]);
+        setHallOfFame(data.hallOfFame as HallOfFameEntry[]);
       } catch {
         setEntries([]);
         setHallOfFame([]);

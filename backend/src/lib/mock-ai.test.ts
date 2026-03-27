@@ -69,10 +69,75 @@ describe("generateMockChatResponse", () => {
 });
 
 describe("generateMockCommandOutput", () => {
-  it("returns oc-style output for oc type", () => {
+  it("returns node-table output for oc get nodes", () => {
     const output = generateMockCommandOutput("oc get nodes", "oc");
     expect(output).toContain("master-0");
     expect(output).toContain("mock command received: oc get nodes");
+  });
+
+  it("returns describe-style output for oc describe node", () => {
+    const output = generateMockCommandOutput("oc describe node master-1", "oc");
+    expect(output).toContain("Name:");
+    expect(output).toContain("master-1");
+    expect(output).toContain("Conditions:");
+    expect(output).toContain("Ready");
+    expect(output).not.toContain("mock command received");
+  });
+
+  it("returns describe-style output for oc describe pod", () => {
+    const output = generateMockCommandOutput("oc describe pod my-pod", "oc");
+    expect(output).toContain("Name:");
+    expect(output).toContain("my-pod");
+    expect(output).toContain("Containers:");
+    expect(output).toContain("Events:");
+  });
+
+  it("returns generic describe for oc describe <other>", () => {
+    const output = generateMockCommandOutput("oc describe service api-svc", "oc");
+    expect(output).toContain("Name:");
+    expect(output).toContain("api-svc");
+  });
+
+  it("returns delete confirmation for oc delete", () => {
+    const output = generateMockCommandOutput("oc delete machine aro-worker-0", "oc");
+    expect(output).toBe('machine "aro-worker-0" deleted');
+  });
+
+  it("handles oc delete with --force flags", () => {
+    const output = generateMockCommandOutput(
+      "oc delete machine aro-worker-0 --force --grace-period=0",
+      "oc"
+    );
+    expect(output).toBe('machine "aro-worker-0" deleted');
+  });
+
+  it("returns log lines for oc logs", () => {
+    const output = generateMockCommandOutput("oc logs my-pod -c main", "oc");
+    expect(output).toContain("server.go");
+    expect(output).toContain("controller.go");
+    expect(output.split("\n").length).toBeGreaterThanOrEqual(3);
+  });
+
+  it("returns JSON for oc get with -o jsonpath", () => {
+    const output = generateMockCommandOutput(
+      "oc get node master-0 -o jsonpath='{.status.conditions}'",
+      "oc"
+    );
+    expect(output).toContain("Ready");
+    expect(() => JSON.parse(output)).not.toThrow();
+  });
+
+  it("returns machine list for oc get machines", () => {
+    const output = generateMockCommandOutput("oc get machines -A", "oc");
+    expect(output).toContain("PHASE");
+    expect(output).toContain("Running");
+    expect(output).toContain("aro-mock-master-0");
+  });
+
+  it("returns events for oc get events", () => {
+    const output = generateMockCommandOutput("oc get events --sort-by='.lastTimestamp'", "oc");
+    expect(output).toContain("LAST SEEN");
+    expect(output).toContain("Warning");
   });
 
   it("returns kql-style output for kql type", () => {
