@@ -17,11 +17,13 @@
     "cors": "^2.8.5",
     "express": "^5.2.1",
     "express-rate-limit": "^8.3.1",
-    "gpt-tokenizer": "^3.4.0"
+    "gpt-tokenizer": "^3.4.0",
+    "mssql": "^12.2.1"
   },
   "devDependencies": {
     "@types/cors": "^2.8.17",
     "@types/express": "^5.0.6",
+    "@types/mssql": "^9.1.11",
     "@types/node": "^20",
     "@vitest/coverage-v8": "^4.1.0",
     "eslint": "^9",

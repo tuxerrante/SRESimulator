@@ -1,8 +1,7 @@
-import { describe, expect, it, beforeEach, afterEach } from "vitest";
+import { describe, expect, it, vi, beforeAll, beforeEach, afterEach } from "vitest";
 import express from "express";
-import { scenarioRouter } from "./scenario";
 
-function createApp() {
+function createApp(scenarioRouter: import("express").Router) {
   const app = express();
   app.use(express.json());
   app.use("/api/scenario", scenarioRouter);
@@ -59,9 +58,22 @@ async function postJson(
 
 describe("POST /api/scenario", () => {
   const originalEnv: Record<string, string | undefined> = {};
+  let scenarioRouter: typeof import("./scenario").scenarioRouter;
+
+  beforeAll(async () => {
+    originalEnv.AI_MOCK_MODE = process.env.AI_MOCK_MODE;
+    process.env.AI_MOCK_MODE = "true";
+
+    vi.resetModules();
+
+    const storageModule = await import("../lib/storage");
+    await storageModule.initStorage();
+
+    const scenarioModule = await import("./scenario");
+    scenarioRouter = scenarioModule.scenarioRouter;
+  });
 
   beforeEach(() => {
-    originalEnv.AI_MOCK_MODE = process.env.AI_MOCK_MODE;
     process.env.AI_MOCK_MODE = "true";
   });
 
@@ -74,7 +86,7 @@ describe("POST /api/scenario", () => {
   });
 
   it("returns a mock scenario and session token in mock mode", async () => {
-    const app = createApp();
+    const app = createApp(scenarioRouter);
     const res = await postJson(app, "/api/scenario", {
       difficulty: "easy",
     });
@@ -88,7 +100,7 @@ describe("POST /api/scenario", () => {
   });
 
   it("rejects invalid difficulty", async () => {
-    const app = createApp();
+    const app = createApp(scenarioRouter);
     const res = await postJson(app, "/api/scenario", {
       difficulty: "extreme",
     });

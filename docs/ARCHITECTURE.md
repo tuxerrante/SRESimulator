@@ -25,6 +25,7 @@ SRESimulator/
 ├── CLAUDE.md                             # Design document and game spec
 ├── README.md
 ├── Makefile                              # Build, lint, dev, and CI targets
+├── docker-compose.yml                    # Azure SQL Edge for local MSSQL testing
 ├── helm/sre-simulator/                   # OpenShift/Kubernetes deployment manifests
 ├── knowledge_base/                       # Reference docs loaded into AI context
 │   ├── sre-investigation-techniques.md
@@ -61,10 +62,18 @@ SRESimulator/
             ├── ai-config.ts              # Provider detection, readiness checks
             ├── context-compactor.ts       # Chat history compaction with retained-state
             ├── nlp-extract.ts            # Compromise-based fact/hypothesis extraction
+            ├── profanity.ts              # Nickname profanity filter (static blocklist)
             ├── token-logger.ts            # Per-route token usage observability
             ├── rate-limit.ts             # Per-IP rate limiting for AI routes
             ├── knowledge.ts              # Knowledge base file loader
-            └── prompts/system.ts         # System prompt builder
+            ├── prompts/system.ts         # System prompt builder
+            └── storage/                  # Pluggable persistence layer
+                ├── types.ts              # ISessionStore, ILeaderboardStore, IMetricsStore
+                ├── index.ts              # Factory (selects JSON or Azure SQL)
+                ├── migrate.ts            # T-SQL migration runner
+                ├── json-*-store.ts       # JSON/in-memory implementations
+                ├── mssql-*-store.ts      # Azure SQL (T-SQL) implementations
+                └── migrations/           # Numbered .sql migration files
 ```
 
 ---
@@ -211,16 +220,130 @@ Returns per-route token usage totals and recent request entries. See [AI_RUNTIME
 
 ---
 
+## Persistence & Storage Backends
+
+The backend supports two storage modes, selected via the `STORAGE_BACKEND`
+environment variable (`json` or `mssql`).
+
+### JSON mode (default)
+
+Best for local development and single-replica deployments.
+
+- **Sessions**: In-memory `Map` with 24h TTL. Lost on pod restart.
+- **Leaderboard**: JSON file on PVC (`data/leaderboard.json`). Writes are
+  serialized through an in-process async mutex.
+- **Metrics**: Log-only (no persistent storage).
+
+Constraints:
+
+- Single backend replica only (PVC is `ReadWriteOnce`, sessions are in-process).
+- No data survives pod restarts (except leaderboard file on PVC).
+
+### Azure SQL mode
+
+Required for multi-replica deployments and production use.  Uses Azure SQL
+Database free tier (100K vCore-seconds/month, 32 GB storage, $0/month).
+
+- **Sessions**: Stored in `sessions` table. Shared across replicas.
+  Stale entries (>24h) are cleaned up opportunistically.
+- **Leaderboard**: Stored in `leaderboard_entries` table. Uses `MERGE`
+  to atomically keep the best score per (nickname, difficulty).
+  Per-difficulty trim to 10 entries happens after each insert.
+- **Metrics**: Stored in `gameplay_metrics` table. Captures per-session
+  analytics (commands executed, scoring events, AI token consumption) with
+  an open JSON `metadata` column for future extensibility.
+
+To enable:
+
+```bash
+STORAGE_BACKEND=mssql
+DATABASE_URL="Server=<fqdn>;Database=sresimulator;User Id=sresimadmin;Password=<pwd>;Encrypt=true"
+```
+
+Migrations run automatically on startup using `sp_getapplock` for
+cross-replica serialization. Schema is managed via numbered `.sql` files
+in `backend/src/lib/storage/migrations/`.
+
+### Why Azure SQL free tier
+
+- **Zero cost**: 100K vCore-seconds/month + 32 GB included permanently.
+- **Zero maintenance**: HA, backups, patching handled by Azure.
+- **Auto-pause**: Database sleeps after 60 min idle; resumes on next request.
+- **Point-in-time restore**: Built-in backup retention (7 days default).
+
+When the monthly free allocation is exhausted the database auto-pauses
+until the next billing cycle (configurable to continue with pay-as-you-go
+instead).
+
+### Local MSSQL testing with Azure SQL Edge
+
+Azure SQL Edge is a free, ARM64/AMD64-compatible Docker image that is
+wire-compatible with Azure SQL Database. It lets developers validate
+T-SQL queries and migrations locally without an Azure subscription.
+
+```bash
+# Start SQL Edge and create the sresimulator database
+make dev-db
+
+# Run all integration tests against the real SQL engine
+make test-mssql
+
+# Stop the container
+docker compose down
+```
+
+`make dev-db` starts the container, polls for TCP readiness, waits for
+the SQL engine to accept queries, and creates the `sresimulator` database.
+`make test-mssql` depends on `dev-db` and runs the full integration test
+suite with `STORAGE_BACKEND=mssql`.
+
+CI runs the same tests automatically via an `integration-test-mssql` job
+that uses Azure SQL Edge as a GitHub Actions service container.
+
+**Note:** The Azure SQL Edge `latest` image does not ship `sqlcmd`. All
+readiness checks use Node.js (`net` module for TCP, `mssql` package for
+SQL queries). The container healthcheck uses Python 3 (bundled in the
+image).
+
+### Storage interface pattern
+
+All persistence is abstracted behind three interfaces (`ISessionStore`,
+`ILeaderboardStore`, `IMetricsStore`) in `backend/src/lib/storage/types.ts`.
+The factory in `backend/src/lib/storage/index.ts` selects the implementation
+at startup based on `STORAGE_BACKEND`.
+
+---
+
 ## Multiplayer Scaling & Resilience
 
 ### Concurrency model
 
-The backend is stateless per-request for AI calls (chat, command, scenario). All conversation state lives in the browser and is sent with each request. This means multiple users can play independently against the same backend without session affinity.
+The backend is stateless per-request for AI calls (chat, command, scenario).
+All conversation state lives in the browser and is sent with each request.
+This means multiple users can play independently against the same backend
+without session affinity.
 
-Two pieces of server-side state exist:
+### Scaling by storage mode
 
-- **Score tokens**: in-memory `Map` with 24h TTL (`backend/src/lib/sessions.ts`). Lost on pod restart; acceptable since they are ephemeral anti-cheat tokens.
-- **Leaderboard**: JSON file on PVC (`backend/src/lib/leaderboard.ts`). Writes are serialized through an in-process async mutex to prevent concurrent read-modify-write races.
+| Concern | JSON mode | Azure SQL mode |
+| --- | --- | --- |
+| Backend replicas | **1 only** | **N (horizontal)** |
+| Session survival | Lost on restart | Survives restarts |
+| Leaderboard consistency | Single-writer mutex | Database MERGE |
+| Sticky sessions needed | No | No |
+| Connection pooling | N/A | `mssql.ConnectionPool` |
+
+When using Azure SQL, increase `backend.replicas` in Helm values as needed.
+No sticky sessions or session affinity are required since all state is in
+the database.
+
+### Infrastructure
+
+- **Azure SQL Database free tier** ($0/month):
+  Provisioned via `infra/sql-database.tf` when `enable_database = true`.
+  Protected by `prevent_destroy` lifecycle rule.
+  Serverless General Purpose (GP_S_Gen5_2) with auto-pause after 60 min idle.
+  Free offer includes 100K vCore-seconds/month and 32 GB storage.
 
 ### Rate limiting & throttle handling
 

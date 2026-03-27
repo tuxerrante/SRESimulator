@@ -1,0 +1,16 @@
+---
+services:
+  sqlserver:
+    image: mcr.microsoft.com/azure-sql-edge:latest
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_SA_PASSWORD: "${MSSQL_SA_PASSWORD:-DevPass@123!}"
+    ports:
+      - "1433:1433"
+    healthcheck:
+      test: >-
+        python3 -c "import socket; s=socket.socket();
+        s.settimeout(2); s.connect(('localhost',1433)); s.close()"
+      interval: 10s
+      timeout: 5s
+      retries: 5

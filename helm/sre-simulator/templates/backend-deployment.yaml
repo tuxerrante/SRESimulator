@@ -45,6 +45,15 @@ spec:
             - name: GOOGLE_APPLICATION_CREDENTIALS
               value: "{{ .Values.ai.vertex.credentials.mountPath }}/{{ .Values.ai.vertex.credentials.key }}"
             {{- end }}
+            {{- if .Values.database.enabled }}
+            - name: STORAGE_BACKEND
+              value: mssql
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "database.existingSecretName is required when database.enabled is true" .Values.database.existingSecretName }}
+                  key: {{ .Values.database.secretConnectionStringKey }}
+            {{- end }}
           envFrom:
             - configMapRef:
                 name: {{ include "sre-simulator.fullname" . }}-config

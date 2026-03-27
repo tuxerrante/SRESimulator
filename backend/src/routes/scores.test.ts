@@ -61,7 +61,7 @@ describe("scores routes", () => {
   let origMockMode: string | undefined;
 
   let scoresRouter: typeof import("./scores").scoresRouter;
-  let createSession: typeof import("../lib/sessions").createSession;
+  let getSessionStore: typeof import("../lib/storage").getSessionStore;
 
   beforeAll(async () => {
     tmpDir = await mkdtemp(join(tmpdir(), "scores-test-"));
@@ -71,10 +71,13 @@ describe("scores routes", () => {
     process.env.AI_MOCK_MODE = "true";
 
     vi.resetModules();
+
+    const storageModule = await import("../lib/storage");
+    await storageModule.initStorage();
+    getSessionStore = storageModule.getSessionStore;
+
     const scoresModule = await import("./scores");
-    const sessionsModule = await import("../lib/sessions");
     scoresRouter = scoresModule.scoresRouter;
-    createSession = sessionsModule.createSession;
   });
 
   afterAll(async () => {
@@ -145,7 +148,7 @@ describe("scores routes", () => {
   });
 
   it("POST /api/scores rejects missing nickname", async () => {
-    const token = createSession("easy", "Test");
+    const token = await getSessionStore().create("easy", "Test");
 
     const app = createApp();
     const res = await httpRequest(app, "POST", "/api/scores", {
@@ -161,7 +164,7 @@ describe("scores routes", () => {
   });
 
   it("POST /api/scores rejects nickname over 20 chars", async () => {
-    const token = createSession("easy", "Test");
+    const token = await getSessionStore().create("easy", "Test");
 
     const app = createApp();
     const res = await httpRequest(app, "POST", "/api/scores", {
@@ -176,8 +179,24 @@ describe("scores routes", () => {
     expect(res.body.error).toContain("20 characters");
   });
 
+  it("POST /api/scores rejects profane nickname", async () => {
+    const token = await getSessionStore().create("easy", "Test");
+
+    const app = createApp();
+    const res = await httpRequest(app, "POST", "/api/scores", {
+      sessionToken: token,
+      nickname: "fuck",
+      score: { total: 80 },
+      grade: "A",
+      commandCount: 5,
+    });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("inappropriate");
+  });
+
   it("POST /api/scores saves a valid entry and returns 201", async () => {
-    const token = createSession("easy", "Test Scenario");
+    const token = await getSessionStore().create("easy", "Test Scenario");
 
     const app = createApp();
     const res = await httpRequest(app, "POST", "/api/scores", {

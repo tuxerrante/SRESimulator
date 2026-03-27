@@ -36,6 +36,8 @@ let savedMockMode: string | undefined;
 async function createFullApp(): Promise<Express> {
   savedMockMode = process.env.AI_MOCK_MODE;
   process.env.AI_MOCK_MODE = "true";
+  const { initStorage } = await import("../lib/storage");
+  await initStorage();
   const { default: express } = await import("express");
   const { default: cors } = await import("cors");
   const { chatRouter } = await import("../routes/chat");
