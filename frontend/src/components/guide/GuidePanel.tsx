@@ -228,13 +228,20 @@ export function GuidePanel() {
     }, 10_000);
 
     fetch("/api/guide", { signal: controller.signal })
-      .then((r) => {
-        if (!r.ok) throw new Error("Failed to load guide");
-        return r.json();
+      .then(async (r) => {
+        const raw = await r.text();
+        let parsed: Record<string, unknown>;
+        try {
+          parsed = JSON.parse(raw);
+        } catch {
+          throw new Error(`Server error (${r.status}): ${raw.slice(0, 120)}`);
+        }
+        if (!r.ok) throw new Error((parsed.error as string) || "Failed to load guide");
+        return parsed;
       })
       .then((d) => {
         if (!d.content) throw new Error("Guide content is empty");
-        if (!unmounted) setContent(d.content);
+        if (!unmounted) setContent(d.content as string);
       })
       .catch((e) => {
         if (unmounted) return;
