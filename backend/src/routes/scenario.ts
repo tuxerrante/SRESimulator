@@ -4,6 +4,7 @@ import { getSessionStore } from "../lib/storage";
 import { getAiReadiness } from "../lib/ai-config";
 import { generateMockScenario } from "../lib/mock-ai";
 import { generateAiText, AiThrottledError } from "../lib/ai-runtime";
+import { utcNow } from "../lib/sim-clock";
 import type { Difficulty, Scenario } from "../../../shared/types/game";
 
 export const scenarioRouter = Router();
@@ -67,7 +68,7 @@ scenarioRouter.post("/", async (req: Request, res: Response) => {
       // Keep scenario generation fast by limiting prompt context size.
       .slice(0, 6000);
 
-    const currentDate = new Date().toISOString();
+    const currentDate = utcNow();
 
     const responseText = await generateAiText({
       maxTokens: 1024,

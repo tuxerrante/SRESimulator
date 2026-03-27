@@ -1,18 +1,8 @@
 import type { InvestigationPhase } from "../../../shared/types/chat";
 import type { Difficulty, Scenario } from "../../../shared/types/game";
+import { utcOffsetMinutes, utcDaysAgo } from "./sim-clock";
 
 const REGION = "eastus";
-
-function nowIso(offsetMinutes: number): string {
-  return new Date(Date.now() + offsetMinutes * 60 * 1000).toISOString();
-}
-
-function recentDaysAgoIso(minDays = 1, maxDays = 7): string {
-  const lo = Math.max(0, Math.min(minDays, maxDays));
-  const hi = Math.max(minDays, maxDays);
-  const days = lo + Math.floor(Math.random() * (hi - lo + 1));
-  return new Date(Date.now() - days * 86_400_000).toISOString();
-}
 
 function severityForDifficulty(difficulty: Difficulty): "Sev2" | "Sev3" | "Sev4" {
   if (difficulty === "hard") return "Sev2";
@@ -36,7 +26,7 @@ export function generateMockScenario(difficulty: Difficulty): Scenario {
         "This ticket is generated in AI mock mode to validate end-to-end plumbing.",
       customerImpact:
         "No customer impact. This is a non-production mock validation scenario.",
-      reportedTime: recentDaysAgoIso(),
+      reportedTime: utcDaysAgo(),
       clusterName,
       region: REGION,
     },
@@ -47,15 +37,15 @@ export function generateMockScenario(difficulty: Difficulty): Scenario {
       nodeCount: difficulty === "easy" ? 6 : difficulty === "medium" ? 9 : 12,
       status: "Degraded (mock)",
       recentEvents: [
-        `${nowIso(-40)} - monitor: mock alert triggered`,
-        `${nowIso(-35)} - kubelet: probe timeout observed`,
+        `${utcOffsetMinutes(-40)} - monitor: mock alert triggered`,
+        `${utcOffsetMinutes(-35)} - kubelet: probe timeout observed`,
       ],
       alerts: [
         {
           name: "MockProbeFailure",
           severity: difficulty === "hard" ? "critical" : "warning",
           message: "Mock AI mode alert to validate UI and command path.",
-          firingTime: nowIso(-25),
+          firingTime: utcOffsetMinutes(-25),
         },
       ],
       upgradeHistory: [
@@ -63,7 +53,7 @@ export function generateMockScenario(difficulty: Difficulty): Scenario {
           from: "4.19.8",
           to: "4.19.9",
           status: "completed",
-          timestamp: nowIso(-180),
+          timestamp: utcOffsetMinutes(-180),
         },
       ],
     },
@@ -97,16 +87,16 @@ function mockOcOutput(command: string): string {
       `                    node-role.kubernetes.io/master=`,
       `                    node.openshift.io/os_id=rhcos`,
       `Annotations:        machineconfiguration.openshift.io/state: Done`,
-      `CreationTimestamp:   ${nowIso(-90 * 24 * 60)}`,
+      `CreationTimestamp:   ${utcOffsetMinutes(-90 * 24 * 60)}`,
       `Taints:             <none>`,
       `Unschedulable:      false`,
       `Conditions:`,
       `  Type                 Status  LastHeartbeatTime                 Reason                       Message`,
       `  ----                 ------  -----------------                 ------                       -------`,
-      `  MemoryPressure       False   ${nowIso(-2)}   KubeletHasSufficientMemory   kubelet has sufficient memory available`,
-      `  DiskPressure         False   ${nowIso(-2)}   KubeletHasNoDiskPressure     kubelet has no disk pressure`,
-      `  PIDPressure          False   ${nowIso(-2)}   KubeletHasSufficientPID      kubelet has sufficient PID available`,
-      `  Ready                True    ${nowIso(-2)}   KubeletReady                 kubelet is posting ready status`,
+      `  MemoryPressure       False   ${utcOffsetMinutes(-2)}   KubeletHasSufficientMemory   kubelet has sufficient memory available`,
+      `  DiskPressure         False   ${utcOffsetMinutes(-2)}   KubeletHasNoDiskPressure     kubelet has no disk pressure`,
+      `  PIDPressure          False   ${utcOffsetMinutes(-2)}   KubeletHasSufficientPID      kubelet has sufficient PID available`,
+      `  Ready                True    ${utcOffsetMinutes(-2)}   KubeletReady                 kubelet is posting ready status`,
       `Addresses:`,
       `  InternalIP:  10.0.1.4`,
       `  Hostname:    ${nodeName}`,
@@ -138,7 +128,7 @@ function mockOcOutput(command: string): string {
       `  main:`,
       `    Image:          quay.io/openshift/mock-image:v4.19`,
       `    State:          Running`,
-      `      Started:      ${nowIso(-60)}`,
+      `      Started:      ${utcOffsetMinutes(-60)}`,
       `    Ready:          True`,
       `    Restart Count:  0`,
       `Events:`,
@@ -176,11 +166,11 @@ function mockOcOutput(command: string): string {
 
   if (/^logs\s+/i.test(trimmed)) {
     return [
-      `${nowIso(-10)} I0101 10:00:00.000000  1 server.go:182] Starting server on :8443`,
-      `${nowIso(-8)} I0101 10:02:00.000000  1 controller.go:95] Syncing resources`,
-      `${nowIso(-5)} W0101 10:05:00.000000  1 reflector.go:324] Watch error: connection reset by peer`,
-      `${nowIso(-3)} I0101 10:07:00.000000  1 controller.go:95] Syncing resources`,
-      `${nowIso(-1)} I0101 10:09:00.000000  1 controller.go:120] Reconcile complete`,
+      `${utcOffsetMinutes(-10)} I0101 10:00:00.000000  1 server.go:182] Starting server on :8443`,
+      `${utcOffsetMinutes(-8)} I0101 10:02:00.000000  1 controller.go:95] Syncing resources`,
+      `${utcOffsetMinutes(-5)} W0101 10:05:00.000000  1 reflector.go:324] Watch error: connection reset by peer`,
+      `${utcOffsetMinutes(-3)} I0101 10:07:00.000000  1 controller.go:95] Syncing resources`,
+      `${utcOffsetMinutes(-1)} I0101 10:09:00.000000  1 controller.go:120] Reconcile complete`,
     ].join("\n");
   }
 
@@ -202,10 +192,10 @@ function mockOcOutput(command: string): string {
   if (/^get\s+events/i.test(trimmed)) {
     return [
       `LAST SEEN   TYPE      REASON    OBJECT               MESSAGE`,
-      `${nowIso(-10)}   Normal    Pulling   pod/monitor-abc12    Pulling image "quay.io/openshift/mock:v4.19"`,
-      `${nowIso(-8)}    Normal    Pulled    pod/monitor-abc12    Successfully pulled image`,
-      `${nowIso(-5)}    Warning   Unhealthy pod/monitor-abc12    Readiness probe failed: connection refused`,
-      `${nowIso(-2)}    Normal    Scheduled pod/api-server-xyz   Successfully assigned pod`,
+      `${utcOffsetMinutes(-10)}   Normal    Pulling   pod/monitor-abc12    Pulling image "quay.io/openshift/mock:v4.19"`,
+      `${utcOffsetMinutes(-8)}    Normal    Pulled    pod/monitor-abc12    Successfully pulled image`,
+      `${utcOffsetMinutes(-5)}    Warning   Unhealthy pod/monitor-abc12    Readiness probe failed: connection refused`,
+      `${utcOffsetMinutes(-2)}    Normal    Scheduled pod/api-server-xyz   Successfully assigned pod`,
     ].join("\n");
   }
 
@@ -230,8 +220,8 @@ export function generateMockCommandOutput(
   if (type === "kql") {
     return [
       "TimeGenerated                Level    Message",
-      `${nowIso(-12)}    Warning  Mock probe event`,
-      `${nowIso(-10)}    Info     Command path validated`,
+      `${utcOffsetMinutes(-12)}    Warning  Mock probe event`,
+      `${utcOffsetMinutes(-10)}    Info     Command path validated`,
       "",
       `// mock query received: ${command}`,
     ].join("\n");
@@ -239,7 +229,7 @@ export function generateMockCommandOutput(
 
   return [
     "Dashboard: Mock Geneva View",
-    `LastUpdated: ${nowIso(-5)}`,
+    `LastUpdated: ${utcOffsetMinutes(-5)}`,
     "Status: healthy (mock)",
     "",
     `# mock command received: ${command}`,

@@ -1,13 +1,19 @@
 import type { Scenario } from "../../../../shared/types/game";
 import type { InvestigationPhase } from "../../../../shared/types/chat";
+import { utcNow } from "../sim-clock";
 
 export function buildSystemPrompt(
   knowledgeBase: string,
   scenario: Scenario | null,
   currentPhase: InvestigationPhase
 ): string {
+  const now = utcNow();
+
   const scenarioContext = scenario
     ? `
+## Simulation Clock
+Current UTC time: ${now}
+
 ## Active Scenario
 - **Title:** ${scenario.title}
 - **Difficulty:** ${scenario.difficulty}
@@ -30,7 +36,7 @@ export function buildSystemPrompt(
 - **Nodes:** ${scenario.clusterContext.nodeCount}
 - **Status:** ${scenario.clusterContext.status}
 - **Recent Events:** ${scenario.clusterContext.recentEvents.join("; ")}
-- **Alerts:** ${scenario.clusterContext.alerts.map((a) => `${a.severity}: ${a.name} - ${a.message}`).join("; ")}
+- **Alerts:** ${scenario.clusterContext.alerts.map((a) => `${a.severity}: ${a.name} (firing since ${a.firingTime}) - ${a.message}`).join("; ")}
 `
     : "";
 

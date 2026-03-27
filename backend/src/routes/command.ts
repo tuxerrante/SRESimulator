@@ -2,6 +2,7 @@ import { Router, type Request, type Response } from "express";
 import { getAiReadiness } from "../lib/ai-config";
 import { generateMockCommandOutput } from "../lib/mock-ai";
 import { generateAiText, AiThrottledError } from "../lib/ai-runtime";
+import { utcNow } from "../lib/sim-clock";
 import type { Scenario } from "../../../shared/types/game";
 
 export const commandRouter = Router();
@@ -94,7 +95,8 @@ Description: ${scenario.description}
 Cluster: ${scenario.clusterContext.name}, version ${scenario.clusterContext.version}
 Status: ${scenario.clusterContext.status}
 Nodes: ${scenario.clusterContext.nodeCount}
-Alerts: ${scenario.clusterContext.alerts.map((a) => `${a.name}: ${a.message}`).join("; ")}
+Ticket reported: ${scenario.incidentTicket.reportedTime}
+Alerts: ${scenario.clusterContext.alerts.map((a) => `${a.name} (firing since ${a.firingTime}): ${a.message}`).join("; ")}
 Recent Events: ${scenario.clusterContext.recentEvents.join("; ")}`;
 }
 
@@ -128,10 +130,11 @@ commandRouter.post("/", async (req: Request, res: Response) => {
 
     const scenarioContext = buildScenarioContext(scenario);
 
+    const now = utcNow();
     const reportedTime = scenario?.incidentTicket?.reportedTime;
     const simNow = reportedTime
-      ? `The incident was reported at ${reportedTime}. The current simulation time is approximately 1-2 hours after the reported time. All timestamps in your output must be in the past relative to this current time.`
-      : "Use consistent, realistic timestamps. All timestamps must be in the past relative to the current time shown in any dashboard or query output.";
+      ? `The current UTC time is ${now}. The incident ticket was originally reported at ${reportedTime}. Alerts and recent events have their own timestamps in the scenario context — use those as the temporal anchor for command output. All timestamps in your output must be in the past relative to ${now}.`
+      : `The current UTC time is ${now}. Use consistent, realistic timestamps. All timestamps must be in the past relative to ${now}.`;
 
     const systemPrompt = buildCommandSystemPrompt(type, scenarioContext, simNow, commandHistory);
 
