@@ -163,4 +163,35 @@ describe("POST /api/command", () => {
     expect(res.status).toBe(200);
     expect(res.body.output).toBe('machine "aro-worker-0" deleted');
   });
+
+  it("handles commandHistory with null/malformed entries without crashing", async () => {
+    const app = createApp();
+    const res = await postJson(app, "/api/command", {
+      command: "oc get nodes",
+      type: "oc",
+      scenario: null,
+      commandHistory: [
+        null,
+        { command: 123, output: null, type: "oc" },
+        { command: "oc get pods", output: "Running", type: "oc" },
+        "not-an-object",
+      ],
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body.exitCode).toBe(0);
+  });
+
+  it("handles commandHistory that is not an array", async () => {
+    const app = createApp();
+    const res = await postJson(app, "/api/command", {
+      command: "oc get nodes",
+      type: "oc",
+      scenario: null,
+      commandHistory: "invalid",
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body.exitCode).toBe(0);
+  });
 });

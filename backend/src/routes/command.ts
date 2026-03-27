@@ -21,13 +21,41 @@ interface CommandRequestBody {
 }
 
 const MAX_HISTORY_ENTRIES = 15;
+const MAX_HISTORY_CHARS = 4000;
+const MAX_ENTRY_OUTPUT_CHARS = 400;
 
 function formatCommandHistory(history: CommandHistoryEntry[] | undefined): string {
-  if (!history || history.length === 0) return "";
+  if (!Array.isArray(history) || history.length === 0) return "";
+
   const recent = history.slice(-MAX_HISTORY_ENTRIES);
-  const lines = recent.map((h) =>
-    `$ ${h.command}\n${h.output.length > 400 ? h.output.slice(0, 400) + "\n...(truncated)" : h.output}`
-  );
+
+  const sanitized = recent
+    .filter((h): h is CommandHistoryEntry => h != null && typeof h === "object")
+    .map((h) => {
+      const command = typeof h.command === "string" ? h.command : String(h.command ?? "");
+      const rawOutput = typeof h.output === "string" ? h.output : String(h.output ?? "");
+      const output = rawOutput.length > MAX_ENTRY_OUTPUT_CHARS
+        ? rawOutput.slice(0, MAX_ENTRY_OUTPUT_CHARS) + "\n...(truncated)"
+        : rawOutput;
+      return { command, output };
+    })
+    .filter((h) => h.command !== "" || h.output !== "");
+
+  if (sanitized.length === 0) return "";
+
+  const lines: string[] = [];
+  let totalChars = 0;
+
+  for (const h of sanitized) {
+    const line = `$ ${h.command}\n${h.output}`;
+    const nextTotal = totalChars + line.length + (lines.length > 0 ? 2 : 0);
+    if (nextTotal > MAX_HISTORY_CHARS) break;
+    lines.push(line);
+    totalChars = nextTotal;
+  }
+
+  if (lines.length === 0) return "";
+
   return `\n\nPreviously Executed Commands (oldest to newest):
 ${lines.join("\n\n")}`;
 }
