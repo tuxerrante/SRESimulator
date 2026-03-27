@@ -35,11 +35,15 @@ patch_bc_strategy() {
 }
 
 # Usage: oc_build_timed <namespace> <bc-name>
-# Retries up to OC_BUILD_MAX_RETRIES (default 3) to work around intermittent
-# FetchSourceFailed errors from the cluster image registry.
+# Retries up to OC_BUILD_MAX_RETRIES (default 3) on transient FetchSourceFailed
+# errors from the cluster image registry. Non-retryable failures (e.g. Dockerfile
+# errors) abort immediately.
 oc_build_timed() {
   local ns=$1 name=$2
   local max_retries=${OC_BUILD_MAX_RETRIES:-3}
+  if ! [[ "$max_retries" =~ ^[1-9][0-9]*$ ]]; then
+    max_retries=3
+  fi
   echo "Building $name image (upload + build)..."
   local t0 t1 archive
   archive="$(mktemp "${TMPDIR:-/tmp}/oc-build-XXXXXX").tar.gz"
@@ -59,13 +63,27 @@ oc_build_timed() {
     if oc -n "$ns" start-build "$name" --from-archive="$archive" --follow --wait >/dev/null; then
       break
     fi
+    local last_build reason
+    last_build=$(oc -n "$ns" get builds --selector="buildconfig=$name" \
+      --sort-by=.metadata.creationTimestamp -o name 2>/dev/null | tail -n 1 || true)
+    if [ -z "$last_build" ]; then
+      echo "  $name build failed and no Build object was found; not retrying."
+      rm -f "$archive"
+      return 1
+    fi
+    reason=$(oc -n "$ns" get "$last_build" -o jsonpath='{.status.reason}' 2>/dev/null || true)
+    if [ "$reason" != "FetchSourceFailed" ]; then
+      echo "  $name build failed with non-retryable reason: ${reason:-unknown}"
+      rm -f "$archive"
+      return 1
+    fi
     if [ "$attempt" -ge "$max_retries" ]; then
-      echo "  $name build failed after $max_retries attempt(s)"
+      echo "  $name build failed with FetchSourceFailed after $max_retries attempt(s)"
       rm -f "$archive"
       return 1
     fi
     local delay=$(( attempt * 10 ))
-    echo "  Attempt $attempt/$max_retries failed, retrying in ${delay}s..."
+    echo "  Attempt $attempt/$max_retries failed (FetchSourceFailed), retrying in ${delay}s..."
     sleep "$delay"
     attempt=$(( attempt + 1 ))
   done
