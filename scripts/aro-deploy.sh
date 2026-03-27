@@ -48,7 +48,11 @@ oc_build_timed() {
   local t0 t1 archive
   archive="$(mktemp "${TMPDIR:-/tmp}/oc-build-XXXXXX").tar.gz"
   local tar_extra_flags=()
-  if tar --help 2>&1 | grep -q -- '--no-mac-metadata'; then
+  # BSD tar on macOS embeds PAX headers (xattrs, resource forks) that
+  # OpenShift builder pods cannot extract.  Probe whether the local tar
+  # accepts --no-mac-metadata by creating a throwaway archive (--help
+  # on newer bsdtar no longer lists the flag).
+  if tar cf /dev/null --no-mac-metadata /dev/null 2>/dev/null; then
     tar_extra_flags+=(--no-mac-metadata --no-xattrs --no-fflags)
   fi
   COPYFILE_DISABLE=1 tar czf "$archive" \
