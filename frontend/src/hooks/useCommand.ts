@@ -5,6 +5,7 @@ import { useGameStore } from "@/stores/gameStore";
 import type { TerminalEntry } from "@shared/types/terminal";
 
 const MAX_COMMAND_HISTORY = 15;
+const MAX_ENTRY_OUTPUT_CHARS = 400;
 
 export function useCommand() {
   const { scenario, addTerminalEntry, addScoringEvent, recalculateScore, setExecuting } =
@@ -44,7 +45,9 @@ export function useCommand() {
         const entries = useGameStore.getState().terminalEntries;
         const commandHistory = entries.slice(-MAX_COMMAND_HISTORY).map((e) => ({
           command: e.command,
-          output: e.output,
+          output: e.output.length > MAX_ENTRY_OUTPUT_CHARS
+            ? e.output.slice(0, MAX_ENTRY_OUTPUT_CHARS) + "\n...(truncated)"
+            : e.output,
           type: e.type,
         }));
 
