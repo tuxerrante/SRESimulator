@@ -8,10 +8,10 @@ CREATE TABLE sessions (
   created_at       DATETIMEOFFSET NOT NULL DEFAULT SYSDATETIMEOFFSET()
 );
 
-IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'idx_sessions_created')
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'idx_sessions_created' AND object_id = OBJECT_ID('sessions'))
   CREATE INDEX idx_sessions_created ON sessions (created_at);
 
-IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'idx_sessions_start_time')
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'idx_sessions_start_time' AND object_id = OBJECT_ID('sessions'))
   CREATE INDEX idx_sessions_start_time ON sessions (start_time);
 
 IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'leaderboard_entries')
@@ -50,8 +50,8 @@ CREATE TABLE gameplay_metrics (
   created_at             DATETIMEOFFSET NOT NULL DEFAULT SYSDATETIMEOFFSET()
 );
 
-IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'idx_metrics_nickname')
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'idx_metrics_nickname' AND object_id = OBJECT_ID('gameplay_metrics'))
   CREATE INDEX idx_metrics_nickname ON gameplay_metrics (nickname);
 
-IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'idx_metrics_created')
+IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'idx_metrics_created' AND object_id = OBJECT_ID('gameplay_metrics'))
   CREATE INDEX idx_metrics_created ON gameplay_metrics (created_at);

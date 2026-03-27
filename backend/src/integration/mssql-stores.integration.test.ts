@@ -5,9 +5,17 @@ let pool: sql.ConnectionPool;
 
 const SKIP = process.env.STORAGE_BACKEND !== "mssql";
 
+const createdSessionTokens: string[] = [];
+const createdNicknames: string[] = [];
+
 function shortId(prefix: string): string {
   const suffix = Date.now().toString(36).slice(-6);
   return `${prefix}${suffix}`.slice(0, 20);
+}
+
+function trackNickname(nick: string): string {
+  createdNicknames.push(nick);
+  return nick;
 }
 
 beforeAll(async () => {
@@ -25,14 +33,24 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  if (pool) {
-    await pool.request().query(`
-      IF OBJECT_ID('gameplay_metrics') IS NOT NULL DELETE FROM gameplay_metrics;
-      IF OBJECT_ID('leaderboard_entries') IS NOT NULL DELETE FROM leaderboard_entries;
-      IF OBJECT_ID('sessions') IS NOT NULL DELETE FROM sessions;
-    `);
-    await pool.close();
+  if (!pool) return;
+
+  for (const nick of createdNicknames) {
+    await pool.request()
+      .input("nick", nick)
+      .query("DELETE FROM gameplay_metrics WHERE nickname = @nick");
+    await pool.request()
+      .input("nick", nick)
+      .query("DELETE FROM leaderboard_entries WHERE nickname = @nick");
   }
+
+  for (const token of createdSessionTokens) {
+    await pool.request()
+      .input("token", token)
+      .query("DELETE FROM sessions WHERE token = @token");
+  }
+
+  await pool.close();
 });
 
 describe.skipIf(SKIP)("MssqlSessionStore (real SQL)", () => {
@@ -43,6 +61,7 @@ describe.skipIf(SKIP)("MssqlSessionStore (real SQL)", () => {
     const store = new MssqlSessionStore(pool);
 
     const token = await store.create("easy", "The Sleeping Cluster");
+    createdSessionTokens.push(token);
     expect(token).toMatch(
       /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
     );
@@ -63,6 +82,7 @@ describe.skipIf(SKIP)("MssqlSessionStore (real SQL)", () => {
     const store = new MssqlSessionStore(pool);
 
     const token = await store.create("medium", "Bad Egress");
+    createdSessionTokens.push(token);
     await store.validateAndConsume(token);
     const second = await store.validateAndConsume(token);
     expect(second).toBeNull();
@@ -90,7 +110,7 @@ describe.skipIf(SKIP)("MssqlLeaderboardStore (real SQL)", () => {
 
     const entry = {
       id: crypto.randomUUID(),
-      nickname: shortId("t"),
+      nickname: trackNickname(shortId("t")),
       difficulty: "easy" as const,
       score: {
         efficiency: 20,
@@ -123,7 +143,7 @@ describe.skipIf(SKIP)("MssqlLeaderboardStore (real SQL)", () => {
       "../lib/storage/mssql-leaderboard-store"
     );
     const store = new MssqlLeaderboardStore(pool);
-    const nick = shortId("u");
+    const nick = trackNickname(shortId("u"));
 
     await store.addEntry({
       id: crypto.randomUUID(),
@@ -174,7 +194,7 @@ describe.skipIf(SKIP)("MssqlLeaderboardStore (real SQL)", () => {
       "../lib/storage/mssql-leaderboard-store"
     );
     const store = new MssqlLeaderboardStore(pool);
-    const nick = shortId("f");
+    const nick = trackNickname(shortId("f"));
 
     for (const diff of ["easy", "medium"] as const) {
       await store.addEntry({
@@ -211,7 +231,7 @@ describe.skipIf(SKIP)("MssqlMetricsStore (real SQL)", () => {
       "../lib/storage/mssql-metrics-store"
     );
     const store = new MssqlMetricsStore(pool);
-    const nick = shortId("m");
+    const nick = trackNickname(shortId("m"));
 
     await store.recordGameplay({
       nickname: nick,
