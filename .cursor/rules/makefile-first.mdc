@@ -1,0 +1,32 @@
+---
+description: Always use Makefile targets instead of ad-hoc commands
+alwaysApply: true
+---
+
+# Makefile First
+
+The root `Makefile` is the single source of truth for all quality gates, builds, and deployments. Never improvise shell commands for operations that have a Makefile target.
+
+## Validation (run from worktree root)
+
+- `make validate` — all linters + type checking
+- `make test` — backend + frontend unit tests with coverage
+- `make test-integration` — integration tests
+- `make pre-commit` — pre-commit hooks on all files
+
+## Deployment
+
+- `make e2e-azure-route-refresh` — rebuild + helm upgrade into existing e2e namespace
+- `make e2e-azure-route` — full create from scratch
+- `make e2e-azure-route-down` — teardown
+- `make prod-up` / `make prod-down` — production namespace
+
+## Why This Matters
+
+Makefile targets handle secrets loading, archive creation (via `.dockerignore`), Helm value plumbing (`AOAI_DEPLOYMENT`, probe tokens, etc.), and retry logic. Manually replicating these steps leads to missing values, corrupted archives, or stuck Helm releases.
+
+If a `make` target fails with a transient error (e.g. `FetchSourceFailed`), **retry the same target** rather than improvising a workaround.
+
+## Discovery
+
+Run `make help` to list all available targets with descriptions.
