@@ -305,6 +305,99 @@ readiness checks use Node.js (`net` module for TCP, `mssql` package for
 SQL queries). The container healthcheck uses Python 3 (bundled in the
 image).
 
+### Tier 3: Real Azure SQL free tier (manual E2E)
+
+This is a manual smoke-test procedure that validates Terraform provisioning,
+Helm wiring, network connectivity, and actual Azure SQL free-tier behavior
+(auto-pause, resume latency). It requires an Azure subscription and a
+running ARO cluster and is **not** automated in CI.
+
+#### Prerequisites
+
+- ARO cluster provisioned via `terraform apply` (the base infra must
+  already exist).
+- CLI tools: `terraform`, `az`, `oc`, `helm`.
+- A strong password that meets
+  [Azure SQL complexity requirements](https://learn.microsoft.com/en-us/sql/relational-databases/security/password-policy).
+
+#### Step 1 — Provision the Azure SQL Database
+
+```bash
+cd infra
+terraform apply -var enable_database=true \
+                -var sql_admin_password='<strong-password>'
+```
+
+Terraform creates the SQL Server, the `sresimulator` database on the
+GP_S_Gen5_2 serverless SKU, enables the free-tier offer via `azapi`, and
+opens the "Allow Azure services" firewall rule.
+
+#### Step 2 — Capture the connection string
+
+```bash
+terraform -chdir=infra output -raw sql_connection_hint
+```
+
+The output is a template: replace `<PASSWORD>` with the password you used
+in step 1.
+
+#### Step 3 — Create the K8s Secret
+
+```bash
+NS=sre-simulator   # or your target namespace
+oc -n "$NS" create secret generic sre-sql-creds \
+  --from-literal=connection-string="Server=<fqdn>;Database=sresimulator;User Id=sresimadmin;Password=<pwd>;Encrypt=true;TrustServerCertificate=false"
+```
+
+The secret key must match `database.secretConnectionStringKey` in the Helm
+values (default: `connection-string`).
+
+#### Step 4 — Deploy with database enabled
+
+```bash
+DB_SECRET_NAME=sre-sql-creds make prod-up
+# or for an ephemeral namespace:
+DB_SECRET_NAME=sre-sql-creds make e2e-azure-route-up
+```
+
+`helm_deploy_sre()` detects `DB_SECRET_NAME` and passes
+`--set database.enabled=true --set database.existingSecretName=sre-sql-creds`
+to Helm. The backend pod starts with `STORAGE_BACKEND=mssql` and runs
+migrations automatically on first connect.
+
+#### Step 5 — Validate persistence across pod restarts
+
+1. Open the app in a browser and play a game to completion.
+1. Submit a score and verify it appears on the leaderboard.
+1. Kill the backend pod:
+
+```bash
+oc -n "$NS" delete pod -l app.kubernetes.io/component=backend
+```
+
+1. Wait for the replacement pod to become ready, then reload the
+   leaderboard page. The score must still be present.
+
+#### Step 6 — Validate auto-pause and resume
+
+The free-tier database auto-pauses after 60 minutes of inactivity.
+
+1. Leave the app idle for at least 60 minutes (no requests).
+1. Make a new request (e.g. load the leaderboard).
+1. The first request will take approximately 30 seconds while Azure
+   resumes the database. Subsequent requests should respond normally.
+
+#### Teardown
+
+The database is on the free tier ($0/month), so the recommended default
+is to leave it running. If you need to remove it, the SQL Server and
+database are protected by `prevent_destroy` lifecycle rules. You must
+remove those blocks before Terraform will allow deletion:
+
+1. Edit `infra/sql-database.tf` and delete the `lifecycle { prevent_destroy = true }`
+   blocks from both `azurerm_mssql_server.main` and `azurerm_mssql_database.app`.
+1. Run `terraform apply -var enable_database=false` from the `infra/` directory.
+
 ### Storage interface pattern
 
 All persistence is abstracted behind three interfaces (`ISessionStore`,
