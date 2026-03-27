@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
-import type { Scenario } from "../../../shared/types/game";
+import type { Scenario } from "../../../../shared/types/game";
 import { buildScenarioContext, buildSimNow, buildCommandSystemPrompt } from "./command";
 
 const FIXED_NOW = new Date("2026-03-27T14:00:00.000Z");
