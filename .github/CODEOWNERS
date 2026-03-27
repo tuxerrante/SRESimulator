@@ -1,0 +1,4 @@
+# Default code owners for all files.
+# GitHub requires Pro plan to enforce reviews from code owners,
+# but the file still documents ownership and is checked by CI.
+* @tuxerrante

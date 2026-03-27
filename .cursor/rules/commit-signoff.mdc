@@ -1,0 +1,13 @@
+---
+description: Require commit signoff (DCO) on all commits
+alwaysApply: true
+---
+
+# Commit Signoff
+
+This repository requires all commits to include a `Signed-off-by` trailer (Developer Certificate of Origin).
+
+- ALWAYS use `git commit -s` (or `--signoff`) when creating commits.
+- The signoff line is added automatically by the `-s` flag using the committer's configured `user.name` and `user.email`.
+- GitHub's web UI also enforces signoff via the `web_commit_signoff_required` repository setting.
+- If a commit is rejected for missing signoff, amend it with `git commit --amend -s` (only if not yet pushed).
