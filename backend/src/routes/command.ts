@@ -61,7 +61,14 @@ function formatCommandHistory(history: CommandHistoryEntry[] | undefined): strin
 ${lines.join("\n\n")}`;
 }
 
-function buildCommandSystemPrompt(
+export function buildSimNow(reportedTime: string | undefined): string {
+  const now = utcNow();
+  return reportedTime
+    ? `The current UTC time is ${now}. The incident ticket was originally reported at ${reportedTime}. Alerts and recent events have their own timestamps in the scenario context — use those as the temporal anchor for command output. All timestamps in your output must be in the past relative to ${now}.`
+    : `The current UTC time is ${now}. Use consistent, realistic timestamps. All timestamps must be in the past relative to ${now}.`;
+}
+
+export function buildCommandSystemPrompt(
   type: string,
   scenarioContext: string,
   simNow: string,
@@ -88,7 +95,7 @@ Scenario Context:
 ${scenarioContext}${historyBlock}`;
 }
 
-function buildScenarioContext(scenario: Scenario | null): string {
+export function buildScenarioContext(scenario: Scenario | null): string {
   if (!scenario) return "No specific scenario context available.";
   return `Title: ${scenario.title} (${scenario.difficulty})
 Description: ${scenario.description}
@@ -129,13 +136,7 @@ commandRouter.post("/", async (req: Request, res: Response) => {
     }
 
     const scenarioContext = buildScenarioContext(scenario);
-
-    const now = utcNow();
-    const reportedTime = scenario?.incidentTicket?.reportedTime;
-    const simNow = reportedTime
-      ? `The current UTC time is ${now}. The incident ticket was originally reported at ${reportedTime}. Alerts and recent events have their own timestamps in the scenario context — use those as the temporal anchor for command output. All timestamps in your output must be in the past relative to ${now}.`
-      : `The current UTC time is ${now}. Use consistent, realistic timestamps. All timestamps must be in the past relative to ${now}.`;
-
+    const simNow = buildSimNow(scenario?.incidentTicket?.reportedTime);
     const systemPrompt = buildCommandSystemPrompt(type, scenarioContext, simNow, commandHistory);
 
     const responseText = await generateAiText({
