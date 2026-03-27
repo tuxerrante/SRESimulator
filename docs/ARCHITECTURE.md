@@ -25,6 +25,7 @@ SRESimulator/
 ├── CLAUDE.md                             # Design document and game spec
 ├── README.md
 ├── Makefile                              # Build, lint, dev, and CI targets
+├── docker-compose.yml                    # Azure SQL Edge for local MSSQL testing
 ├── helm/sre-simulator/                   # OpenShift/Kubernetes deployment manifests
 ├── knowledge_base/                       # Reference docs loaded into AI context
 │   ├── sre-investigation-techniques.md
@@ -273,6 +274,36 @@ in `backend/src/lib/storage/migrations/`.
 When the monthly free allocation is exhausted the database auto-pauses
 until the next billing cycle (configurable to continue with pay-as-you-go
 instead).
+
+### Local MSSQL testing with Azure SQL Edge
+
+Azure SQL Edge is a free, ARM64/AMD64-compatible Docker image that is
+wire-compatible with Azure SQL Database. It lets developers validate
+T-SQL queries and migrations locally without an Azure subscription.
+
+```bash
+# Start SQL Edge and create the sresimulator database
+make dev-db
+
+# Run all integration tests against the real SQL engine
+make test-mssql
+
+# Stop the container
+docker compose down
+```
+
+`make dev-db` starts the container, polls for TCP readiness, waits for
+the SQL engine to accept queries, and creates the `sresimulator` database.
+`make test-mssql` depends on `dev-db` and runs the full integration test
+suite with `STORAGE_BACKEND=mssql`.
+
+CI runs the same tests automatically via an `integration-test-mssql` job
+that uses Azure SQL Edge as a GitHub Actions service container.
+
+**Note:** The Azure SQL Edge `latest` image does not ship `sqlcmd`. All
+readiness checks use Node.js (`net` module for TCP, `mssql` package for
+SQL queries). The container healthcheck uses Python 3 (bundled in the
+image).
 
 ### Storage interface pattern
 
