@@ -36,6 +36,8 @@ alwaysApply: true
 - [ ] All changes are inside the worktree, not the host checkout
 - [ ] `make validate` passes (lint + typecheck)
 - [ ] `make test` passes (unit tests)
+- [ ] `make test-integration` passes (integration tests)
+- [ ] Any **new or modified Makefile targets** have been executed at least once and produce the expected result
 - [ ] Changes committed with a descriptive message
 - [ ] Branch pushed to remote
 - [ ] PR created with summary and test plan

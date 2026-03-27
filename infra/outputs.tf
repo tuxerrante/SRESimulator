@@ -38,6 +38,25 @@ output "prod_namespace" {
   value       = var.prod_namespace
 }
 
+# ---------------------------------------------------------------------------
+# Azure SQL Database outputs (only when enable_database = true)
+# ---------------------------------------------------------------------------
+output "sql_server_fqdn" {
+  description = "Azure SQL Server FQDN."
+  value       = var.enable_database ? azurerm_mssql_server.main[0].fully_qualified_domain_name : ""
+}
+
+output "sql_database_name" {
+  description = "Azure SQL Database name."
+  value       = var.enable_database ? azurerm_mssql_database.app[0].name : ""
+}
+
+output "sql_connection_hint" {
+  description = "DATABASE_URL template (replace <PASSWORD> with the admin password). Uses ADO.NET-style 'Server=...;Database=...;User Id=...;Password=...' connection string format."
+  sensitive   = true
+  value = var.enable_database ? "Server=${azurerm_mssql_server.main[0].fully_qualified_domain_name};Database=${azurerm_mssql_database.app[0].name};User Id=sresimadmin;Password=<PASSWORD>;Encrypt=true;TrustServerCertificate=false" : ""
+}
+
 output "env_file_snippet" {
   description = "Paste into backend/.env.local to connect to these resources."
   value       = <<-EOT
