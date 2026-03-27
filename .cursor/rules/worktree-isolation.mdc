@@ -6,7 +6,7 @@ alwaysApply: true
 # Worktree Isolation
 
 - Never edit host checkout files for implementation work.
-- Start each task in an isolated git worktree: `git worktree add .worktrees/<task-name> -b <branch-name> main`
+- Start each task in an isolated git worktree: `git worktree add -b <branch-name> .worktrees/<task-name> main`
 - Always branch from `main`.
 - Keep host checkout read-only — use it only for exploration, review, and context.
 - Only include task-related files in commits.
