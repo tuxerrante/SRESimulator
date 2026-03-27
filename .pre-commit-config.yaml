@@ -33,6 +33,20 @@ repos:
 
   - repo: local
     hooks:
+      - id: no-push-to-main
+        name: Block direct pushes to main
+        entry: >-
+          bash -c
+          'branch=$(git symbolic-ref --short HEAD 2>/dev/null);
+          if [ "$branch" = "main" ]; then
+          echo "ERROR: Direct push to main is not allowed.";
+          echo "Create a feature branch and open a pull request.";
+          exit 1;
+          fi'
+        language: system
+        always_run: true
+        pass_filenames: false
+        stages: [pre-push]
       - id: npm-audit
         name: npm audit (high/critical)
         entry: bash -c 'cd frontend && npm audit --audit-level=high'
