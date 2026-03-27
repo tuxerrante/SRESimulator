@@ -59,10 +59,19 @@ oc_build_timed() {
 
 # Usage: helm_deploy_sre <namespace> <tag> <probe-token>
 # Sets DEPLOY_HOST for use by caller.
+# Optional env: DB_SECRET_NAME — when set, enables Azure SQL persistence
+#   via database.enabled=true and database.existingSecretName.
 helm_deploy_sre() {
   local ns=$1 tag=$2 probe_token=$3
   DEPLOY_DOMAIN=$(oc get ingresses.config/cluster -o jsonpath='{.spec.domain}')
   DEPLOY_HOST="${ns}.${DEPLOY_DOMAIN}"
+
+  local db_flags=()
+  if [ -n "${DB_SECRET_NAME:-}" ]; then
+    db_flags=(--set database.enabled=true
+              --set "database.existingSecretName=$DB_SECRET_NAME")
+  fi
+
   helm upgrade --install "$E2E_RELEASE" ./helm/sre-simulator -n "$ns" \
     --set route.host="$DEPLOY_HOST" \
     --set frontend.image.repository="image-registry.openshift-image-registry.svc:5000/$ns/sre-simulator-frontend" \
@@ -82,6 +91,7 @@ helm_deploy_sre() {
     --set ai.azureOpenai.apiVersion=2024-10-21 \
     --set ai.azureOpenai.credentials.existingSecretName=azure-openai-creds \
     --set ai.azureOpenai.credentials.key=api-key \
+    "${db_flags[@]}" \
     --wait --timeout 15m >/dev/null
 }
 
