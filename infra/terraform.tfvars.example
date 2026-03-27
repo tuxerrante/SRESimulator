@@ -29,6 +29,10 @@ location    = "eastus"
 budget_alert_emails = ["your-email@example.com"]
 # budget_amount       = 200  # monthly cap in billing currency (default 200)
 
+# Azure SQL Database free tier (persistent leaderboard + sessions, $0/month)
+# enable_database    = true
+# sql_admin_password = "<strong-password-meeting-azure-complexity>"
+
 # Additional tags to apply to all resources
 # extra_tags = {
 #   team = "your-team"
