@@ -58,8 +58,15 @@ export function useChat() {
         });
 
         if (!response.ok) {
-          const err = await response.json();
-          throw new Error(err.error || "Chat request failed");
+          const raw = await response.text();
+          let errorMessage = `Chat request failed (${response.status})`;
+          try {
+            const err = JSON.parse(raw);
+            errorMessage = err.error || errorMessage;
+          } catch {
+            errorMessage = `Server error (${response.status}): ${raw.slice(0, 120)}`;
+          }
+          throw new Error(errorMessage);
         }
 
         const reader = response.body?.getReader();

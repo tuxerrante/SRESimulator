@@ -68,12 +68,19 @@ export default function HomePage() {
         body: JSON.stringify({ difficulty }),
       });
 
-      if (!response.ok) {
-        const data = await response.json();
-        throw new Error(data.error || "Failed to generate scenario");
+      const raw = await response.text();
+      let parsed: Record<string, unknown>;
+      try {
+        parsed = JSON.parse(raw);
+      } catch {
+        throw new Error(`Server error (${response.status}): ${raw.slice(0, 120)}`);
       }
 
-      const { scenario, sessionToken }: { scenario: Scenario; sessionToken: string } = await response.json();
+      if (!response.ok) {
+        throw new Error((parsed.error as string) || "Failed to generate scenario");
+      }
+
+      const { scenario, sessionToken } = parsed as unknown as { scenario: Scenario; sessionToken: string };
       startGame(scenario, sessionToken);
       router.push("/game");
     } catch (err) {
