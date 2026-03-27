@@ -9,8 +9,8 @@ services:
       - "1433:1433"
     healthcheck:
       test: >-
-        /opt/mssql-tools/bin/sqlcmd
-        -S localhost -U sa -P 'DevPass@123!' -Q 'SELECT 1'
+        python3 -c "import socket; s=socket.socket();
+        s.settimeout(2); s.connect(('localhost',1433)); s.close()"
       interval: 10s
       timeout: 5s
       retries: 5

@@ -176,11 +176,11 @@ jobs:
           - 1433:1433
         options: >-
           --health-cmd
-          "/opt/mssql-tools/bin/sqlcmd -S localhost -U sa
-          -P 'CI_Pass@123!' -Q 'SELECT 1'"
+          "python3 -c \"import socket; s=socket.socket();
+          s.settimeout(2); s.connect(('localhost',1433)); s.close()\""
           --health-interval 10s
           --health-timeout 5s
-          --health-retries 5
+          --health-retries 10
     steps:
       - name: Harden runner
         # v2.16.0
@@ -215,13 +215,29 @@ jobs:
         run: make install-backend
 
       - name: Create sresimulator database
+        working-directory: backend
         env:
-          SQLSERVER_CONTAINER_ID: ${{ job.services.sqlserver.id }}
-        run: >-
-          docker exec "${SQLSERVER_CONTAINER_ID}"
-          /opt/mssql-tools/bin/sqlcmd
-          -S localhost -U sa -P 'CI_Pass@123!'
-          -Q "CREATE DATABASE sresimulator"
+          DB_CONN: >-
+            Server=localhost;User Id=sa;
+            Password=CI_Pass@123!;
+            TrustServerCertificate=true
+        run: |
+          node -e "
+            const sql = require('mssql');
+            const q = 'IF DB_ID('+
+              String.fromCharCode(39)+
+              'sresimulator'+
+              String.fromCharCode(39)+
+              ') IS NULL CREATE DATABASE sresimulator';
+            sql.connect(process.env.DB_CONN)
+              .then(p => p.request().query(q)
+                .then(() => p.close()))
+              .then(() => process.exit(0))
+              .catch(e => {
+                console.error(e.message);
+                process.exit(1);
+              });
+          "
 
       - name: Run MSSQL integration tests
         env:

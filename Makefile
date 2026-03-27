@@ -169,13 +169,29 @@ MSSQL_DATABASE_URL ?= Server=localhost;Database=sresimulator;User Id=sa;Password
 dev-db: ## Start Azure SQL Edge container for local development
 	docker compose up -d sqlserver
 	@echo "Waiting for SQL Edge to accept connections..."
-	@until docker compose exec sqlserver /opt/mssql-tools/bin/sqlcmd \
-		-S localhost -U sa -P '$(MSSQL_SA_PASSWORD)' -Q 'SELECT 1' \
-		>/dev/null 2>&1; do sleep 2; done
-	@docker compose exec sqlserver /opt/mssql-tools/bin/sqlcmd \
-		-S localhost -U sa -P '$(MSSQL_SA_PASSWORD)' \
-		-Q "IF DB_ID('sresimulator') IS NULL CREATE DATABASE sresimulator" \
-		>/dev/null 2>&1
+	@until node -e " \
+		const s = require('net').createConnection(1433, 'localhost'); \
+		s.on('connect', () => { s.end(); process.exit(0); }); \
+		s.on('error', () => process.exit(1)); \
+		setTimeout(() => process.exit(1), 2000);" 2>/dev/null; do \
+		sleep 2; \
+	done
+	@echo "TCP ready, waiting for SQL engine..."
+	@until NODE_PATH=$(CURDIR)/$(BACKEND_DIR)/node_modules node -e " \
+		const sql = require('mssql'); \
+		sql.connect('Server=localhost;User Id=sa;Password=$(MSSQL_SA_PASSWORD);TrustServerCertificate=true') \
+		  .then(p => p.request().query('SELECT 1').then(() => p.close())) \
+		  .then(() => process.exit(0)) \
+		  .catch(() => process.exit(1));" 2>/dev/null; do \
+		sleep 2; \
+	done
+	@NODE_PATH=$(CURDIR)/$(BACKEND_DIR)/node_modules node -e " \
+		const sql = require('mssql'); \
+		sql.connect('Server=localhost;User Id=sa;Password=$(MSSQL_SA_PASSWORD);TrustServerCertificate=true') \
+		  .then(p => p.request().query(\"IF DB_ID('sresimulator') IS NULL CREATE DATABASE sresimulator\") \
+		    .then(() => p.close())) \
+		  .then(() => { console.log('Database sresimulator ensured'); process.exit(0); }) \
+		  .catch(e => { console.error(e.message); process.exit(1); });"
 	@echo "SQL Edge ready on localhost:1433 (database: sresimulator)"
 
 test-mssql: dev-db ## Run MSSQL integration tests against local SQL Edge container

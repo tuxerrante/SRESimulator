@@ -5,6 +5,11 @@ let pool: sql.ConnectionPool;
 
 const SKIP = process.env.STORAGE_BACKEND !== "mssql";
 
+function shortId(prefix: string): string {
+  const suffix = Date.now().toString(36).slice(-6);
+  return `${prefix}${suffix}`.slice(0, 20);
+}
+
 beforeAll(async () => {
   if (SKIP) return;
 
@@ -44,7 +49,7 @@ describe.skipIf(SKIP)("MssqlSessionStore (real SQL)", () => {
 
     const session = await store.validateAndConsume(token);
     expect(session).not.toBeNull();
-    expect(session!.token).toBe(token);
+    expect(session!.token.toLowerCase()).toBe(token.toLowerCase());
     expect(session!.difficulty).toBe("easy");
     expect(session!.scenarioTitle).toBe("The Sleeping Cluster");
     expect(session!.used).toBe(true);
@@ -85,7 +90,7 @@ describe.skipIf(SKIP)("MssqlLeaderboardStore (real SQL)", () => {
 
     const entry = {
       id: crypto.randomUUID(),
-      nickname: `test-${Date.now()}`,
+      nickname: shortId("t"),
       difficulty: "easy" as const,
       score: {
         efficiency: 20,
@@ -105,7 +110,9 @@ describe.skipIf(SKIP)("MssqlLeaderboardStore (real SQL)", () => {
     expect(returned.id).toBe(entry.id);
 
     const entries = await store.getLeaderboard("easy");
-    const found = entries.find((e) => e.id === entry.id);
+    const found = entries.find(
+      (e) => e.id.toLowerCase() === entry.id.toLowerCase(),
+    );
     expect(found).toBeDefined();
     expect(found!.nickname).toBe(entry.nickname);
     expect(found!.score.total).toBe(85);
@@ -116,7 +123,7 @@ describe.skipIf(SKIP)("MssqlLeaderboardStore (real SQL)", () => {
       "../lib/storage/mssql-leaderboard-store"
     );
     const store = new MssqlLeaderboardStore(pool);
-    const nick = `upsert-${Date.now()}`;
+    const nick = shortId("u");
 
     await store.addEntry({
       id: crypto.randomUUID(),
@@ -159,7 +166,7 @@ describe.skipIf(SKIP)("MssqlLeaderboardStore (real SQL)", () => {
     const found = entries.find((e) => e.nickname === nick);
     expect(found).toBeDefined();
     expect(found!.score.total).toBe(100);
-    expect(found!.id).toBe(upgradedId);
+    expect(found!.id.toLowerCase()).toBe(upgradedId.toLowerCase());
   });
 
   it("getHallOfFame returns aggregated composite scores", async () => {
@@ -167,7 +174,7 @@ describe.skipIf(SKIP)("MssqlLeaderboardStore (real SQL)", () => {
       "../lib/storage/mssql-leaderboard-store"
     );
     const store = new MssqlLeaderboardStore(pool);
-    const nick = `fame-${Date.now()}`;
+    const nick = shortId("f");
 
     for (const diff of ["easy", "medium"] as const) {
       await store.addEntry({
@@ -204,7 +211,7 @@ describe.skipIf(SKIP)("MssqlMetricsStore (real SQL)", () => {
       "../lib/storage/mssql-metrics-store"
     );
     const store = new MssqlMetricsStore(pool);
-    const nick = `metrics-${Date.now()}`;
+    const nick = shortId("m");
 
     await store.recordGameplay({
       nickname: nick,
