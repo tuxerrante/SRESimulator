@@ -7,7 +7,7 @@ export function cn(...inputs: ClassValue[]) {
 
 /**
  * Converts an ISO 8601 timestamp into a human-readable relative string
- * (e.g. "5 minutes ago", "3 hours ago", "2 days ago").
+ * (e.g. "5m ago", "3h ago", "2d ago", "just now").
  * Returns the raw value if it cannot be parsed.
  */
 export function formatRelativeTime(iso: string): string {
@@ -19,7 +19,7 @@ export function formatRelativeTime(iso: string): string {
   const suffix = diffMs >= 0 ? "ago" : "from now";
 
   const seconds = Math.floor(absDiffMs / 1000);
-  if (seconds < 60) return "just now";
+  if (seconds < 60) return diffMs >= 0 ? "just now" : `<1m ${suffix}`;
 
   const minutes = Math.floor(seconds / 60);
   if (minutes < 60) return `${minutes}m ${suffix}`;
