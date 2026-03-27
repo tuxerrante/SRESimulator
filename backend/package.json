@@ -30,7 +30,7 @@
     "ts-unused-exports": "^11.0.1",
     "tsx": "^4.19.4",
     "typescript": "^5",
-    "typescript-eslint": "^8.57.1",
+    "typescript-eslint": "^8.57.2",
     "vitest": "^4.1.0"
   }
 }
