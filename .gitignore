@@ -54,6 +54,7 @@ data/
 # Terraform
 infra/.terraform/
 infra/.terraform.lock.hcl
+infra/.tf-backend.env
 infra/tfplan
 infra/*.tfstate*
 infra/terraform.tfvars

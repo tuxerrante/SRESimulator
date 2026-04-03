@@ -4,6 +4,7 @@ OWNER_ALIAS ?=
 TF_VAR_FLAGS := $(if $(OWNER_ALIAS),-var owner_alias=$(OWNER_ALIAS),)
 LOCATION ?= eastus
 SQL_SERVER_NAME ?=
+TF_BACKEND_ENV_FILE ?= .tf-backend.env
 
 # Backend config – override these or supply via -backend-config at init time
 TF_STATE_RG           ?= tfstate-rg
@@ -11,6 +12,8 @@ TF_STATE_ACCOUNT      ?=
 TF_STATE_CONTAINER    ?= tfstate
 TF_STATE_KEY          ?= $(if $(OWNER_ALIAS),$(OWNER_ALIAS)-test-sre-simulator.tfstate,sre-simulator.tfstate)
 GENEVA_SUPPRESSION_ACCESS_CONFIRMED ?= false
+
+-include $(TF_BACKEND_ENV_FILE)
 
 help: ## Show this help
 	@grep -hE '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -21,11 +24,11 @@ tf-bootstrap: ## Create Azure Storage Account for Terraform remote state (one-ti
 		echo "Set TF_STATE_ACCOUNT to a globally unique storage account name."; \
 		exit 1; \
 	fi
-	az group create --name "$(TF_STATE_RG)" --location eastus --tags purpose=terraform-state
+	az group create --name "$(TF_STATE_RG)" --location "$(LOCATION)" --tags purpose=terraform-state
 	az storage account create \
 		--name "$(TF_STATE_ACCOUNT)" \
 		--resource-group "$(TF_STATE_RG)" \
-		--location eastus \
+		--location "$(LOCATION)" \
 		--sku Standard_LRS \
 		--min-tls-version TLS1_2 \
 		--allow-blob-public-access false \
@@ -44,6 +47,7 @@ tf-preflight: ## Run Azure preflight checks for final isolated environment
 	TF_STATE_RG="$(TF_STATE_RG)" \
 	TF_STATE_ACCOUNT="$(TF_STATE_ACCOUNT)" \
 	TF_STATE_CONTAINER="$(TF_STATE_CONTAINER)" \
+	TF_BACKEND_ENV_FILE="$(TF_BACKEND_ENV_FILE)" \
 	SQL_SERVER_NAME="$(SQL_SERVER_NAME)" \
 	GENEVA_SUPPRESSION_ACCESS_CONFIRMED="$(GENEVA_SUPPRESSION_ACCESS_CONFIRMED)" \
 	./scripts/tf-preflight.sh

@@ -203,15 +203,18 @@ For the final environment (`aaffinit-test-*`), use:
 make tf-preflight \
   OWNER_ALIAS=aaffinit \
   TF_STATE_ACCOUNT=<state-account> \
+  LOCATION=westeurope \
   TF_STATE_KEY=aaffinit-test-sre-simulator.tfstate \
   SQL_SERVER_NAME=aaffinit-test-sql-20260403 \
   GENEVA_SUPPRESSION_ACCESS_CONFIRMED=true
 
-make tf-init-isolated OWNER_ALIAS=aaffinit TF_STATE_ACCOUNT=<state-account>
+make tf-init-isolated OWNER_ALIAS=aaffinit
 ```
 
 If `TF_STATE_ACCOUNT` is missing or does not exist, `make tf-preflight` now
 prompts to create the backend resources for first-time runs.
+After preflight passes, backend defaults are saved to `infra/.tf-backend.env`
+and reused automatically by `make tf-init-isolated`.
 
 ---
 
