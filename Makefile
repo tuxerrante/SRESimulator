@@ -123,7 +123,7 @@ typecheck: ## Run frontend TypeScript type checking
 typecheck-backend: ## Run backend TypeScript type checking
 	cd $(BACKEND_DIR) && npx tsc --noEmit
 
-validate: lint typecheck typecheck-backend ## Run all linters + type checking
+validate: lint typecheck typecheck-backend tf-validate ## Run all linters + type checking + Terraform validation
 
 # ──────────────────────────────────────────────
 # Security
