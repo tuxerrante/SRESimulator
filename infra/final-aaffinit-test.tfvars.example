@@ -3,7 +3,7 @@
 # terraform.tfvars is gitignored.
 #
 # Before plan/apply:
-#   1) make tf-preflight OWNER_ALIAS=aaffinit GENEVA_SUPPRESSION_ACCESS_CONFIRMED=true
+#   1) make tf-preflight OWNER_ALIAS=aaffinit TF_STATE_ACCOUNT=<state-account> GENEVA_SUPPRESSION_ACCESS_CONFIRMED=true
 #   2) make tf-init-isolated OWNER_ALIAS=aaffinit TF_STATE_ACCOUNT=<state-account>
 
 owner_alias = "aaffinit"

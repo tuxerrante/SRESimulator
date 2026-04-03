@@ -7,10 +7,14 @@ Before `terraform apply`, run the preflight gates for the final environment:
 ```bash
 make tf-preflight \
   OWNER_ALIAS=aaffinit \
+  TF_STATE_ACCOUNT=<state-account> \
   TF_STATE_KEY=aaffinit-test-sre-simulator.tfstate \
   SQL_SERVER_NAME=aaffinit-test-sql-20260403 \
   GENEVA_SUPPRESSION_ACCESS_CONFIRMED=true
 ```
+
+If this is your first run and the backend does not exist yet, preflight will
+ask to create the state resource group/storage account/container.
 
 ## 1. Silence Cluster in Geneva Health
 

@@ -6,6 +6,9 @@ LOCATION="${LOCATION:-eastus}"
 TF_STATE_KEY="${TF_STATE_KEY:-sre-simulator.tfstate}"
 GENEVA_SUPPRESSION_ACCESS_CONFIRMED="${GENEVA_SUPPRESSION_ACCESS_CONFIRMED:-false}"
 SQL_SERVER_NAME="${SQL_SERVER_NAME:-}"
+TF_STATE_RG="${TF_STATE_RG:-tfstate-rg}"
+TF_STATE_ACCOUNT="${TF_STATE_ACCOUNT:-}"
+TF_STATE_CONTAINER="${TF_STATE_CONTAINER:-tfstate}"
 
 failures=()
 warnings=()
@@ -37,10 +40,98 @@ contains_role() {
   return 1
 }
 
+is_tty() {
+  [[ -t 0 ]]
+}
+
+is_yes() {
+  local answer="${1:-}"
+  answer="$(echo "$answer" | tr '[:upper:]' '[:lower:]')"
+  [[ "$answer" == "y" || "$answer" == "yes" ]]
+}
+
+prompt_yes_no() {
+  local prompt="$1"
+  local response
+  read -r -p "$prompt" response
+  is_yes "$response"
+}
+
+ensure_state_backend_exists() {
+  local storage_account_exists container_exists
+
+  if [[ -z "$TF_STATE_ACCOUNT" ]]; then
+    if is_tty; then
+      echo "Terraform remote state account is not configured (TF_STATE_ACCOUNT is empty)."
+      if prompt_yes_no "First-time run: create Terraform backend resources now? [y/N] "; then
+        read -r -p "Enter globally unique TF_STATE_ACCOUNT name: " TF_STATE_ACCOUNT
+      else
+        add_failure "TF_STATE_ACCOUNT is required. Set it or run: make tf-bootstrap TF_STATE_ACCOUNT=<name>"
+        return
+      fi
+    else
+      add_failure "TF_STATE_ACCOUNT is required. Set it or run interactively to create backend resources."
+      return
+    fi
+  fi
+
+  if [[ ! "$TF_STATE_ACCOUNT" =~ ^[a-z0-9]{3,24}$ ]]; then
+    add_failure "TF_STATE_ACCOUNT must be 3-24 lowercase alphanumeric characters."
+    return
+  fi
+
+  storage_account_exists=false
+  if az storage account show --name "$TF_STATE_ACCOUNT" --resource-group "$TF_STATE_RG" >/dev/null 2>&1; then
+    storage_account_exists=true
+  fi
+
+  if [[ "$storage_account_exists" != "true" ]]; then
+    if is_tty && prompt_yes_no "State storage account ${TF_STATE_ACCOUNT} not found in ${TF_STATE_RG}. Create it now? [y/N] "; then
+      az group create --name "$TF_STATE_RG" --location "$LOCATION" --tags purpose=terraform-state >/dev/null
+      az storage account create \
+        --name "$TF_STATE_ACCOUNT" \
+        --resource-group "$TF_STATE_RG" \
+        --location "$LOCATION" \
+        --sku Standard_LRS \
+        --min-tls-version TLS1_2 \
+        --allow-blob-public-access false \
+        --tags purpose=terraform-state >/dev/null
+      echo "Created Terraform state storage account: ${TF_STATE_ACCOUNT}"
+    else
+      add_failure "State storage account ${TF_STATE_ACCOUNT} was not found. Create it with: make tf-bootstrap TF_STATE_ACCOUNT=${TF_STATE_ACCOUNT}"
+      return
+    fi
+  fi
+
+  container_exists=false
+  if az storage container show \
+    --name "$TF_STATE_CONTAINER" \
+    --account-name "$TF_STATE_ACCOUNT" \
+    --auth-mode login >/dev/null 2>&1; then
+    container_exists=true
+  fi
+
+  if [[ "$container_exists" != "true" ]]; then
+    if is_tty && prompt_yes_no "State container ${TF_STATE_CONTAINER} not found in ${TF_STATE_ACCOUNT}. Create it now? [y/N] "; then
+      az storage container create \
+        --name "$TF_STATE_CONTAINER" \
+        --account-name "$TF_STATE_ACCOUNT" \
+        --auth-mode login >/dev/null
+      echo "Created Terraform state container: ${TF_STATE_CONTAINER}"
+    else
+      add_failure "State container ${TF_STATE_CONTAINER} was not found in ${TF_STATE_ACCOUNT}. Create it with: az storage container create --name ${TF_STATE_CONTAINER} --account-name ${TF_STATE_ACCOUNT} --auth-mode login"
+      return
+    fi
+  fi
+}
+
 echo "== ARO final infra preflight =="
 echo "Owner alias: ${OWNER_ALIAS:-<missing>}"
 echo "Location: ${LOCATION}"
 echo "State key: ${TF_STATE_KEY}"
+echo "State account: ${TF_STATE_ACCOUNT:-<missing>}"
+echo "State resource group: ${TF_STATE_RG}"
+echo "State container: ${TF_STATE_CONTAINER}"
 echo "SQL server name: ${SQL_SERVER_NAME:-<default from alias>}"
 echo
 
@@ -69,6 +160,10 @@ if ((${#failures[@]} == 0)); then
   if ! az account show >/dev/null 2>&1; then
     add_failure "Azure CLI is not authenticated. Run: az login"
   fi
+fi
+
+if ((${#failures[@]} == 0)); then
+  ensure_state_backend_exists
 fi
 
 subscription_id=""

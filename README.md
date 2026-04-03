@@ -202,12 +202,16 @@ For the final environment (`aaffinit-test-*`), use:
 ```bash
 make tf-preflight \
   OWNER_ALIAS=aaffinit \
+  TF_STATE_ACCOUNT=<state-account> \
   TF_STATE_KEY=aaffinit-test-sre-simulator.tfstate \
   SQL_SERVER_NAME=aaffinit-test-sql-20260403 \
   GENEVA_SUPPRESSION_ACCESS_CONFIRMED=true
 
 make tf-init-isolated OWNER_ALIAS=aaffinit TF_STATE_ACCOUNT=<state-account>
 ```
+
+If `TF_STATE_ACCOUNT` is missing or does not exist, `make tf-preflight` now
+prompts to create the backend resources for first-time runs.
 
 ---
 

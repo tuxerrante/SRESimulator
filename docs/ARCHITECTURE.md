@@ -97,6 +97,7 @@ Preflight gate:
 ```bash
 make tf-preflight \
   OWNER_ALIAS=aaffinit \
+  TF_STATE_ACCOUNT=<state-account> \
   TF_STATE_KEY=aaffinit-test-sre-simulator.tfstate \
   SQL_SERVER_NAME=aaffinit-test-sql-20260403 \
   GENEVA_SUPPRESSION_ACCESS_CONFIRMED=true
@@ -107,6 +108,9 @@ Then initialize state safely:
 ```bash
 make tf-init-isolated OWNER_ALIAS=aaffinit TF_STATE_ACCOUNT=<state-account>
 ```
+
+For first-time runs, preflight prompts to create the Terraform backend when
+`TF_STATE_ACCOUNT` is missing or not found.
 
 ---
 
