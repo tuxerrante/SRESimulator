@@ -24,7 +24,7 @@ def parse_pull_secret(raw_value: str):
 
 
 def main() -> int:
-    src = os.path.expanduser(os.environ.get("ARO_RP_ENV_FILE", "").strip())
+    src = os.path.expanduser(os.environ.get("PULL_SECRET_ENV_FILE", "").strip())
     dst = os.path.expanduser(os.environ.get("PULL_SECRET_PATH", "").strip())
 
     if not src:
@@ -33,7 +33,7 @@ def main() -> int:
                 input("Path to env file containing PULL_SECRET: ").strip()
             )
         if not src:
-            print("ARO_RP_ENV_FILE is required (or provide it interactively).")
+            print("PULL_SECRET_ENV_FILE is required (or provide it interactively).")
             return 1
 
     if not dst and sys.stdin.isatty():

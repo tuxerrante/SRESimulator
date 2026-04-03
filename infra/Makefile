@@ -5,7 +5,7 @@ TF_VAR_FLAGS := $(if $(OWNER_ALIAS),-var owner_alias=$(OWNER_ALIAS),)
 LOCATION ?= eastus
 SQL_SERVER_NAME ?=
 TF_BACKEND_ENV_FILE ?= .tf-backend.env
-ARO_RP_ENV_FILE ?=
+PULL_SECRET_ENV_FILE ?=
 PULL_SECRET_PATH ?=
 
 # Backend config – override these or supply via -backend-config at init time
@@ -43,7 +43,7 @@ tf-bootstrap: ## Create Azure Storage Account for Terraform remote state (one-ti
 	@echo "  make tf-init TF_STATE_ACCOUNT=\"$(TF_STATE_ACCOUNT)\""
 
 tf-pull-secret: ## Extract PULL_SECRET JSON from a user-provided env source
-	@ARO_RP_ENV_FILE="$(ARO_RP_ENV_FILE)" \
+	@PULL_SECRET_ENV_FILE="$(PULL_SECRET_ENV_FILE)" \
 	PULL_SECRET_PATH="$(PULL_SECRET_PATH)" \
 	python3 ./scripts/extract_pull_secret.py
 

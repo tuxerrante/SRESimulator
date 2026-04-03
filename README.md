@@ -220,14 +220,14 @@ and reused automatically by `make tf-init-isolated`.
 To reuse a pull secret from your private env source without exposing paths in this repo:
 
 ```bash
-make tf-pull-secret ARO_RP_ENV_FILE=/private/path/to/env
+make tf-pull-secret PULL_SECRET_ENV_FILE=/private/path/to/env
 ```
 
 Optionally choose your own destination path:
 
 ```bash
 make tf-pull-secret \
-  ARO_RP_ENV_FILE=/private/path/to/env \
+  PULL_SECRET_ENV_FILE=/private/path/to/env \
   PULL_SECRET_PATH=/private/path/pull-secret.json
 ```
 
