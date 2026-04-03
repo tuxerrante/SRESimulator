@@ -180,7 +180,7 @@ Open [http://localhost:3000](http://localhost:3000) in your browser.
 | `make public-exposure-audit`| Verify frontend-only public exposure in OpenShift   |
 | `make db-port-forward-check`| Verify backend DB path via local `oc port-forward`  |
 | `make prod-up-final`        | Guarded final deploy (Geneva + exposure + DB checks) |
-| `make tf-pull-secret`       | Materialize `PULL_SECRET` JSON from `~/dev/ARO-RP/secrets/env` |
+| `make tf-pull-secret`       | Materialize `PULL_SECRET` JSON from a private env source |
 | `make tf-preflight`         | Run Azure preflight gates for final infra           |
 | `make tf-init-isolated`     | Init Terraform with per-owner isolated state key    |
 | `make security`             | Run security audit + lockfile check                 |
@@ -217,14 +217,22 @@ prompts to create the backend resources for first-time runs.
 After preflight passes, backend defaults are saved to `infra/.tf-backend.env`
 and reused automatically by `make tf-init-isolated`.
 
-To reuse the ARO-RP pull secret from your local env file:
+To reuse a pull secret from your private env source without exposing paths in this repo:
 
 ```bash
-make tf-pull-secret
+make tf-pull-secret ARO_RP_ENV_FILE=/private/path/to/env
 ```
 
-This writes `infra/.pull-secret.json` (gitignored). Then set in
-`infra/terraform.tfvars`:
+Optionally choose your own destination path:
+
+```bash
+make tf-pull-secret \
+  ARO_RP_ENV_FILE=/private/path/to/env \
+  PULL_SECRET_PATH=/private/path/pull-secret.json
+```
+
+If `PULL_SECRET_PATH` is omitted, a temporary file is created automatically.
+Then set in `infra/terraform.tfvars`:
 
 ```hcl
 pull_secret_path = "/absolute/path/to/infra/.pull-secret.json"

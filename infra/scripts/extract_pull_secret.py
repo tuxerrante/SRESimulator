@@ -3,6 +3,7 @@ import json
 import os
 import pathlib
 import sys
+import tempfile
 
 
 def parse_pull_secret(raw_value: str):
@@ -23,15 +24,30 @@ def parse_pull_secret(raw_value: str):
 
 
 def main() -> int:
-    src = os.path.expanduser(os.environ.get("ARO_RP_ENV_FILE", ""))
-    dst = os.path.expanduser(os.environ.get("PULL_SECRET_PATH", ""))
+    src = os.path.expanduser(os.environ.get("ARO_RP_ENV_FILE", "").strip())
+    dst = os.path.expanduser(os.environ.get("PULL_SECRET_PATH", "").strip())
 
     if not src:
-        print("ARO_RP_ENV_FILE is required")
-        return 1
+        if sys.stdin.isatty():
+            src = os.path.expanduser(
+                input("Path to env file containing PULL_SECRET: ").strip()
+            )
+        if not src:
+            print("ARO_RP_ENV_FILE is required (or provide it interactively).")
+            return 1
+
+    if not dst and sys.stdin.isatty():
+        entered = input(
+            "Optional output path for pull-secret JSON (leave empty for temp file): "
+        ).strip()
+        if entered:
+            dst = os.path.expanduser(entered)
+
     if not dst:
-        print("PULL_SECRET_PATH is required")
-        return 1
+        fd, temp_path = tempfile.mkstemp(prefix="sre-pull-secret-", suffix=".json")
+        os.close(fd)
+        dst = temp_path
+
     if not os.path.exists(src):
         print(f"Source file not found: {src}")
         return 1
@@ -60,6 +76,7 @@ def main() -> int:
     dst_path = pathlib.Path(dst)
     dst_path.parent.mkdir(parents=True, exist_ok=True)
     dst_path.write_text(json.dumps(pull_secret_obj, separators=(",", ":")), encoding="utf-8")
+    os.chmod(dst_path, 0o600)
 
     print(f"Wrote pull secret JSON to: {dst_path}")
     print(f'Set in terraform.tfvars: pull_secret_path = "{dst_path}"')

@@ -580,7 +580,7 @@ all: validate security build ## Full CI pipeline: lint + typecheck + security + 
 tf-bootstrap: ## Create Azure Storage for Terraform remote state (one-time)
 	$(MAKE) -C infra tf-bootstrap
 
-tf-pull-secret: ## Extract pull secret JSON from ARO-RP env file for Terraform
+tf-pull-secret: ## Extract pull secret JSON from a private env source for Terraform
 	$(MAKE) -C infra tf-pull-secret
 
 tf-preflight: ## Run Azure preflight checks for final isolated environment
