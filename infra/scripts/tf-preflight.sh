@@ -50,6 +50,11 @@ is_yes() {
   [[ "$answer" == "y" || "$answer" == "yes" ]]
 }
 
+is_valid_storage_account_name() {
+  local name="${1:-}"
+  [[ "$name" =~ ^[a-z0-9]{3,24}$ ]]
+}
+
 prompt_yes_no() {
   local prompt="$1"
   local response
@@ -64,7 +69,15 @@ ensure_state_backend_exists() {
     if is_tty; then
       echo "Terraform remote state account is not configured (TF_STATE_ACCOUNT is empty)."
       if prompt_yes_no "First-time run: create Terraform backend resources now? [y/N] "; then
-        read -r -p "Enter globally unique TF_STATE_ACCOUNT name: " TF_STATE_ACCOUNT
+        while true; do
+          read -r -p "Enter globally unique TF_STATE_ACCOUNT name (3-24 chars, lowercase letters/numbers only): " TF_STATE_ACCOUNT
+          if is_valid_storage_account_name "$TF_STATE_ACCOUNT"; then
+            break
+          fi
+          echo "Invalid storage account name: ${TF_STATE_ACCOUNT}"
+          echo "Use 3-24 chars with only lowercase letters and numbers (no dashes)."
+          echo "Example: aaffinitsresimulator"
+        done
       else
         add_failure "TF_STATE_ACCOUNT is required. Set it or run: make tf-bootstrap TF_STATE_ACCOUNT=<name>"
         return
@@ -75,8 +88,8 @@ ensure_state_backend_exists() {
     fi
   fi
 
-  if [[ ! "$TF_STATE_ACCOUNT" =~ ^[a-z0-9]{3,24}$ ]]; then
-    add_failure "TF_STATE_ACCOUNT must be 3-24 lowercase alphanumeric characters."
+  if ! is_valid_storage_account_name "$TF_STATE_ACCOUNT"; then
+    add_failure "TF_STATE_ACCOUNT must be 3-24 lowercase letters/numbers with no dashes. Example: aaffinitsresimulator"
     return
   fi
 
