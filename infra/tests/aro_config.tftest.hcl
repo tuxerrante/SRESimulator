@@ -54,6 +54,16 @@ run "aro_network_profile" {
     condition     = azapi_resource.aro_cluster.body.properties.networkProfile.serviceCidr == "172.30.0.0/16"
     error_message = "ARO service CIDR should be 172.30.0.0/16."
   }
+
+  assert {
+    condition     = azapi_resource.aro_cluster.body.properties.networkProfile.outboundType == "Loadbalancer"
+    error_message = "ARO outboundType must be explicitly set to Loadbalancer."
+  }
+
+  assert {
+    condition     = azapi_resource.aro_cluster.body.properties.networkProfile.preconfiguredNsg == "Disabled"
+    error_message = "ARO preconfiguredNsg must be explicitly set to Disabled."
+  }
 }
 
 run "aro_api_public" {
@@ -83,6 +93,25 @@ run "aro_worker_disk_size" {
   }
 }
 
+run "aro_security_profile_defaults" {
+  command = plan
+
+  assert {
+    condition     = azapi_resource.aro_cluster.body.properties.clusterProfile.fipsValidatedModules == "Disabled"
+    error_message = "ARO FIPS modules setting must be explicitly set to Disabled."
+  }
+
+  assert {
+    condition     = azapi_resource.aro_cluster.body.properties.masterProfile.encryptionAtHost == "Disabled"
+    error_message = "ARO masterProfile.encryptionAtHost must be explicitly set to Disabled."
+  }
+
+  assert {
+    condition     = azapi_resource.aro_cluster.body.properties.workerProfiles[0].encryptionAtHost == "Disabled"
+    error_message = "ARO workerProfile.encryptionAtHost must be explicitly set to Disabled."
+  }
+}
+
 run "aro_sp_password_expiry" {
   command = plan
 
@@ -106,16 +135,16 @@ run "aro_role_assignments_are_contributor" {
   }
 }
 
-run "subnet_delegations" {
+run "subnets_not_delegated" {
   command = plan
 
   assert {
-    condition     = azapi_update_resource.master_subnet_delegation.body.properties.delegations[0].properties.serviceName == "Microsoft.RedHatOpenShift/hcpOpenShiftClusters"
-    error_message = "Master subnet must delegate to Microsoft.RedHatOpenShift/hcpOpenShiftClusters."
+    condition     = length(azurerm_subnet.master.delegation) == 0
+    error_message = "Master subnet must not be delegated; ARO creates private endpoints in this subnet."
   }
 
   assert {
-    condition     = azapi_update_resource.worker_subnet_delegation.body.properties.delegations[0].properties.serviceName == "Microsoft.RedHatOpenShift/hcpOpenShiftClusters"
-    error_message = "Worker subnet must delegate to Microsoft.RedHatOpenShift/hcpOpenShiftClusters."
+    condition     = length(azurerm_subnet.worker.delegation) == 0
+    error_message = "Worker subnet must not be delegated."
   }
 }
