@@ -15,14 +15,6 @@ resource "azurerm_subnet" "master" {
   resource_group_name  = azurerm_resource_group.main.name
   virtual_network_name = azurerm_virtual_network.aro.name
   address_prefixes     = [var.master_subnet_cidr]
-
-  # ARO requires the Microsoft.RedHatOpenShift RP to join the subnet
-  delegation {
-    name = "aro-master"
-    service_delegation {
-      name = "Microsoft.RedHatOpenShift/openShiftClusters"
-    }
-  }
 }
 
 resource "azurerm_subnet" "worker" {
@@ -30,11 +22,42 @@ resource "azurerm_subnet" "worker" {
   resource_group_name  = azurerm_resource_group.main.name
   virtual_network_name = azurerm_virtual_network.aro.name
   address_prefixes     = [var.worker_subnet_cidr]
+}
 
-  delegation {
-    name = "aro-worker"
-    service_delegation {
-      name = "Microsoft.RedHatOpenShift/openShiftClusters"
+# azurerm v4 no longer accepts ARO subnet delegations in schema validation.
+# Apply delegations through azapi so the cluster can still be provisioned.
+resource "azapi_update_resource" "master_subnet_delegation" {
+  type        = "Microsoft.Network/virtualNetworks/subnets@2024-05-01"
+  resource_id = azurerm_subnet.master.id
+
+  body = {
+    properties = {
+      delegations = [
+        {
+          name = "aro-master"
+          properties = {
+            serviceName = "Microsoft.RedHatOpenShift/openShiftClusters"
+          }
+        }
+      ]
+    }
+  }
+}
+
+resource "azapi_update_resource" "worker_subnet_delegation" {
+  type        = "Microsoft.Network/virtualNetworks/subnets@2024-05-01"
+  resource_id = azurerm_subnet.worker.id
+
+  body = {
+    properties = {
+      delegations = [
+        {
+          name = "aro-worker"
+          properties = {
+            serviceName = "Microsoft.RedHatOpenShift/openShiftClusters"
+          }
+        }
+      ]
     }
   }
 }
@@ -146,6 +169,8 @@ resource "azapi_resource" "aro_cluster" {
   }
 
   depends_on = [
+    azapi_update_resource.master_subnet_delegation,
+    azapi_update_resource.worker_subnet_delegation,
     azurerm_role_assignment.aro_vnet_contributor,
     azurerm_role_assignment.aro_rp_vnet_contributor,
   ]

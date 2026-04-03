@@ -78,6 +78,38 @@ SRESimulator/
 
 ---
 
+## Final Infra Baseline (ARO + Azure SQL)
+
+For the final production-infra rehearsal, provision a dedicated environment
+through `infra/` with:
+
+- `owner_alias = "aaffinit"` so main Azure resources follow
+  `aaffinit-test-*` naming (`aaffinit-test-rg`, `aaffinit-test` cluster).
+- Isolated Terraform state key (for example
+  `aaffinit-test-sre-simulator.tfstate`) to avoid side effects on other stacks.
+- Explicit `extra_tags.test = "true"` in addition to mandatory infra tags.
+- Minimum supported ARO sizing (`Standard_D8s_v3` masters,
+  `Standard_D4s_v3` workers, count `2`).
+- `enable_database = true` for Azure SQL-backed persistence.
+
+Preflight gate:
+
+```bash
+make tf-preflight \
+  OWNER_ALIAS=aaffinit \
+  TF_STATE_KEY=aaffinit-test-sre-simulator.tfstate \
+  SQL_SERVER_NAME=aaffinit-test-sql-20260403 \
+  GENEVA_SUPPRESSION_ACCESS_CONFIRMED=true
+```
+
+Then initialize state safely:
+
+```bash
+make tf-init-isolated OWNER_ALIAS=aaffinit TF_STATE_ACCOUNT=<state-account>
+```
+
+---
+
 ## OpenShift Exposure Model
 
 Short answer: **only the frontend is internet-exposed; backend stays private inside the cluster**.
@@ -107,6 +139,12 @@ Short answer: **only the frontend is internet-exposed; backend stays private ins
 - Backend is not directly reachable from the internet.
 - External traffic terminates at frontend only.
 - Backend remains isolated with least-privilege pod-to-pod access.
+
+Runtime audit command:
+
+```bash
+make public-exposure-audit NS=sre-simulator
+```
 
 ---
 
@@ -299,6 +337,8 @@ suite with `STORAGE_BACKEND=mssql`.
 
 CI runs the same tests automatically via an `integration-test-mssql` job
 that uses Azure SQL Edge as a GitHub Actions service container.
+The same job now includes `make smoke-backend-mssql` to verify backend startup
+and DB-backed route behavior (`GET /api/scores`) with `STORAGE_BACKEND=mssql`.
 
 **Note:** The Azure SQL Edge `latest` image does not ship `sqlcmd`. All
 readiness checks use Node.js (`net` module for TCP, `mssql` package for
@@ -365,6 +405,14 @@ DB_SECRET_NAME=sre-sql-creds make e2e-azure-route-up
 to Helm. The backend pod starts with `STORAGE_BACKEND=mssql` and runs
 migrations automatically on first connect.
 
+For the guarded final deployment flow (Geneva suppression + exposure/DB checks):
+
+```bash
+DB_SECRET_NAME=sre-sql-creds \
+GENEVA_SUPPRESSION_RULE_ACTIVE=true \
+make prod-up-final
+```
+
 #### Step 5 — Validate persistence across pod restarts
 
 1. Open the app in a browser and play a game to completion.
@@ -386,6 +434,13 @@ The free-tier database auto-pauses after 60 minutes of inactivity.
 1. Make a new request (e.g. load the leaderboard).
 1. The first request will take approximately 30 seconds while Azure
    resumes the database. Subsequent requests should respond normally.
+
+If GitHub pipelines are unavailable, validate backend-to-DB reachability
+from your machine via `oc port-forward`:
+
+```bash
+make db-port-forward-check NS=sre-simulator
+```
 
 #### Teardown
 

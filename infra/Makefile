@@ -1,13 +1,16 @@
-.PHONY: help tf-bootstrap tf-init tf-validate tf-test tf-plan tf-apply tf-destroy tf-kubeconfig tf-fmt tf-output
+.PHONY: help tf-bootstrap tf-preflight tf-init tf-init-local tf-init-isolated tf-validate tf-test tf-plan tf-apply tf-destroy tf-kubeconfig tf-fmt tf-output
 
 OWNER_ALIAS ?=
 TF_VAR_FLAGS := $(if $(OWNER_ALIAS),-var owner_alias=$(OWNER_ALIAS),)
+LOCATION ?= eastus
+SQL_SERVER_NAME ?=
 
 # Backend config – override these or supply via -backend-config at init time
 TF_STATE_RG           ?= tfstate-rg
 TF_STATE_ACCOUNT      ?=
 TF_STATE_CONTAINER    ?= tfstate
-TF_STATE_KEY          ?= sre-simulator.tfstate
+TF_STATE_KEY          ?= $(if $(OWNER_ALIAS),$(OWNER_ALIAS)-test-sre-simulator.tfstate,sre-simulator.tfstate)
+GENEVA_SUPPRESSION_ACCESS_CONFIRMED ?= false
 
 help: ## Show this help
 	@grep -hE '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -34,6 +37,14 @@ tf-bootstrap: ## Create Azure Storage Account for Terraform remote state (one-ti
 	@echo "To use this storage account for the Terraform backend, run:"
 	@echo "  make tf-init TF_STATE_ACCOUNT=\"$(TF_STATE_ACCOUNT)\""
 
+tf-preflight: ## Run Azure preflight checks for final isolated environment
+	@OWNER_ALIAS="$(OWNER_ALIAS)" \
+	LOCATION="$(LOCATION)" \
+	TF_STATE_KEY="$(TF_STATE_KEY)" \
+	SQL_SERVER_NAME="$(SQL_SERVER_NAME)" \
+	GENEVA_SUPPRESSION_ACCESS_CONFIRMED="$(GENEVA_SUPPRESSION_ACCESS_CONFIRMED)" \
+	./scripts/tf-preflight.sh
+
 tf-init: ## Initialize Terraform (requires TF_STATE_ACCOUNT for remote state)
 	@if [ -z "$(TF_STATE_ACCOUNT)" ]; then \
 		echo "TF_STATE_ACCOUNT is required. Run 'make tf-bootstrap' first, then:"; \
@@ -49,6 +60,21 @@ tf-init: ## Initialize Terraform (requires TF_STATE_ACCOUNT for remote state)
 		-backend-config="container_name=$(TF_STATE_CONTAINER)" \
 		-backend-config="key=$(TF_STATE_KEY)"
 
+tf-init-local: ## Initialize Terraform without remote backend (validation/testing only)
+	terraform init -backend=false
+
+tf-init-isolated: ## Initialize Terraform with per-owner isolated state key
+	@if [ -z "$(OWNER_ALIAS)" ]; then \
+		echo "OWNER_ALIAS is required (expected aaffinit for final environment)."; \
+		exit 1; \
+	fi
+	@$(MAKE) tf-init \
+		OWNER_ALIAS="$(OWNER_ALIAS)" \
+		TF_STATE_ACCOUNT="$(TF_STATE_ACCOUNT)" \
+		TF_STATE_RG="$(TF_STATE_RG)" \
+		TF_STATE_CONTAINER="$(TF_STATE_CONTAINER)" \
+		TF_STATE_KEY="$(OWNER_ALIAS)-test-sre-simulator.tfstate"
+
 tf-validate: ## Validate Terraform configuration
 	terraform validate
 
@@ -56,9 +82,13 @@ tf-fmt: ## Format Terraform files
 	terraform fmt -recursive
 
 tf-test: ## Run Terraform native tests (requires TF >= 1.7, no credentials needed)
-	@TF_VER=$$(terraform version -json 2>/dev/null | grep -o '"terraform_version":"[^"]*"' | cut -d'"' -f4); \
+	@TF_VER=$$(terraform version -json 2>/dev/null | sed -n 's/.*"terraform_version":[[:space:]]*"\([^"]*\)".*/\1/p'); \
 	MAJOR=$$(echo "$$TF_VER" | cut -d. -f1); \
 	MINOR=$$(echo "$$TF_VER" | cut -d. -f2); \
+	if [ -z "$$TF_VER" ]; then \
+		echo "Unable to detect terraform version from 'terraform version -json'."; \
+		exit 1; \
+	fi; \
 	if [ "$$MAJOR" -lt 1 ] || { [ "$$MAJOR" -eq 1 ] && [ "$$MINOR" -lt 7 ]; }; then \
 		echo "terraform test with mock_provider requires Terraform >= 1.7.0 (found $$TF_VER)"; \
 		exit 1; \

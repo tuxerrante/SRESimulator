@@ -140,7 +140,7 @@ variable "sql_admin_password" {
 
   validation {
     condition = (
-      var.enable_database == false ||
+      var.sql_admin_password == "" ||
       (
         length(var.sql_admin_password) >= 8 &&
         can(regex("[A-Z]", var.sql_admin_password)) &&
@@ -149,7 +149,21 @@ variable "sql_admin_password" {
         can(regex("[^A-Za-z0-9]", var.sql_admin_password))
       )
     )
-    error_message = "When enable_database is true, sql_admin_password must be at least 8 characters and include uppercase, lowercase, numeric, and special characters."
+    error_message = "When set, sql_admin_password must be at least 8 characters and include uppercase, lowercase, numeric, and special characters."
+  }
+}
+
+variable "sql_server_name" {
+  description = "Optional Azure SQL Server name override. Must be globally unique in Azure. If empty, defaults to <owner_alias>-test-sql."
+  type        = string
+  default     = ""
+
+  validation {
+    condition = (
+      var.sql_server_name == "" ||
+      can(regex("^[a-z][a-z0-9-]{1,61}[a-z0-9]$", var.sql_server_name))
+    )
+    error_message = "sql_server_name must be 3-63 chars, lowercase letters/numbers/hyphens, start with a letter, and not end with a hyphen."
   }
 }
 
@@ -162,6 +176,7 @@ locals {
   cluster_name        = local.prefix
   vnet_name           = "${local.prefix}-vnet"
   aoai_account_name   = "${local.prefix}-aoai"
+  sql_server_name     = var.sql_server_name != "" ? var.sql_server_name : "${local.prefix}-sql"
 
   tags = merge(var.extra_tags, {
     environment = "test"

@@ -174,8 +174,14 @@ Open [http://localhost:3000](http://localhost:3000) in your browser.
 | `make lint`                 | Run all linters                                     |
 | `make typecheck`            | Run TypeScript type checking                        |
 | `make smoke-local-vertex`   | Run local live Vertex probe against backend         |
+| `make smoke-backend-mssql`  | Start backend with MSSQL and smoke-test `/api/scores` |
 | `make e2e-azure-route-up`   | Build/deploy temporary ARO route using Azure OpenAI |
 | `make e2e-azure-route-down` | Tear down temporary Azure e2e namespace             |
+| `make public-exposure-audit`| Verify frontend-only public exposure in OpenShift   |
+| `make db-port-forward-check`| Verify backend DB path via local `oc port-forward`  |
+| `make prod-up-final`        | Guarded final deploy (Geneva + exposure + DB checks) |
+| `make tf-preflight`         | Run Azure preflight gates for final infra           |
+| `make tf-init-isolated`     | Init Terraform with per-owner isolated state key    |
 | `make security`             | Run security audit + lockfile check                 |
 | `make all`                  | Full CI pipeline                                    |
 | `make clean`                | Remove build artifacts                              |
@@ -191,11 +197,24 @@ export AOAI_ACCOUNT=<azure-openai-account-name>
 export AOAI_DEPLOYMENT=<azure-openai-deployment-name>
 ```
 
+For the final environment (`aaffinit-test-*`), use:
+
+```bash
+make tf-preflight \
+  OWNER_ALIAS=aaffinit \
+  TF_STATE_KEY=aaffinit-test-sre-simulator.tfstate \
+  SQL_SERVER_NAME=aaffinit-test-sql-20260403 \
+  GENEVA_SUPPRESSION_ACCESS_CONFIRMED=true
+
+make tf-init-isolated OWNER_ALIAS=aaffinit TF_STATE_ACCOUNT=<state-account>
+```
+
 ---
 
 ## 📚 Documentation
 
 - **[Architecture & Game Design](docs/ARCHITECTURE.md)** — project structure, tech stack, scoring system, investigation methodology, API routes
+- **[Infra Post-Apply Checklist](infra/POST_APPLY_CHECKLIST.md)** — Geneva suppression, production/e2e namespace flow, exposure + DB validation checks
 - **[ARO AI Connectivity Spike](docs/ARO_AI_CONNECTIVITY_SPIKE.md)** — prove Claude-on-Vertex connectivity from a pod end-to-end
 - **[CLAUDE.md](CLAUDE.md)** — original design document and game spec
 

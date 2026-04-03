@@ -103,6 +103,7 @@ output "post_apply_checklist" {
     ║     • Suppression type = "Suppress all alerts"                       ║
     ║     • Duration = Indefinite (or match cluster lifetime)              ║
     ║     • Reason = "Test/development cluster – not production"           ║
+    ║     • Then: export GENEVA_SUPPRESSION_RULE_ACTIVE=true               ║
     ║                                                                      ║
     ║  2. GET KUBECONFIG                                                   ║
     ║     make tf-kubeconfig                                               ║
@@ -116,6 +117,11 @@ output "post_apply_checklist" {
     ║     • Both share the same Azure OpenAI account/deployment.           ║
     ║     • prod-down requires typing the namespace name to confirm.       ║
     ║     • e2e namespaces are disposable and auto-cleaned.                ║
+    ║                                                                      ║
+    ║  5. FINAL DEPLOY + CHECKS (with Azure SQL enabled)                   ║
+    ║     • DB_SECRET_NAME=sre-sql-creds make prod-up-final                ║
+    ║     • make public-exposure-audit NS="${var.prod_namespace}"           ║
+    ║     • make db-port-forward-check NS="${var.prod_namespace}"           ║
     ║                                                                      ║
     EOT
     ,

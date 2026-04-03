@@ -11,7 +11,7 @@
 
 resource "azurerm_mssql_server" "main" {
   count               = var.enable_database ? 1 : 0
-  name                = "${local.prefix}-sql"
+  name                = local.sql_server_name
   resource_group_name = azurerm_resource_group.main.name
   location            = azurerm_resource_group.main.location
   version             = "12.0"
@@ -24,6 +24,10 @@ resource "azurerm_mssql_server" "main" {
   tags = local.tags
 
   lifecycle {
+    precondition {
+      condition     = var.enable_database == false || var.sql_admin_password != ""
+      error_message = "sql_admin_password is required when enable_database=true."
+    }
     prevent_destroy = true
   }
 }

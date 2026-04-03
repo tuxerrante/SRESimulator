@@ -266,6 +266,13 @@ jobs:
             Password=CI_Pass@123!;TrustServerCertificate=true
         run: make test-integration
 
+      - name: Smoke startup with MSSQL backend
+        env:
+          MSSQL_DATABASE_URL: >-
+            Server=localhost;Database=sresimulator;User Id=sa;
+            Password=CI_Pass@123!;TrustServerCertificate=true
+        run: make smoke-backend-mssql
+
   security:
     runs-on: ubuntu-latest
     env:
