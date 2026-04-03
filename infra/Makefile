@@ -1,10 +1,12 @@
-.PHONY: help tf-bootstrap tf-preflight tf-init tf-init-local tf-init-isolated tf-validate tf-test tf-plan tf-apply tf-destroy tf-kubeconfig tf-fmt tf-output
+.PHONY: help tf-bootstrap tf-pull-secret tf-preflight tf-init tf-init-local tf-init-isolated tf-validate tf-test tf-plan tf-apply tf-destroy tf-kubeconfig tf-fmt tf-output
 
 OWNER_ALIAS ?=
 TF_VAR_FLAGS := $(if $(OWNER_ALIAS),-var owner_alias=$(OWNER_ALIAS),)
 LOCATION ?= eastus
 SQL_SERVER_NAME ?=
 TF_BACKEND_ENV_FILE ?= .tf-backend.env
+ARO_RP_ENV_FILE ?= $(HOME)/dev/ARO-RP/secrets/env
+PULL_SECRET_PATH ?= $(CURDIR)/.pull-secret.json
 
 # Backend config – override these or supply via -backend-config at init time
 TF_STATE_RG           ?= tfstate-rg
@@ -39,6 +41,11 @@ tf-bootstrap: ## Create Azure Storage Account for Terraform remote state (one-ti
 	@echo "Terraform backend storage ready."
 	@echo "To use this storage account for the Terraform backend, run:"
 	@echo "  make tf-init TF_STATE_ACCOUNT=\"$(TF_STATE_ACCOUNT)\""
+
+tf-pull-secret: ## Extract PULL_SECRET JSON from ARO-RP env and write local pull-secret file
+	@ARO_RP_ENV_FILE="$(ARO_RP_ENV_FILE)" \
+	PULL_SECRET_PATH="$(PULL_SECRET_PATH)" \
+	python3 ./scripts/extract_pull_secret.py
 
 tf-preflight: ## Run Azure preflight checks for final isolated environment
 	@OWNER_ALIAS="$(OWNER_ALIAS)" \

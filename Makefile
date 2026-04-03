@@ -8,7 +8,7 @@
        build dev start \
        docker-build-frontend docker-build-backend docker-build \
        pre-commit all \
-       tf-bootstrap tf-preflight tf-init tf-init-local tf-init-isolated tf-validate tf-fmt tf-test tf-plan tf-apply tf-destroy tf-kubeconfig tf-output
+       tf-bootstrap tf-pull-secret tf-preflight tf-init tf-init-local tf-init-isolated tf-validate tf-fmt tf-test tf-plan tf-apply tf-destroy tf-kubeconfig tf-output
 
 FRONTEND_DIR := frontend
 BACKEND_DIR := backend
@@ -579,6 +579,9 @@ all: validate security build ## Full CI pipeline: lint + typecheck + security + 
 # ──────────────────────────────────────────────
 tf-bootstrap: ## Create Azure Storage for Terraform remote state (one-time)
 	$(MAKE) -C infra tf-bootstrap
+
+tf-pull-secret: ## Extract pull secret JSON from ARO-RP env file for Terraform
+	$(MAKE) -C infra tf-pull-secret
 
 tf-preflight: ## Run Azure preflight checks for final isolated environment
 	$(MAKE) -C infra tf-preflight
