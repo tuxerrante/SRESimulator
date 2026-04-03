@@ -25,6 +25,11 @@ resource "azurerm_mssql_server" "main" {
 
   lifecycle {
     prevent_destroy = true
+
+    precondition {
+      condition     = var.sql_admin_password != ""
+      error_message = "sql_admin_password is required when enable_database is true."
+    }
   }
 }
 

@@ -140,7 +140,7 @@ variable "sql_admin_password" {
 
   validation {
     condition = (
-      var.enable_database == false ||
+      var.sql_admin_password == "" ||
       (
         length(var.sql_admin_password) >= 8 &&
         can(regex("[A-Z]", var.sql_admin_password)) &&
@@ -149,7 +149,7 @@ variable "sql_admin_password" {
         can(regex("[^A-Za-z0-9]", var.sql_admin_password))
       )
     )
-    error_message = "When enable_database is true, sql_admin_password must be at least 8 characters and include uppercase, lowercase, numeric, and special characters."
+    error_message = "When set, sql_admin_password must be at least 8 characters and include uppercase, lowercase, numeric, and special characters."
   }
 }
 
