@@ -36,7 +36,7 @@ resource "azapi_update_resource" "master_subnet_delegation" {
         {
           name = "aro-master"
           properties = {
-            serviceName = "Microsoft.RedHatOpenShift/openShiftClusters"
+            serviceName = "Microsoft.RedHatOpenShift/hcpOpenShiftClusters"
           }
         }
       ]
@@ -54,7 +54,7 @@ resource "azapi_update_resource" "worker_subnet_delegation" {
         {
           name = "aro-worker"
           properties = {
-            serviceName = "Microsoft.RedHatOpenShift/openShiftClusters"
+            serviceName = "Microsoft.RedHatOpenShift/hcpOpenShiftClusters"
           }
         }
       ]

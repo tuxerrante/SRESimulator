@@ -205,6 +205,8 @@ make tf-preflight \
   OWNER_ALIAS=aaffinit \
   TF_STATE_ACCOUNT=<state-account> \
   LOCATION=westeurope \
+  AOAI_SKU_NAME=GlobalStandard \
+  ENABLE_SQL_FREE_TIER=false \
   TF_STATE_KEY=aaffinit-test-sre-simulator.tfstate \
   SQL_SERVER_NAME=aaffinit-test-sql-20260403 \
   GENEVA_SUPPRESSION_ACCESS_CONFIRMED=true

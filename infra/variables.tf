@@ -61,6 +61,12 @@ variable "aoai_model_version" {
   default     = "2024-07-18"
 }
 
+variable "aoai_sku_name" {
+  description = "Azure OpenAI deployment SKU name. For westeurope with gpt-4o-mini, use GlobalStandard."
+  type        = string
+  default     = "GlobalStandard"
+}
+
 variable "aoai_capacity" {
   description = "Rate limit in thousands of tokens per minute (K TPM). Cost is pay-per-token, not per capacity."
   type        = number
@@ -73,7 +79,8 @@ variable "aoai_capacity" {
   #   Single active user peak: ~50K TPM
   #   With prod + e2e concurrent: ~80K TPM burst
   #   80K TPM handles a single active user at peak plus concurrent e2e.
-  #   Standard (pay-as-you-go) means this only affects rate limit, not cost.
+  #   GlobalStandard/DataZoneStandard (pay-as-you-go) means this only affects
+  #   rate limit, not base cost.
 
   validation {
     condition     = var.aoai_capacity >= 1 && var.aoai_capacity <= 500
@@ -127,7 +134,13 @@ variable "extra_tags" {
 # Azure SQL Database (optional, default off)
 # ---------------------------------------------------------------------------
 variable "enable_database" {
-  description = "Whether to provision Azure SQL Database (free tier) for persistent game data."
+  description = "Whether to provision Azure SQL Database for persistent game data."
+  type        = bool
+  default     = false
+}
+
+variable "enable_sql_free_tier" {
+  description = "Whether to apply Azure SQL free-tier overlay properties. Disable in regions/subscriptions where the update is not allowed."
   type        = bool
   default     = false
 }

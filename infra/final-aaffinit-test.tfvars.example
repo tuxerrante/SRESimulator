@@ -14,6 +14,9 @@ location    = "eastus"
 # Last validated from preflight on 2026-04-03.
 aro_version = "4.20.15"
 
+# In westeurope, gpt-4o-mini requires GlobalStandard (Standard is unsupported).
+aoai_sku_name = "GlobalStandard"
+
 # Minimum supported ARO sizing.
 master_vm_size = "Standard_D8s_v3"
 worker_vm_size = "Standard_D4s_v3"
@@ -24,6 +27,8 @@ prod_namespace = "sre-simulator"
 
 # Final environment should provision Azure SQL for backend persistence.
 enable_database = true
+# Free-tier update is not supported in all regions/subscriptions.
+enable_sql_free_tier = false
 # sql_admin_password = "<strong-password-meeting-azure-complexity>"
 # Set if default aaffinit-test-sql is already taken in Azure:
 # sql_server_name = "aaffinit-test-sql-001"

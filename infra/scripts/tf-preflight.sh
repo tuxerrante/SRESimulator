@@ -10,6 +10,10 @@ TF_STATE_RG="${TF_STATE_RG:-tfstate-rg}"
 TF_STATE_ACCOUNT="${TF_STATE_ACCOUNT:-}"
 TF_STATE_CONTAINER="${TF_STATE_CONTAINER:-tfstate}"
 TF_BACKEND_ENV_FILE="${TF_BACKEND_ENV_FILE:-.tf-backend.env}"
+AOAI_MODEL_NAME="${AOAI_MODEL_NAME:-gpt-4o-mini}"
+AOAI_MODEL_VERSION="${AOAI_MODEL_VERSION:-2024-07-18}"
+AOAI_SKU_NAME="${AOAI_SKU_NAME:-GlobalStandard}"
+ENABLE_SQL_FREE_TIER="${ENABLE_SQL_FREE_TIER:-false}"
 
 failures=()
 warnings=()
@@ -160,6 +164,9 @@ echo "State resource group: ${TF_STATE_RG}"
 echo "State container: ${TF_STATE_CONTAINER}"
 echo "Backend env file: ${TF_BACKEND_ENV_FILE}"
 echo "SQL server name: ${SQL_SERVER_NAME:-<default from alias>}"
+echo "AOAI model/version: ${AOAI_MODEL_NAME}/${AOAI_MODEL_VERSION}"
+echo "AOAI deployment sku: ${AOAI_SKU_NAME}"
+echo "Enable SQL free tier: ${ENABLE_SQL_FREE_TIER}"
 echo
 
 if [[ -z "$OWNER_ALIAS" ]]; then
@@ -271,6 +278,20 @@ if ((${#failures[@]} == 0)); then
     echo "DSv3 quota usage (name current limit):"
     echo "$dsv3_quota"
   fi
+
+  aoai_skus="$(az cognitiveservices model list \
+    --location "$LOCATION" \
+    --query "[?kind=='OpenAI' && model.name=='${AOAI_MODEL_NAME}' && model.version=='${AOAI_MODEL_VERSION}'].model.skus[].name" \
+    -o tsv 2>/dev/null || true)"
+  if [[ -z "$aoai_skus" ]]; then
+    add_failure "AOAI model ${AOAI_MODEL_NAME} version ${AOAI_MODEL_VERSION} was not found in ${LOCATION}. Query available models with: az cognitiveservices model list --location ${LOCATION} --query \"[?kind=='OpenAI'].model.[name,version]\" -o tsv"
+  elif ! contains_role "$aoai_skus" "$AOAI_SKU_NAME"; then
+    add_failure "AOAI sku ${AOAI_SKU_NAME} is not supported for ${AOAI_MODEL_NAME} ${AOAI_MODEL_VERSION} in ${LOCATION}. Available skus: $(echo "$aoai_skus" | tr '\n' ' ')"
+  fi
+
+  if [[ "$ENABLE_SQL_FREE_TIER" == "true" ]]; then
+    add_warning "enable_sql_free_tier=true may fail in some regions/subscriptions (error: ProvisioningDisabled). Disable if apply fails."
+  fi
 fi
 
 if [[ "$GENEVA_SUPPRESSION_ACCESS_CONFIRMED" != "true" ]]; then
@@ -284,7 +305,11 @@ echo "  master_vm_size = \"Standard_D8s_v3\""
 echo "  worker_vm_size = \"Standard_D4s_v3\""
 echo "  worker_count = 2"
 echo "  aro_version = \"${latest_aro_version:-<pin-latest-compatible>}\""
+echo "  aoai_model_name = \"${AOAI_MODEL_NAME}\""
+echo "  aoai_model_version = \"${AOAI_MODEL_VERSION}\""
+echo "  aoai_sku_name = \"${AOAI_SKU_NAME}\""
 echo "  enable_database = true"
+echo "  enable_sql_free_tier = ${ENABLE_SQL_FREE_TIER}"
 echo "  sql_server_name = \"${SQL_SERVER_NAME:-${OWNER_ALIAS}-test-sql}\""
 echo "  extra_tags = { test = \"true\" }"
 

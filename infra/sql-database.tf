@@ -1,9 +1,8 @@
 # ---------------------------------------------------------------------------
-# Azure SQL Database (free tier)
+# Azure SQL Database
 #
 # Gated behind var.enable_database (default false) so existing deployments
-# are unaffected.  Uses the Azure SQL free offer: 100K vCore-seconds/month,
-# 32 GB storage, built-in HA and automated backups at zero cost.
+# are unaffected. Free-tier overlay is optional via var.enable_sql_free_tier.
 #
 # Networking: By default uses a public endpoint with a firewall rule.
 # For production, replace with a private endpoint inside the ARO VNet.
@@ -55,7 +54,7 @@ resource "azurerm_mssql_database" "app" {
 # free_limit_exhaustion_behavior (hashicorp/terraform-provider-azurerm#32055),
 # so we overlay them via azapi_update_resource.
 resource "azapi_update_resource" "sql_free_tier" {
-  count       = var.enable_database ? 1 : 0
+  count       = var.enable_database && var.enable_sql_free_tier ? 1 : 0
   type        = "Microsoft.Sql/servers/databases@2023-08-01-preview"
   resource_id = azurerm_mssql_database.app[0].id
 

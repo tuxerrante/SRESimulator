@@ -7,6 +7,10 @@ SQL_SERVER_NAME ?=
 TF_BACKEND_ENV_FILE ?= .tf-backend.env
 PULL_SECRET_ENV_FILE ?=
 PULL_SECRET_PATH ?=
+AOAI_MODEL_NAME ?= gpt-4o-mini
+AOAI_MODEL_VERSION ?= 2024-07-18
+AOAI_SKU_NAME ?= GlobalStandard
+ENABLE_SQL_FREE_TIER ?= false
 
 # Backend config – override these or supply via -backend-config at init time
 TF_STATE_RG           ?= tfstate-rg
@@ -56,6 +60,10 @@ tf-preflight: ## Run Azure preflight checks for final isolated environment
 	TF_STATE_CONTAINER="$(TF_STATE_CONTAINER)" \
 	TF_BACKEND_ENV_FILE="$(TF_BACKEND_ENV_FILE)" \
 	SQL_SERVER_NAME="$(SQL_SERVER_NAME)" \
+	AOAI_MODEL_NAME="$(AOAI_MODEL_NAME)" \
+	AOAI_MODEL_VERSION="$(AOAI_MODEL_VERSION)" \
+	AOAI_SKU_NAME="$(AOAI_SKU_NAME)" \
+	ENABLE_SQL_FREE_TIER="$(ENABLE_SQL_FREE_TIER)" \
 	GENEVA_SUPPRESSION_ACCESS_CONFIRMED="$(GENEVA_SUPPRESSION_ACCESS_CONFIRMED)" \
 	./scripts/tf-preflight.sh
 

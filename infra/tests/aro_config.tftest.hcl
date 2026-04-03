@@ -110,12 +110,12 @@ run "subnet_delegations" {
   command = plan
 
   assert {
-    condition     = azapi_update_resource.master_subnet_delegation.body.properties.delegations[0].properties.serviceName == "Microsoft.RedHatOpenShift/openShiftClusters"
-    error_message = "Master subnet must delegate to Microsoft.RedHatOpenShift/openShiftClusters."
+    condition     = azapi_update_resource.master_subnet_delegation.body.properties.delegations[0].properties.serviceName == "Microsoft.RedHatOpenShift/hcpOpenShiftClusters"
+    error_message = "Master subnet must delegate to Microsoft.RedHatOpenShift/hcpOpenShiftClusters."
   }
 
   assert {
-    condition     = azapi_update_resource.worker_subnet_delegation.body.properties.delegations[0].properties.serviceName == "Microsoft.RedHatOpenShift/openShiftClusters"
-    error_message = "Worker subnet must delegate to Microsoft.RedHatOpenShift/openShiftClusters."
+    condition     = azapi_update_resource.worker_subnet_delegation.body.properties.delegations[0].properties.serviceName == "Microsoft.RedHatOpenShift/hcpOpenShiftClusters"
+    error_message = "Worker subnet must delegate to Microsoft.RedHatOpenShift/hcpOpenShiftClusters."
   }
 }

@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------------------
-# Azure OpenAI (Cognitive Services) – single account + gpt-4o-mini deployment
+# Azure OpenAI (Cognitive Services) - single account + deployment
 # ---------------------------------------------------------------------------
 #
 # Per PR #31 spike results, all routes can share a single gpt-4o-mini deployment.
@@ -27,7 +27,7 @@ resource "azurerm_cognitive_deployment" "model" {
   }
 
   sku {
-    name     = "Standard"
+    name     = var.aoai_sku_name
     capacity = var.aoai_capacity
   }
 }
