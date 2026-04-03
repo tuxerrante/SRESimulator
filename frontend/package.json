@@ -30,7 +30,7 @@
     "@types/react-dom": "^19",
     "@vitest/coverage-v8": "^4.1.0",
     "eslint": "^9",
-    "eslint-config-next": "16.2.1",
+    "eslint-config-next": "16.2.2",
     "happy-dom": "^20.8.4",
     "tailwindcss": "^4",
     "typescript": "^5",
