@@ -2,6 +2,8 @@
 
 OWNER_ALIAS ?=
 TF_VAR_FLAGS := $(if $(OWNER_ALIAS),-var owner_alias=$(OWNER_ALIAS),)
+CONFIRM_APPLY ?=
+CONFIRM_DESTROY ?=
 LOCATION ?= eastus
 SQL_SERVER_NAME ?=
 TF_BACKEND_ENV_FILE ?= .tf-backend.env
@@ -121,11 +123,39 @@ tf-plan: ## Generate and show an execution plan
 	terraform plan $(TF_VAR_FLAGS) -out=tfplan
 
 tf-apply: ## Apply the saved plan (run tf-plan first)
+	@if [ -z "$(OWNER_ALIAS)" ]; then \
+		echo "OWNER_ALIAS is required for tf-apply."; \
+		echo "Example: make tf-apply OWNER_ALIAS=aaffinit CONFIRM_APPLY=aaffinit"; \
+		exit 1; \
+	fi
+	@if [ ! -f tfplan ]; then \
+		echo "tfplan not found. Run 'make tf-plan OWNER_ALIAS=$(OWNER_ALIAS)' first."; \
+		exit 1; \
+	fi
+	@if [ "$(CONFIRM_APPLY)" != "$(OWNER_ALIAS)" ]; then \
+		echo "REFUSED: missing manual confirmation for apply."; \
+		echo "Re-run with CONFIRM_APPLY=$(OWNER_ALIAS)"; \
+		exit 1; \
+	fi
 	terraform apply tfplan
 	@echo ""
 	@terraform output -raw post_apply_checklist 2>/dev/null || true
 
 tf-destroy: ## Destroy all managed infrastructure
+	@if [ -z "$(OWNER_ALIAS)" ]; then \
+		echo "OWNER_ALIAS is required for tf-destroy."; \
+		echo "Example: make tf-destroy OWNER_ALIAS=aaffinit CONFIRM_DESTROY=aaffinit-test-rg"; \
+		exit 1; \
+	fi
+	@case " $(TF_VAR_FLAGS) " in *" -auto-approve "*|*" --auto-approve "*) \
+		echo "REFUSED: -auto-approve is not allowed for destructive operations."; \
+		exit 1; \
+	esac
+	@if [ "$(CONFIRM_DESTROY)" != "$(OWNER_ALIAS)-test-rg" ]; then \
+		echo "REFUSED: missing manual confirmation for destroy."; \
+		echo "Re-run with CONFIRM_DESTROY=$(OWNER_ALIAS)-test-rg"; \
+		exit 1; \
+	fi
 	terraform destroy $(TF_VAR_FLAGS)
 
 tf-kubeconfig: ## Extract kubeconfig from ARO and write to ~/.kube/<cluster-name>
