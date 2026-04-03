@@ -196,6 +196,12 @@ export ARO_CLUSTER=<aro-cluster-name>
 export AOAI_RG=<azure-openai-resource-group>
 export AOAI_ACCOUNT=<azure-openai-account-name>
 export AOAI_DEPLOYMENT=<azure-openai-deployment-name>
+
+# Optional per-route deployment overrides (for mixed quality/cost profile)
+export AOAI_DEPLOYMENT_CHAT=<high-quality-deployment-name>
+export AOAI_DEPLOYMENT_COMMAND=<fast-cheaper-deployment-name>
+export AOAI_DEPLOYMENT_SCENARIO=<fast-cheaper-deployment-name>
+export AOAI_DEPLOYMENT_PROBE=<fast-cheaper-deployment-name>
 ```
 
 For the final environment (`aaffinit-test-*`), use:

@@ -20,4 +20,16 @@ data:
   AI_AZURE_OPENAI_ENDPOINT: "{{ .Values.ai.azureOpenai.endpoint }}"
   {{- end }}
   AI_AZURE_OPENAI_DEPLOYMENT: "{{ .Values.ai.azureOpenai.deployment }}"
+  {{- if .Values.ai.azureOpenai.routeDeployments.chat }}
+  AI_AZURE_OPENAI_DEPLOYMENT_CHAT: "{{ .Values.ai.azureOpenai.routeDeployments.chat }}"
+  {{- end }}
+  {{- if .Values.ai.azureOpenai.routeDeployments.command }}
+  AI_AZURE_OPENAI_DEPLOYMENT_COMMAND: "{{ .Values.ai.azureOpenai.routeDeployments.command }}"
+  {{- end }}
+  {{- if .Values.ai.azureOpenai.routeDeployments.scenario }}
+  AI_AZURE_OPENAI_DEPLOYMENT_SCENARIO: "{{ .Values.ai.azureOpenai.routeDeployments.scenario }}"
+  {{- end }}
+  {{- if .Values.ai.azureOpenai.routeDeployments.probe }}
+  AI_AZURE_OPENAI_DEPLOYMENT_PROBE: "{{ .Values.ai.azureOpenai.routeDeployments.probe }}"
+  {{- end }}
   AI_AZURE_OPENAI_API_VERSION: "{{ .Values.ai.azureOpenai.apiVersion }}"

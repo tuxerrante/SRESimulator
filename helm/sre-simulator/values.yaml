@@ -48,6 +48,11 @@ ai:
       existingSecretName: ""
       key: endpoint
     deployment: ""
+    routeDeployments:
+      chat: ""
+      command: ""
+      scenario: ""
+      probe: ""
     apiVersion: 2024-10-21
     credentials:
       existingSecretName: ""
