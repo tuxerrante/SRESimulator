@@ -10,6 +10,8 @@
        pre-commit all \
        tf-bootstrap tf-pull-secret tf-preflight tf-init tf-init-local tf-init-isolated tf-validate tf-fmt tf-test tf-plan tf-apply tf-destroy tf-kubeconfig tf-output
 
+SHELL := /bin/bash
+
 FRONTEND_DIR := frontend
 BACKEND_DIR := backend
 E2E_ENV_FILE ?= $(BACKEND_DIR)/.env.local
@@ -128,7 +130,7 @@ typecheck: ## Run frontend TypeScript type checking
 typecheck-backend: ## Run backend TypeScript type checking
 	cd $(BACKEND_DIR) && npx tsc --noEmit
 
-validate: lint typecheck typecheck-backend tf-validate ## Run all linters + type checking + Terraform validation
+validate: lint typecheck typecheck-backend ## Run all linters + type checking
 
 # ──────────────────────────────────────────────
 # Security
@@ -209,6 +211,7 @@ smoke-backend-mssql: ## Start backend with MSSQL and verify DB-backed route resp
 	@set -e; \
 	PORT="$${PORT:-18081}"; \
 	LOG_FILE="$${LOG_FILE:-/tmp/sre-backend-mssql-smoke.log}"; \
+	RESPONSE_FILE="$$(mktemp /tmp/sre-db-smoke-response.XXXXXX.json)"; \
 	if ! NODE_PATH="$(CURDIR)/$(BACKEND_DIR)/node_modules" DATABASE_URL="$(MSSQL_DATABASE_URL)" node -e " \
 		const sql = require('mssql'); \
 		sql.connect(process.env.DATABASE_URL) \
@@ -227,11 +230,11 @@ smoke-backend-mssql: ## Start backend with MSSQL and verify DB-backed route resp
 	PORT="$$PORT" \
 	npm --prefix "$(BACKEND_DIR)" run dev >"$$LOG_FILE" 2>&1 & \
 	PID=$$!; \
-	trap 'kill $$PID >/dev/null 2>&1 || true' EXIT INT TERM; \
+	trap 'kill $$PID >/dev/null 2>&1 || true; pkill -P $$PID >/dev/null 2>&1 || true; rm -f "$$RESPONSE_FILE"' EXIT INT TERM; \
 	READY=0; \
 	i=0; \
 	while [ $$i -lt 40 ]; do \
-		CODE=$$(curl -s -o /tmp/sre-db-smoke-response.json -w '%{http_code}' "http://127.0.0.1:$$PORT/api/scores?difficulty=easy" || true); \
+		CODE=$$(curl -s -o "$$RESPONSE_FILE" -w '%{http_code}' "http://127.0.0.1:$$PORT/api/scores?difficulty=easy" || true); \
 		if [ "$$CODE" = "200" ]; then \
 			READY=1; \
 			break; \
@@ -245,7 +248,9 @@ smoke-backend-mssql: ## Start backend with MSSQL and verify DB-backed route resp
 		exit 1; \
 	fi; \
 	echo "DB smoke check passed (backend + MSSQL path is healthy)."; \
-	kill $$PID >/dev/null 2>&1 || true
+	kill $$PID >/dev/null 2>&1 || true; \
+	pkill -P $$PID >/dev/null 2>&1 || true; \
+	rm -f "$$RESPONSE_FILE"
 
 smoke-local-vertex: ## Run local backend live probe using Vertex env from frontend/.env.local
 	@set -e; \

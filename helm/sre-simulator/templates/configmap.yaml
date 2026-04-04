@@ -20,16 +20,18 @@ data:
   AI_AZURE_OPENAI_ENDPOINT: "{{ .Values.ai.azureOpenai.endpoint }}"
   {{- end }}
   AI_AZURE_OPENAI_DEPLOYMENT: "{{ .Values.ai.azureOpenai.deployment }}"
-  {{- if .Values.ai.azureOpenai.routeDeployments.chat }}
-  AI_AZURE_OPENAI_DEPLOYMENT_CHAT: "{{ .Values.ai.azureOpenai.routeDeployments.chat }}"
+  {{- with .Values.ai.azureOpenai.routeDeployments }}
+  {{- if .chat }}
+  AI_AZURE_OPENAI_DEPLOYMENT_CHAT: "{{ .chat }}"
   {{- end }}
-  {{- if .Values.ai.azureOpenai.routeDeployments.command }}
-  AI_AZURE_OPENAI_DEPLOYMENT_COMMAND: "{{ .Values.ai.azureOpenai.routeDeployments.command }}"
+  {{- if .command }}
+  AI_AZURE_OPENAI_DEPLOYMENT_COMMAND: "{{ .command }}"
   {{- end }}
-  {{- if .Values.ai.azureOpenai.routeDeployments.scenario }}
-  AI_AZURE_OPENAI_DEPLOYMENT_SCENARIO: "{{ .Values.ai.azureOpenai.routeDeployments.scenario }}"
+  {{- if .scenario }}
+  AI_AZURE_OPENAI_DEPLOYMENT_SCENARIO: "{{ .scenario }}"
   {{- end }}
-  {{- if .Values.ai.azureOpenai.routeDeployments.probe }}
-  AI_AZURE_OPENAI_DEPLOYMENT_PROBE: "{{ .Values.ai.azureOpenai.routeDeployments.probe }}"
+  {{- if .probe }}
+  AI_AZURE_OPENAI_DEPLOYMENT_PROBE: "{{ .probe }}"
+  {{- end }}
   {{- end }}
   AI_AZURE_OPENAI_API_VERSION: "{{ .Values.ai.azureOpenai.apiVersion }}"
