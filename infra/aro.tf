@@ -13,10 +13,11 @@ resource "azurerm_virtual_network" "aro" {
 resource "azurerm_subnet" "master" {
   # Keep ARO subnets non-delegated in Terraform: delegation capabilities differ
   # by subscription/region and are validated server-side during cluster create.
-  name                 = "master-subnet"
-  resource_group_name  = azurerm_resource_group.main.name
-  virtual_network_name = azurerm_virtual_network.aro.name
-  address_prefixes     = [var.master_subnet_cidr]
+  name                                          = "master-subnet"
+  resource_group_name                           = azurerm_resource_group.main.name
+  virtual_network_name                          = azurerm_virtual_network.aro.name
+  address_prefixes                              = [var.master_subnet_cidr]
+  private_link_service_network_policies_enabled = false
 }
 
 resource "azurerm_subnet" "worker" {
@@ -90,7 +91,7 @@ resource "azapi_resource" "aro_cluster" {
         # The ARO RP auto-creates this resource group to hold cluster-internal
         # resources (VMs, disks, LBs).  It is hidden in the portal and fully
         # managed by the RP — we only specify the desired name here.
-        resourceGroupId = "/subscriptions/${data.azurerm_client_config.current.subscription_id}/resourceGroups/${local.prefix}-cluster-rg"
+        resourceGroupId = "/subscriptions/${data.azurerm_client_config.current.subscription_id}/resourcegroups/${local.prefix}-cluster-rg"
         version         = var.aro_version != "" ? var.aro_version : null
         pullSecret      = var.pull_secret_path != "" ? sensitive(file(var.pull_secret_path)) : null
       }

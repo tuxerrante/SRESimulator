@@ -428,6 +428,10 @@ prod-up: env-check ## Deploy to stable production namespace (same cluster + AOAI
 	if ! oc -n "$$NS" get bc/sre-simulator-backend >/dev/null 2>&1; then \
 		oc -n "$$NS" new-build --name=sre-simulator-backend --binary=true --strategy=docker --to=sre-simulator-backend:$$TAG >/dev/null; \
 	fi; \
+	oc -n "$$NS" patch bc/sre-simulator-frontend --type=merge \
+		-p "{\"spec\":{\"output\":{\"to\":{\"kind\":\"ImageStreamTag\",\"name\":\"sre-simulator-frontend:$$TAG\"}}}}" >/dev/null; \
+	oc -n "$$NS" patch bc/sre-simulator-backend --type=merge \
+		-p "{\"spec\":{\"output\":{\"to\":{\"kind\":\"ImageStreamTag\",\"name\":\"sre-simulator-backend:$$TAG\"}}}}" >/dev/null; \
 	patch_bc_strategy "$$NS" sre-simulator-frontend frontend/Dockerfile; \
 	patch_bc_strategy "$$NS" sre-simulator-backend backend/Dockerfile; \
 	oc_build_timed "$$NS" sre-simulator-frontend; \
