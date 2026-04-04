@@ -254,11 +254,22 @@ if ((${#failures[@]} == 0)); then
     add_failure "Cluster resource group ${cluster_rg} already exists. Clean up or choose a different alias/suffix."
   fi
 
-  sql_name_matches="$(az sql server list --query "[?name=='${sql_server_name}'] | length(@)" -o tsv 2>/dev/null || true)"
-  if [[ -z "$sql_name_matches" ]]; then
-    add_warning "Could not verify SQL server name collisions for ${sql_server_name}; check manually."
-  elif [[ "$sql_name_matches" != "0" ]]; then
-    add_failure "SQL server name ${sql_server_name} already exists in this subscription context."
+  sql_name_check="$(az rest \
+    --method post \
+    --url "https://management.azure.com/subscriptions/${subscription_id}/providers/Microsoft.Sql/checkNameAvailability?api-version=2021-11-01" \
+    --body "{\"name\":\"${sql_server_name}\",\"type\":\"Microsoft.Sql/servers\"}" \
+    --query "{available:nameAvailable,message:message}" \
+    -o tsv 2>/dev/null || true)"
+  sql_name_available="$(printf '%s\n' "$sql_name_check" | awk 'NR==1 {print $1}')"
+  sql_name_message="$(printf '%s\n' "$sql_name_check" | cut -f2-)"
+  if [[ -z "$sql_name_available" ]]; then
+    add_warning "Could not verify global SQL server name availability for ${sql_server_name}; check manually."
+  elif [[ "$sql_name_available" != "true" ]]; then
+    if [[ -n "$sql_name_message" ]]; then
+      add_failure "SQL server name ${sql_server_name} is not available: ${sql_name_message}"
+    else
+      add_failure "SQL server name ${sql_server_name} is not globally available."
+    fi
   fi
 
   latest_aro_version="$(az aro get-versions --location "$LOCATION" --query "[-1]" -o tsv 2>/dev/null || true)"

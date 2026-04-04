@@ -10,12 +10,20 @@ output "aro_cluster_name" {
 
 output "aro_api_server_url" {
   description = "ARO API server URL."
-  value       = try(azapi_resource.aro_cluster.output.properties.apiserverProfile.url, "")
+  value = try(
+    jsondecode(tostring(azapi_resource.aro_cluster.output)).properties.apiserverProfile.url,
+    azapi_resource.aro_cluster.output.properties.apiserverProfile.url,
+    "",
+  )
 }
 
 output "aro_console_url" {
   description = "ARO web console URL."
-  value       = try(azapi_resource.aro_cluster.output.properties.consoleProfile.url, "")
+  value = try(
+    jsondecode(tostring(azapi_resource.aro_cluster.output)).properties.consoleProfile.url,
+    azapi_resource.aro_cluster.output.properties.consoleProfile.url,
+    "",
+  )
 }
 
 output "aoai_endpoint" {
