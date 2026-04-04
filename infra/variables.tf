@@ -61,6 +61,12 @@ variable "aoai_model_version" {
   default     = "2024-07-18"
 }
 
+variable "aoai_sku_name" {
+  description = "Azure OpenAI deployment SKU name. For westeurope with gpt-4o-mini, use GlobalStandard."
+  type        = string
+  default     = "GlobalStandard"
+}
+
 variable "aoai_capacity" {
   description = "Rate limit in thousands of tokens per minute (K TPM). Cost is pay-per-token, not per capacity."
   type        = number
@@ -73,7 +79,8 @@ variable "aoai_capacity" {
   #   Single active user peak: ~50K TPM
   #   With prod + e2e concurrent: ~80K TPM burst
   #   80K TPM handles a single active user at peak plus concurrent e2e.
-  #   Standard (pay-as-you-go) means this only affects rate limit, not cost.
+  #   GlobalStandard/DataZoneStandard (pay-as-you-go) means this only affects
+  #   rate limit, not base cost.
 
   validation {
     condition     = var.aoai_capacity >= 1 && var.aoai_capacity <= 500
@@ -127,7 +134,13 @@ variable "extra_tags" {
 # Azure SQL Database (optional, default off)
 # ---------------------------------------------------------------------------
 variable "enable_database" {
-  description = "Whether to provision Azure SQL Database (free tier) for persistent game data."
+  description = "Whether to provision Azure SQL Database for persistent game data."
+  type        = bool
+  default     = false
+}
+
+variable "enable_sql_free_tier" {
+  description = "Whether to apply Azure SQL free-tier overlay properties. Disable in regions/subscriptions where the update is not allowed."
   type        = bool
   default     = false
 }
@@ -140,7 +153,7 @@ variable "sql_admin_password" {
 
   validation {
     condition = (
-      var.enable_database == false ||
+      var.sql_admin_password == "" ||
       (
         length(var.sql_admin_password) >= 8 &&
         can(regex("[A-Z]", var.sql_admin_password)) &&
@@ -149,7 +162,21 @@ variable "sql_admin_password" {
         can(regex("[^A-Za-z0-9]", var.sql_admin_password))
       )
     )
-    error_message = "When enable_database is true, sql_admin_password must be at least 8 characters and include uppercase, lowercase, numeric, and special characters."
+    error_message = "When set, sql_admin_password must be at least 8 characters and include uppercase, lowercase, numeric, and special characters."
+  }
+}
+
+variable "sql_server_name" {
+  description = "Optional Azure SQL Server name override. Must be globally unique in Azure. If empty, defaults to <owner_alias>-test-sql."
+  type        = string
+  default     = ""
+
+  validation {
+    condition = (
+      var.sql_server_name == "" ||
+      can(regex("^[a-z][a-z0-9-]{1,61}[a-z0-9]$", var.sql_server_name))
+    )
+    error_message = "sql_server_name must be 3-63 chars, lowercase letters/numbers/hyphens, start with a letter, and not end with a hyphen."
   }
 }
 
@@ -162,6 +189,7 @@ locals {
   cluster_name        = local.prefix
   vnet_name           = "${local.prefix}-vnet"
   aoai_account_name   = "${local.prefix}-aoai"
+  sql_server_name     = var.sql_server_name != "" ? var.sql_server_name : "${local.prefix}-sql"
 
   tags = merge(var.extra_tags, {
     environment = "test"
