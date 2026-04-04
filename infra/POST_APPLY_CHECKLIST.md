@@ -2,10 +2,26 @@
 
 Complete these steps after `terraform apply` succeeds.
 
+Before `terraform apply`, run the preflight gates for the final environment:
+
+```bash
+make tf-preflight \
+  OWNER_ALIAS=aaffinit \
+  TF_STATE_ACCOUNT=<state-account> \
+  LOCATION=westeurope \
+  TF_STATE_KEY=aaffinit-test-sre-simulator.tfstate \
+  SQL_SERVER_NAME=aaffinit-test-sql-20260403 \
+  GENEVA_SUPPRESSION_ACCESS_CONFIRMED=true
+```
+
+If this is your first run and the backend does not exist yet, preflight will
+ask to create the state resource group/storage account/container and persist
+backend defaults to `infra/.tf-backend.env`.
+
 ## 1. Silence Cluster in Geneva Health
 
 To avoid production alert noise from this test cluster, create a suppression
-rule in Geneva Health:
+rule in Geneva Health and confirm it is active before any break/fix traffic:
 
 1. Navigate to **Geneva Health** → **Suppression Rules**
 2. Create a new suppression rule:
@@ -19,6 +35,12 @@ rule in Geneva Health:
 
 > **Why?** Without suppression, the test cluster's incidents (synthetic ones are only simulated)
 > will fire real alerts and page the on-call team.
+
+For guarded final deployment targets, export:
+
+```bash
+export GENEVA_SUPPRESSION_RULE_ACTIVE=true
+```
 
 ## 2. Extract Kubeconfig
 
@@ -86,6 +108,14 @@ stable ("production") namespace and ephemeral e2e namespaces:
 make prod-up
 ```
 
+For the final environment run (DB enabled + mandatory checks), use:
+
+```bash
+DB_SECRET_NAME=sre-sql-creds \
+GENEVA_SUPPRESSION_RULE_ACTIVE=true \
+make prod-up-final
+```
+
 ### Check production status
 
 ```bash
@@ -105,7 +135,23 @@ make e2e-azure-route-up    # creates timestamped namespace
 make e2e-azure-route-down  # deletes it (refuses if it matches prod namespace)
 ```
 
-## 5. AOAI Capacity & Scaling Notes
+## 5. Validate exposure and DB connectivity
+
+Run these checks after each final deployment:
+
+```bash
+# Frontend route exists; backend remains private ClusterIP and non-routable
+make public-exposure-audit NS=sre-simulator
+
+# Fallback DB check when GH pipelines are unavailable
+make db-port-forward-check NS=sre-simulator
+```
+
+`db-port-forward-check` calls `/api/scores?difficulty=easy` through a local
+`oc port-forward` tunnel to the backend service. A `200` response confirms the
+backend can serve DB-backed queries.
+
+## 6. AOAI Capacity & Scaling Notes
 
 The Azure OpenAI deployment is provisioned with a **Standard (pay-as-you-go)**
 SKU. Key things to know:
@@ -147,17 +193,18 @@ minutes (it only updates the rate limit on the existing deployment).
 See [Azure OpenAI Quotas and Limits](https://learn.microsoft.com/en-us/azure/ai-foundry/openai/quotas-limits)
 for the full reference. Quota tiers auto-upgrade with usage.
 
-## 6. Tear Down (when done)
+## 7. Tear Down (when done)
 
 ```bash
 make tf-destroy
 ```
 
-All resources are in a single resource group, so you can also run:
+Most customer-managed resources are in a single resource group, so you can also run:
 
 ```bash
 az group delete --name <owner_alias>-test-rg --yes --no-wait
 ```
 
 > **Note:** `tf-destroy` / `az group delete` removes the cluster and AOAI
-> account. Both prod and e2e namespaces disappear with the cluster.
+> account in the customer-managed RG. The ARO RP-managed cluster RG is cleaned
+> up by the provider when cluster deletion completes.
