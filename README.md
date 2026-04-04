@@ -166,26 +166,26 @@ Open [http://localhost:3000](http://localhost:3000) in your browser.
 
 ### Make targets
 
-| Command                     | Description                                         |
-| --------------------------- | --------------------------------------------------- |
-| `make install`              | Install all dependencies                            |
-| `make dev`                  | Start Next.js dev server                            |
-| `make build`                | Build the production bundle                         |
-| `make lint`                 | Run all linters                                     |
-| `make typecheck`            | Run TypeScript type checking                        |
-| `make smoke-local-vertex`   | Run local live Vertex probe against backend         |
-| `make smoke-backend-mssql`  | Start backend with MSSQL and smoke-test `/api/scores` |
-| `make e2e-azure-route-up`   | Build/deploy temporary ARO route using Azure OpenAI |
-| `make e2e-azure-route-down` | Tear down temporary Azure e2e namespace             |
-| `make public-exposure-audit`| Verify frontend-only public exposure in OpenShift   |
-| `make db-port-forward-check`| Verify backend DB path via local `oc port-forward`  |
-| `make prod-up-final`        | Guarded final deploy (Geneva + exposure + DB checks) |
-| `make tf-pull-secret`       | Materialize `PULL_SECRET` JSON from a private env source |
-| `make tf-preflight`         | Run Azure preflight gates for final infra           |
-| `make tf-init-isolated`     | Init Terraform with per-owner isolated state key    |
-| `make security`             | Run security audit + lockfile check                 |
-| `make all`                  | Full CI pipeline                                    |
-| `make clean`                | Remove build artifacts                              |
+| Command                      | Description                                              |
+| ---------------------------- | -------------------------------------------------------- |
+| `make install`               | Install all dependencies                                 |
+| `make dev`                   | Start Next.js dev server                                 |
+| `make build`                 | Build the production bundle                              |
+| `make lint`                  | Run all linters                                          |
+| `make typecheck`             | Run TypeScript type checking                             |
+| `make smoke-local-vertex`    | Run local live Vertex probe against backend              |
+| `make smoke-backend-mssql`   | Start backend with MSSQL and smoke-test `/api/scores`    |
+| `make e2e-azure-route-up`    | Build/deploy temporary ARO route using Azure OpenAI      |
+| `make e2e-azure-route-down`  | Tear down temporary Azure e2e namespace                  |
+| `make public-exposure-audit` | Verify frontend-only public exposure in OpenShift        |
+| `make db-port-forward-check` | Verify backend DB path via local `oc port-forward`       |
+| `make prod-up-final`         | Guarded final deploy (Geneva + exposure + DB checks)     |
+| `make tf-pull-secret`        | Materialize `PULL_SECRET` JSON from a private env source |
+| `make tf-preflight`          | Run Azure preflight gates for final infra                |
+| `make tf-init-isolated`      | Init Terraform with per-owner isolated state key         |
+| `make security`              | Run security audit + lockfile check                      |
+| `make all`                   | Full CI pipeline                                         |
+| `make clean`                 | Remove build artifacts                                   |
 
 For `make e2e-azure-route-up`, set these runtime variables first (either export them in your shell or place them in `backend/.env.local`):
 
