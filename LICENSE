@@ -11,15 +11,13 @@ Change License:       Apache License, Version 2.0
 Additional Use Grant: You may use the Licensed Work for non-production,
                       educational, and personal purposes. Any enterprise,
                       commercial, or production use requires a separate
-                      license agreement with the Licensor.
-
-AI Training Restriction: The Licensed Work, including its source code,
-                      documentation, and any associated materials, may not
-                      be used, in whole or in part, as training data for
-                      machine learning models, artificial intelligence
-                      systems, code generation tools, or any automated
-                      content synthesis system, without explicit prior
-                      written permission from the Licensor.
+                      license agreement with the Licensor. In addition,
+                      no permission is granted to use the Licensed Work,
+                      in whole or in part, as training data for machine
+                      learning models, artificial intelligence systems,
+                      code generation tools, or automated content
+                      synthesis systems, without explicit prior written
+                      permission from the Licensor.
 
 --------------------------------------------------------------------------
 
