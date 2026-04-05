@@ -30,6 +30,90 @@ jobs:
           echo "::warning::Direct push to main detected — use a PR instead."
           echo "Pushed by: ${ACTOR} (${SHA})"
 
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      docs_only: ${{ steps.detect.outputs.docs_only }}
+      run_integration: ${{ steps.detect.outputs.run_integration }}
+    steps:
+      - name: Harden runner
+        # v2.16.0
+        uses: >-
+          step-security/harden-runner@fa2e9d605c4eeb9fcad4c99c224cee0c6c7f3594
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        # v6.0.2
+        uses: >-
+          actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 0
+
+      - name: Detect docs-only changes
+        id: detect
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PUSH_BASE_SHA: ${{ github.event.before }}
+          PUSH_HEAD_SHA: ${{ github.sha }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+
+          if [[ "${EVENT_NAME}" == "pull_request" ]]; then
+            base_sha="${PR_BASE_SHA}"
+            head_sha="${PR_HEAD_SHA}"
+          else
+            base_sha="${PUSH_BASE_SHA}"
+            head_sha="${PUSH_HEAD_SHA}"
+          fi
+
+          # Fall back to running integration if diff endpoints are unavailable.
+          if [[ -z "${base_sha}" ]] || [[ "${base_sha}" =~ ^0+$ ]]; then
+            echo "docs_only=false" >> "$GITHUB_OUTPUT"
+            echo "run_integration=true" >> "$GITHUB_OUTPUT"
+            echo "Unable to determine diff base; running integration tests." \
+              >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          mapfile -t changed_files < <(
+            git diff --name-only "${base_sha}" "${head_sha}"
+          )
+
+          if [[ "${#changed_files[@]}" -eq 0 ]]; then
+            echo "docs_only=false" >> "$GITHUB_OUTPUT"
+            echo "run_integration=true" >> "$GITHUB_OUTPUT"
+            echo "No changed files detected; running integration tests." \
+              >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          docs_only=true
+          for file in "${changed_files[@]}"; do
+            case "$file" in
+              *.md|*.mdx|docs/*)
+                ;;
+              *)
+                docs_only=false
+                break
+                ;;
+            esac
+          done
+
+          if [[ "${docs_only}" == "true" ]]; then
+            echo "docs_only=true" >> "$GITHUB_OUTPUT"
+            echo "run_integration=false" >> "$GITHUB_OUTPUT"
+            echo "Docs-only change detected; integration suites skipped." \
+              >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "docs_only=false" >> "$GITHUB_OUTPUT"
+            echo "run_integration=true" >> "$GITHUB_OUTPUT"
+            echo "Code-related change detected; integration suites enabled." \
+              >> "$GITHUB_STEP_SUMMARY"
+          fi
+
   lint-typecheck:
     runs-on: ubuntu-latest
     steps:
@@ -146,6 +230,9 @@ jobs:
           echo "$summary_line" >> "$GITHUB_STEP_SUMMARY"
 
   integration-test:
+    needs:
+      - changes
+    if: needs.changes.outputs.run_integration == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Harden runner
@@ -184,6 +271,9 @@ jobs:
         run: make test-integration
 
   integration-test-mssql:
+    needs:
+      - changes
+    if: needs.changes.outputs.run_integration == 'true'
     runs-on: ubuntu-latest
     services:
       sqlserver:
@@ -399,6 +489,7 @@ jobs:
   ci-gate:
     if: always()
     needs:
+      - changes
       - lint-typecheck
       - test
       - integration-test
@@ -410,6 +501,9 @@ jobs:
     steps:
       - name: Verify all jobs passed
         env:
+          CHANGES_RESULT: ${{ needs.changes.result }}
+          DOCS_ONLY: ${{ needs.changes.outputs.docs_only }}
+          RUN_INTEGRATION: ${{ needs.changes.outputs.run_integration }}
           LINT_RESULT: ${{ needs.lint-typecheck.result }}
           TEST_RESULT: ${{ needs.test.result }}
           INTEGRATION_RESULT: ${{ needs.integration-test.result }}
@@ -422,6 +516,9 @@ jobs:
           failed_jobs=()
 
           echo "CI job results:"
+          echo "  changes:                    ${CHANGES_RESULT}"
+          echo "  docs-only change:           ${DOCS_ONLY}"
+          echo "  run integration suites:     ${RUN_INTEGRATION}"
           echo "  lint-typecheck:             ${LINT_RESULT}"
           echo "  test:                       ${TEST_RESULT}"
           echo "  integration-test:           ${INTEGRATION_RESULT}"
@@ -431,10 +528,9 @@ jobs:
           echo "  docker-build:               ${DOCKER_RESULT}"
 
           for name_result in \
+            "changes:${CHANGES_RESULT}" \
             "lint-typecheck:${LINT_RESULT}" \
             "test:${TEST_RESULT}" \
-            "integration-test:${INTEGRATION_RESULT}" \
-            "integration-test-mssql:${INTEGRATION_MSSQL_RESULT}" \
             "security:${SECURITY_RESULT}" \
             "helm-validate:${HELM_RESULT}" \
             "docker-build:${DOCKER_RESULT}"; do
@@ -445,6 +541,21 @@ jobs:
               failed_jobs+=("${name} (${result})")
             fi
           done
+
+          if [[ "${RUN_INTEGRATION}" == "true" ]]; then
+            for name_result in \
+              "integration-test:${INTEGRATION_RESULT}" \
+              "integration-test-mssql:${INTEGRATION_MSSQL_RESULT}"; do
+              name="${name_result%%:*}"
+              result="${name_result#*:}"
+              if [[ "$result" != "success" ]]; then
+                failed=true
+                failed_jobs+=("${name} (${result})")
+              fi
+            done
+          else
+            echo "Integration suites intentionally skipped (docs-only change)."
+          fi
 
           if [[ "$failed" == "true" ]]; then
             echo ""
