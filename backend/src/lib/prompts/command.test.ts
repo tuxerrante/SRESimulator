@@ -105,6 +105,12 @@ describe("buildScenarioContext", () => {
     const ctx = buildScenarioContext(makeScenario());
     expect(ctx).toContain("A worker node has gone NotReady due to DiskPressure");
   });
+
+  it("includes named resources when identifiers can be derived from the scenario", () => {
+    const ctx = buildScenarioContext(makeScenario());
+    expect(ctx).toContain("Named resources");
+    expect(ctx).toContain("worker-eastus2-2");
+  });
 });
 
 describe("buildSimNow", () => {
@@ -162,6 +168,11 @@ describe("buildCommandSystemPrompt", () => {
   it("embeds scenario context at the end", () => {
     const prompt = buildCommandSystemPrompt("oc", "Title: Test (easy)", "simNow");
     expect(prompt).toContain("Scenario Context:\nTitle: Test (easy)");
+  });
+
+  it("instructs the model not to echo angle-bracket placeholders in output", () => {
+    const prompt = buildCommandSystemPrompt("oc", "ctx", "now");
+    expect(prompt).toContain("PLACEHOLDER RESOLUTION");
   });
 
   it("labels oc commands as OpenShift CLI", () => {

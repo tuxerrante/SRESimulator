@@ -1,5 +1,6 @@
 import { utcNow } from "../sim-clock";
 import type { Scenario } from "../../../../shared/types/game";
+import { formatResourceHintsForPrompt } from "./scenario-resources";
 
 export interface CommandHistoryEntry {
   command: string;
@@ -76,6 +77,7 @@ Rules:
 - EXIT CODES AND SYSTEM OUTPUT: Use real Linux/OpenShift conventions. For systemctl status, use the actual format: "Active: active (running)" or "Active: failed" with a real numeric exit code in the "Main PID" line (e.g. "status=143/TERM", "status=1/FAILURE", "code=exited, status=1/FAILURE"). Exit codes must be integers (0=success, 1=general error, 2=misuse, 127=not found, 137=SIGKILL, 143=SIGTERM). Never use placeholder strings like "exit-status" — always use the actual numeric code.
 - TEMPORAL CONSISTENCY: ${simNow} If a time range is shown (e.g. "11:00 - 13:00"), the "Last Updated" or "as of" timestamp must be at or after the end of that range. Never show a "Last Updated" time that falls before the end of the displayed time range.
 - STATE CONTINUITY: If a previous command mutated cluster state (e.g. delete, scale, patch, cordon, drain, apply), subsequent command output MUST reflect that mutation. For example, if a Machine was deleted, it should not appear in a later "oc get machines" listing, or should show a "Deleting"/"Terminating" phase.
+- PLACEHOLDER RESOLUTION: The user may paste angle-bracket placeholders from documentation (e.g. <machine-name>, <node>). Never echo those placeholders in simulated output. Use concrete resource names from the scenario context and the "Named resources" line below.
 
 Scenario Context:
 ${scenarioContext}${historyBlock}`;
@@ -83,6 +85,7 @@ ${scenarioContext}${historyBlock}`;
 
 export function buildScenarioContext(scenario: Scenario | null): string {
   if (!scenario) return "No specific scenario context available.";
+  const resourceHints = formatResourceHintsForPrompt(scenario);
   return `Title: ${scenario.title} (${scenario.difficulty})
 Description: ${scenario.description}
 Cluster: ${scenario.clusterContext.name}, version ${scenario.clusterContext.version}
@@ -90,5 +93,5 @@ Status: ${scenario.clusterContext.status}
 Nodes: ${scenario.clusterContext.nodeCount}
 Ticket reported: ${scenario.incidentTicket.reportedTime}
 Alerts: ${scenario.clusterContext.alerts.map((a) => `${a.name} (firing since ${a.firingTime}): ${a.message}`).join("; ")}
-Recent Events: ${scenario.clusterContext.recentEvents.join("; ")}`;
+Recent Events: ${scenario.clusterContext.recentEvents.join("; ")}${resourceHints}`;
 }

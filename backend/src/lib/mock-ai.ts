@@ -115,6 +115,26 @@ function mockOcOutput(command: string): string {
     ].join("\n");
   }
 
+  if (/^describe\s+machine\b/i.test(trimmed)) {
+    const withNs = trimmed.match(/^describe\s+machine\s+-n\s+\S+\s+(\S+)/i);
+    const name = withNs?.[1] ?? "machine-mock-0";
+    return [
+      `Name:         ${name}`,
+      `Namespace:    openshift-machine-api`,
+      `Labels:       machine.openshift.io/cluster-api-cluster=mock`,
+      `Annotations:  <none>`,
+      `API Version:  machine.openshift.io/v1beta1`,
+      `Kind:         Machine`,
+      `Phase:        Running`,
+      `Provider ID:  azure:///subscriptions/mock/resourceGroups/mock/providers/Microsoft.Compute/virtualMachines/${name}`,
+      `Conditions:`,
+      `  Type     Status  Reason`,
+      `  ----     ------  ------`,
+      `  Ready    True    MachineReady`,
+      `Events:       <none>`,
+    ].join("\n");
+  }
+
   if (/^describe\s+pod/i.test(trimmed)) {
     const nameMatch = trimmed.match(/^describe\s+pod\s+(\S+)/i);
     const podName = nameMatch?.[1] ?? "example-pod-abc12";

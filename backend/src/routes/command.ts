@@ -7,6 +7,7 @@ import {
   buildSimNow,
   buildCommandSystemPrompt,
 } from "../lib/prompts/command";
+import { resolveAngleBracketPlaceholders } from "../lib/prompts/scenario-resources";
 import type { Scenario } from "../../../shared/types/game";
 
 export const commandRouter = Router();
@@ -23,6 +24,7 @@ commandRouter.post("/", async (req: Request, res: Response) => {
   try {
     const body: CommandRequestBody = req.body;
     const { command, type, scenario, commandHistory } = body;
+    const commandResolved = resolveAngleBracketPlaceholders(command, scenario);
 
     if (!VALID_COMMAND_TYPES.includes(type)) {
       res.status(400).json({
@@ -34,7 +36,7 @@ commandRouter.post("/", async (req: Request, res: Response) => {
     const readiness = getAiReadiness();
     if (readiness.mockMode) {
       res.json({
-        output: generateMockCommandOutput(command, type),
+        output: generateMockCommandOutput(commandResolved, type),
         exitCode: 0,
       });
       return;
@@ -57,7 +59,7 @@ commandRouter.post("/", async (req: Request, res: Response) => {
       messages: [
         {
           role: "user",
-          content: `Simulate the output for this ${type} command:\n\n${command}`,
+          content: `Simulate the output for this ${type} command:\n\n${commandResolved}`,
         },
       ],
       route: "command",
@@ -76,7 +78,10 @@ commandRouter.post("/", async (req: Request, res: Response) => {
       message.includes("did not include text content")
     ) {
       res.json({
-        output: generateMockCommandOutput(req.body.command, req.body.type),
+        output: generateMockCommandOutput(
+          resolveAngleBracketPlaceholders(req.body.command, req.body.scenario),
+          req.body.type,
+        ),
         exitCode: 0,
       });
       return;
