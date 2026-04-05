@@ -166,19 +166,26 @@ Open [http://localhost:3000](http://localhost:3000) in your browser.
 
 ### Make targets
 
-| Command                     | Description                                         |
-| --------------------------- | --------------------------------------------------- |
-| `make install`              | Install all dependencies                            |
-| `make dev`                  | Start Next.js dev server                            |
-| `make build`                | Build the production bundle                         |
-| `make lint`                 | Run all linters                                     |
-| `make typecheck`            | Run TypeScript type checking                        |
-| `make smoke-local-vertex`   | Run local live Vertex probe against backend         |
-| `make e2e-azure-route-up`   | Build/deploy temporary ARO route using Azure OpenAI |
-| `make e2e-azure-route-down` | Tear down temporary Azure e2e namespace             |
-| `make security`             | Run security audit + lockfile check                 |
-| `make all`                  | Full CI pipeline                                    |
-| `make clean`                | Remove build artifacts                              |
+| Command                      | Description                                              |
+| ---------------------------- | -------------------------------------------------------- |
+| `make install`               | Install all dependencies                                 |
+| `make dev`                   | Start Next.js dev server                                 |
+| `make build`                 | Build the production bundle                              |
+| `make lint`                  | Run all linters                                          |
+| `make typecheck`             | Run TypeScript type checking                             |
+| `make smoke-local-vertex`    | Run local live Vertex probe against backend              |
+| `make smoke-backend-mssql`   | Start backend with MSSQL and smoke-test `/api/scores`    |
+| `make e2e-azure-route-up`    | Build/deploy temporary ARO route using Azure OpenAI      |
+| `make e2e-azure-route-down`  | Tear down temporary Azure e2e namespace                  |
+| `make public-exposure-audit` | Verify frontend-only public exposure in OpenShift        |
+| `make db-port-forward-check` | Verify backend DB path via local `oc port-forward`       |
+| `make prod-up-final`         | Guarded final deploy (Geneva + exposure + DB checks)     |
+| `make tf-pull-secret`        | Materialize `PULL_SECRET` JSON from a private env source |
+| `make tf-preflight`          | Run Azure preflight gates for final infra                |
+| `make tf-init-isolated`      | Init Terraform with per-owner isolated state key         |
+| `make security`              | Run security audit + lockfile check                      |
+| `make all`                   | Full CI pipeline                                         |
+| `make clean`                 | Remove build artifacts                                   |
 
 For `make e2e-azure-route-up`, set these runtime variables first (either export them in your shell or place them in `backend/.env.local`):
 
@@ -189,6 +196,54 @@ export ARO_CLUSTER=<aro-cluster-name>
 export AOAI_RG=<azure-openai-resource-group>
 export AOAI_ACCOUNT=<azure-openai-account-name>
 export AOAI_DEPLOYMENT=<azure-openai-deployment-name>
+
+# Optional per-route deployment overrides (for mixed quality/cost profile)
+export AOAI_DEPLOYMENT_CHAT=<high-quality-deployment-name>
+export AOAI_DEPLOYMENT_COMMAND=<fast-cheaper-deployment-name>
+export AOAI_DEPLOYMENT_SCENARIO=<fast-cheaper-deployment-name>
+export AOAI_DEPLOYMENT_PROBE=<fast-cheaper-deployment-name>
+```
+
+For the final environment (`aaffinit-test-*`), use:
+
+```bash
+make tf-preflight \
+  OWNER_ALIAS=aaffinit \
+  TF_STATE_ACCOUNT=<state-account> \
+  LOCATION=westeurope \
+  AOAI_SKU_NAME=GlobalStandard \
+  ENABLE_SQL_FREE_TIER=false \
+  TF_STATE_KEY=aaffinit-test-sre-simulator.tfstate \
+  SQL_SERVER_NAME=aaffinit-test-sql-20260403 \
+  GENEVA_SUPPRESSION_ACCESS_CONFIRMED=true
+
+make tf-init-isolated OWNER_ALIAS=aaffinit
+```
+
+If `TF_STATE_ACCOUNT` is missing or does not exist, `make tf-preflight` now
+prompts to create the backend resources for first-time runs.
+After preflight passes, backend defaults are saved to `infra/.tf-backend.env`
+and reused automatically by `make tf-init-isolated`.
+
+To reuse a pull secret from your private env source without exposing paths in this repo:
+
+```bash
+make tf-pull-secret PULL_SECRET_ENV_FILE=/private/path/to/env
+```
+
+Optionally choose your own destination path:
+
+```bash
+make tf-pull-secret \
+  PULL_SECRET_ENV_FILE=/private/path/to/env \
+  PULL_SECRET_PATH=/private/path/pull-secret.json
+```
+
+If `PULL_SECRET_PATH` is omitted, a temporary file is created automatically.
+Then set in `infra/terraform.tfvars`:
+
+```hcl
+pull_secret_path = "/absolute/path/to/infra/.pull-secret.json"
 ```
 
 ---
@@ -196,6 +251,7 @@ export AOAI_DEPLOYMENT=<azure-openai-deployment-name>
 ## 📚 Documentation
 
 - **[Architecture & Game Design](docs/ARCHITECTURE.md)** — project structure, tech stack, scoring system, investigation methodology, API routes
+- **[Infra Post-Apply Checklist](infra/POST_APPLY_CHECKLIST.md)** — Geneva suppression, production/e2e namespace flow, exposure + DB validation checks
 - **[ARO AI Connectivity Spike](docs/ARO_AI_CONNECTIVITY_SPIKE.md)** — prove Claude-on-Vertex connectivity from a pod end-to-end
 - **[CLAUDE.md](CLAUDE.md)** — original design document and game spec
 

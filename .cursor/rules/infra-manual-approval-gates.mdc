@@ -1,0 +1,29 @@
+---
+description: Require explicit human approval for critical infra commands
+alwaysApply: true
+---
+
+# Infra Manual Approval Gates
+
+Never execute critical infrastructure commands without explicit user confirmation in the current chat.
+
+## Commands that always require manual approval
+
+- `make tf-apply`, `terraform apply`, `make tf-destroy`, `terraform destroy`
+- `az group delete`, `az aro delete`
+- `make prod-down`, `oc delete namespace ...`, `kubectl delete ...`
+- Terraform state mutations: `terraform state rm`, `terraform import`, `terraform force-unlock`
+
+## Mandatory approval protocol
+
+1. Show the exact command(s) and target scope (subscription/resource group/cluster/namespace/state key).
+2. State blast radius in one short sentence.
+3. Ask for a clear `yes`/`no` and wait.
+4. Treat approval as one-time only; if the command changes, ask again.
+
+## Additional safety checks
+
+- Prefer Make targets (`make tf-preflight`, `make tf-plan`, then `make tf-apply`) instead of ad-hoc Terraform commands.
+- Refuse `terraform apply`/`terraform destroy` if `-auto-approve` is present.
+- Before destroy/delete, require the user to type the exact target identifier in chat and verify it matches command args.
+- If target environment is ambiguous, stop and ask; never guess defaults for destructive actions.

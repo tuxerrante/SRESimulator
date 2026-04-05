@@ -1,13 +1,27 @@
-.PHONY: help tf-bootstrap tf-init tf-validate tf-test tf-plan tf-apply tf-destroy tf-kubeconfig tf-fmt tf-output
+.PHONY: help tf-bootstrap tf-pull-secret tf-preflight tf-init tf-init-local tf-init-isolated tf-validate tf-test tf-plan tf-apply tf-destroy tf-kubeconfig tf-fmt tf-output
 
 OWNER_ALIAS ?=
 TF_VAR_FLAGS := $(if $(OWNER_ALIAS),-var owner_alias=$(OWNER_ALIAS),)
+CONFIRM_APPLY ?=
+CONFIRM_DESTROY ?=
+LOCATION ?= eastus
+SQL_SERVER_NAME ?=
+TF_BACKEND_ENV_FILE ?= .tf-backend.env
+PULL_SECRET_ENV_FILE ?=
+PULL_SECRET_PATH ?=
+AOAI_MODEL_NAME ?= gpt-4o-mini
+AOAI_MODEL_VERSION ?= 2024-07-18
+AOAI_SKU_NAME ?= GlobalStandard
+ENABLE_SQL_FREE_TIER ?= false
 
 # Backend config – override these or supply via -backend-config at init time
 TF_STATE_RG           ?= tfstate-rg
 TF_STATE_ACCOUNT      ?=
 TF_STATE_CONTAINER    ?= tfstate
-TF_STATE_KEY          ?= sre-simulator.tfstate
+TF_STATE_KEY          ?= $(if $(OWNER_ALIAS),$(OWNER_ALIAS)-test-sre-simulator.tfstate,sre-simulator.tfstate)
+GENEVA_SUPPRESSION_ACCESS_CONFIRMED ?= false
+
+-include $(TF_BACKEND_ENV_FILE)
 
 help: ## Show this help
 	@grep -hE '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -18,11 +32,11 @@ tf-bootstrap: ## Create Azure Storage Account for Terraform remote state (one-ti
 		echo "Set TF_STATE_ACCOUNT to a globally unique storage account name."; \
 		exit 1; \
 	fi
-	az group create --name "$(TF_STATE_RG)" --location eastus --tags purpose=terraform-state
+	az group create --name "$(TF_STATE_RG)" --location "$(LOCATION)" --tags purpose=terraform-state
 	az storage account create \
 		--name "$(TF_STATE_ACCOUNT)" \
 		--resource-group "$(TF_STATE_RG)" \
-		--location eastus \
+		--location "$(LOCATION)" \
 		--sku Standard_LRS \
 		--min-tls-version TLS1_2 \
 		--allow-blob-public-access false \
@@ -33,6 +47,27 @@ tf-bootstrap: ## Create Azure Storage Account for Terraform remote state (one-ti
 	@echo "Terraform backend storage ready."
 	@echo "To use this storage account for the Terraform backend, run:"
 	@echo "  make tf-init TF_STATE_ACCOUNT=\"$(TF_STATE_ACCOUNT)\""
+
+tf-pull-secret: ## Extract PULL_SECRET JSON from a user-provided env source
+	@PULL_SECRET_ENV_FILE="$(PULL_SECRET_ENV_FILE)" \
+	PULL_SECRET_PATH="$(PULL_SECRET_PATH)" \
+	python3 ./scripts/extract_pull_secret.py
+
+tf-preflight: ## Run Azure preflight checks for final isolated environment
+	@OWNER_ALIAS="$(OWNER_ALIAS)" \
+	LOCATION="$(LOCATION)" \
+	TF_STATE_KEY="$(TF_STATE_KEY)" \
+	TF_STATE_RG="$(TF_STATE_RG)" \
+	TF_STATE_ACCOUNT="$(TF_STATE_ACCOUNT)" \
+	TF_STATE_CONTAINER="$(TF_STATE_CONTAINER)" \
+	TF_BACKEND_ENV_FILE="$(TF_BACKEND_ENV_FILE)" \
+	SQL_SERVER_NAME="$(SQL_SERVER_NAME)" \
+	AOAI_MODEL_NAME="$(AOAI_MODEL_NAME)" \
+	AOAI_MODEL_VERSION="$(AOAI_MODEL_VERSION)" \
+	AOAI_SKU_NAME="$(AOAI_SKU_NAME)" \
+	ENABLE_SQL_FREE_TIER="$(ENABLE_SQL_FREE_TIER)" \
+	GENEVA_SUPPRESSION_ACCESS_CONFIRMED="$(GENEVA_SUPPRESSION_ACCESS_CONFIRMED)" \
+	./scripts/tf-preflight.sh
 
 tf-init: ## Initialize Terraform (requires TF_STATE_ACCOUNT for remote state)
 	@if [ -z "$(TF_STATE_ACCOUNT)" ]; then \
@@ -49,6 +84,21 @@ tf-init: ## Initialize Terraform (requires TF_STATE_ACCOUNT for remote state)
 		-backend-config="container_name=$(TF_STATE_CONTAINER)" \
 		-backend-config="key=$(TF_STATE_KEY)"
 
+tf-init-local: ## Initialize Terraform without remote backend (validation/testing only)
+	terraform init -backend=false
+
+tf-init-isolated: ## Initialize Terraform with per-owner isolated state key
+	@if [ -z "$(OWNER_ALIAS)" ]; then \
+		echo "OWNER_ALIAS is required (expected aaffinit for final environment)."; \
+		exit 1; \
+	fi
+	@$(MAKE) tf-init \
+		OWNER_ALIAS="$(OWNER_ALIAS)" \
+		TF_STATE_ACCOUNT="$(TF_STATE_ACCOUNT)" \
+		TF_STATE_RG="$(TF_STATE_RG)" \
+		TF_STATE_CONTAINER="$(TF_STATE_CONTAINER)" \
+		TF_STATE_KEY="$(OWNER_ALIAS)-test-sre-simulator.tfstate"
+
 tf-validate: ## Validate Terraform configuration
 	terraform validate
 
@@ -56,9 +106,13 @@ tf-fmt: ## Format Terraform files
 	terraform fmt -recursive
 
 tf-test: ## Run Terraform native tests (requires TF >= 1.7, no credentials needed)
-	@TF_VER=$$(terraform version -json 2>/dev/null | grep -o '"terraform_version":"[^"]*"' | cut -d'"' -f4); \
+	@TF_VER=$$(terraform version -json 2>/dev/null | sed -n 's/.*"terraform_version":[[:space:]]*"\([^"]*\)".*/\1/p'); \
 	MAJOR=$$(echo "$$TF_VER" | cut -d. -f1); \
 	MINOR=$$(echo "$$TF_VER" | cut -d. -f2); \
+	if [ -z "$$TF_VER" ]; then \
+		echo "Unable to detect terraform version from 'terraform version -json'."; \
+		exit 1; \
+	fi; \
 	if [ "$$MAJOR" -lt 1 ] || { [ "$$MAJOR" -eq 1 ] && [ "$$MINOR" -lt 7 ]; }; then \
 		echo "terraform test with mock_provider requires Terraform >= 1.7.0 (found $$TF_VER)"; \
 		exit 1; \
@@ -69,11 +123,39 @@ tf-plan: ## Generate and show an execution plan
 	terraform plan $(TF_VAR_FLAGS) -out=tfplan
 
 tf-apply: ## Apply the saved plan (run tf-plan first)
+	@if [ -z "$(OWNER_ALIAS)" ]; then \
+		echo "OWNER_ALIAS is required for tf-apply."; \
+		echo "Example: make tf-apply OWNER_ALIAS=aaffinit CONFIRM_APPLY=aaffinit"; \
+		exit 1; \
+	fi
+	@if [ ! -f tfplan ]; then \
+		echo "tfplan not found. Run 'make tf-plan OWNER_ALIAS=$(OWNER_ALIAS)' first."; \
+		exit 1; \
+	fi
+	@if [ "$(CONFIRM_APPLY)" != "$(OWNER_ALIAS)" ]; then \
+		echo "REFUSED: missing manual confirmation for apply."; \
+		echo "Re-run with CONFIRM_APPLY=$(OWNER_ALIAS)"; \
+		exit 1; \
+	fi
 	terraform apply tfplan
 	@echo ""
 	@terraform output -raw post_apply_checklist 2>/dev/null || true
 
 tf-destroy: ## Destroy all managed infrastructure
+	@if [ -z "$(OWNER_ALIAS)" ]; then \
+		echo "OWNER_ALIAS is required for tf-destroy."; \
+		echo "Example: make tf-destroy OWNER_ALIAS=aaffinit CONFIRM_DESTROY=aaffinit-test-rg"; \
+		exit 1; \
+	fi
+	@case " $(TF_VAR_FLAGS) " in *" -auto-approve "*|*" --auto-approve "*) \
+		echo "REFUSED: -auto-approve is not allowed for destructive operations."; \
+		exit 1; \
+	esac
+	@if [ "$(CONFIRM_DESTROY)" != "$(OWNER_ALIAS)-test-rg" ]; then \
+		echo "REFUSED: missing manual confirmation for destroy."; \
+		echo "Re-run with CONFIRM_DESTROY=$(OWNER_ALIAS)-test-rg"; \
+		exit 1; \
+	fi
 	terraform destroy $(TF_VAR_FLAGS)
 
 tf-kubeconfig: ## Extract kubeconfig from ARO and write to ~/.kube/<cluster-name>

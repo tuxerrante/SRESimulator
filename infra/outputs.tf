@@ -10,12 +10,20 @@ output "aro_cluster_name" {
 
 output "aro_api_server_url" {
   description = "ARO API server URL."
-  value       = jsondecode(azapi_resource.aro_cluster.output).properties.apiserverProfile.url
+  value = try(
+    jsondecode(tostring(azapi_resource.aro_cluster.output)).properties.apiserverProfile.url,
+    azapi_resource.aro_cluster.output.properties.apiserverProfile.url,
+    "",
+  )
 }
 
 output "aro_console_url" {
   description = "ARO web console URL."
-  value       = jsondecode(azapi_resource.aro_cluster.output).properties.consoleProfile.url
+  value = try(
+    jsondecode(tostring(azapi_resource.aro_cluster.output)).properties.consoleProfile.url,
+    azapi_resource.aro_cluster.output.properties.consoleProfile.url,
+    "",
+  )
 }
 
 output "aoai_endpoint" {
@@ -103,6 +111,7 @@ output "post_apply_checklist" {
     ║     • Suppression type = "Suppress all alerts"                       ║
     ║     • Duration = Indefinite (or match cluster lifetime)              ║
     ║     • Reason = "Test/development cluster – not production"           ║
+    ║     • Then: export GENEVA_SUPPRESSION_RULE_ACTIVE=true               ║
     ║                                                                      ║
     ║  2. GET KUBECONFIG                                                   ║
     ║     make tf-kubeconfig                                               ║
@@ -116,6 +125,11 @@ output "post_apply_checklist" {
     ║     • Both share the same Azure OpenAI account/deployment.           ║
     ║     • prod-down requires typing the namespace name to confirm.       ║
     ║     • e2e namespaces are disposable and auto-cleaned.                ║
+    ║                                                                      ║
+    ║  5. FINAL DEPLOY + CHECKS (with Azure SQL enabled)                   ║
+    ║     • DB_SECRET_NAME=sre-sql-creds make prod-up-final                ║
+    ║     • make public-exposure-audit NS="${var.prod_namespace}"           ║
+    ║     • make db-port-forward-check NS="${var.prod_namespace}"           ║
     ║                                                                      ║
     EOT
     ,
