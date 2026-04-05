@@ -8,6 +8,7 @@ import {
   buildCommandSystemPrompt,
 } from "../lib/prompts/command";
 import type { Scenario } from "../../../shared/types/game";
+import { stripTerminalCommandEcho } from "../../../shared/stripTerminalCommandEcho";
 
 export const commandRouter = Router();
 const VALID_COMMAND_TYPES = ["oc", "kql", "geneva"] as const;
@@ -33,8 +34,9 @@ commandRouter.post("/", async (req: Request, res: Response) => {
 
     const readiness = getAiReadiness();
     if (readiness.mockMode) {
+      const raw = generateMockCommandOutput(command, type);
       res.json({
-        output: generateMockCommandOutput(command, type),
+        output: stripTerminalCommandEcho(raw, command),
         exitCode: 0,
       });
       return;
@@ -65,6 +67,7 @@ commandRouter.post("/", async (req: Request, res: Response) => {
 
     let output = responseText;
     output = output.replace(/^```(?:\w*)\s*\n?/i, "").replace(/\n?```\s*$/i, "").trim();
+    output = stripTerminalCommandEcho(output, command);
 
     res.json({ output, exitCode: 0 });
   } catch (error) {
@@ -76,7 +79,10 @@ commandRouter.post("/", async (req: Request, res: Response) => {
       message.includes("did not include text content")
     ) {
       res.json({
-        output: generateMockCommandOutput(req.body.command, req.body.type),
+        output: stripTerminalCommandEcho(
+          generateMockCommandOutput(req.body.command, req.body.type),
+          req.body.command,
+        ),
         exitCode: 0,
       });
       return;

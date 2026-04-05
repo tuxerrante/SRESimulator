@@ -194,4 +194,10 @@ describe("buildCommandSystemPrompt", () => {
     const prompt = buildCommandSystemPrompt("oc", "ctx", "now");
     expect(prompt).not.toContain("Previously Executed Commands");
   });
+
+  it("instructs the model not to echo the command or prompt lines", () => {
+    const prompt = buildCommandSystemPrompt("oc", "ctx", "now");
+    expect(prompt).toContain("Do not echo the command line");
+    expect(prompt).toContain('"[oc]"');
+  });
 });
