@@ -55,7 +55,7 @@ export function extractResourceIdentifiers(scenario: Scenario): string[] {
   return [...found].slice(0, MAX_IDENTIFIERS);
 }
 
-/** Comma-separated identifiers for prompts, or empty string when none. */
+/** Paragraph appended to command scenario context: newline, short guidance, then comma-separated identifiers; empty when none. */
 export function formatResourceHintsForPrompt(scenario: Scenario): string {
   const ids = extractResourceIdentifiers(scenario);
   if (ids.length === 0) return "";
@@ -67,8 +67,28 @@ export function getResourceIdentifiersCsv(scenario: Scenario): string | null {
   return ids.length > 0 ? ids.join(", ") : null;
 }
 
+function compareResourceIdentifiers(a: string, b: string): number {
+  const aMatch = a.match(/(\d+)(?!.*\d)/);
+  const bMatch = b.match(/(\d+)(?!.*\d)/);
+
+  if (aMatch && bMatch) {
+    const aNum = parseInt(aMatch[1], 10);
+    const bNum = parseInt(bMatch[1], 10);
+    if (aNum !== bNum) return aNum - bNum;
+  } else if (aMatch) {
+    return -1;
+  } else if (bMatch) {
+    return 1;
+  }
+
+  return a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" });
+}
+
+/** Worker-like identifiers in deterministic order for positional placeholder resolution. */
 function sortedWorkerLike(ids: string[]): string[] {
-  return [...ids].filter((id) => /worker/i.test(id));
+  return [...ids]
+    .filter((id) => /worker/i.test(id))
+    .sort(compareResourceIdentifiers);
 }
 
 /**

@@ -80,6 +80,33 @@ describe("resolveAngleBracketPlaceholders", () => {
     expect(resolved).toContain("worker-eastus2-2");
   });
 
+  it("maps worker-2 placeholder to the second sorted worker-like identifier", () => {
+    const s = makeScenario({
+      clusterContext: {
+        ...makeScenario().clusterContext,
+        recentEvents: [],
+        status: "Degraded",
+        alerts: [
+          {
+            name: "A",
+            severity: "warning" as const,
+            message: "Node worker-bbb is not ready",
+            firingTime: "2026-03-27T12:00:00Z",
+          },
+          {
+            name: "B",
+            severity: "warning" as const,
+            message: "Node worker-aaa is not ready",
+            firingTime: "2026-03-27T12:01:00Z",
+          },
+        ],
+      },
+    });
+    const cmd = "oc describe machine <machine-name-for-worker-2>";
+    const resolved = resolveAngleBracketPlaceholders(cmd, s);
+    expect(resolved).toContain("worker-bbb");
+  });
+
   it("leaves commands without placeholders unchanged", () => {
     const cmd = "oc get nodes";
     expect(resolveAngleBracketPlaceholders(cmd, makeScenario())).toBe(cmd);

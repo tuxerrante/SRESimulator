@@ -117,7 +117,15 @@ function mockOcOutput(command: string): string {
 
   if (/^describe\s+machine\b/i.test(trimmed)) {
     const withNs = trimmed.match(/^describe\s+machine\s+-n\s+\S+\s+(\S+)/i);
-    const name = withNs?.[1] ?? "machine-mock-0";
+    let name = withNs?.[1];
+    if (!name) {
+      const simple = trimmed.match(/^describe\s+machine\s+(\S+)/i);
+      const token = simple?.[1];
+      if (token && token !== "-n" && token !== "--namespace") {
+        name = token;
+      }
+    }
+    name ??= "machine-mock-0";
     return [
       `Name:         ${name}`,
       `Namespace:    openshift-machine-api`,
