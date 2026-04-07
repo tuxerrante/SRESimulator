@@ -10,6 +10,12 @@ alwaysApply: true
 1. Commit with a descriptive conventional-commit message.
 2. Push: `git push -u origin HEAD`
 3. Open PR: `gh pr create` with summary and test plan.
+4. After creating a new worktree, bootstrap required local gitignored env files from the host checkout **when present**:
+   - `backend/.env.local` (for `make env-check` / `make e2e-azure-route`)
+   - `infra/.tf-backend.env` (for Terraform backend targets)
+   - `data/e2e-azure-route.env` only when intentionally reusing an existing e2e namespace
+5. Verify env bootstrap with `make env-check` before running e2e/prod targets.
+6. Never commit copied gitignored env files.
 
 ## CI Monitoring
 
