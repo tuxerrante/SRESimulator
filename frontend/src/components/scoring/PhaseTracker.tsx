@@ -12,7 +12,7 @@ export function PhaseTracker() {
   const currentIdx = PHASE_ORDER.indexOf(currentPhase);
 
   return (
-    <div className="flex items-center gap-1">
+    <div data-testid="phase-tracker" className="flex shrink-0 items-center gap-1">
       {PHASE_ORDER.map((phase, idx) => {
         const isActive = phase === currentPhase;
         const isCompleted = phaseHistory.includes(phase) && idx < currentIdx;
