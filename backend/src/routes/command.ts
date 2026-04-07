@@ -6,7 +6,9 @@ import {
   buildScenarioContext,
   buildSimNow,
   buildCommandSystemPrompt,
+  type CommandHistoryEntry,
 } from "../lib/prompts/command";
+import { resolveAngleBracketPlaceholders } from "../lib/prompts/scenario-resources";
 import type { Scenario } from "../../../shared/types/game";
 import { stripTerminalCommandEcho } from "../../../shared/stripTerminalCommandEcho";
 
@@ -17,13 +19,44 @@ interface CommandRequestBody {
   command: string;
   type: "oc" | "kql" | "geneva";
   scenario: Scenario | null;
-  commandHistory?: { command: string; output: string; type: "oc" | "kql" | "geneva" }[];
+  commandHistory?: unknown;
+}
+
+type LooseHistoryEntry = {
+  command?: unknown;
+  output?: unknown;
+  type?: unknown;
+};
+
+export function resolveCommandHistoryPlaceholders(
+  commandHistory: unknown,
+  scenario: Scenario | null,
+): CommandHistoryEntry[] | undefined {
+  if (!Array.isArray(commandHistory)) return undefined;
+
+  return commandHistory.map((entry) => {
+    if (entry == null || typeof entry !== "object") {
+      return entry as CommandHistoryEntry;
+    }
+
+    const candidate = entry as LooseHistoryEntry;
+    if (typeof candidate.command !== "string") {
+      return entry as CommandHistoryEntry;
+    }
+
+    return {
+      ...candidate,
+      command: resolveAngleBracketPlaceholders(candidate.command, scenario),
+    } as CommandHistoryEntry;
+  });
 }
 
 commandRouter.post("/", async (req: Request, res: Response) => {
   try {
     const body: CommandRequestBody = req.body;
     const { command, type, scenario, commandHistory } = body;
+    const commandResolved = resolveAngleBracketPlaceholders(command, scenario);
+    const commandHistoryResolved = resolveCommandHistoryPlaceholders(commandHistory, scenario);
 
     if (!VALID_COMMAND_TYPES.includes(type)) {
       res.status(400).json({
@@ -34,9 +67,9 @@ commandRouter.post("/", async (req: Request, res: Response) => {
 
     const readiness = getAiReadiness();
     if (readiness.mockMode) {
-      const raw = generateMockCommandOutput(command, type);
+      const raw = generateMockCommandOutput(commandResolved, type);
       res.json({
-        output: stripTerminalCommandEcho(raw, command),
+        output: stripTerminalCommandEcho(raw, commandResolved),
         exitCode: 0,
       });
       return;
@@ -51,7 +84,12 @@ commandRouter.post("/", async (req: Request, res: Response) => {
 
     const scenarioContext = buildScenarioContext(scenario);
     const simNow = buildSimNow(scenario?.incidentTicket?.reportedTime);
-    const systemPrompt = buildCommandSystemPrompt(type, scenarioContext, simNow, commandHistory);
+    const systemPrompt = buildCommandSystemPrompt(
+      type,
+      scenarioContext,
+      simNow,
+      commandHistoryResolved,
+    );
 
     const responseText = await generateAiText({
       maxTokens: 2048,
@@ -59,7 +97,7 @@ commandRouter.post("/", async (req: Request, res: Response) => {
       messages: [
         {
           role: "user",
-          content: `Simulate the output for this ${type} command:\n\n${command}`,
+          content: `Simulate the output for this ${type} command:\n\n${commandResolved}`,
         },
       ],
       route: "command",
@@ -67,7 +105,7 @@ commandRouter.post("/", async (req: Request, res: Response) => {
 
     let output = responseText;
     output = output.replace(/^```(?:\w*)\s*\n?/i, "").replace(/\n?```\s*$/i, "").trim();
-    output = stripTerminalCommandEcho(output, command);
+    output = stripTerminalCommandEcho(output, commandResolved);
 
     res.json({ output, exitCode: 0 });
   } catch (error) {
@@ -78,10 +116,14 @@ commandRouter.post("/", async (req: Request, res: Response) => {
       message.includes("without output text") ||
       message.includes("did not include text content")
     ) {
+      const fallbackCommand = resolveAngleBracketPlaceholders(
+        req.body.command,
+        req.body.scenario,
+      );
       res.json({
         output: stripTerminalCommandEcho(
-          generateMockCommandOutput(req.body.command, req.body.type),
-          req.body.command,
+          generateMockCommandOutput(fallbackCommand, req.body.type),
+          fallbackCommand,
         ),
         exitCode: 0,
       });
