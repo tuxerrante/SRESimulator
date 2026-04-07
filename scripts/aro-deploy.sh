@@ -106,9 +106,23 @@ helm_deploy_sre() {
   DEPLOY_HOST="${ns}.${DEPLOY_DOMAIN}"
 
   local db_flags=()
+  local aoai_route_flags=()
   if [ -n "${DB_SECRET_NAME:-}" ]; then
     db_flags=(--set database.enabled=true
               --set "database.existingSecretName=$DB_SECRET_NAME")
+  fi
+
+  if [ -n "${AOAI_DEPLOYMENT_CHAT:-}" ]; then
+    aoai_route_flags+=(--set "ai.azureOpenai.routeDeployments.chat=$AOAI_DEPLOYMENT_CHAT")
+  fi
+  if [ -n "${AOAI_DEPLOYMENT_COMMAND:-}" ]; then
+    aoai_route_flags+=(--set "ai.azureOpenai.routeDeployments.command=$AOAI_DEPLOYMENT_COMMAND")
+  fi
+  if [ -n "${AOAI_DEPLOYMENT_SCENARIO:-}" ]; then
+    aoai_route_flags+=(--set "ai.azureOpenai.routeDeployments.scenario=$AOAI_DEPLOYMENT_SCENARIO")
+  fi
+  if [ -n "${AOAI_DEPLOYMENT_PROBE:-}" ]; then
+    aoai_route_flags+=(--set "ai.azureOpenai.routeDeployments.probe=$AOAI_DEPLOYMENT_PROBE")
   fi
 
   helm upgrade --install "$E2E_RELEASE" ./helm/sre-simulator -n "$ns" \
@@ -130,6 +144,7 @@ helm_deploy_sre() {
     --set ai.azureOpenai.apiVersion=2024-10-21 \
     --set ai.azureOpenai.credentials.existingSecretName=azure-openai-creds \
     --set ai.azureOpenai.credentials.key=api-key \
+    "${aoai_route_flags[@]}" \
     "${db_flags[@]}" \
     --wait --timeout 15m >/dev/null
 }

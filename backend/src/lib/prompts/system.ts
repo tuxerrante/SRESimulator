@@ -1,6 +1,7 @@
 import type { Scenario } from "../../../../shared/types/game";
 import type { InvestigationPhase } from "../../../../shared/types/chat";
 import { utcNow } from "../sim-clock";
+import { getResourceIdentifiersCsv } from "./scenario-resources";
 
 export function buildSystemPrompt(
   knowledgeBase: string,
@@ -8,6 +9,8 @@ export function buildSystemPrompt(
   currentPhase: InvestigationPhase
 ): string {
   const now = utcNow();
+
+  const resourceCsv = scenario ? getResourceIdentifiersCsv(scenario) : null;
 
   const scenarioContext = scenario
     ? `
@@ -37,6 +40,7 @@ Current UTC time: ${now}
 - **Status:** ${scenario.clusterContext.status}
 - **Recent Events:** ${scenario.clusterContext.recentEvents.join("; ")}
 - **Alerts:** ${scenario.clusterContext.alerts.map((a) => `${a.severity}: ${a.name} (firing since ${a.firingTime}) - ${a.message}`).join("; ")}
+${resourceCsv ? `- **Named resources:** ${resourceCsv} (use these instead of raw documentation placeholders such as <machine-name>)` : ""}
 `
     : "";
 
@@ -78,6 +82,8 @@ Advise upgrade if cluster runs an EOL version.
 
 ## Documentation References
 Cite 1-2 links per response from: [ARO lifecycle](https://learn.microsoft.com/en-us/azure/openshift/support-lifecycle), [ARO policies](https://learn.microsoft.com/en-us/azure/openshift/support-policies-v4), [OpenShift docs](https://docs.openshift.com/container-platform/4.18/), [Red Hat KB](https://access.redhat.com/knowledgebase), [runbooks](https://github.com/openshift/runbooks/tree/master/alerts). Use \`[References]\` from KB entries.
+
+When the knowledge base shows example commands with angle-bracket placeholders (e.g. \`oc describe machine <machine-name>\`), substitute concrete names from the Active Scenario and the "Named resources" line — do not repeat raw \`<placeholder>\` tokens in suggested commands.
 
 ## Response Format
 - Start with a 1-sentence reaction, then use **headers, bullets, bold** for structure.

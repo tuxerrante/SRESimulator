@@ -2,13 +2,15 @@
        fmt fmt-check \
        lint lint-ts lint-backend lint-unused-exports lint-yaml lint-md \
        typecheck typecheck-backend validate \
-       security audit lockfile-lint grype \
-       test test-integration test-mssql dev-db smoke-local-vertex env-check e2e-azure-route e2e-azure-route-up e2e-azure-route-refresh e2e-azure-route-down \
-       prod-up prod-down prod-status \
+       security audit lockfile-lint gitleaks grype \
+       test test-integration test-mssql dev-db smoke-backend-mssql smoke-local-vertex env-check e2e-azure-route e2e-azure-route-up e2e-azure-route-refresh e2e-azure-route-down \
+       prod-up prod-down prod-status public-exposure-audit db-port-forward-check geneva-suppression-check prod-up-final \
        build dev start \
        docker-build-frontend docker-build-backend docker-build \
        pre-commit all \
-       tf-bootstrap tf-init tf-validate tf-fmt tf-test tf-plan tf-apply tf-destroy tf-kubeconfig tf-output
+       tf-bootstrap tf-pull-secret tf-preflight tf-init tf-init-local tf-init-isolated tf-validate tf-fmt tf-test tf-plan tf-apply tf-destroy tf-kubeconfig tf-output
+
+SHELL := /bin/bash
 
 FRONTEND_DIR := frontend
 BACKEND_DIR := backend
@@ -17,6 +19,8 @@ E2E_ENV_FILE ?= $(BACKEND_DIR)/.env.local
 SECURITY_FAIL_LEVEL ?= high
 GRYPE_VERSION ?= v0.110.0
 GRYPE_IMAGE ?= anchore/grype:$(GRYPE_VERSION)@sha256:af65fbc0c664691067788fe95ff88760b435543e45595eb2ca6f102fc476fbe1
+GITLEAKS_VERSION ?= v8.30.0
+GITLEAKS_IMAGE ?= ghcr.io/gitleaks/gitleaks:$(GITLEAKS_VERSION)@sha256:691af3c7c5a48b16f187ce3446d5f194838f91238f27270ed36eef6359a574d9
 NPM_VERSION ?= $(shell tr -d '\n' < .npm-version)
 AZURE_SUBSCRIPTION_ID ?=
 ARO_RG ?=
@@ -24,15 +28,21 @@ ARO_CLUSTER ?=
 AOAI_RG ?=
 AOAI_ACCOUNT ?=
 AOAI_DEPLOYMENT ?=
+AOAI_DEPLOYMENT_CHAT ?=
+AOAI_DEPLOYMENT_COMMAND ?=
+AOAI_DEPLOYMENT_SCENARIO ?=
+AOAI_DEPLOYMENT_PROBE ?=
 E2E_NAMESPACE_PREFIX ?= sre-manual-e2e
 E2E_RELEASE ?= sre-simulator
 E2E_METADATA_FILE ?= data/e2e-azure-route.env
 E2E_REQUIRED_VARS := AZURE_SUBSCRIPTION_ID ARO_RG ARO_CLUSTER AOAI_RG AOAI_ACCOUNT AOAI_DEPLOYMENT
 PROD_NAMESPACE ?= sre-simulator
 PROD_METADATA_FILE ?= data/prod-route.env
+GENEVA_SUPPRESSION_RULE_ACTIVE ?= false
 
 export AZURE_SUBSCRIPTION_ID ARO_RG ARO_CLUSTER
 export AOAI_RG AOAI_ACCOUNT AOAI_DEPLOYMENT
+export AOAI_DEPLOYMENT_CHAT AOAI_DEPLOYMENT_COMMAND AOAI_DEPLOYMENT_SCENARIO AOAI_DEPLOYMENT_PROBE
 export E2E_RELEASE NPM_VERSION
 
 define e2e_var_source
@@ -127,7 +137,7 @@ validate: lint typecheck typecheck-backend ## Run all linters + type checking
 # ──────────────────────────────────────────────
 # Security
 # ──────────────────────────────────────────────
-security: audit lockfile-lint grype ## Run all security checks
+security: audit lockfile-lint gitleaks grype ## Run all security checks
 
 audit: ## Check npm dependencies for known vulnerabilities
 	cd $(FRONTEND_DIR) && npm audit --audit-level=$(SECURITY_FAIL_LEVEL)
@@ -138,6 +148,17 @@ lockfile-lint: ## Validate lockfile integrity (registry & HTTPS)
 		--type npm \
 		--allowed-hosts npm \
 		--validate-https
+
+gitleaks: ## Scan repository for hardcoded secrets
+	@set -e; \
+	if command -v gitleaks >/dev/null 2>&1; then \
+		gitleaks detect --no-git --source . --config .gitleaks.toml --redact; \
+	elif command -v docker >/dev/null 2>&1; then \
+		docker run --rm -v "$$(pwd):/work" -w /work "$(GITLEAKS_IMAGE)" detect --no-git --source . --config .gitleaks.toml --redact; \
+	else \
+		echo "gitleaks scanner requires either gitleaks CLI or docker."; \
+		exit 1; \
+	fi
 
 grype: ## Scan frontend/backend dependencies with Grype (high/critical)
 	@set -e; \
@@ -198,6 +219,51 @@ test-mssql: dev-db ## Run MSSQL integration tests against local SQL Edge contain
 	cd $(BACKEND_DIR) && STORAGE_BACKEND=mssql \
 		DATABASE_URL="$(MSSQL_DATABASE_URL)" \
 		npx vitest run -c vitest.integration.config.ts
+
+smoke-backend-mssql: ## Start backend with MSSQL and verify DB-backed route responds
+	@set -e; \
+	PORT="$${PORT:-18081}"; \
+	LOG_FILE="$${LOG_FILE:-/tmp/sre-backend-mssql-smoke.log}"; \
+	RESPONSE_FILE="$$(mktemp /tmp/sre-db-smoke-response.XXXXXX.json)"; \
+	if ! NODE_PATH="$(CURDIR)/$(BACKEND_DIR)/node_modules" DATABASE_URL="$(MSSQL_DATABASE_URL)" node -e " \
+		const sql = require('mssql'); \
+		sql.connect(process.env.DATABASE_URL) \
+		  .then(pool => pool.request().query('SELECT 1').then(() => pool.close())) \
+		  .then(() => process.exit(0)) \
+		  .catch(() => process.exit(1));"; then \
+		echo "MSSQL endpoint is not reachable at DATABASE_URL."; \
+		echo "Run 'make dev-db' locally or provide a reachable MSSQL endpoint."; \
+		exit 1; \
+	fi; \
+	echo "Starting backend with STORAGE_BACKEND=mssql on port $$PORT"; \
+	STORAGE_BACKEND=mssql \
+	DATABASE_URL="$(MSSQL_DATABASE_URL)" \
+	AI_MOCK_MODE=true \
+	AI_STRICT_STARTUP=true \
+	PORT="$$PORT" \
+	npm --prefix "$(BACKEND_DIR)" run dev >"$$LOG_FILE" 2>&1 & \
+	PID=$$!; \
+	trap 'kill $$PID >/dev/null 2>&1 || true; pkill -P $$PID >/dev/null 2>&1 || true; rm -f "$$RESPONSE_FILE"' EXIT INT TERM; \
+	READY=0; \
+	i=0; \
+	while [ $$i -lt 40 ]; do \
+		CODE=$$(curl -s -o "$$RESPONSE_FILE" -w '%{http_code}' "http://127.0.0.1:$$PORT/api/scores?difficulty=easy" || true); \
+		if [ "$$CODE" = "200" ]; then \
+			READY=1; \
+			break; \
+		fi; \
+		i=$$((i + 1)); \
+		sleep 1; \
+	done; \
+	if [ "$$READY" -ne 1 ]; then \
+		echo "DB smoke check failed (expected 200 from /api/scores, got $$CODE)."; \
+		echo "Backend log: $$LOG_FILE"; \
+		exit 1; \
+	fi; \
+	echo "DB smoke check passed (backend + MSSQL path is healthy)."; \
+	kill $$PID >/dev/null 2>&1 || true; \
+	pkill -P $$PID >/dev/null 2>&1 || true; \
+	rm -f "$$RESPONSE_FILE"
 
 smoke-local-vertex: ## Run local backend live probe using Vertex env from frontend/.env.local
 	@set -e; \
@@ -380,6 +446,10 @@ prod-up: env-check ## Deploy to stable production namespace (same cluster + AOAI
 	if ! oc -n "$$NS" get bc/sre-simulator-backend >/dev/null 2>&1; then \
 		oc -n "$$NS" new-build --name=sre-simulator-backend --binary=true --strategy=docker --to=sre-simulator-backend:$$TAG >/dev/null; \
 	fi; \
+	oc -n "$$NS" patch bc/sre-simulator-frontend --type=merge \
+		-p "{\"spec\":{\"output\":{\"to\":{\"kind\":\"ImageStreamTag\",\"name\":\"sre-simulator-frontend:$$TAG\"}}}}" >/dev/null; \
+	oc -n "$$NS" patch bc/sre-simulator-backend --type=merge \
+		-p "{\"spec\":{\"output\":{\"to\":{\"kind\":\"ImageStreamTag\",\"name\":\"sre-simulator-backend:$$TAG\"}}}}" >/dev/null; \
 	patch_bc_strategy "$$NS" sre-simulator-frontend frontend/Dockerfile; \
 	patch_bc_strategy "$$NS" sre-simulator-backend backend/Dockerfile; \
 	oc_build_timed "$$NS" sre-simulator-frontend; \
@@ -434,6 +504,72 @@ prod-status: ## Show production namespace status (pods, route URL)
 	echo "Deployments:"; \
 	oc -n "$$NS" get deployments 2>/dev/null || echo "  (no deployments)"
 
+geneva-suppression-check: ## Require explicit confirmation that Geneva suppression rule is active
+	@if [ "$(GENEVA_SUPPRESSION_RULE_ACTIVE)" != "true" ]; then \
+		echo "Set GENEVA_SUPPRESSION_RULE_ACTIVE=true after verifying Geneva suppression is active for the target ARO cluster/resource group (ARO_CLUSTER, ARO_RG)."; \
+		exit 1; \
+	fi
+
+public-exposure-audit: ## Verify frontend route is public and backend remains private ClusterIP
+	@set -e; \
+	NS="$${NS:-$(PROD_NAMESPACE)}"; \
+	RELEASE="$${RELEASE:-$(E2E_RELEASE)}"; \
+	FRONT_ROUTE="$$RELEASE"; \
+	BACK_ROUTE="$$RELEASE-backend"; \
+	BACK_SVC="$$RELEASE-backend"; \
+	echo "Auditing exposure in namespace $$NS (release $$RELEASE)"; \
+	oc -n "$$NS" get "route/$$FRONT_ROUTE" >/dev/null; \
+	if oc -n "$$NS" get "route/$$BACK_ROUTE" >/dev/null 2>&1; then \
+		echo "Unexpected backend route found: $$BACK_ROUTE"; \
+		exit 1; \
+	fi; \
+	SVC_TYPE=$$(oc -n "$$NS" get "svc/$$BACK_SVC" -o jsonpath='{.spec.type}'); \
+	if [ "$$SVC_TYPE" != "ClusterIP" ]; then \
+		echo "Backend service type must be ClusterIP, found $$SVC_TYPE"; \
+		exit 1; \
+	fi; \
+	echo "Exposure audit passed: frontend route exists, backend is internal-only."
+
+db-port-forward-check: ## Verify backend-to-DB path through local oc port-forward fallback
+	@set -e; \
+	NS="$${NS:-$(PROD_NAMESPACE)}"; \
+	RELEASE="$${RELEASE:-$(E2E_RELEASE)}"; \
+	LOCAL_PORT="$${LOCAL_PORT:-18080}"; \
+	BACK_PORT="$${BACK_PORT:-8080}"; \
+	SVC="$$RELEASE-backend"; \
+	echo "Running DB check via port-forward: $$NS/$$SVC -> 127.0.0.1:$$LOCAL_PORT"; \
+	oc -n "$$NS" get "svc/$$SVC" >/dev/null; \
+	oc -n "$$NS" port-forward "svc/$$SVC" "$$LOCAL_PORT:$$BACK_PORT" >/tmp/sre-db-port-forward.log 2>&1 & \
+	PID=$$!; \
+	trap 'kill $$PID >/dev/null 2>&1 || true' EXIT INT TERM; \
+	READY=0; \
+	i=0; \
+	while [ $$i -lt 40 ]; do \
+		CODE=$$(curl -s -o /tmp/sre-db-port-forward-response.json -w '%{http_code}' "http://127.0.0.1:$$LOCAL_PORT/api/scores?difficulty=easy" || true); \
+		if [ "$$CODE" = "200" ]; then \
+			READY=1; \
+			break; \
+		fi; \
+		i=$$((i + 1)); \
+		sleep 1; \
+	done; \
+	if [ "$$READY" -ne 1 ]; then \
+		echo "Port-forward DB check failed (expected 200 from /api/scores, got $$CODE)."; \
+		echo "Port-forward log: /tmp/sre-db-port-forward.log"; \
+		exit 1; \
+	fi; \
+	echo "Port-forward DB check passed."
+
+prod-up-final: geneva-suppression-check env-check ## Deploy final env then run exposure + DB fallback checks
+	@set -e; \
+	if [ -z "$(DB_SECRET_NAME)" ]; then \
+		echo "DB_SECRET_NAME is required for final deployment with STORAGE_BACKEND=mssql."; \
+		exit 1; \
+	fi; \
+	$(MAKE) prod-up DB_SECRET_NAME="$(DB_SECRET_NAME)"; \
+	$(MAKE) public-exposure-audit NS="$(PROD_NAMESPACE)"; \
+	$(MAKE) db-port-forward-check NS="$(PROD_NAMESPACE)"
+
 # ──────────────────────────────────────────────
 # Build & Run
 # ──────────────────────────────────────────────
@@ -471,8 +607,20 @@ all: validate security build ## Full CI pipeline: lint + typecheck + security + 
 tf-bootstrap: ## Create Azure Storage for Terraform remote state (one-time)
 	$(MAKE) -C infra tf-bootstrap
 
+tf-pull-secret: ## Extract pull secret JSON from a private env source for Terraform
+	$(MAKE) -C infra tf-pull-secret
+
+tf-preflight: ## Run Azure preflight checks for final isolated environment
+	$(MAKE) -C infra tf-preflight
+
 tf-init: ## Terraform init (see infra/Makefile for options)
 	$(MAKE) -C infra tf-init
+
+tf-init-local: ## Terraform init without remote backend (validation/testing only)
+	$(MAKE) -C infra tf-init-local
+
+tf-init-isolated: ## Terraform init with per-owner isolated state key
+	$(MAKE) -C infra tf-init-isolated
 
 tf-validate: ## Validate Terraform configuration
 	$(MAKE) -C infra tf-validate

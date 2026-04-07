@@ -201,6 +201,7 @@ interface AzureChatResponse {
 }
 
 const VALID_REASONING_EFFORTS = new Set(["low", "medium", "high"]);
+const deploymentReasoningEffortSupport = new Map<string, boolean>();
 
 function validReasoningEffort(raw: string | undefined): "low" | "medium" | "high" {
   const normalized = raw?.trim().toLowerCase();
@@ -210,20 +211,54 @@ function validReasoningEffort(raw: string | undefined): "low" | "medium" | "high
   return "medium";
 }
 
+function isReasoningModelName(value: string): boolean {
+  return /^o\d/.test(value) || /^gpt-5/.test(value);
+}
+
+function shouldSendReasoningEffort(deployment: string): boolean {
+  const deploymentKey = deployment.trim().toLowerCase();
+  const cached = deploymentReasoningEffortSupport.get(deploymentKey);
+  if (cached !== undefined) return cached;
+
+  const configuredModel = getConfiguredModel().trim().toLowerCase();
+  const deploymentLooksNonReasoningModel =
+    deploymentKey.includes("gpt-4o") ||
+    deploymentKey.includes("gpt-4.1") ||
+    deploymentKey.includes("gpt-4.5") ||
+    deploymentKey.includes("gpt-35") ||
+    deploymentKey.includes("gpt-3.5");
+
+  const supports =
+    isReasoningModelName(deploymentKey) ||
+    (isReasoningModelName(configuredModel) && !deploymentLooksNonReasoningModel);
+
+  deploymentReasoningEffortSupport.set(deploymentKey, supports);
+  return supports;
+}
+
+function isUnsupportedReasoningEffortError(errorText: string): boolean {
+  const normalized = errorText.toLowerCase();
+  return normalized.includes("reasoning_effort") && (
+    normalized.includes("unrecognized request argument") ||
+    normalized.includes("unknown parameter") ||
+    normalized.includes("unsupported")
+  );
+}
+
 async function runAzureOpenAiRequest(
   endpoint: string,
   key: string,
   deployment: string,
   apiVersion: string,
   request: AiTextRequest,
-  useLegacyMaxTokens: boolean
+  useLegacyMaxTokens: boolean,
+  includeReasoningEffort: boolean
 ): Promise<Response> {
-  const reasoningEffort = validReasoningEffort(
-    request._reasoningEffortOverride ?? process.env.AI_REASONING_EFFORT,
-  );
-
-  const model = getConfiguredModel().toLowerCase();
-  const isReasoningModel = /^o\d/.test(model) || /^gpt-5/.test(model);
+  const reasoningEffort = includeReasoningEffort
+    ? validReasoningEffort(
+      request._reasoningEffortOverride ?? process.env.AI_REASONING_EFFORT,
+    )
+    : undefined;
 
   const body: Record<string, unknown> = {
     messages: [
@@ -233,7 +268,7 @@ async function runAzureOpenAiRequest(
         content: message.content,
       })),
     ],
-    ...(isReasoningModel ? {} : { temperature: 0 }),
+    ...(includeReasoningEffort ? {} : { temperature: 0 }),
     ...(reasoningEffort ? { reasoning_effort: reasoningEffort } : {}),
     ...(useLegacyMaxTokens
       ? { max_tokens: request.maxTokens }
@@ -264,29 +299,42 @@ async function executeAzureRequest(
   apiVersion: string,
   request: AiTextRequest,
 ): Promise<Response> {
-  let response = await runAzureOpenAiRequest(
-    base, key, deployment, apiVersion, request, false,
-  );
+  const deploymentKey = deployment.trim().toLowerCase();
+  let useLegacyMaxTokens = false;
+  let includeReasoningEffort = shouldSendReasoningEffort(deployment);
 
-  if (!response.ok && response.status !== 429) {
-    const firstError = await response.text();
-    if (firstError.includes("max_completion_tokens")) {
-      response = await runAzureOpenAiRequest(
-        base, key, deployment, apiVersion, request, true,
-      );
-    } else if (firstError.includes("max_tokens")) {
-      response = await runAzureOpenAiRequest(
-        base, key, deployment, apiVersion, request, false,
-      );
-    } else {
-      if (request.route) logTokenError(request.route, firstError.slice(0, 200));
-      throw new Error(
-        `Azure OpenAI request failed (${response.status}): ${firstError}`
-      );
+  while (true) {
+    const response = await runAzureOpenAiRequest(
+      base, key, deployment, apiVersion, request, useLegacyMaxTokens, includeReasoningEffort,
+    );
+
+    if (response.ok || response.status === 429) {
+      return response;
     }
-  }
 
-  return response;
+    const details = await response.text();
+
+    if (includeReasoningEffort && isUnsupportedReasoningEffortError(details)) {
+      deploymentReasoningEffortSupport.set(deploymentKey, false);
+      includeReasoningEffort = false;
+      continue;
+    }
+
+    if (!useLegacyMaxTokens && details.includes("max_completion_tokens")) {
+      useLegacyMaxTokens = true;
+      continue;
+    }
+
+    if (useLegacyMaxTokens && details.includes("max_tokens")) {
+      useLegacyMaxTokens = false;
+      continue;
+    }
+
+    if (request.route) logTokenError(request.route, details.slice(0, 200));
+    throw new Error(
+      `Azure OpenAI request failed (${response.status}): ${details}`
+    );
+  }
 }
 
 async function callAzureOpenAi(request: AiTextRequest): Promise<string> {

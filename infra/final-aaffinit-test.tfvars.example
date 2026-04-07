@@ -1,0 +1,43 @@
+# Final environment baseline for the production infra rehearsal.
+# Copy this file to infra/terraform.tfvars and fill in required values.
+# terraform.tfvars is gitignored.
+#
+# Before plan/apply:
+#   1) make tf-preflight OWNER_ALIAS=aaffinit TF_STATE_ACCOUNT=<state-account> GENEVA_SUPPRESSION_ACCESS_CONFIRMED=true
+#   2) make tf-init-isolated OWNER_ALIAS=aaffinit TF_STATE_ACCOUNT=<state-account>
+
+owner_alias = "aaffinit"
+location    = "eastus"
+
+# Pin to the latest compatible version returned by:
+#   az aro get-versions --location eastus -o table
+# Last validated from preflight on 2026-04-03.
+aro_version = "4.20.15"
+
+# In westeurope, gpt-4o-mini requires GlobalStandard (Standard is unsupported).
+aoai_sku_name = "GlobalStandard"
+
+# Minimum supported ARO sizing.
+master_vm_size = "Standard_D8s_v3"
+worker_vm_size = "Standard_D4s_v3"
+worker_count   = 2
+
+# Shared stable namespace.
+prod_namespace = "sre-simulator"
+
+# Final environment should provision Azure SQL for backend persistence.
+enable_database = true
+# Free-tier update is not supported in all regions/subscriptions.
+enable_sql_free_tier = false
+# sql_admin_password = "<strong-password-meeting-azure-complexity>"
+# Set if default aaffinit-test-sql is already taken in Azure:
+# sql_server_name = "aaffinit-test-sql-001"
+
+# Budget notifications (required when budget_amount > 0).
+budget_alert_emails = ["your-email@example.com"]
+budget_amount       = 200
+
+# Keep test tag explicit in addition to mandatory tags.
+extra_tags = {
+  test = "true"
+}
