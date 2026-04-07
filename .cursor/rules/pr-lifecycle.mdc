@@ -30,11 +30,28 @@ alwaysApply: true
 - Squash merge: `gh pr merge <number> --squash --body "..."`
 - After merge: `git checkout main && git pull`
 
+## Impactful PR Gate (required before merge)
+
+Run a **real ARO e2e deployment probe** for impactful PRs before merge.
+
+Treat a PR as impactful when it changes any of:
+- frontend gameplay UX/layout or user flows
+- backend API/chat/scoring/session behavior
+- deployment scripts, Helm values, or route wiring
+- infrastructure or environment plumbing used by runtime paths
+
+Required gate for impactful PRs:
+1. Ensure required vars are available in `backend/.env.local`.
+2. Run `make e2e-azure-route` from the task worktree.
+3. Confirm probe readiness (`Probe status: 200`) and capture namespace + URL in the PR comment or final handoff.
+4. Keep the temporary namespace until reviewer signoff, then clean up with `make e2e-azure-route-down` (or `NS=<namespace> make e2e-azure-route-down`).
+
 ## Checklist (complete ALL before finishing)
 
 - [ ] `make validate` passes
 - [ ] `make test` passes
 - [ ] `make test-integration` passes
+- [ ] For impactful PRs: `make e2e-azure-route` passes with probe status 200
 - [ ] PR created with summary
 - [ ] CI checks green (or confirmed unrelated failure)
 - [ ] PR URL and status reported to user
