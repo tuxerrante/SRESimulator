@@ -63,6 +63,7 @@ describe("Header layout", () => {
 
   afterEach(() => {
     cleanup();
+    useGameStore.setState({ nickname: null });
     useGameStore.getState().resetGame();
   });
 
