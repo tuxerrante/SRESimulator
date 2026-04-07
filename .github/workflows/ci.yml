@@ -282,12 +282,14 @@ jobs:
       - changes
     if: needs.changes.outputs.run_integration == 'true'
     runs-on: ubuntu-latest
+    env:
+      MSSQL_SA_PASSWORD: ${{ format('CiRun{0}!aA', github.run_id) }}
     services:
       sqlserver:
         image: mcr.microsoft.com/azure-sql-edge:latest
         env:
           ACCEPT_EULA: "Y"
-          MSSQL_SA_PASSWORD: "CI_Pass@123!"
+          MSSQL_SA_PASSWORD: ${{ env.MSSQL_SA_PASSWORD }}
         ports:
           - 1433:1433
         options: >-
@@ -335,7 +337,7 @@ jobs:
         env:
           DB_CONN: >-
             Server=localhost;User Id=sa;
-            Password=CI_Pass@123!;
+            Password=${{ env.MSSQL_SA_PASSWORD }};
             TrustServerCertificate=true
         run: |
           node -e "
@@ -360,14 +362,14 @@ jobs:
           STORAGE_BACKEND: mssql
           DATABASE_URL: >-
             Server=localhost;Database=sresimulator;User Id=sa;
-            Password=CI_Pass@123!;TrustServerCertificate=true
+            Password=${{ env.MSSQL_SA_PASSWORD }};TrustServerCertificate=true
         run: make test-integration
 
       - name: Smoke startup with MSSQL backend
         env:
           MSSQL_DATABASE_URL: >-
             Server=localhost;Database=sresimulator;User Id=sa;
-            Password=CI_Pass@123!;TrustServerCertificate=true
+            Password=${{ env.MSSQL_SA_PASSWORD }};TrustServerCertificate=true
         run: make smoke-backend-mssql
 
   security:
