@@ -70,15 +70,15 @@ export function Header({ onTourRestart }: HeaderProps) {
   }, [scoreOpen]);
 
   return (
-    <header className="flex items-center justify-between px-4 py-2 border-b border-zinc-700 bg-zinc-900 relative z-20">
-      <div className="flex items-center gap-3">
+    <header className="relative z-20 flex items-center gap-4 border-b border-zinc-700 bg-zinc-900 px-4 py-2">
+      <div data-testid="header-left-cluster" className="flex min-w-0 flex-1 items-center gap-3">
         <Link
           href="/"
           className="flex items-center gap-1 text-zinc-500 hover:text-zinc-300 transition-colors"
         >
           <ArrowLeft size={16} />
         </Link>
-        <div className="flex items-center gap-2">
+        <div className="flex shrink-0 items-center gap-2">
           <Shield size={18} className="text-amber-500" />
           <span className="font-bold text-sm text-zinc-200">
             SRE Simulator
@@ -86,11 +86,16 @@ export function Header({ onTourRestart }: HeaderProps) {
         </div>
         {scenario && (
           <>
-            <div className="w-px h-5 bg-zinc-700" />
-            <span className="text-sm text-zinc-400">{scenario.title}</span>
+            <div className="h-5 w-px shrink-0 bg-zinc-700" />
+            <span
+              data-testid="header-scenario-title"
+              className="min-w-0 max-w-[22rem] truncate text-sm text-zinc-400"
+            >
+              {scenario.title}
+            </span>
             <span
               className={cn(
-                "text-xs px-1.5 py-0.5 rounded font-medium",
+                "shrink-0 rounded px-1.5 py-0.5 text-xs font-medium",
                 scenario.difficulty === "easy" && "bg-emerald-600/20 text-emerald-400",
                 scenario.difficulty === "medium" && "bg-amber-600/20 text-amber-400",
                 scenario.difficulty === "hard" && "bg-red-600/20 text-red-400"
@@ -102,16 +107,19 @@ export function Header({ onTourRestart }: HeaderProps) {
         )}
         {status === "playing" && nickname && (
           <>
-            <div className="w-px h-5 bg-zinc-700" />
-            <span className="flex items-center gap-1 text-xs text-zinc-400">
-              <User size={12} />
-              {nickname}
+            <div className="h-5 w-px shrink-0 bg-zinc-700" />
+            <span
+              data-testid="header-nickname"
+              className="flex min-w-0 max-w-40 items-center gap-1 text-xs text-zinc-400"
+            >
+              <User size={12} className="shrink-0" />
+              <span className="truncate">{nickname}</span>
             </span>
           </>
         )}
       </div>
 
-      <div className="flex items-center gap-4">
+      <div data-testid="header-right-cluster" className="flex shrink-0 items-center gap-4 pl-2">
         {status === "playing" && (
           <>
             <PhaseTracker />
