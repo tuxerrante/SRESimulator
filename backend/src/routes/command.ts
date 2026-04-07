@@ -6,7 +6,9 @@ import {
   buildScenarioContext,
   buildSimNow,
   buildCommandSystemPrompt,
+  type CommandHistoryEntry,
 } from "../lib/prompts/command";
+import { resolveAngleBracketPlaceholders } from "../lib/prompts/scenario-resources";
 import type { Scenario } from "../../../shared/types/game";
 
 export const commandRouter = Router();
@@ -16,13 +18,44 @@ interface CommandRequestBody {
   command: string;
   type: "oc" | "kql" | "geneva";
   scenario: Scenario | null;
-  commandHistory?: { command: string; output: string; type: "oc" | "kql" | "geneva" }[];
+  commandHistory?: unknown;
+}
+
+type LooseHistoryEntry = {
+  command?: unknown;
+  output?: unknown;
+  type?: unknown;
+};
+
+export function resolveCommandHistoryPlaceholders(
+  commandHistory: unknown,
+  scenario: Scenario | null,
+): CommandHistoryEntry[] | undefined {
+  if (!Array.isArray(commandHistory)) return undefined;
+
+  return commandHistory.map((entry) => {
+    if (entry == null || typeof entry !== "object") {
+      return entry as CommandHistoryEntry;
+    }
+
+    const candidate = entry as LooseHistoryEntry;
+    if (typeof candidate.command !== "string") {
+      return entry as CommandHistoryEntry;
+    }
+
+    return {
+      ...candidate,
+      command: resolveAngleBracketPlaceholders(candidate.command, scenario),
+    } as CommandHistoryEntry;
+  });
 }
 
 commandRouter.post("/", async (req: Request, res: Response) => {
   try {
     const body: CommandRequestBody = req.body;
     const { command, type, scenario, commandHistory } = body;
+    const commandResolved = resolveAngleBracketPlaceholders(command, scenario);
+    const commandHistoryResolved = resolveCommandHistoryPlaceholders(commandHistory, scenario);
 
     if (!VALID_COMMAND_TYPES.includes(type)) {
       res.status(400).json({
@@ -34,7 +67,7 @@ commandRouter.post("/", async (req: Request, res: Response) => {
     const readiness = getAiReadiness();
     if (readiness.mockMode) {
       res.json({
-        output: generateMockCommandOutput(command, type),
+        output: generateMockCommandOutput(commandResolved, type),
         exitCode: 0,
       });
       return;
@@ -49,7 +82,12 @@ commandRouter.post("/", async (req: Request, res: Response) => {
 
     const scenarioContext = buildScenarioContext(scenario);
     const simNow = buildSimNow(scenario?.incidentTicket?.reportedTime);
-    const systemPrompt = buildCommandSystemPrompt(type, scenarioContext, simNow, commandHistory);
+    const systemPrompt = buildCommandSystemPrompt(
+      type,
+      scenarioContext,
+      simNow,
+      commandHistoryResolved,
+    );
 
     const responseText = await generateAiText({
       maxTokens: 2048,
@@ -57,7 +95,7 @@ commandRouter.post("/", async (req: Request, res: Response) => {
       messages: [
         {
           role: "user",
-          content: `Simulate the output for this ${type} command:\n\n${command}`,
+          content: `Simulate the output for this ${type} command:\n\n${commandResolved}`,
         },
       ],
       route: "command",
@@ -76,7 +114,10 @@ commandRouter.post("/", async (req: Request, res: Response) => {
       message.includes("did not include text content")
     ) {
       res.json({
-        output: generateMockCommandOutput(req.body.command, req.body.type),
+        output: generateMockCommandOutput(
+          resolveAngleBracketPlaceholders(req.body.command, req.body.scenario),
+          req.body.type,
+        ),
         exitCode: 0,
       });
       return;
