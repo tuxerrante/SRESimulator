@@ -4,7 +4,8 @@ import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useGameStore } from "@/stores/gameStore";
 import type { Difficulty, Scenario } from "@shared/types/game";
-import { Shield, AlertTriangle, Zap, Flame, Loader2, Trophy, Github, Heart, User } from "lucide-react";
+import { Shield, AlertTriangle, Zap, Flame, Loader2, Trophy, Heart, User } from "lucide-react";
+import { Github } from "@/components/icons/Github";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
 

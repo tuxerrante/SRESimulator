@@ -155,10 +155,10 @@
 - **Version:** Unknown
 - **Symptoms:** `az aro update` commands failed for the customer. SREs noted the cluster appeared to have preconfiguredNSG disabled despite being enabled previously.
 - **Root Cause:** A critical bug in the PUCM logic caused the preconfiguredNSG flag in the cluster document to be reverted to disabled (from enabled) during maintenance. This put the cluster in a state where the RP attempted to manage NSGs that the customer owned, causing updates to fail.
-- **Technical Details:** In the ARO-RP codebase, `PreconfiguredNSG` is a string field with values `"Enabled"` or `"Disabled"`. The REST API default is `"Disabled"`. If the PUCM maintenance path does not explicitly preserve this field during cluster document updates, it reverts to the default, causing the ARO operator's subnets controller to attempt managing customer-owned NSGs.
+- **Technical Details:** In the platform control-plane implementation, `PreconfiguredNSG` is a string field with values `"Enabled"` or `"Disabled"`. The REST API default is `"Disabled"`. If the PUCM maintenance path does not explicitly preserve this field during cluster document updates, it reverts to the default, causing the ARO operator's subnets controller to attempt managing customer-owned NSGs.
 - **References:**
   - [Microsoft: Bring your own NSG to ARO](https://learn.microsoft.com/en-us/azure/openshift/howto-bring-nsg)
-  - [ARO-RP Source Code](https://github.com/Azure/ARO-RP)
+  - Public implementation notes (internal reference)
 
 ### Stuck Upgrades (Machine Config Mismatch)
 

@@ -24,13 +24,13 @@
     "@types/cors": "^2.8.17",
     "@types/express": "^5.0.6",
     "@types/mssql": "^9.1.11",
-    "@types/node": "^20",
+    "@types/node": "^25",
     "@vitest/coverage-v8": "^4.1.0",
     "eslint": "^9",
     "ts-unused-exports": "^11.0.1",
     "tsx": "^4.19.4",
     "typescript": "^5",
-    "typescript-eslint": "^8.57.1",
+    "typescript-eslint": "^8.58.0",
     "vitest": "^4.1.0"
   }
 }

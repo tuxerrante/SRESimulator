@@ -27,7 +27,7 @@ jobs:
       - name: Harden runner
         # v2.16.0
         uses: >-
-          step-security/harden-runner@fa2e9d605c4eeb9fcad4c99c224cee0c6c7f3594
+          step-security/harden-runner@fe104658747b27e96e4f7e80cd0a94068e53901d
         with:
           egress-policy: audit
 
@@ -37,9 +37,9 @@ jobs:
           actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
 
       - name: Login to GHCR
-        # v4.0.0
+        # v4.1.0
         uses: >-
-          docker/login-action@b45d80f862d83dbcd57f89517bcf500b2ab88fb2
+          docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
