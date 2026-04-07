@@ -51,7 +51,7 @@ export function PhaseTracker() {
         onClick={() => setIsOpen((open) => !open)}
         aria-haspopup="true"
         aria-expanded={isOpen}
-        aria-controls={menuId}
+        aria-controls={isOpen ? menuId : undefined}
         className="flex max-w-32 items-center gap-1 rounded bg-amber-600/20 px-2 py-0.5 text-xs font-medium text-amber-400 ring-1 ring-amber-600/50"
       >
         <span className="truncate">{currentLabel}</span>

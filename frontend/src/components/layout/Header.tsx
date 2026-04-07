@@ -129,6 +129,9 @@ export function Header({ onTourRestart }: HeaderProps) {
               <button
                 onClick={() => setShowScore(!showScore)}
                 data-testid="score-toggle"
+                aria-haspopup="dialog"
+                aria-expanded={scoreOpen}
+                aria-controls={scoreOpen ? "score-dropdown-panel" : undefined}
                 className="flex items-center gap-1.5 text-sm font-mono px-2 py-1 rounded hover:bg-zinc-800 transition-colors"
               >
                 <span className="text-zinc-500">Score:</span>
@@ -157,7 +160,10 @@ export function Header({ onTourRestart }: HeaderProps) {
               ))}
 
               {scoreOpen && (
-                <div className="absolute right-0 top-full mt-2 bg-zinc-900 border border-zinc-700 rounded-lg p-3 shadow-xl min-w-[240px]">
+                <div
+                  id="score-dropdown-panel"
+                  className="absolute right-0 top-full mt-2 bg-zinc-900 border border-zinc-700 rounded-lg p-3 shadow-xl min-w-[240px]"
+                >
                   {nickname && (
                     <div
                       data-testid="score-panel-nickname"

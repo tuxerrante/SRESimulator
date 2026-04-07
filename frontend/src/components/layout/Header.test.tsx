@@ -77,6 +77,7 @@ describe("Header layout", () => {
     expect(phaseButton.textContent).toContain("Reading");
     expect(phaseButton.getAttribute("aria-haspopup")).toBe("true");
     expect(phaseButton.getAttribute("aria-expanded")).toBe("false");
+    expect(phaseButton.getAttribute("aria-controls")).toBeNull();
 
     fireEvent.click(phaseButton);
     const phaseMenu = screen.getByTestId("phase-tracker-menu");
@@ -93,7 +94,14 @@ describe("Header layout", () => {
   it("shows nickname inside the score dropdown panel", () => {
     render(<Header />);
 
-    fireEvent.click(screen.getByTestId("score-toggle"));
+    const scoreToggle = screen.getByTestId("score-toggle");
+    expect(scoreToggle.getAttribute("aria-haspopup")).toBe("dialog");
+    expect(scoreToggle.getAttribute("aria-expanded")).toBe("false");
+    expect(scoreToggle.getAttribute("aria-controls")).toBeNull();
+
+    fireEvent.click(scoreToggle);
+    expect(scoreToggle.getAttribute("aria-expanded")).toBe("true");
+    expect(scoreToggle.getAttribute("aria-controls")).toBe("score-dropdown-panel");
 
     const nicknameRow = screen.getByTestId("score-panel-nickname");
     expect(nicknameRow).toBeTruthy();
