@@ -78,9 +78,16 @@ jobs:
             exit 0
           fi
 
-          mapfile -t changed_files < <(
-            git diff --name-only "${base_sha}" "${head_sha}"
-          )
+          if [[ "${EVENT_NAME}" == "pull_request" ]]; then
+            # Use merge-base diff for PRs to ignore unrelated base-only commits.
+            mapfile -t changed_files < <(
+              git diff --name-only "${base_sha}...${head_sha}"
+            )
+          else
+            mapfile -t changed_files < <(
+              git diff --name-only "${base_sha}" "${head_sha}"
+            )
+          fi
 
           if [[ "${#changed_files[@]}" -eq 0 ]]; then
             echo "docs_only=false" >> "$GITHUB_OUTPUT"
