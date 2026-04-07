@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
 import { Github } from "@/components/icons/Github";
+import { APP_VERSION } from "@/lib/release";
 
 export default function AboutPage() {
   return (
@@ -53,6 +54,8 @@ export default function AboutPage() {
 
       <footer className="text-center text-zinc-700 text-xs py-4">
         ARO SRE Simulator &mdash; Investigation training powered by AI
+        <span className="mx-2">&middot;</span>
+        <span>{APP_VERSION}</span>
       </footer>
     </div>
   );

@@ -8,6 +8,7 @@ import { Shield, AlertTriangle, Zap, Flame, Loader2, Trophy, Heart, User } from 
 import { Github } from "@/components/icons/Github";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
+import { APP_VERSION, HOME_FEATURE_HIGHLIGHTS } from "@/lib/release";
 
 const DIFFICULTIES: {
   level: Difficulty;
@@ -105,6 +106,19 @@ export default function HomePage() {
           An AI Dungeon Master will break a cluster. Your job is to investigate
           and fix it using the proper SRE methodology.
         </p>
+
+        <section className="mb-8 w-full max-w-2xl rounded-xl border border-zinc-800 bg-zinc-900/50 p-4">
+          <h2 className="mb-2 text-sm font-semibold text-zinc-200">
+            Main feature updates
+          </h2>
+          <ul className="space-y-1 text-sm text-zinc-400">
+            {HOME_FEATURE_HIGHLIGHTS.map((feature) => (
+              <li key={feature} className="leading-relaxed">
+                - {feature}
+              </li>
+            ))}
+          </ul>
+        </section>
 
         <div className="flex items-center gap-2 mb-8 w-full max-w-xs">
           <User size={18} className="text-zinc-500 shrink-0" />
@@ -216,6 +230,8 @@ export default function HomePage() {
 
         <div className="text-zinc-700 text-xs text-center">
           ARO SRE Simulator &mdash; Investigation training powered by AI
+          <span className="mx-2">&middot;</span>
+          <span>{APP_VERSION}</span>
           <span className="mx-2">&middot;</span>
           <Link href="/about" className="hover:text-zinc-400 transition-colors">
             About

@@ -1,0 +1,140 @@
+---
+name: Deploy Production
+
+"on":
+  release:
+    types:
+      - published
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-prod
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: startsWith(github.event.release.tag_name, 'v')
+    runs-on: ubuntu-latest
+    env:
+      RELEASE_TAG: ${{ github.event.release.tag_name }}
+      AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      ARO_RG: ${{ secrets.ARO_RG }}
+      ARO_CLUSTER: ${{ secrets.ARO_CLUSTER }}
+      AOAI_RG: ${{ secrets.AOAI_RG }}
+      AOAI_ACCOUNT: ${{ secrets.AOAI_ACCOUNT }}
+      AOAI_DEPLOYMENT: ${{ secrets.AOAI_DEPLOYMENT }}
+      AOAI_DEPLOYMENT_CHAT: ${{ secrets.AOAI_DEPLOYMENT_CHAT }}
+      AOAI_DEPLOYMENT_COMMAND: ${{ secrets.AOAI_DEPLOYMENT_COMMAND }}
+      AOAI_DEPLOYMENT_SCENARIO: ${{ secrets.AOAI_DEPLOYMENT_SCENARIO }}
+      AOAI_DEPLOYMENT_PROBE: ${{ secrets.AOAI_DEPLOYMENT_PROBE }}
+      PROD_NAMESPACE: ${{ secrets.PROD_NAMESPACE }}
+      E2E_RELEASE: sre-simulator
+      NPM_VERSION: "10"
+    steps:
+      - name: Harden runner
+        # v2.16.0
+        uses: >-
+          step-security/harden-runner@fe104658747b27e96e4f7e80cd0a94068e53901d
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        # v6.0.2
+        uses: >-
+          actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: ${{ github.event.release.tag_name }}
+          fetch-depth: 0
+
+      - name: Verify tag is semver and latest release
+        run: |
+          set -euo pipefail
+          if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Release tag must follow semver: ${RELEASE_TAG}"
+            exit 1
+          fi
+
+          git fetch --tags --force
+          git fetch origin main --depth=1
+          release_sha="$(git rev-list -n 1 "${RELEASE_TAG}")"
+          if ! git merge-base --is-ancestor "${release_sha}" "origin/main"; then
+            echo "Refusing deploy: ${RELEASE_TAG} is not from main history."
+            exit 1
+          fi
+
+          latest_semver_tag="$(
+            git tag | awk '/^v[0-9]+\.[0-9]+\.[0-9]+$/ {print}' | \
+              sort -V | tail -n 1
+          )"
+          if [[ "$RELEASE_TAG" != "$latest_semver_tag" ]]; then
+            echo "Refusing deploy: ${RELEASE_TAG} is not latest semver"
+            echo "tag (${latest_semver_tag})."
+            exit 1
+          fi
+
+      - name: Validate required deployment secrets
+        run: |
+          set -euo pipefail
+          missing=()
+          for name in \
+            AZURE_SUBSCRIPTION_ID ARO_RG ARO_CLUSTER \
+            AOAI_RG AOAI_ACCOUNT AOAI_DEPLOYMENT; do
+            if [[ -z "${!name:-}" ]]; then
+              missing+=("$name")
+            fi
+          done
+          if [[ "${#missing[@]}" -gt 0 ]]; then
+            echo "Missing required secrets: ${missing[*]}"
+            exit 1
+          fi
+
+      - name: Ensure CI gate passed for release tag
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          release_sha="$(git rev-list -n 1 "${RELEASE_TAG}")"
+          ci_gate_conclusion="$(
+            gh api \
+              "repos/${GITHUB_REPOSITORY}/commits/${release_sha}/check-runs" \
+              --jq '
+                .check_runs[] |
+                select(.name == "ci-gate") |
+                .conclusion
+              ' | \
+              head -n 1
+          )"
+          if [[ "${ci_gate_conclusion}" != "success" ]]; then
+            echo "CI gate check did not pass for ${RELEASE_TAG}."
+            echo "Commit: ${release_sha}"
+            exit 1
+          fi
+
+      - name: Install OpenShift CLI
+        run: |
+          set -euo pipefail
+          oc_url="https://mirror.openshift.com/pub/openshift-v4/clients/ocp/"
+          oc_url+="latest/openshift-client-linux.tar.gz"
+          curl -fsSL "${oc_url}" \
+            -o /tmp/openshift-client-linux.tar.gz
+          tar -xzf /tmp/openshift-client-linux.tar.gz -C /tmp oc kubectl
+          sudo mv /tmp/oc /tmp/kubectl /usr/local/bin/
+          oc version --client
+
+      - name: Install Helm
+        run: |
+          set -euo pipefail
+          HELM_VERSION="v3.14.4"
+          HELM_TARBALL_URL="https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz"
+          curl -fsSL "${HELM_TARBALL_URL}" -o /tmp/helm.tar.gz
+          tar -C /tmp -zxvf /tmp/helm.tar.gz
+          sudo mv /tmp/linux-amd64/helm /usr/local/bin/helm
+          helm version
+
+      - name: Deploy tagged release to production
+        run: |
+          set -euo pipefail
+          make prod-up-tag TAG="${RELEASE_TAG}"
+          make public-exposure-audit NS="${PROD_NAMESPACE:-sre-simulator}"

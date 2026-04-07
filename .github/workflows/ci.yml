@@ -4,6 +4,8 @@ name: CI
 "on":
   push:
     branches: [main]
+    tags:
+      - "v*.*.*"
   pull_request:
     branches: [main]
 
@@ -29,6 +31,47 @@ jobs:
         run: |
           echo "::warning::Direct push to main detected — use a PR instead."
           echo "Pushed by: ${ACTOR} (${SHA})"
+
+  tag-mainline-check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Harden runner
+        # v2.16.0
+        uses: >-
+          step-security/harden-runner@fe104658747b27e96e4f7e80cd0a94068e53901d
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        # v6.0.2
+        uses: >-
+          actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 0
+
+      - name: Verify semver tag ancestry
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          if [[ "${EVENT_NAME}" != "push" ]]; then
+            echo "Not a push event; skipping tag ancestry check."
+            exit 0
+          fi
+          if [[ ! "${REF}" =~ ^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Not a semver tag push; skipping tag ancestry check."
+            exit 0
+          fi
+
+          git fetch origin main --depth=1
+          if ! git merge-base --is-ancestor "${SHA}" "origin/main"; then
+            echo "Tag ${REF} points to ${SHA}, outside main history."
+            echo "Release tags must be created from main."
+            exit 1
+          fi
+          echo "Tag commit is on main history."
 
   changes:
     runs-on: ubuntu-latest
@@ -505,6 +548,7 @@ jobs:
   ci-gate:
     if: always()
     needs:
+      - tag-mainline-check
       - changes
       - lint-typecheck
       - test
@@ -518,6 +562,7 @@ jobs:
       - name: Verify all jobs passed
         env:
           CHANGES_RESULT: ${{ needs.changes.result }}
+          TAG_MAINLINE_RESULT: ${{ needs.tag-mainline-check.result }}
           DOCS_ONLY: ${{ needs.changes.outputs.docs_only }}
           RUN_INTEGRATION: ${{ needs.changes.outputs.run_integration }}
           LINT_RESULT: ${{ needs.lint-typecheck.result }}
@@ -532,6 +577,7 @@ jobs:
           failed_jobs=()
 
           echo "CI job results:"
+          echo "  tag-mainline-check:         ${TAG_MAINLINE_RESULT}"
           echo "  changes:                    ${CHANGES_RESULT}"
           echo "  docs-only change:           ${DOCS_ONLY}"
           echo "  run integration suites:     ${RUN_INTEGRATION}"
@@ -544,6 +590,7 @@ jobs:
           echo "  docker-build:               ${DOCKER_RESULT}"
 
           for name_result in \
+            "tag-mainline-check:${TAG_MAINLINE_RESULT}" \
             "changes:${CHANGES_RESULT}" \
             "lint-typecheck:${LINT_RESULT}" \
             "test:${TEST_RESULT}" \
