@@ -1,12 +1,44 @@
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
 import express from "express";
-import { commandRouter } from "./command";
+import { commandRouter, resolveCommandHistoryPlaceholders } from "./command";
+import type { Scenario } from "../../../shared/types/game";
 
 function createApp() {
   const app = express();
   app.use(express.json());
   app.use("/api/command", commandRouter);
   return app;
+}
+
+function makeScenario(): Scenario {
+  return {
+    id: "scenario_test",
+    title: "Worker Node NotReady",
+    difficulty: "easy",
+    description: "A worker node has gone NotReady due to DiskPressure",
+    incidentTicket: {
+      id: "IcM-900327",
+      severity: "Sev3",
+      title: "Pods stuck Pending after node went NotReady",
+      description: "Customer reports pods stuck Pending",
+      customerImpact: "Reduced capacity",
+      reportedTime: "2026-03-23T10:52:18Z",
+      clusterName: "aro-prod-payments-eus2-01",
+      region: "eastus2",
+    },
+    clusterContext: {
+      name: "aro-prod-payments-eus2-01",
+      version: "4.18.6",
+      region: "eastus2",
+      nodeCount: 6,
+      status: "Degraded",
+      recentEvents: [
+        "2026-03-27T12:41:03Z Warning NodeHasDiskPressure node/worker-eastus2-2 has disk pressure",
+      ],
+      alerts: [],
+      upgradeHistory: [],
+    },
+  };
 }
 
 async function postJson(
@@ -56,6 +88,16 @@ async function postJson(
     });
   });
 }
+
+describe("resolveCommandHistoryPlaceholders", () => {
+  it("resolves placeholders inside command history entries", () => {
+    const resolved = resolveCommandHistoryPlaceholders(
+      [{ command: "oc debug node/<worker>", output: "ok", type: "oc" }],
+      makeScenario(),
+    );
+    expect(resolved?.[0]?.command).toBe("oc debug node/worker-eastus2-2");
+  });
+});
 
 describe("POST /api/command", () => {
   const originalEnv: Record<string, string | undefined> = {};
