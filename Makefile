@@ -4,7 +4,7 @@
        typecheck typecheck-backend validate \
        security audit lockfile-lint gitleaks grype \
        test test-integration test-mssql dev-db smoke-backend-mssql smoke-local-vertex env-check e2e-azure-route e2e-azure-route-up e2e-azure-route-refresh e2e-azure-route-down \
-       prod-up prod-down prod-status public-exposure-audit db-port-forward-check geneva-suppression-check prod-up-final \
+       prod-up prod-up-tag prod-down prod-status public-exposure-audit db-port-forward-check geneva-suppression-check prod-up-final \
        build dev start \
        docker-build-frontend docker-build-backend docker-build \
        pre-commit all \
@@ -460,6 +460,50 @@ prod-up: env-check ## Deploy to stable production namespace (same cluster + AOAI
 	printf 'NS=%s\nRELEASE=%s\nURL=%s\nTAG=%s\n' "$$NS" "$(E2E_RELEASE)" "https://$$DEPLOY_HOST" "$$TAG" > "$(PROD_METADATA_FILE)"; \
 	echo "Production deployment ready."; \
 	echo "URL: https://$$DEPLOY_HOST"; \
+	echo "Metadata saved to $(PROD_METADATA_FILE)"
+
+prod-up-tag: env-check ## Deploy to production namespace with explicit semver TAG (e.g. TAG=v0.1.0)
+	@set -e; \
+	if [ -z "$${TAG:-}" ]; then \
+		echo "TAG is required. Example: make prod-up-tag TAG=v0.1.0"; \
+		exit 1; \
+	fi; \
+	if [[ ! "$$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$$ ]]; then \
+		echo "TAG must follow semver with v prefix (example: v0.1.0)."; \
+		exit 1; \
+	fi; \
+	. scripts/aro-deploy.sh; \
+	NS="$(PROD_NAMESPACE)"; \
+	PROBE_TOKEN="probe-prod-$$(echo "$$TAG" | tr -cd '[:alnum:]-')-$$(date +%s)"; \
+	echo "Deploying semver release $$TAG to PRODUCTION namespace: $$NS"; \
+	aro_login; \
+	aoai_fetch_creds; \
+	oc create namespace "$$NS" 2>/dev/null || true; \
+	oc -n "$$NS" delete secret azure-openai-creds 2>/dev/null || true; \
+	oc -n "$$NS" create secret generic azure-openai-creds \
+		--from-literal=endpoint="$$AOAI_ENDPOINT" --from-literal=api-key="$$AOAI_KEY" >/dev/null; \
+	if ! oc -n "$$NS" get bc/sre-simulator-frontend >/dev/null 2>&1; then \
+		oc -n "$$NS" new-build --name=sre-simulator-frontend --binary=true --strategy=docker --to=sre-simulator-frontend:$$TAG >/dev/null; \
+	fi; \
+	if ! oc -n "$$NS" get bc/sre-simulator-backend >/dev/null 2>&1; then \
+		oc -n "$$NS" new-build --name=sre-simulator-backend --binary=true --strategy=docker --to=sre-simulator-backend:$$TAG >/dev/null; \
+	fi; \
+	oc -n "$$NS" patch bc/sre-simulator-frontend --type=merge \
+		-p "{\"spec\":{\"output\":{\"to\":{\"kind\":\"ImageStreamTag\",\"name\":\"sre-simulator-frontend:$$TAG\"}}}}" >/dev/null; \
+	oc -n "$$NS" patch bc/sre-simulator-backend --type=merge \
+		-p "{\"spec\":{\"output\":{\"to\":{\"kind\":\"ImageStreamTag\",\"name\":\"sre-simulator-backend:$$TAG\"}}}}" >/dev/null; \
+	patch_bc_strategy "$$NS" sre-simulator-frontend frontend/Dockerfile; \
+	patch_bc_strategy "$$NS" sre-simulator-backend backend/Dockerfile; \
+	oc_build_timed "$$NS" sre-simulator-frontend; \
+	oc_build_timed "$$NS" sre-simulator-backend; \
+	helm_deploy_sre "$$NS" "$$TAG" "$$PROBE_TOKEN"; \
+	wait_for_rollout "$$NS"; \
+	probe_readiness "$$DEPLOY_HOST" "$$PROBE_TOKEN"; \
+	mkdir -p "$$(dirname "$(PROD_METADATA_FILE)")"; \
+	printf 'NS=%s\nRELEASE=%s\nURL=%s\nTAG=%s\n' "$$NS" "$(E2E_RELEASE)" "https://$$DEPLOY_HOST" "$$TAG" > "$(PROD_METADATA_FILE)"; \
+	echo "Production deployment ready."; \
+	echo "URL: https://$$DEPLOY_HOST"; \
+	echo "Probe status: 200"; \
 	echo "Metadata saved to $(PROD_METADATA_FILE)"
 
 prod-down: ## Delete production namespace (REQUIRES CONFIRMATION – type namespace name)

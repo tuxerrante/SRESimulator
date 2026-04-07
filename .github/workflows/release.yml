@@ -1,0 +1,214 @@
+---
+name: Release
+
+"on":
+  workflow_run:
+    workflows: ["Build and Push Images"]
+    types:
+      - completed
+
+permissions:
+  contents: write
+
+jobs:
+  resolve-release-tag:
+    if: github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    outputs:
+      should_release: ${{ steps.resolve.outputs.should_release }}
+      release_tag: ${{ steps.resolve.outputs.release_tag }}
+    steps:
+      - name: Harden runner
+        # v2.16.0
+        uses: >-
+          step-security/harden-runner@fe104658747b27e96e4f7e80cd0a94068e53901d
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        # v6.0.2
+        uses: >-
+          actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 0
+
+      - name: Resolve semver tag for current SHA
+        id: resolve
+        env:
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          git fetch --tags --force
+          mapfile -t semver_tags < <(
+            git tag --points-at "$HEAD_SHA" | \
+              awk '/^v[0-9]+\.[0-9]+\.[0-9]+$/ {print}' | \
+              sort -V
+          )
+
+          if [[ "${#semver_tags[@]}" -eq 0 ]]; then
+            echo "No semver tag found for this run; skipping release."
+            echo "should_release=false" >> "$GITHUB_OUTPUT"
+            echo "release_tag=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          release_tag="${semver_tags[${#semver_tags[@]}-1]}"
+          echo "should_release=true" >> "$GITHUB_OUTPUT"
+          echo "release_tag=${release_tag}" >> "$GITHUB_OUTPUT"
+
+  publish-release:
+    needs:
+      - resolve-release-tag
+    if: needs.resolve-release-tag.outputs.should_release == 'true'
+    runs-on: ubuntu-latest
+    env:
+      RELEASE_TAG: ${{ needs.resolve-release-tag.outputs.release_tag }}
+      WORKFLOW_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+    steps:
+      - name: Harden runner
+        # v2.16.0
+        uses: >-
+          step-security/harden-runner@fe104658747b27e96e4f7e80cd0a94068e53901d
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        # v6.0.2
+        uses: >-
+          actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 0
+
+      - name: Verify release tag commit is on main
+        env:
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          git fetch origin main --depth=1
+          if ! git merge-base --is-ancestor "${HEAD_SHA}" "origin/main"; then
+            echo "Release commit ${HEAD_SHA} is not in main history."
+            echo "Release tags must be created from main."
+            exit 1
+          fi
+
+      - name: Validate semver surfaces are aligned
+        run: |
+          set -euo pipefail
+          node <<'EOF'
+          const fs = require("fs");
+
+          const releaseTag = process.env.RELEASE_TAG;
+          if (!/^v\d+\.\d+\.\d+$/.test(releaseTag)) {
+            throw new Error(`Release tag is not semver: ${releaseTag}`);
+          }
+          const expectedVersion = releaseTag.slice(1);
+
+          const frontendPkg = JSON.parse(
+            fs.readFileSync("frontend/package.json", "utf8")
+          );
+          const backendPkg = JSON.parse(
+            fs.readFileSync("backend/package.json", "utf8")
+          );
+          const chart = fs.readFileSync(
+            "helm/sre-simulator/Chart.yaml",
+            "utf8"
+          );
+          const releaseMeta = fs.readFileSync(
+            "frontend/src/lib/release.ts",
+            "utf8"
+          );
+
+          const chartVersion = (
+            chart.match(/^version:\s*([0-9]+\.[0-9]+\.[0-9]+)\s*$/m) || []
+          )[1];
+          const chartAppVersion = (
+            chart.match(/^appVersion:\s*"([0-9]+\.[0-9]+\.[0-9]+)"\s*$/m) || []
+          )[1];
+          const appVersion = (
+            releaseMeta.match(/APP_VERSION\s*=\s*"([^"]+)"/) || []
+          )[1];
+
+          const checks = [
+            ["frontend/package.json", frontendPkg.version],
+            ["backend/package.json", backendPkg.version],
+            ["helm/sre-simulator/Chart.yaml version", chartVersion],
+            ["helm/sre-simulator/Chart.yaml appVersion", chartAppVersion],
+            ["frontend/src/lib/release.ts APP_VERSION", appVersion],
+          ];
+
+          for (const [source, value] of checks) {
+            if (!value) {
+              throw new Error(`Missing version value in ${source}`);
+            }
+          }
+
+          if (frontendPkg.version !== expectedVersion) {
+            throw new Error(
+              `frontend/package.json mismatch: ${frontendPkg.version}` +
+              ` != ${expectedVersion}`
+            );
+          }
+          if (backendPkg.version !== expectedVersion) {
+            throw new Error(
+              `backend/package.json mismatch: ${backendPkg.version}` +
+              ` != ${expectedVersion}`
+            );
+          }
+          if (chartVersion !== expectedVersion) {
+            throw new Error(
+              `Chart version mismatch: ${chartVersion} != ${expectedVersion}`
+            );
+          }
+          if (chartAppVersion !== expectedVersion) {
+            throw new Error(
+              `Chart appVersion mismatch: ${chartAppVersion}` +
+              ` != ${expectedVersion}`
+            );
+          }
+          if (appVersion !== releaseTag) {
+            throw new Error(
+              `APP_VERSION mismatch: ${appVersion} != ${releaseTag}`
+            );
+          }
+          EOF
+
+      - name: Extract changelog section for release
+        run: |
+          set -euo pipefail
+          release_version="${RELEASE_TAG#v}"
+          notes_file="release-notes.md"
+          {
+            echo "## Changelog"
+            echo
+            awk -v target="${release_version}" '
+              $0 ~ "^## \\[" target "\\]" {capture=1; next}
+              capture && $0 ~ "^## \\[" {exit}
+              capture {print}
+            ' CHANGELOG.md
+          } > "${notes_file}"
+
+          if ! awk 'NF{found=1} END{exit !found}' "${notes_file}"; then
+            echo "No changelog notes found for ${release_version}"
+            echo "in CHANGELOG.md"
+            exit 1
+          fi
+
+      - name: Create or update GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if gh release view "${RELEASE_TAG}" >/dev/null 2>&1; then
+            gh release edit "${RELEASE_TAG}" \
+              --title "${RELEASE_TAG}" \
+              --notes-file release-notes.md \
+              --latest
+          else
+            gh release create "${RELEASE_TAG}" \
+              --target "${WORKFLOW_HEAD_SHA}" \
+              --title "${RELEASE_TAG}" \
+              --notes-file release-notes.md \
+              --latest
+          fi
