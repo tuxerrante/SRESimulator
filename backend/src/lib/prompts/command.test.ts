@@ -105,6 +105,12 @@ describe("buildScenarioContext", () => {
     const ctx = buildScenarioContext(makeScenario());
     expect(ctx).toContain("A worker node has gone NotReady due to DiskPressure");
   });
+
+  it("includes named resources when identifiers can be derived from the scenario", () => {
+    const ctx = buildScenarioContext(makeScenario());
+    expect(ctx).toContain("Named resources");
+    expect(ctx).toContain("worker-eastus2-2");
+  });
 });
 
 describe("buildSimNow", () => {
@@ -164,6 +170,11 @@ describe("buildCommandSystemPrompt", () => {
     expect(prompt).toContain("Scenario Context:\nTitle: Test (easy)");
   });
 
+  it("instructs the model not to echo angle-bracket placeholders in output", () => {
+    const prompt = buildCommandSystemPrompt("oc", "ctx", "now");
+    expect(prompt).toContain("PLACEHOLDER RESOLUTION");
+  });
+
   it("labels oc commands as OpenShift CLI", () => {
     const prompt = buildCommandSystemPrompt("oc", "ctx", "now");
     expect(prompt).toContain("OpenShift CLI (oc)");
@@ -193,5 +204,11 @@ describe("buildCommandSystemPrompt", () => {
   it("omits history section when no history provided", () => {
     const prompt = buildCommandSystemPrompt("oc", "ctx", "now");
     expect(prompt).not.toContain("Previously Executed Commands");
+  });
+
+  it("instructs the model not to echo the command or prompt lines", () => {
+    const prompt = buildCommandSystemPrompt("oc", "ctx", "now");
+    expect(prompt).toContain("Do not echo the command line");
+    expect(prompt).toContain('"[oc]"');
   });
 });
