@@ -1,0 +1,16 @@
+[extend]
+useDefault = true
+
+[[rules]]
+id = "hardcoded-mssql-sa-password-in-workflow"
+description = "Detect hardcoded MSSQL SA passwords in GitHub workflows."
+path = '''(^|/)\.github/workflows/.*\.ya?ml$'''
+regex = '''(?i)MSSQL_SA_PASSWORD:\s*["'][^$"'\n][^"'\n]*["']'''
+tags = ["password", "mssql", "github-actions"]
+
+[[rules]]
+id = "hardcoded-connection-string-password-in-workflow"
+description = "Detect hardcoded SQL connection string passwords in GitHub workflows."
+path = '''(^|/)\.github/workflows/.*\.ya?ml$'''
+regex = '''(?i)Password=[^$;\s\n][^;\s\n]*'''
+tags = ["password", "sql", "connection-string", "github-actions"]
