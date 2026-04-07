@@ -75,14 +75,13 @@ describe("Header layout", () => {
     const phaseButton = screen.getByTestId("phase-tracker-button");
     expect(phaseButton).toBeTruthy();
     expect(phaseButton.textContent).toContain("Reading");
-    expect(phaseButton.getAttribute("aria-haspopup")).toBe("listbox");
+    expect(phaseButton.getAttribute("aria-haspopup")).toBe("true");
     expect(phaseButton.getAttribute("aria-expanded")).toBe("false");
 
     fireEvent.click(phaseButton);
     const phaseMenu = screen.getByTestId("phase-tracker-menu");
     expect(phaseMenu).toBeTruthy();
     expect(phaseButton.getAttribute("aria-expanded")).toBe("true");
-    expect(phaseMenu.getAttribute("role")).toBe("listbox");
     expect(phaseButton.getAttribute("aria-controls")).toBe(phaseMenu.getAttribute("id"));
     expect(screen.getByText("Context Gathering")).toBeTruthy();
 

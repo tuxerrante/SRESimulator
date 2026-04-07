@@ -49,7 +49,7 @@ export function PhaseTracker() {
         type="button"
         data-testid="phase-tracker-button"
         onClick={() => setIsOpen((open) => !open)}
-        aria-haspopup="listbox"
+        aria-haspopup="true"
         aria-expanded={isOpen}
         aria-controls={menuId}
         className="flex max-w-32 items-center gap-1 rounded bg-amber-600/20 px-2 py-0.5 text-xs font-medium text-amber-400 ring-1 ring-amber-600/50"
@@ -61,9 +61,8 @@ export function PhaseTracker() {
         />
       </button>
       {isOpen && (
-        <div
+        <ul
           id={menuId}
-          role="listbox"
           aria-label="Investigation phases"
           data-testid="phase-tracker-menu"
           className="absolute right-0 top-full z-30 mt-2 min-w-[13rem] rounded-md border border-zinc-700 bg-zinc-900 p-1.5 shadow-xl"
@@ -73,10 +72,8 @@ export function PhaseTracker() {
             const isCompleted = phaseHistory.includes(phase) && idx < currentIdx;
 
             return (
-              <div
+              <li
                 key={phase}
-                role="option"
-                aria-selected={isActive}
                 className={cn(
                   "mb-0.5 flex items-center justify-between gap-3 rounded px-2 py-1 text-xs",
                   isActive && "bg-amber-600/20 text-amber-300",
@@ -97,10 +94,10 @@ export function PhaseTracker() {
                     "Pending"
                   )}
                 </span>
-              </div>
+              </li>
             );
           })}
-        </div>
+        </ul>
       )}
     </div>
   );
