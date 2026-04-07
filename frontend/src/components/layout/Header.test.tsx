@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { Header } from "./Header";
 import { useGameStore } from "@/stores/gameStore";
@@ -67,11 +67,45 @@ describe("Header layout", () => {
     useGameStore.getState().resetGame();
   });
 
-  it("renders nickname and Reading phase together in playing state", () => {
+  it("renders a compact current-phase tracker with a dropdown list", () => {
     render(<Header />);
 
-    expect(screen.getByTestId("header-nickname")).toBeTruthy();
-    expect(screen.getByText("Reading")).toBeTruthy();
+    expect(screen.queryByTestId("header-nickname")).toBeNull();
+
+    const phaseButton = screen.getByTestId("phase-tracker-button");
+    expect(phaseButton).toBeTruthy();
+    expect(phaseButton.textContent).toContain("Reading");
+    expect(phaseButton.getAttribute("aria-haspopup")).toBe("true");
+    expect(phaseButton.getAttribute("aria-expanded")).toBe("false");
+    expect(phaseButton.getAttribute("aria-controls")).toBeNull();
+
+    fireEvent.click(phaseButton);
+    const phaseMenu = screen.getByTestId("phase-tracker-menu");
+    expect(phaseMenu).toBeTruthy();
+    expect(phaseButton.getAttribute("aria-expanded")).toBe("true");
+    expect(phaseButton.getAttribute("aria-controls")).toBe(phaseMenu.getAttribute("id"));
+    expect(screen.getByText("Context Gathering")).toBeTruthy();
+
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(screen.queryByTestId("phase-tracker-menu")).toBeNull();
+    expect(phaseButton.getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it("shows nickname inside the score dropdown panel", () => {
+    render(<Header />);
+
+    const scoreToggle = screen.getByTestId("score-toggle");
+    expect(scoreToggle.getAttribute("aria-haspopup")).toBe("dialog");
+    expect(scoreToggle.getAttribute("aria-expanded")).toBe("false");
+    expect(scoreToggle.getAttribute("aria-controls")).toBeNull();
+
+    fireEvent.click(scoreToggle);
+    expect(scoreToggle.getAttribute("aria-expanded")).toBe("true");
+    expect(scoreToggle.getAttribute("aria-controls")).toBe("score-dropdown-panel");
+
+    const nicknameRow = screen.getByTestId("score-panel-nickname");
+    expect(nicknameRow).toBeTruthy();
+    expect(nicknameRow.textContent).toContain("alexander_operator");
   });
 
   it("applies truncation and width guard classes to avoid cluster collisions", () => {
@@ -80,13 +114,15 @@ describe("Header layout", () => {
     const leftCluster = screen.getByTestId("header-left-cluster");
     const rightCluster = screen.getByTestId("header-right-cluster");
     const scenarioTitle = screen.getByTestId("header-scenario-title");
-    const nickname = screen.getByTestId("header-nickname");
+    const phaseTracker = screen.getByTestId("phase-tracker");
+    const phaseButton = screen.getByTestId("phase-tracker-button");
 
     expect(leftCluster.className).toContain("min-w-0");
     expect(leftCluster.className).toContain("flex-1");
     expect(rightCluster.className).toContain("shrink-0");
     expect(scenarioTitle.className).toContain("truncate");
-    expect(nickname.className).toContain("max-w-40");
-    expect(nickname.querySelector("span.truncate")).toBeTruthy();
+    expect(phaseTracker.className).toContain("shrink-0");
+    expect(phaseButton.className).toContain("max-w-32");
+    expect(phaseButton.querySelector("span.truncate")).toBeTruthy();
   });
 });

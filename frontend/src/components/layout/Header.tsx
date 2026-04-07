@@ -105,18 +105,6 @@ export function Header({ onTourRestart }: HeaderProps) {
             </span>
           </>
         )}
-        {status === "playing" && nickname && (
-          <>
-            <div className="h-5 w-px shrink-0 bg-zinc-700" />
-            <span
-              data-testid="header-nickname"
-              className="flex min-w-0 max-w-40 items-center gap-1 text-xs text-zinc-400"
-            >
-              <User size={12} className="shrink-0" />
-              <span className="truncate">{nickname}</span>
-            </span>
-          </>
-        )}
       </div>
 
       <div data-testid="header-right-cluster" className="flex shrink-0 items-center gap-4 pl-2">
@@ -140,6 +128,10 @@ export function Header({ onTourRestart }: HeaderProps) {
             <div className="relative" ref={dropdownRef}>
               <button
                 onClick={() => setShowScore(!showScore)}
+                data-testid="score-toggle"
+                aria-haspopup="dialog"
+                aria-expanded={scoreOpen}
+                aria-controls={scoreOpen ? "score-dropdown-panel" : undefined}
                 className="flex items-center gap-1.5 text-sm font-mono px-2 py-1 rounded hover:bg-zinc-800 transition-colors"
               >
                 <span className="text-zinc-500">Score:</span>
@@ -168,7 +160,22 @@ export function Header({ onTourRestart }: HeaderProps) {
               ))}
 
               {scoreOpen && (
-                <div className="absolute right-0 top-full mt-2 bg-zinc-900 border border-zinc-700 rounded-lg p-3 shadow-xl min-w-[240px]">
+                <div
+                  id="score-dropdown-panel"
+                  className="absolute right-0 top-full mt-2 bg-zinc-900 border border-zinc-700 rounded-lg p-3 shadow-xl min-w-[240px]"
+                >
+                  {nickname && (
+                    <div
+                      data-testid="score-panel-nickname"
+                      className="mb-2 flex min-w-0 items-center gap-1.5 rounded bg-zinc-800/70 px-2 py-1"
+                    >
+                      <User size={12} className="shrink-0 text-zinc-500" />
+                      <span className="shrink-0 text-[10px] uppercase tracking-wide text-zinc-500">
+                        Operator
+                      </span>
+                      <span className="min-w-0 truncate text-xs text-zinc-200">{nickname}</span>
+                    </div>
+                  )}
                   <div className="text-xs font-semibold text-zinc-400 mb-2 flex items-center justify-between">
                     <span>SCORE BREAKDOWN</span>
                     <span className="text-zinc-600">{commandCount} cmds</span>
