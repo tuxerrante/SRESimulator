@@ -80,6 +80,32 @@ describe("resolveAngleBracketPlaceholders", () => {
     expect(resolved).toContain("worker-eastus2-2");
   });
 
+  it("replaces common <worker> placeholders", () => {
+    const cmd = "oc debug node/<worker>";
+    const resolved = resolveAngleBracketPlaceholders(cmd, makeScenario());
+    expect(resolved).toBe("oc debug node/worker-eastus2-2");
+  });
+
+  it("replaces common <master> placeholders", () => {
+    const s = makeScenario({
+      clusterContext: {
+        ...makeScenario().clusterContext,
+        recentEvents: [],
+        alerts: [
+          {
+            name: "KubeNodeNotReady",
+            severity: "critical",
+            message: "Node master-eastus2-0 is not ready",
+            firingTime: "2026-03-27T12:44:30Z",
+          },
+        ],
+      },
+    });
+    const cmd = "oc adm cordon <master>";
+    const resolved = resolveAngleBracketPlaceholders(cmd, s);
+    expect(resolved).toBe("oc adm cordon master-eastus2-0");
+  });
+
   it("maps worker-2 placeholder to the second sorted worker-like identifier", () => {
     const s = makeScenario({
       clusterContext: {
@@ -105,6 +131,12 @@ describe("resolveAngleBracketPlaceholders", () => {
     const cmd = "oc describe machine <machine-name-for-worker-2>";
     const resolved = resolveAngleBracketPlaceholders(cmd, s);
     expect(resolved).toContain("worker-bbb");
+  });
+
+  it("matches partial placeholders against known identifiers", () => {
+    const cmd = "oc describe node <eastus2-2>";
+    const resolved = resolveAngleBracketPlaceholders(cmd, makeScenario());
+    expect(resolved).toBe("oc describe node worker-eastus2-2");
   });
 
   it("leaves commands without placeholders unchanged", () => {

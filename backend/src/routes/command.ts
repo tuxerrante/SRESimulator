@@ -6,6 +6,7 @@ import {
   buildScenarioContext,
   buildSimNow,
   buildCommandSystemPrompt,
+  type CommandHistoryEntry,
 } from "../lib/prompts/command";
 import { resolveAngleBracketPlaceholders } from "../lib/prompts/scenario-resources";
 import type { Scenario } from "../../../shared/types/game";
@@ -17,7 +18,36 @@ interface CommandRequestBody {
   command: string;
   type: "oc" | "kql" | "geneva";
   scenario: Scenario | null;
-  commandHistory?: { command: string; output: string; type: "oc" | "kql" | "geneva" }[];
+  commandHistory?: unknown;
+}
+
+type LooseHistoryEntry = {
+  command?: unknown;
+  output?: unknown;
+  type?: unknown;
+};
+
+export function resolveCommandHistoryPlaceholders(
+  commandHistory: unknown,
+  scenario: Scenario | null,
+): CommandHistoryEntry[] | undefined {
+  if (!Array.isArray(commandHistory)) return undefined;
+
+  return commandHistory.map((entry) => {
+    if (entry == null || typeof entry !== "object") {
+      return entry as CommandHistoryEntry;
+    }
+
+    const candidate = entry as LooseHistoryEntry;
+    if (typeof candidate.command !== "string") {
+      return entry as CommandHistoryEntry;
+    }
+
+    return {
+      ...candidate,
+      command: resolveAngleBracketPlaceholders(candidate.command, scenario),
+    } as CommandHistoryEntry;
+  });
 }
 
 commandRouter.post("/", async (req: Request, res: Response) => {
@@ -25,6 +55,7 @@ commandRouter.post("/", async (req: Request, res: Response) => {
     const body: CommandRequestBody = req.body;
     const { command, type, scenario, commandHistory } = body;
     const commandResolved = resolveAngleBracketPlaceholders(command, scenario);
+    const commandHistoryResolved = resolveCommandHistoryPlaceholders(commandHistory, scenario);
 
     if (!VALID_COMMAND_TYPES.includes(type)) {
       res.status(400).json({
@@ -51,7 +82,12 @@ commandRouter.post("/", async (req: Request, res: Response) => {
 
     const scenarioContext = buildScenarioContext(scenario);
     const simNow = buildSimNow(scenario?.incidentTicket?.reportedTime);
-    const systemPrompt = buildCommandSystemPrompt(type, scenarioContext, simNow, commandHistory);
+    const systemPrompt = buildCommandSystemPrompt(
+      type,
+      scenarioContext,
+      simNow,
+      commandHistoryResolved,
+    );
 
     const responseText = await generateAiText({
       maxTokens: 2048,

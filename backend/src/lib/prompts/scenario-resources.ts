@@ -104,7 +104,9 @@ export function resolveAngleBracketPlaceholders(
   const ids = extractResourceIdentifiers(scenario);
   const cluster = scenario.clusterContext.name;
   const workers = sortedWorkerLike(ids);
-  const masters = ids.filter((id) => /master/i.test(id));
+  const masters = [...ids]
+    .filter((id) => /master/i.test(id))
+    .sort(compareResourceIdentifiers);
 
   return command.replace(ANGLE_PLACEHOLDER, (full, inner: string) => {
     const key = inner.trim().toLowerCase();
@@ -120,6 +122,14 @@ export function resolveAngleBracketPlaceholders(
       return `worker-${workerNum[1]}`;
     }
 
+    if (/\bworker\b/i.test(key)) {
+      return workers[0] ?? (cluster ? `${cluster}-worker-0` : full);
+    }
+
+    if (/\bmaster\b/i.test(key)) {
+      return masters[0] ?? (cluster ? `${cluster}-master-0` : full);
+    }
+
     if (/(^|[^a-z])machine([^a-z]|$)/i.test(key) && /worker/i.test(key)) {
       return workers[0] ?? (cluster ? `${cluster}-worker-0` : full);
     }
@@ -132,7 +142,11 @@ export function resolveAngleBracketPlaceholders(
       return workers[0] ?? masters[0] ?? cluster ?? full;
     }
 
-    const bySubstring = ids.find((id) => key.length > 2 && key.includes(id.toLowerCase()));
+    const bySubstring = key.length > 2
+      ? ids
+        .filter((id) => id.toLowerCase().includes(key))
+        .sort((a, b) => a.length - b.length || compareResourceIdentifiers(a, b))[0]
+      : undefined;
     if (bySubstring) return bySubstring;
 
     return full;
