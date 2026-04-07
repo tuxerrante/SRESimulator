@@ -46,7 +46,7 @@ describe("Header layout", () => {
     useGameStore.setState({
       status: "playing",
       scenario: scenarioFixture,
-      nickname: "alexander_operator_name",
+      nickname: "alexander_operator",
       currentPhase: "reading",
       phaseHistory: ["reading"],
       score: {
