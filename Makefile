@@ -2,7 +2,7 @@
        fmt fmt-check \
        lint lint-ts lint-backend lint-unused-exports lint-yaml lint-md \
        typecheck typecheck-backend validate \
-       security audit lockfile-lint grype \
+       security audit lockfile-lint gitleaks grype \
        test test-integration test-mssql dev-db smoke-backend-mssql smoke-local-vertex env-check e2e-azure-route e2e-azure-route-up e2e-azure-route-refresh e2e-azure-route-down \
        prod-up prod-down prod-status public-exposure-audit db-port-forward-check geneva-suppression-check prod-up-final \
        build dev start \
@@ -19,6 +19,8 @@ E2E_ENV_FILE ?= $(BACKEND_DIR)/.env.local
 SECURITY_FAIL_LEVEL ?= high
 GRYPE_VERSION ?= v0.110.0
 GRYPE_IMAGE ?= anchore/grype:$(GRYPE_VERSION)@sha256:af65fbc0c664691067788fe95ff88760b435543e45595eb2ca6f102fc476fbe1
+GITLEAKS_VERSION ?= v8.30.0
+GITLEAKS_IMAGE ?= ghcr.io/gitleaks/gitleaks:$(GITLEAKS_VERSION)
 NPM_VERSION ?= $(shell tr -d '\n' < .npm-version)
 AZURE_SUBSCRIPTION_ID ?=
 ARO_RG ?=
@@ -135,7 +137,7 @@ validate: lint typecheck typecheck-backend ## Run all linters + type checking
 # ──────────────────────────────────────────────
 # Security
 # ──────────────────────────────────────────────
-security: audit lockfile-lint grype ## Run all security checks
+security: audit lockfile-lint gitleaks grype ## Run all security checks
 
 audit: ## Check npm dependencies for known vulnerabilities
 	cd $(FRONTEND_DIR) && npm audit --audit-level=$(SECURITY_FAIL_LEVEL)
@@ -146,6 +148,17 @@ lockfile-lint: ## Validate lockfile integrity (registry & HTTPS)
 		--type npm \
 		--allowed-hosts npm \
 		--validate-https
+
+gitleaks: ## Scan repository for hardcoded secrets
+	@set -e; \
+	if command -v gitleaks >/dev/null 2>&1; then \
+		gitleaks detect --no-git --source . --config .gitleaks.toml --redact; \
+	elif command -v docker >/dev/null 2>&1; then \
+		docker run --rm -v "$$(pwd):/work" -w /work "$(GITLEAKS_IMAGE)" detect --no-git --source . --config .gitleaks.toml --redact; \
+	else \
+		echo "gitleaks scanner requires either gitleaks CLI or docker."; \
+		exit 1; \
+	fi
 
 grype: ## Scan frontend/backend dependencies with Grype (high/critical)
 	@set -e; \
