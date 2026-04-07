@@ -1,5 +1,6 @@
 import Link from "next/link";
-import { ArrowLeft, Github } from "lucide-react";
+import { ArrowLeft } from "lucide-react";
+import { Github } from "@/components/icons/Github";
 
 export default function AboutPage() {
   return (

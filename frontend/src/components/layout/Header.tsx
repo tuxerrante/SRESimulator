@@ -3,7 +3,8 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { useGameStore } from "@/stores/gameStore";
 import { PhaseTracker } from "@/components/scoring/PhaseTracker";
-import { Shield, ArrowLeft, ChevronDown, Target, FileText, Crosshair, Github, HelpCircle, User } from "lucide-react";
+import { Shield, ArrowLeft, ChevronDown, Target, FileText, Crosshair, HelpCircle, User } from "lucide-react";
+import { Github } from "@/components/icons/Github";
 import Link from "next/link";
 
 interface ScorePopup {
