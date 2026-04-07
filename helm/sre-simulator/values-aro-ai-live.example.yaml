@@ -1,0 +1,13 @@
+---
+ai:
+  mockMode: false
+  strictStartup: true
+  liveProbeToken: replace-with-long-random-token
+  model: claude-sonnet-4@20250514
+  vertex:
+    region: us-east5
+    projectId: your-gcp-project-id
+    credentials:
+      existingSecretName: gcp-vertex-creds
+      key: credentials.json
+      mountPath: /var/run/secrets/gcp

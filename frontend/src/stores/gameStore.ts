@@ -1,10 +1,25 @@
 import { create } from "zustand";
-import type { ChatMessage, InvestigationPhase } from "@/types/chat";
-import type { Scenario, GameStatus } from "@/types/game";
-import type { TerminalEntry } from "@/types/terminal";
-import type { Score, ScoringEvent } from "@/types/scoring";
+import type { ChatMessage, InvestigationPhase } from "@shared/types/chat";
+import type { Scenario, GameStatus } from "@shared/types/game";
+import type { TerminalEntry } from "@shared/types/terminal";
+import type { Score, ScoringEvent } from "@shared/types/scoring";
+
+const NICKNAME_KEY = "sre-nickname";
+
+function loadNickname(): string | null {
+  try {
+    return globalThis.localStorage?.getItem(NICKNAME_KEY) ?? null;
+  } catch {
+    return null;
+  }
+}
 
 interface GameState {
+  // Player identity (persisted in localStorage, never sent to LLM)
+  nickname: string | null;
+  setNickname: (name: string) => void;
+  hydrateNickname: () => void;
+
   // Session
   status: GameStatus;
   scenario: Scenario | null;
@@ -60,7 +75,26 @@ const initialScore: Score = {
   total: 0,
 };
 
-export const useGameStore = create<GameState>((set, get) => ({
+export const useGameStore = create<GameState>((set) => ({
+  nickname: null,
+  hydrateNickname: () => {
+    const raw = loadNickname();
+    if (!raw) return;
+    const normalized = raw.trim().slice(0, 20);
+    if (normalized) set({ nickname: normalized });
+  },
+  setNickname: (name: string) => {
+    const normalized = name.trim().slice(0, 20);
+    try {
+      if (normalized === "") {
+        globalThis.localStorage?.removeItem(NICKNAME_KEY);
+      } else {
+        globalThis.localStorage?.setItem(NICKNAME_KEY, normalized);
+      }
+    } catch { /* SSR / restricted storage */ }
+    set({ nickname: normalized === "" ? null : normalized });
+  },
+
   status: "idle",
   scenario: null,
   sessionToken: null,

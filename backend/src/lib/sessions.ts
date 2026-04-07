@@ -1,0 +1,48 @@
+import type { Difficulty } from "../../../shared/types/game";
+
+interface GameSession {
+  token: string;
+  difficulty: Difficulty;
+  scenarioTitle: string;
+  startTime: number;
+  used: boolean;
+}
+
+const sessions = new Map<string, GameSession>();
+
+const SESSION_TTL_MS = 24 * 60 * 60 * 1000;
+
+function cleanup() {
+  const now = Date.now();
+  for (const [token, session] of sessions) {
+    if (now - session.startTime > SESSION_TTL_MS) {
+      sessions.delete(token);
+    }
+  }
+}
+
+export function createSession(
+  difficulty: Difficulty,
+  scenarioTitle: string
+): string {
+  cleanup();
+  const token = crypto.randomUUID();
+  sessions.set(token, {
+    token,
+    difficulty,
+    scenarioTitle,
+    startTime: Date.now(),
+    used: false,
+  });
+  return token;
+}
+
+export function validateAndConsumeSession(
+  token: string
+): GameSession | null {
+  cleanup();
+  const session = sessions.get(token);
+  if (!session || session.used) return null;
+  session.used = true;
+  return session;
+}

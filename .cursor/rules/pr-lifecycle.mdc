@@ -1,0 +1,63 @@
+---
+description: PR creation, CI monitoring, and merge workflow
+alwaysApply: true
+---
+
+# PR Lifecycle
+
+## Creating
+
+1. Commit with a descriptive conventional-commit message.
+2. Push: `git push -u origin HEAD`
+3. Open PR: `gh pr create` with summary and test plan.
+4. After creating a new worktree, bootstrap required local gitignored env files from the host checkout **when present**:
+   - `backend/.env.local` (for `make env-check` / `make e2e-azure-route`)
+   - `infra/.tf-backend.env` (for Terraform backend targets)
+   - `data/e2e-azure-route.env` only when intentionally reusing an existing e2e namespace
+5. Verify env bootstrap with `make env-check` before running e2e/prod targets.
+6. Never commit copied gitignored env files.
+
+## CI Monitoring
+
+1. Poll: `gh pr checks <PR-NUMBER>` until all checks complete.
+2. On failure, read logs: `gh run view <RUN-ID> --job <JOB-ID> --log-failed`
+3. Fix in the worktree, commit, push, re-monitor.
+4. If failure is unrelated (e.g. billing/infra), note it and proceed.
+
+## Copilot Review
+
+1. Request: `gh api repos/{owner}/{repo}/pulls/{number}/requested_reviewers --method POST -f 'reviewers[]=copilot'`
+2. Poll for review: `gh api repos/{owner}/{repo}/pulls/{number}/reviews --jq 'if length > 0 then .[-1] | {author: .user.login, state: .state} else {author: null, state: "NO_REVIEWS"} end'`
+3. Fetch inline comments: `gh api repos/{owner}/{repo}/pulls/{number}/comments`
+4. Fix comments, push, re-request review.
+
+## Merging
+
+- Squash merge: `gh pr merge <number> --squash --body "..."`
+- After merge: `git checkout main && git pull`
+
+## Impactful PR Gate (required before merge)
+
+Run a **real ARO e2e deployment probe** for impactful PRs before merge.
+
+Treat a PR as impactful when it changes any of:
+- frontend gameplay UX/layout or user flows
+- backend API/chat/scoring/session behavior
+- deployment scripts, Helm values, or route wiring
+- infrastructure or environment plumbing used by runtime paths
+
+Required gate for impactful PRs:
+1. Ensure required vars are available in `backend/.env.local`.
+2. Run `make e2e-azure-route` from the task worktree.
+3. Confirm probe readiness (`Probe status: 200`) and capture namespace + URL in the PR comment or final handoff.
+4. Keep the temporary namespace until reviewer signoff, then clean up with `make e2e-azure-route-down` (or `NS=<namespace> make e2e-azure-route-down`).
+
+## Checklist (complete ALL before finishing)
+
+- [ ] `make validate` passes
+- [ ] `make test` passes
+- [ ] `make test-integration` passes
+- [ ] For impactful PRs: `make e2e-azure-route` passes with probe status 200
+- [ ] PR created with summary
+- [ ] CI checks green (or confirmed unrelated failure)
+- [ ] PR URL and status reported to user

@@ -1,0 +1,58 @@
+---
+name: Pre-commit Checks
+
+"on":
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  pre-commit:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Harden runner
+        # v2.16.0
+        uses: >-
+          step-security/harden-runner@fe104658747b27e96e4f7e80cd0a94068e53901d
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        # v6.0.2
+        uses: >-
+          actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+
+      - name: Load npm version
+        run: echo "NPM_VERSION=$(tr -d '\n' < .npm-version)" >> "$GITHUB_ENV"
+
+      - name: Setup Node.js
+        # v6.3.0
+        uses: >-
+          actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: |
+            frontend/package-lock.json
+            backend/package-lock.json
+
+      - name: Update npm
+        run: npm install --global "npm@${NPM_VERSION}"
+
+      - name: Ensure SHA-pinned actions
+        # v5.0.3
+        uses: >-
+          zgosalvez/github-actions-ensure-sha-pinned-actions@ca46236c6ce584ae24bc6283ba8dcf4b3ec8a066
+
+      - name: Install pre-commit
+        run: python3 -m pip install --upgrade pre-commit
+
+      - name: Install dependencies
+        run: make install
+
+      - name: Run pre-commit hooks
+        run: make pre-commit

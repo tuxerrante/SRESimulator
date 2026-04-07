@@ -5,6 +5,7 @@ node_modules/
 .env
 .env.*
 !.env.example
+!backend/.env.local.example
 
 # OS files
 .DS_Store
@@ -46,6 +47,22 @@ venv/
 
 # Testing
 coverage/
+
+# Data (leaderboard storage)
+data/
+
+# Terraform
+infra/.terraform/
+infra/.terraform.lock.hcl
+infra/.tf-backend.env
+infra/.pull-secret.json
+infra/tfplan
+infra/*.tfstate*
+infra/terraform.tfvars
+infra/crash.log
+
+# Worktrees (agent-managed isolated checkouts)
+.worktrees/
 
 # Misc
 *.tmp

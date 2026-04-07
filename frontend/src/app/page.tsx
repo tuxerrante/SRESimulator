@@ -1,10 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useGameStore } from "@/stores/gameStore";
-import type { Difficulty, Scenario } from "@/types/game";
-import { Shield, AlertTriangle, Zap, Flame, Loader2, Trophy } from "lucide-react";
+import type { Difficulty, Scenario } from "@shared/types/game";
+import { Shield, AlertTriangle, Zap, Flame, Loader2, Trophy, Heart, User } from "lucide-react";
+import { Github } from "@/components/icons/Github";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
 
@@ -48,8 +49,14 @@ const DIFFICULTIES: {
 export default function HomePage() {
   const router = useRouter();
   const startGame = useGameStore((s) => s.startGame);
+  const nickname = useGameStore((s) => s.nickname);
+  const setNickname = useGameStore((s) => s.setNickname);
+  const hydrateNickname = useGameStore((s) => s.hydrateNickname);
   const [loading, setLoading] = useState<Difficulty | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const hasCallsign = Boolean(nickname);
+
+  useEffect(() => { hydrateNickname(); }, [hydrateNickname]);
 
   const handleSelect = async (difficulty: Difficulty) => {
     setLoading(difficulty);
@@ -62,12 +69,19 @@ export default function HomePage() {
         body: JSON.stringify({ difficulty }),
       });
 
-      if (!response.ok) {
-        const data = await response.json();
-        throw new Error(data.error || "Failed to generate scenario");
+      const raw = await response.text();
+      let parsed: Record<string, unknown>;
+      try {
+        parsed = JSON.parse(raw);
+      } catch {
+        throw new Error(`Server error (${response.status}): ${raw.slice(0, 120)}`);
       }
 
-      const { scenario, sessionToken }: { scenario: Scenario; sessionToken: string } = await response.json();
+      if (!response.ok) {
+        throw new Error((parsed.error as string) || "Failed to generate scenario");
+      }
+
+      const { scenario, sessionToken } = parsed as unknown as { scenario: Scenario; sessionToken: string };
       startGame(scenario, sessionToken);
       router.push("/game");
     } catch (err) {
@@ -87,17 +101,30 @@ export default function HomePage() {
         <p className="text-zinc-500 text-center mb-2 max-w-lg">
           The Break-Fix Game for Azure Red Hat OpenShift
         </p>
-        <p className="text-zinc-600 text-sm text-center mb-12 max-w-md">
+        <p className="text-zinc-600 text-sm text-center mb-10 max-w-md">
           An AI Dungeon Master will break a cluster. Your job is to investigate
           and fix it using the proper SRE methodology.
         </p>
+
+        <div className="flex items-center gap-2 mb-8 w-full max-w-xs">
+          <User size={18} className="text-zinc-500 shrink-0" />
+          <input
+            type="text"
+            value={nickname ?? ""}
+            onChange={(e) => setNickname(e.target.value)}
+            placeholder="Enter your callsign"
+            aria-label="Callsign"
+            maxLength={20}
+            className="flex-1 px-3 py-2 rounded-lg bg-zinc-900 border border-zinc-700 text-sm text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-amber-600 transition-colors"
+          />
+        </div>
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 w-full max-w-3xl">
           {DIFFICULTIES.map((d) => (
             <button
               key={d.level}
               onClick={() => handleSelect(d.level)}
-              disabled={loading !== null}
+              disabled={loading !== null || !hasCallsign}
               className={cn(
                 "flex flex-col items-start p-5 rounded-xl border transition-all text-left",
                 "hover:scale-[1.02] active:scale-[0.98]",
@@ -166,8 +193,34 @@ export default function HomePage() {
         )}
       </div>
 
-      <footer className="text-center text-zinc-700 text-xs py-4">
-        ARO SRE Simulator &mdash; Investigation training powered by AI
+      <footer className="flex flex-col items-center gap-4 py-6 px-6">
+        <a
+          href="https://github.com/tuxerrante"
+          target="_blank"
+          rel="noopener noreferrer"
+          className={cn(
+            "group flex items-center gap-3 px-5 py-3 rounded-xl border transition-all",
+            "border-zinc-800 bg-zinc-900/60 hover:border-amber-700/50 hover:bg-zinc-900"
+          )}
+        >
+          <Github size={20} className="text-zinc-400 group-hover:text-zinc-200 transition-colors" />
+          <div className="flex flex-col">
+            <span className="text-sm font-semibold text-zinc-300 group-hover:text-zinc-100 transition-colors">
+              tuxerrante
+            </span>
+            <span className="text-[11px] text-zinc-600 group-hover:text-zinc-500 transition-colors flex items-center gap-1">
+              Built with <Heart size={10} className="text-red-500/70" /> by Alessandro Affinito
+            </span>
+          </div>
+        </a>
+
+        <div className="text-zinc-700 text-xs text-center">
+          ARO SRE Simulator &mdash; Investigation training powered by AI
+          <span className="mx-2">&middot;</span>
+          <Link href="/about" className="hover:text-zinc-400 transition-colors">
+            About
+          </Link>
+        </div>
       </footer>
     </div>
   );

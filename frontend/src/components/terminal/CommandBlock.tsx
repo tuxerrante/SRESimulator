@@ -1,6 +1,7 @@
 "use client";
 
-import type { TerminalEntry } from "@/types/terminal";
+import type { TerminalEntry } from "@shared/types/terminal";
+import { stripTerminalCommandEcho } from "@shared/stripTerminalCommandEcho";
 import { cn } from "@/lib/utils";
 
 interface CommandBlockProps {
@@ -15,6 +16,7 @@ const TYPE_COLORS: Record<string, string> = {
 
 export function CommandBlock({ entry }: CommandBlockProps) {
   const time = new Date(entry.timestamp).toLocaleTimeString();
+  const displayOutput = stripTerminalCommandEcho(entry.output, entry.command);
 
   return (
     <div className="font-mono text-sm mb-3">
@@ -29,7 +31,7 @@ export function CommandBlock({ entry }: CommandBlockProps) {
         <span className="text-zinc-200">{entry.command}</span>
       </div>
       <pre className="mt-1 text-zinc-400 whitespace-pre-wrap text-xs leading-relaxed pl-4">
-        {entry.output}
+        {displayOutput}
       </pre>
       {entry.exitCode !== 0 && (
         <div className="text-red-400 text-xs mt-0.5 pl-4">

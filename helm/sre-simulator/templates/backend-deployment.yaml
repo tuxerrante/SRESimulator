@@ -1,0 +1,103 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "sre-simulator.fullname" . }}-backend
+  labels:
+    {{- include "sre-simulator.labels" . | nindent 4 }}
+    {{- include "sre-simulator.backend.selectorLabels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.backend.replicas }}
+  selector:
+    matchLabels:
+      {{- include "sre-simulator.backend.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "sre-simulator.backend.selectorLabels" . | nindent 8 }}
+    spec:
+      containers:
+        - name: backend
+          image: "{{ .Values.backend.image.repository }}:{{ .Values.backend.image.tag }}"
+          imagePullPolicy: {{ .Values.backend.image.pullPolicy }}
+          ports:
+            - containerPort: {{ .Values.backend.port }}
+              protocol: TCP
+          env:
+            - name: DATA_DIR
+              value: /data
+            - name: CORS_ORIGIN
+              value: "https://{{ .Values.route.host }}"
+            {{- if .Values.ai.azureOpenai.endpointFromSecret.existingSecretName }}
+            - name: AI_AZURE_OPENAI_ENDPOINT
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.ai.azureOpenai.endpointFromSecret.existingSecretName }}
+                  key: {{ .Values.ai.azureOpenai.endpointFromSecret.key }}
+            {{- end }}
+            {{- if .Values.ai.azureOpenai.credentials.existingSecretName }}
+            - name: AI_AZURE_OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.ai.azureOpenai.credentials.existingSecretName }}
+                  key: {{ .Values.ai.azureOpenai.credentials.key }}
+            {{- end }}
+            {{- if .Values.ai.vertex.credentials.existingSecretName }}
+            - name: GOOGLE_APPLICATION_CREDENTIALS
+              value: "{{ .Values.ai.vertex.credentials.mountPath }}/{{ .Values.ai.vertex.credentials.key }}"
+            {{- end }}
+            {{- if .Values.database.enabled }}
+            - name: STORAGE_BACKEND
+              value: mssql
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "database.existingSecretName is required when database.enabled is true" .Values.database.existingSecretName }}
+                  key: {{ .Values.database.secretConnectionStringKey }}
+            {{- end }}
+          envFrom:
+            - configMapRef:
+                name: {{ include "sre-simulator.fullname" . }}-config
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            {{- if .Values.ai.vertex.credentials.existingSecretName }}
+            - name: gcp-credentials
+              mountPath: {{ .Values.ai.vertex.credentials.mountPath }}
+              readOnly: true
+            {{- end }}
+            {{- if .Values.keyvault.name }}
+            - name: secrets
+              mountPath: /mnt/secrets
+              readOnly: true
+            {{- end }}
+          resources:
+            {{- toYaml .Values.backend.resources | nindent 12 }}
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: {{ .Values.backend.port }}
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: {{ .Values.backend.port }}
+            initialDelaySeconds: 5
+            periodSeconds: 10
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ include "sre-simulator.fullname" . }}-data
+        {{- if .Values.ai.vertex.credentials.existingSecretName }}
+        - name: gcp-credentials
+          secret:
+            secretName: {{ .Values.ai.vertex.credentials.existingSecretName }}
+        {{- end }}
+        {{- if .Values.keyvault.name }}
+        - name: secrets
+          csi:
+            driver: secrets-store.csi.k8s.io
+            readOnly: true
+            volumeAttributes:
+              secretProviderClass: {{ include "sre-simulator.fullname" . }}-secrets
+        {{- end }}

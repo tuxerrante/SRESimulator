@@ -1,0 +1,675 @@
+---
+name: CI
+
+"on":
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  direct-push-check:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Harden runner
+        # v2.16.0
+        uses: >-
+          step-security/harden-runner@fe104658747b27e96e4f7e80cd0a94068e53901d
+        with:
+          egress-policy: audit
+
+      - name: Flag direct push to main
+        env:
+          ACTOR: ${{ github.actor }}
+          SHA: ${{ github.sha }}
+        run: |
+          echo "::warning::Direct push to main detected — use a PR instead."
+          echo "Pushed by: ${ACTOR} (${SHA})"
+
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      docs_only: ${{ steps.detect.outputs.docs_only }}
+      run_integration: ${{ steps.detect.outputs.run_integration }}
+    steps:
+      - name: Harden runner
+        # v2.16.0
+        uses: >-
+          step-security/harden-runner@fe104658747b27e96e4f7e80cd0a94068e53901d
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        # v6.0.2
+        uses: >-
+          actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 0
+
+      - name: Detect docs-only changes
+        id: detect
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PUSH_BASE_SHA: ${{ github.event.before }}
+          PUSH_HEAD_SHA: ${{ github.sha }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+
+          if [[ "${EVENT_NAME}" == "pull_request" ]]; then
+            base_sha="${PR_BASE_SHA}"
+            head_sha="${PR_HEAD_SHA}"
+          else
+            base_sha="${PUSH_BASE_SHA}"
+            head_sha="${PUSH_HEAD_SHA}"
+          fi
+
+          # Fall back to running integration if diff endpoints are unavailable.
+          if [[ -z "${base_sha}" ]] || [[ "${base_sha}" =~ ^0+$ ]]; then
+            echo "docs_only=false" >> "$GITHUB_OUTPUT"
+            echo "run_integration=true" >> "$GITHUB_OUTPUT"
+            echo "Unable to determine diff base; running integration tests." \
+              >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          if [[ "${EVENT_NAME}" == "pull_request" ]]; then
+            # Use merge-base diff for PRs to ignore unrelated base-only commits.
+            mapfile -t changed_files < <(
+              git diff --name-only "${base_sha}...${head_sha}"
+            )
+          else
+            mapfile -t changed_files < <(
+              git diff --name-only "${base_sha}" "${head_sha}"
+            )
+          fi
+
+          if [[ "${#changed_files[@]}" -eq 0 ]]; then
+            echo "docs_only=false" >> "$GITHUB_OUTPUT"
+            echo "run_integration=true" >> "$GITHUB_OUTPUT"
+            echo "No changed files detected; running integration tests." \
+              >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          docs_only=true
+          for file in "${changed_files[@]}"; do
+            case "$file" in
+              *.md|*.mdx|docs/*)
+                ;;
+              *)
+                docs_only=false
+                break
+                ;;
+            esac
+          done
+
+          if [[ "${docs_only}" == "true" ]]; then
+            echo "docs_only=true" >> "$GITHUB_OUTPUT"
+            echo "run_integration=false" >> "$GITHUB_OUTPUT"
+            echo "Docs-only change detected; integration suites skipped." \
+              >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "docs_only=false" >> "$GITHUB_OUTPUT"
+            echo "run_integration=true" >> "$GITHUB_OUTPUT"
+            echo "Code-related change detected; integration suites enabled." \
+              >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  lint-typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Harden runner
+        # v2.16.0
+        uses: >-
+          step-security/harden-runner@fe104658747b27e96e4f7e80cd0a94068e53901d
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        # v6.0.2
+        uses: >-
+          actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+
+      - name: Load npm version
+        run: echo "NPM_VERSION=$(tr -d '\n' < .npm-version)" >> "$GITHUB_ENV"
+
+      - name: Setup Node.js
+        # v6.3.0
+        uses: >-
+          actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: |
+            frontend/package-lock.json
+            backend/package-lock.json
+
+      - name: Update npm
+        run: npm install --global "npm@${NPM_VERSION}"
+
+      - name: Ensure SHA-pinned actions
+        # v5.0.3
+        uses: >-
+          zgosalvez/github-actions-ensure-sha-pinned-actions@ca46236c6ce584ae24bc6283ba8dcf4b3ec8a066
+
+      - name: Install dependencies
+        run: make install
+
+      - name: Validate (lint + typecheck)
+        run: make validate
+
+      - name: Check unused exports (hygiene, non-blocking)
+        continue-on-error: true
+        run: make lint-unused-exports
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Harden runner
+        # v2.16.0
+        uses: >-
+          step-security/harden-runner@fe104658747b27e96e4f7e80cd0a94068e53901d
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        # v6.0.2
+        uses: >-
+          actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+
+      - name: Load npm version
+        run: echo "NPM_VERSION=$(tr -d '\n' < .npm-version)" >> "$GITHUB_ENV"
+
+      - name: Setup Node.js
+        # v6.3.0
+        uses: >-
+          actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: |
+            frontend/package-lock.json
+            backend/package-lock.json
+
+      - name: Update npm
+        run: npm install --global "npm@${NPM_VERSION}"
+
+      - name: Install dependencies
+        run: make install
+
+      - name: Run tests with coverage
+        run: make test
+
+      - name: Compute coverage metadata
+        id: coverage
+        run: |
+          set -euo pipefail
+          coverage_pct="$(node -e '
+            const fs = require("fs");
+            const data = JSON.parse(
+              fs.readFileSync("backend/coverage/coverage-summary.json", "utf8")
+            );
+            process.stdout.write(String(data.total.lines.pct));
+          ')"
+          coverage_value="$(printf '%.1f' "$coverage_pct")"
+          color="red"
+          if awk "BEGIN {exit !($coverage_pct >= 90)}"; then
+            color="brightgreen"
+          elif awk "BEGIN {exit !($coverage_pct >= 80)}"; then
+            color="green"
+          elif awk "BEGIN {exit !($coverage_pct >= 70)}"; then
+            color="yellowgreen"
+          elif awk "BEGIN {exit !($coverage_pct >= 60)}"; then
+            color="yellow"
+          elif awk "BEGIN {exit !($coverage_pct >= 50)}"; then
+            color="orange"
+          fi
+          echo "value=${coverage_value}" >> "$GITHUB_OUTPUT"
+          echo "color=${color}" >> "$GITHUB_OUTPUT"
+          echo "### Coverage" >> "$GITHUB_STEP_SUMMARY"
+          summary_line="- Backend line coverage: ${coverage_value}%"
+          echo "$summary_line" >> "$GITHUB_STEP_SUMMARY"
+
+  integration-test:
+    needs:
+      - changes
+    if: needs.changes.outputs.run_integration == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Harden runner
+        # v2.16.0
+        uses: >-
+          step-security/harden-runner@fe104658747b27e96e4f7e80cd0a94068e53901d
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        # v6.0.2
+        uses: >-
+          actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+
+      - name: Load npm version
+        run: echo "NPM_VERSION=$(tr -d '\n' < .npm-version)" >> "$GITHUB_ENV"
+
+      - name: Setup Node.js
+        # v6.3.0
+        uses: >-
+          actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: |
+            frontend/package-lock.json
+            backend/package-lock.json
+
+      - name: Update npm
+        run: npm install --global "npm@${NPM_VERSION}"
+
+      - name: Install backend dependencies
+        run: make install-backend
+
+      - name: Run integration tests (mock mode)
+        run: make test-integration
+
+  integration-test-mssql:
+    needs:
+      - changes
+    if: needs.changes.outputs.run_integration == 'true'
+    runs-on: ubuntu-latest
+    env:
+      MSSQL_SA_PASSWORD: ${{ format('CiRun{0}!aA', github.run_id) }}
+    services:
+      sqlserver:
+        image: mcr.microsoft.com/azure-sql-edge:latest
+        env:
+          ACCEPT_EULA: "Y"
+          MSSQL_SA_PASSWORD: ${{ env.MSSQL_SA_PASSWORD }}
+        ports:
+          - 1433:1433
+        options: >-
+          --health-cmd
+          "python3 -c \"import socket; s=socket.socket();
+          s.settimeout(2); s.connect(('localhost',1433)); s.close()\""
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - name: Harden runner
+        # v2.16.0
+        uses: >-
+          step-security/harden-runner@fe104658747b27e96e4f7e80cd0a94068e53901d
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        # v6.0.2
+        uses: >-
+          actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+
+      - name: Load npm version
+        run: echo "NPM_VERSION=$(tr -d '\n' < .npm-version)" >> "$GITHUB_ENV"
+
+      - name: Setup Node.js
+        # v6.3.0
+        uses: >-
+          actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: |
+            frontend/package-lock.json
+            backend/package-lock.json
+
+      - name: Update npm
+        run: npm install --global "npm@${NPM_VERSION}"
+
+      - name: Install backend dependencies
+        run: make install-backend
+
+      - name: Create sresimulator database
+        working-directory: backend
+        env:
+          DB_CONN: >-
+            Server=localhost;User Id=sa;
+            Password=${{ env.MSSQL_SA_PASSWORD }};
+            TrustServerCertificate=true
+        run: |
+          node -e "
+            const sql = require('mssql');
+            const q = 'IF DB_ID('+
+              String.fromCharCode(39)+
+              'sresimulator'+
+              String.fromCharCode(39)+
+              ') IS NULL CREATE DATABASE sresimulator';
+            sql.connect(process.env.DB_CONN)
+              .then(p => p.request().query(q)
+                .then(() => p.close()))
+              .then(() => process.exit(0))
+              .catch(e => {
+                console.error(e.message);
+                process.exit(1);
+              });
+          "
+
+      - name: Run MSSQL integration tests
+        env:
+          STORAGE_BACKEND: mssql
+          DATABASE_URL: >-
+            Server=localhost;Database=sresimulator;User Id=sa;
+            Password=${{ env.MSSQL_SA_PASSWORD }};TrustServerCertificate=true
+        run: make test-integration
+
+      - name: Smoke startup with MSSQL backend
+        env:
+          MSSQL_DATABASE_URL: >-
+            Server=localhost;Database=sresimulator;User Id=sa;
+            Password=${{ env.MSSQL_SA_PASSWORD }};TrustServerCertificate=true
+        run: make smoke-backend-mssql
+
+  security:
+    runs-on: ubuntu-latest
+    env:
+      SECURITY_FAIL_LEVEL: high
+    steps:
+      - name: Harden runner
+        # v2.16.0
+        uses: >-
+          step-security/harden-runner@fe104658747b27e96e4f7e80cd0a94068e53901d
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        # v6.0.2
+        uses: >-
+          actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+
+      - name: Load npm version
+        run: echo "NPM_VERSION=$(tr -d '\n' < .npm-version)" >> "$GITHUB_ENV"
+
+      - name: Setup Node.js
+        # v6.3.0
+        uses: >-
+          actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: |
+            frontend/package-lock.json
+            backend/package-lock.json
+
+      - name: Update npm
+        run: npm install --global "npm@${NPM_VERSION}"
+
+      - name: Install dependencies
+        run: make install
+
+      - name: Security checks
+        run: make security
+
+      - name: Grype severity gate
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.cache/grype"
+          grype_digest_a="sha256:af65fbc0c664691067788fe95ff88760"
+          grype_digest_b="b435543e45595eb2ca6f102fc476fbe1"
+          grype_image="anchore/grype:v0.110.0@${grype_digest_a}${grype_digest_b}"
+          docker_args=(
+            --rm
+            -e GRYPE_DB_AUTO_UPDATE=true
+            -v "$HOME/.cache/grype:/root/.cache/grype"
+            -v "$PWD:/work"
+            -w /work
+            "$grype_image"
+          )
+          fail_args=(--only-fixed --fail-on "$SECURITY_FAIL_LEVEL")
+          docker run "${docker_args[@]}" "dir:frontend" "${fail_args[@]}"
+          docker run "${docker_args[@]}" "dir:backend" "${fail_args[@]}"
+
+  helm-validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Harden runner
+        # v2.16.0
+        uses: >-
+          step-security/harden-runner@fe104658747b27e96e4f7e80cd0a94068e53901d
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        # v6.0.2
+        uses: >-
+          actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+
+      - name: Install Helm
+        run: |
+          set -euo pipefail
+          HELM_VERSION="v3.14.4"
+          HELM_TARBALL_URL="https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz"
+          curl -fsSL "${HELM_TARBALL_URL}" -o /tmp/helm.tar.gz
+          tar -C /tmp -zxvf /tmp/helm.tar.gz
+          sudo mv /tmp/linux-amd64/helm /usr/local/bin/helm
+          helm version
+
+      - name: Helm lint
+        run: helm lint ./helm/sre-simulator
+
+      - name: Helm template
+        run: |
+          set -euo pipefail
+          helm template sre-simulator ./helm/sre-simulator \
+            --values ./helm/sre-simulator/values.yaml
+
+  docker-build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - component: frontend
+            dockerfile: frontend/Dockerfile
+          - component: backend
+            dockerfile: backend/Dockerfile
+    steps:
+      - name: Harden runner
+        # v2.16.0
+        uses: >-
+          step-security/harden-runner@fe104658747b27e96e4f7e80cd0a94068e53901d
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        # v6.0.2
+        uses: >-
+          actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+
+      - name: Load npm version
+        run: echo "NPM_VERSION=$(tr -d '\n' < .npm-version)" >> "$GITHUB_ENV"
+
+      - name: Build Docker image
+        env:
+          DOCKERFILE: ${{ matrix.dockerfile }}
+          COMPONENT: ${{ matrix.component }}
+        run: >-
+          docker build
+          --build-arg NPM_VERSION="${NPM_VERSION}"
+          -f "${DOCKERFILE}"
+          -t "sre-simulator-${COMPONENT}"
+          .
+
+  ci-gate:
+    if: always()
+    needs:
+      - changes
+      - lint-typecheck
+      - test
+      - integration-test
+      - integration-test-mssql
+      - security
+      - helm-validate
+      - docker-build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify all jobs passed
+        env:
+          CHANGES_RESULT: ${{ needs.changes.result }}
+          DOCS_ONLY: ${{ needs.changes.outputs.docs_only }}
+          RUN_INTEGRATION: ${{ needs.changes.outputs.run_integration }}
+          LINT_RESULT: ${{ needs.lint-typecheck.result }}
+          TEST_RESULT: ${{ needs.test.result }}
+          INTEGRATION_RESULT: ${{ needs.integration-test.result }}
+          INTEGRATION_MSSQL_RESULT: ${{ needs.integration-test-mssql.result }}
+          SECURITY_RESULT: ${{ needs.security.result }}
+          HELM_RESULT: ${{ needs.helm-validate.result }}
+          DOCKER_RESULT: ${{ needs.docker-build.result }}
+        run: |
+          failed=false
+          failed_jobs=()
+
+          echo "CI job results:"
+          echo "  changes:                    ${CHANGES_RESULT}"
+          echo "  docs-only change:           ${DOCS_ONLY}"
+          echo "  run integration suites:     ${RUN_INTEGRATION}"
+          echo "  lint-typecheck:             ${LINT_RESULT}"
+          echo "  test:                       ${TEST_RESULT}"
+          echo "  integration-test:           ${INTEGRATION_RESULT}"
+          echo "  integration-test-mssql:     ${INTEGRATION_MSSQL_RESULT}"
+          echo "  security:                   ${SECURITY_RESULT}"
+          echo "  helm-validate:              ${HELM_RESULT}"
+          echo "  docker-build:               ${DOCKER_RESULT}"
+
+          for name_result in \
+            "changes:${CHANGES_RESULT}" \
+            "lint-typecheck:${LINT_RESULT}" \
+            "test:${TEST_RESULT}" \
+            "security:${SECURITY_RESULT}" \
+            "helm-validate:${HELM_RESULT}" \
+            "docker-build:${DOCKER_RESULT}"; do
+            name="${name_result%%:*}"
+            result="${name_result#*:}"
+            if [[ "$result" != "success" ]]; then
+              failed=true
+              failed_jobs+=("${name} (${result})")
+            fi
+          done
+
+          if [[ "${RUN_INTEGRATION}" == "true" ]]; then
+            for name_result in \
+              "integration-test:${INTEGRATION_RESULT}" \
+              "integration-test-mssql:${INTEGRATION_MSSQL_RESULT}"; do
+              name="${name_result%%:*}"
+              result="${name_result#*:}"
+              if [[ "$result" != "success" ]]; then
+                failed=true
+                failed_jobs+=("${name} (${result})")
+              fi
+            done
+          else
+            echo "Integration suites intentionally skipped (docs-only change)."
+          fi
+
+          if [[ "$failed" == "true" ]]; then
+            echo ""
+            echo "Failed jobs:"
+            for job in "${failed_jobs[@]}"; do
+              echo "  - ${job}"
+            done
+            exit 1
+          fi
+          echo "All CI jobs passed."
+
+  update-coverage-badge:
+    runs-on: ubuntu-latest
+    needs:
+      - lint-typecheck
+      - test
+      - integration-test
+      - integration-test-mssql
+      - security
+      - helm-validate
+      - docker-build
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: write
+    steps:
+      - name: Harden runner
+        # v2.16.0
+        uses: >-
+          step-security/harden-runner@fe104658747b27e96e4f7e80cd0a94068e53901d
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        # v6.0.2
+        uses: >-
+          actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+
+      - name: Load npm version
+        run: echo "NPM_VERSION=$(tr -d '\n' < .npm-version)" >> "$GITHUB_ENV"
+
+      - name: Setup Node.js
+        # v6.3.0
+        uses: >-
+          actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: |
+            frontend/package-lock.json
+            backend/package-lock.json
+
+      - name: Update npm
+        run: npm install --global "npm@${NPM_VERSION}"
+
+      - name: Install dependencies
+        run: make install
+
+      - name: Run backend tests with coverage
+        run: make test
+
+      - name: Generate coverage badge
+        run: |
+          set -euo pipefail
+          coverage_pct="$(node -e '
+            const fs = require("fs");
+            const data = JSON.parse(
+              fs.readFileSync("backend/coverage/coverage-summary.json", "utf8")
+            );
+            process.stdout.write(String(data.total.lines.pct));
+          ')"
+          coverage_value="$(printf '%.1f' "$coverage_pct")"
+          color="red"
+          if awk "BEGIN {exit !($coverage_pct >= 90)}"; then
+            color="brightgreen"
+          elif awk "BEGIN {exit !($coverage_pct >= 80)}"; then
+            color="green"
+          elif awk "BEGIN {exit !($coverage_pct >= 70)}"; then
+            color="yellowgreen"
+          elif awk "BEGIN {exit !($coverage_pct >= 60)}"; then
+            color="yellow"
+          elif awk "BEGIN {exit !($coverage_pct >= 50)}"; then
+            color="orange"
+          fi
+          mkdir -p badges
+          coverage_label="${coverage_value}%25"
+          badge_url="https://img.shields.io/badge/coverage-"
+          badge_url+="${coverage_label}-${color}.svg"
+          curl -fsSL "$badge_url" -o badges/coverage.svg
+
+      - name: Commit updated coverage badge
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- badges/coverage.svg; then
+            echo "Coverage badge is already up to date."
+            exit 0
+          fi
+          git add badges/coverage.svg
+          git -c user.name="github-actions[bot]" \
+            -c user.email="github-actions[bot]@users.noreply.github.com" \
+            commit -m "chore(ci): update coverage badge [skip ci]"
+          git push origin HEAD:main

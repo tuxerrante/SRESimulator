@@ -1,0 +1,49 @@
+# Copy to terraform.tfvars and fill in your values.
+# terraform.tfvars is gitignored - never commit real values.
+# For final environment provisioning (aaffinit-test), use
+# final-aaffinit-test.tfvars.example as the starting point.
+
+owner_alias = ""  # required - your alias, e.g. "jdoe"
+location    = "eastus"
+
+# ARO cluster sizing (defaults are minimal for testing)
+# master_vm_size = "Standard_D8s_v3"   # minimum, cannot go smaller
+# worker_vm_size = "Standard_D4s_v3"
+# worker_count   = 2
+
+# ARO version - leave empty for latest, or pin to a specific version
+# (run: az aro get-versions --location eastus -o table)
+# aro_version = "4.17.27"
+
+# Red Hat pull secret (optional but recommended)
+# NOTE: Terraform does not expand "~"; use an absolute path.
+# pull_secret_path = "/absolute/path/to/pull-secret.txt"
+
+# Azure OpenAI model (gpt-4o-mini is cheapest; see PR #31 for per-route sizing)
+# aoai_model_name    = "gpt-4o-mini"
+# aoai_model_version = "2024-07-18"
+# aoai_sku_name      = "GlobalStandard" # required for some regions/models (e.g. westeurope + gpt-4o-mini)
+# aoai_capacity      = 80  # 80K TPM rate limit (pay-per-token, not per capacity)
+
+# Stable namespace for the app (shared cluster + AOAI with e2e namespaces)
+# prod_namespace = "sre-simulator"
+
+# Budget alert – sends email when monthly RG spend reaches threshold
+budget_alert_emails = ["your-email@example.com"]
+# budget_amount       = 200  # monthly cap in billing currency (default 200)
+
+# Azure SQL Database free tier (persistent leaderboard + sessions, $0/month)
+# enable_database    = true
+# enable_sql_free_tier = false # set true only where free-tier update is supported
+# sql_admin_password = "<strong-password-meeting-azure-complexity>"
+# sql_server_name    = "jdoe-test-sql-001" # optional override if default name is unavailable
+
+# Additional tags to apply to all resources
+# extra_tags = {
+#   team = "your-team"
+# }
+#
+# For test-tagged environments, prefer:
+# extra_tags = {
+#   test = "true"
+# }

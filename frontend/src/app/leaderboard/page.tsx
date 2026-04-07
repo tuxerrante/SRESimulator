@@ -4,8 +4,8 @@ import { useState, useEffect } from "react";
 import Link from "next/link";
 import { Trophy, ArrowLeft, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import type { Difficulty } from "@/types/game";
-import type { LeaderboardEntry, HallOfFameEntry } from "@/types/leaderboard";
+import type { Difficulty } from "@shared/types/game";
+import type { LeaderboardEntry, HallOfFameEntry } from "@shared/types/leaderboard";
 
 type Tab = "all" | Difficulty;
 
@@ -74,9 +74,16 @@ export default function LeaderboardPage() {
       try {
         const param = activeTab === "all" ? "" : `?difficulty=${activeTab}`;
         const res = await fetch(`/api/scores${param}`);
-        const data = await res.json();
-        setEntries(data.entries);
-        setHallOfFame(data.hallOfFame);
+        const raw = await res.text();
+        let data: Record<string, unknown>;
+        try {
+          data = JSON.parse(raw);
+        } catch {
+          throw new Error(`Server error (${res.status}): ${raw.slice(0, 120)}`);
+        }
+        if (!res.ok) throw new Error((data.error as string) || "Failed to load scores");
+        setEntries(data.entries as LeaderboardEntry[]);
+        setHallOfFame(data.hallOfFame as HallOfFameEntry[]);
       } catch {
         setEntries([]);
         setHallOfFame([]);
@@ -249,6 +256,10 @@ export default function LeaderboardPage() {
 
       <footer className="text-center text-zinc-700 text-xs py-4">
         ARO SRE Simulator &mdash; Investigation training powered by AI
+        <span className="mx-2">&middot;</span>
+        <Link href="/about" className="hover:text-zinc-400 transition-colors">
+          About
+        </Link>
       </footer>
     </div>
   );

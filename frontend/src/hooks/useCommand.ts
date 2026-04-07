@@ -2,7 +2,10 @@
 
 import { useCallback } from "react";
 import { useGameStore } from "@/stores/gameStore";
-import type { TerminalEntry } from "@/types/terminal";
+import type { TerminalEntry } from "@shared/types/terminal";
+
+const MAX_COMMAND_HISTORY = 15;
+const MAX_ENTRY_OUTPUT_CHARS = 400;
 
 export function useCommand() {
   const { scenario, addTerminalEntry, addScoringEvent, recalculateScore, setExecuting } =
@@ -39,20 +42,35 @@ export function useCommand() {
       }
 
       try {
+        const entries = useGameStore.getState().terminalEntries;
+        const commandHistory = entries.slice(-MAX_COMMAND_HISTORY).map((e) => ({
+          command: e.command,
+          output: e.output.length > MAX_ENTRY_OUTPUT_CHARS
+            ? e.output.slice(0, MAX_ENTRY_OUTPUT_CHARS) + "\n...(truncated)"
+            : e.output,
+          type: e.type,
+        }));
+
         const response = await fetch("/api/command", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ command, type, scenario }),
+          body: JSON.stringify({ command, type, scenario, commandHistory }),
         });
 
-        const data = await response.json();
+        const raw = await response.text();
+        let data: Record<string, unknown>;
+        try {
+          data = JSON.parse(raw);
+        } catch {
+          data = { error: `Server error (${response.status}): ${raw.slice(0, 120)}`, exitCode: 1 };
+        }
 
         const entry: TerminalEntry = {
           id: crypto.randomUUID(),
           command,
-          output: data.output || data.error || "No output",
+          output: String(data.output || data.error || "No output"),
           timestamp: Date.now(),
-          exitCode: data.exitCode ?? (data.error ? 1 : 0),
+          exitCode: typeof data.exitCode === "number" ? data.exitCode : (data.error ? 1 : 0),
           type,
         };
 

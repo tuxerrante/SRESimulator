@@ -2,44 +2,8 @@
 
 import { useCallback } from "react";
 import { useGameStore } from "@/stores/gameStore";
-import type { ChatMessage, InvestigationPhase } from "@/types/chat";
-import type { ScoringEvent } from "@/types/scoring";
-
-const VALID_PHASES: InvestigationPhase[] = [
-  "reading", "context", "facts", "theory", "action",
-];
-
-const VALID_DIMENSIONS = ["efficiency", "safety", "documentation", "accuracy"];
-
-function extractPhase(content: string): InvestigationPhase | null {
-  const match = content.match(/\[PHASE:(\w+)\]/);
-  if (!match) return null;
-  const phase = match[1] as InvestigationPhase;
-  return VALID_PHASES.includes(phase) ? phase : null;
-}
-
-function extractScoreMarkers(content: string): ScoringEvent[] {
-  const events: ScoringEvent[] = [];
-  const pattern = /\[SCORE:(\w+):([+-]\d+):([^\]]+)\]/g;
-  let match;
-  while ((match = pattern.exec(content)) !== null) {
-    const dimension = match[1];
-    if (!VALID_DIMENSIONS.includes(dimension)) continue;
-    const points = parseInt(match[2], 10);
-    events.push({
-      type: points >= 0 ? "bonus" : "penalty",
-      dimension: dimension as ScoringEvent["dimension"],
-      points: Math.abs(points),
-      reason: match[3],
-      timestamp: Date.now(),
-    });
-  }
-  return events;
-}
-
-function extractResolved(content: string): boolean {
-  return content.includes("[RESOLVED]");
-}
+import { extractPhase, extractScoreMarkers, extractResolved } from "@/lib/chat-markers";
+import type { ChatMessage } from "@shared/types/chat";
 
 export function useChat() {
   const {
@@ -94,8 +58,15 @@ export function useChat() {
         });
 
         if (!response.ok) {
-          const err = await response.json();
-          throw new Error(err.error || "Chat request failed");
+          const raw = await response.text();
+          let errorMessage = `Chat request failed (${response.status})`;
+          try {
+            const err = JSON.parse(raw);
+            errorMessage = err.error || errorMessage;
+          } catch {
+            errorMessage = `Server error (${response.status}): ${raw.slice(0, 120)}`;
+          }
+          throw new Error(errorMessage);
         }
 
         const reader = response.body?.getReader();
@@ -120,6 +91,10 @@ export function useChat() {
             try {
               const parsed = JSON.parse(data);
               if (parsed.error) throw new Error(parsed.error);
+              if (parsed.reasoning) {
+                updateLastAssistantMessage("_The AI is thinking deeper..._");
+                continue;
+              }
               if (parsed.text) {
                 accumulated += parsed.text;
                 updateLastAssistantMessage(accumulated);

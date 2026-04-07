@@ -2,7 +2,7 @@
 
 import { useCallback } from "react";
 import { useGameStore } from "@/stores/gameStore";
-import type { InvestigationPhase } from "@/types/chat";
+import type { InvestigationPhase } from "@shared/types/chat";
 
 export function useScoring() {
   const {
