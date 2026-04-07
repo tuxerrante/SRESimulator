@@ -75,10 +75,20 @@ describe("Header layout", () => {
     const phaseButton = screen.getByTestId("phase-tracker-button");
     expect(phaseButton).toBeTruthy();
     expect(phaseButton.textContent).toContain("Reading");
+    expect(phaseButton.getAttribute("aria-haspopup")).toBe("listbox");
+    expect(phaseButton.getAttribute("aria-expanded")).toBe("false");
 
     fireEvent.click(phaseButton);
-    expect(screen.getByTestId("phase-tracker-menu")).toBeTruthy();
+    const phaseMenu = screen.getByTestId("phase-tracker-menu");
+    expect(phaseMenu).toBeTruthy();
+    expect(phaseButton.getAttribute("aria-expanded")).toBe("true");
+    expect(phaseMenu.getAttribute("role")).toBe("listbox");
+    expect(phaseButton.getAttribute("aria-controls")).toBe(phaseMenu.getAttribute("id"));
     expect(screen.getByText("Context Gathering")).toBeTruthy();
+
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(screen.queryByTestId("phase-tracker-menu")).toBeNull();
+    expect(phaseButton.getAttribute("aria-expanded")).toBe("false");
   });
 
   it("shows nickname inside the score dropdown panel", () => {
