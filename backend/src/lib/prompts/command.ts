@@ -67,6 +67,7 @@ Given a command and scenario context, generate realistic output that would be se
 
 Rules:
 - Output ONLY the command output, no explanations or commentary.
+- Do not echo the command line, a shell prompt (e.g. starting with "$ "), a line like "[oc]" / "[kql]" / "[geneva]", or repeat the command text — the UI shows the command separately. Begin with the first line of real tool output.
 - Make the output realistic and consistent with the scenario.
 - Include realistic timestamps, pod names, node names, and IP addresses.
 - For ${type === "oc" ? "OpenShift CLI (oc)" : type === "kql" ? "Kusto Query Language (KQL)" : "Geneva"} commands, format output appropriately.
