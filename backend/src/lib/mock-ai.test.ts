@@ -33,13 +33,14 @@ describe("generateMockScenario", () => {
   });
 
   it("generates reportedTime within the past 1-7 days", () => {
+    const before = Date.now();
     const scenario = generateMockScenario("easy");
+    const after = Date.now();
     const reported = new Date(scenario.incidentTicket.reportedTime).getTime();
-    const now = Date.now();
     const oneDayMs = 86_400_000;
 
-    expect(reported).toBeLessThanOrEqual(now - oneDayMs);
-    expect(reported).toBeGreaterThanOrEqual(now - 7 * oneDayMs);
+    expect(reported).toBeLessThanOrEqual(after - oneDayMs);
+    expect(reported).toBeGreaterThanOrEqual(before - 7 * oneDayMs);
   });
 
   it("uses critical severity alert for hard difficulty", () => {
