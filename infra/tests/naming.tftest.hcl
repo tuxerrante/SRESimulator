@@ -1,6 +1,21 @@
-mock_provider "azurerm" {}
+mock_provider "azurerm" {
+  mock_data "azurerm_client_config" {
+    defaults = {
+      client_id       = "00000000-0000-0000-0000-000000000001"
+      object_id       = "00000000-0000-0000-0000-000000000002"
+      subscription_id = "00000000-0000-0000-0000-000000000003"
+      tenant_id       = "00000000-0000-0000-0000-000000000004"
+    }
+  }
+}
 mock_provider "azapi" {}
-mock_provider "azuread" {}
+mock_provider "azuread" {
+  mock_data "azuread_service_principal" {
+    defaults = {
+      object_id = "00000000-0000-0000-0000-000000000005"
+    }
+  }
+}
 
 variables {
   owner_alias = "jdoe"

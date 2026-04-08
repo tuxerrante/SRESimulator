@@ -2,12 +2,19 @@
 name: Deploy Production
 
 "on":
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Semver tag to deploy (example v0.1.0)
+        required: true
+        type: string
   workflow_run:
     workflows: ["Release"]
     types:
       - completed
 
 permissions:
+  checks: read
   contents: read
 
 concurrency:
@@ -16,7 +23,12 @@ concurrency:
 
 jobs:
   resolve-release-tag:
-    if: github.event.workflow_run.conclusion == 'success'
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (
+        github.event_name == 'workflow_run' &&
+        github.event.workflow_run.conclusion == 'success'
+      )
     runs-on: ubuntu-latest
     outputs:
       should_deploy: ${{ steps.resolve.outputs.should_deploy }}
@@ -35,16 +47,33 @@ jobs:
         uses: >-
           actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
-          ref: ${{ github.event.workflow_run.head_sha }}
           fetch-depth: 0
 
       - name: Resolve semver tag for release SHA
         id: resolve
         env:
+          EVENT_NAME: ${{ github.event_name }}
           HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          INPUT_RELEASE_TAG: ${{ github.event.inputs.release_tag }}
         run: |
           set -euo pipefail
           git fetch --tags --force
+          if [[ "${EVENT_NAME}" == "workflow_dispatch" ]]; then
+            if [[ ! "${INPUT_RELEASE_TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "Release tag must follow semver: ${INPUT_RELEASE_TAG}"
+              exit 1
+            fi
+            if ! git rev-parse "${INPUT_RELEASE_TAG}" >/dev/null 2>&1; then
+              echo "Release tag ${INPUT_RELEASE_TAG} does not exist."
+              exit 1
+            fi
+            release_sha="$(git rev-list -n 1 "${INPUT_RELEASE_TAG}")"
+            echo "should_deploy=true" >> "$GITHUB_OUTPUT"
+            echo "release_tag=${INPUT_RELEASE_TAG}" >> "$GITHUB_OUTPUT"
+            echo "release_sha=${release_sha}" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
           mapfile -t semver_tags < <(
             git tag --points-at "${HEAD_SHA}" | \
               awk '/^v[0-9]+\.[0-9]+\.[0-9]+$/ {print}' | \
@@ -110,7 +139,8 @@ jobs:
           fi
 
           git fetch --tags --force
-          git fetch origin main --depth=1
+          # Fetch full main history so older semver tags stay deployable.
+          git fetch origin main
           if ! git merge-base --is-ancestor "${RELEASE_SHA}" "origin/main"; then
             echo "Refusing deploy: ${RELEASE_TAG} is not from main history."
             exit 1

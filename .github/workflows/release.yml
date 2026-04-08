@@ -86,7 +86,8 @@ jobs:
           HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
         run: |
           set -euo pipefail
-          git fetch origin main --depth=1
+          # Fetch full main history so older semver tags can be re-released.
+          git fetch origin main
           if ! git merge-base --is-ancestor "${HEAD_SHA}" "origin/main"; then
             echo "Release commit ${HEAD_SHA} is not in main history."
             echo "Release tags must be created from main."
