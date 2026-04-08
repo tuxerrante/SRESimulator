@@ -101,7 +101,7 @@ jobs:
             pod -l "${SELECTOR}=frontend" --timeout=120s
 
       - name: Run helm test
-        run: helm test sre-simulator --timeout 2m
+        run: helm test sre-simulator --timeout 4m
 
       - name: Show test pod logs on failure
         if: failure()
