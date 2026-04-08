@@ -184,12 +184,14 @@ variable "sql_server_name" {
 # Locals – derived names and shared tags
 # ---------------------------------------------------------------------------
 locals {
-  prefix              = "${var.owner_alias}-test"
-  resource_group_name = "${local.prefix}-rg"
-  cluster_name        = local.prefix
-  vnet_name           = "${local.prefix}-vnet"
-  aoai_account_name   = "${local.prefix}-aoai"
-  sql_server_name     = var.sql_server_name != "" ? var.sql_server_name : "${local.prefix}-sql"
+  prefix                      = "${var.owner_alias}-test"
+  resource_group_name         = "${local.prefix}-rg"
+  cluster_resource_group_name = "${local.prefix}-cluster-rg"
+  cluster_resource_group_id   = "/subscriptions/${data.azurerm_client_config.current.subscription_id}/resourcegroups/${local.cluster_resource_group_name}"
+  cluster_name                = local.prefix
+  vnet_name                   = "${local.prefix}-vnet"
+  aoai_account_name           = "${local.prefix}-aoai"
+  sql_server_name             = var.sql_server_name != "" ? var.sql_server_name : "${local.prefix}-sql"
 
   tags = merge(var.extra_tags, {
     environment = "test"

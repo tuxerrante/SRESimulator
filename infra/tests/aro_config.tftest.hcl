@@ -60,6 +60,30 @@ run "aro_cluster_domain" {
     condition     = azapi_resource.aro_cluster.body.properties.clusterProfile.domain == "jdoe-test"
     error_message = "ARO cluster domain should match the prefix (<alias>-test)."
   }
+
+  assert {
+    condition     = azapi_resource.aro_cluster.body.properties.clusterProfile.resourceGroupId == "/subscriptions/00000000-0000-0000-0000-000000000003/resourcegroups/jdoe-test-cluster-rg"
+    error_message = "ARO cluster profile should target the RP-managed cluster resource group."
+  }
+}
+
+run "aro_cluster_rg_tags_overlay" {
+  command = plan
+
+  assert {
+    condition     = azapi_update_resource.aro_cluster_rg_tags.type == "Microsoft.Resources/resourceGroups@2021-04-01"
+    error_message = "Cluster RG tag overlay should use the resource group ARM type."
+  }
+
+  assert {
+    condition     = azapi_update_resource.aro_cluster_rg_tags.resource_id == "/subscriptions/00000000-0000-0000-0000-000000000003/resourcegroups/jdoe-test-cluster-rg"
+    error_message = "Cluster RG tag overlay should target the RP-managed cluster resource group id."
+  }
+
+  assert {
+    condition     = azapi_update_resource.aro_cluster_rg_tags.body.tags["persist"] == "true"
+    error_message = "Cluster RG tag overlay must include persist=true."
+  }
 }
 
 run "aro_network_profile" {

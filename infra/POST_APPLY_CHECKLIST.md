@@ -208,3 +208,8 @@ az group delete --name <owner_alias>-test-rg --yes --no-wait
 > **Note:** `tf-destroy` / `az group delete` removes the cluster and AOAI
 > account in the customer-managed RG. The ARO RP-managed cluster RG is cleaned
 > up by the provider when cluster deletion completes.
+>
+> **Tagging caveat:** The RP-managed cluster resource group (`<owner_alias>-test-cluster-rg`)
+> can be protected by Azure deny assignments. In that case, even Owner/Contributor
+> principals cannot write tags on that RG, and `persist=true` cannot be enforced there
+> via Terraform.
