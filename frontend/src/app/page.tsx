@@ -234,6 +234,7 @@ export default function HomePage() {
             className="underline decoration-zinc-600 underline-offset-2 hover:text-zinc-200 hover:decoration-zinc-300 transition-colors"
             aria-expanded={showReleaseNotes}
             aria-controls="release-notes-panel"
+            aria-label={`${showReleaseNotes ? "Hide" : "Show"} release notes (${APP_VERSION})`}
           >
             {APP_VERSION}
           </button>
@@ -242,23 +243,23 @@ export default function HomePage() {
             About
           </Link>
         </div>
-        {showReleaseNotes && (
-          <section
-            id="release-notes-panel"
-            className="w-full max-w-2xl rounded-xl border border-zinc-800 bg-zinc-900/70 p-4 text-left"
-          >
-            <h2 className="mb-2 text-sm font-semibold text-zinc-100">
-              Main feature updates
-            </h2>
-            <ul className="space-y-1 text-sm text-zinc-300">
-              {HOME_FEATURE_HIGHLIGHTS.map((feature) => (
-                <li key={feature} className="leading-relaxed">
-                  - {feature}
-                </li>
-              ))}
-            </ul>
-          </section>
-        )}
+        <section
+          id="release-notes-panel"
+          hidden={!showReleaseNotes}
+          aria-hidden={!showReleaseNotes}
+          className="w-full max-w-2xl rounded-xl border border-zinc-800 bg-zinc-900/70 p-4 text-left"
+        >
+          <h2 className="mb-2 text-sm font-semibold text-zinc-100">
+            Main feature updates
+          </h2>
+          <ul className="space-y-1 text-sm text-zinc-300">
+            {HOME_FEATURE_HIGHLIGHTS.map((feature) => (
+              <li key={feature} className="leading-relaxed">
+                - {feature}
+              </li>
+            ))}
+          </ul>
+        </section>
       </footer>
     </div>
   );
