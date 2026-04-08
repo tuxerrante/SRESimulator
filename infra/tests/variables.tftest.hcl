@@ -125,3 +125,16 @@ run "worker_count_below_minimum_rejected" {
     var.worker_count,
   ]
 }
+
+run "cluster_rg_tag_overlay_default_enabled" {
+  command = plan
+
+  variables {
+    owner_alias = "test"
+  }
+
+  assert {
+    condition     = var.enable_cluster_rg_tag_overlay == true
+    error_message = "Cluster RG tag overlay should be enabled by default."
+  }
+}

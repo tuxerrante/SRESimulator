@@ -7,6 +7,14 @@ mock_provider "azurerm" {
       tenant_id       = "00000000-0000-0000-0000-000000000004"
     }
   }
+
+  mock_data "azurerm_resource_group" {
+    defaults = {
+      tags = {
+        createdAt = "2026-04-08T00:00:00Z"
+      }
+    }
+  }
 }
 mock_provider "azapi" {}
 mock_provider "azuread" {
@@ -59,6 +67,42 @@ run "aro_cluster_domain" {
   assert {
     condition     = azapi_resource.aro_cluster.body.properties.clusterProfile.domain == "jdoe-test"
     error_message = "ARO cluster domain should match the prefix (<alias>-test)."
+  }
+
+  assert {
+    condition     = azapi_resource.aro_cluster.body.properties.clusterProfile.resourceGroupId == "/subscriptions/00000000-0000-0000-0000-000000000003/resourcegroups/jdoe-test-cluster-rg"
+    error_message = "ARO cluster profile should target the RP-managed cluster resource group."
+  }
+}
+
+run "aro_cluster_rg_tags_overlay" {
+  command = plan
+
+  assert {
+    condition     = azapi_update_resource.aro_cluster_rg_tags[0].type == "Microsoft.Resources/resourceGroups@2021-04-01"
+    error_message = "Cluster RG tag overlay should use the resource group ARM type."
+  }
+
+  assert {
+    condition     = azapi_update_resource.aro_cluster_rg_tags[0].resource_id == "/subscriptions/00000000-0000-0000-0000-000000000003/resourcegroups/jdoe-test-cluster-rg"
+    error_message = "Cluster RG tag overlay should target the RP-managed cluster resource group id."
+  }
+
+  # body.tags is computed from runtime RG tags + local tags; that merged map is
+  # unknown at plan time in tests, so assert target wiring instead.
+}
+
+run "aro_cluster_rg_tags_overlay_can_be_disabled" {
+  command = plan
+
+  variables {
+    owner_alias                   = "jdoe"
+    enable_cluster_rg_tag_overlay = false
+  }
+
+  assert {
+    condition     = length(azapi_update_resource.aro_cluster_rg_tags) == 0
+    error_message = "Cluster RG tag overlay should be omitted when enable_cluster_rg_tag_overlay=false."
   }
 }
 

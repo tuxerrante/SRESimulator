@@ -130,6 +130,12 @@ variable "extra_tags" {
   default     = {}
 }
 
+variable "enable_cluster_rg_tag_overlay" {
+  description = "Whether to attempt applying shared tags to the RP-managed <alias>-test-cluster-rg resource group. Disable when deny assignments block RG writes."
+  type        = bool
+  default     = true
+}
+
 # ---------------------------------------------------------------------------
 # Azure SQL Database (optional, default off)
 # ---------------------------------------------------------------------------
@@ -184,12 +190,14 @@ variable "sql_server_name" {
 # Locals – derived names and shared tags
 # ---------------------------------------------------------------------------
 locals {
-  prefix              = "${var.owner_alias}-test"
-  resource_group_name = "${local.prefix}-rg"
-  cluster_name        = local.prefix
-  vnet_name           = "${local.prefix}-vnet"
-  aoai_account_name   = "${local.prefix}-aoai"
-  sql_server_name     = var.sql_server_name != "" ? var.sql_server_name : "${local.prefix}-sql"
+  prefix                      = "${var.owner_alias}-test"
+  resource_group_name         = "${local.prefix}-rg"
+  cluster_resource_group_name = "${local.prefix}-cluster-rg"
+  cluster_resource_group_id   = "/subscriptions/${data.azurerm_client_config.current.subscription_id}/resourcegroups/${local.cluster_resource_group_name}"
+  cluster_name                = local.prefix
+  vnet_name                   = "${local.prefix}-vnet"
+  aoai_account_name           = "${local.prefix}-aoai"
+  sql_server_name             = var.sql_server_name != "" ? var.sql_server_name : "${local.prefix}-sql"
 
   tags = merge(var.extra_tags, {
     environment = "test"

@@ -84,17 +84,19 @@ resource "azapi_resource" "aro_cluster" {
 
   body = {
     properties = {
-      clusterProfile = {
-        domain = local.prefix
-        # Required by newer ARO API validation; avoid empty-string default.
-        fipsValidatedModules = "Disabled"
-        # The ARO RP auto-creates this resource group to hold cluster-internal
-        # resources (VMs, disks, LBs).  It is hidden in the portal and fully
-        # managed by the RP — we only specify the desired name here.
-        resourceGroupId = "/subscriptions/${data.azurerm_client_config.current.subscription_id}/resourcegroups/${local.prefix}-cluster-rg"
-        version         = var.aro_version != "" ? var.aro_version : null
-        pullSecret      = var.pull_secret_path != "" ? sensitive(file(var.pull_secret_path)) : null
-      }
+      clusterProfile = merge(
+        {
+          # Omit optional fields when unset; sending explicit nulls can force
+          # invalid updates against long-lived ARO clusters.
+          domain               = local.prefix
+          fipsValidatedModules = "Disabled" # required by newer ARO API validation.
+          # The ARO RP auto-creates this resource group to hold cluster-internal
+          # resources (VMs, disks, LBs). It is managed by the RP.
+          resourceGroupId = local.cluster_resource_group_id
+        },
+        var.aro_version != "" ? { version = var.aro_version } : {},
+        var.pull_secret_path != "" ? { pullSecret = sensitive(file(var.pull_secret_path)) } : {}
+      )
 
       networkProfile = {
         podCidr          = "10.128.0.0/14"
@@ -147,9 +149,44 @@ resource "azapi_resource" "aro_cluster" {
     delete = "60m"
   }
 
+  lifecycle {
+    # ARO rejects many post-create cluster property updates through the same PUT
+    # API path used by azapi. Keep cluster tags on create, but avoid tag-only
+    # drift trying to mutate an otherwise healthy running cluster.
+    ignore_changes = [tags]
+  }
+
   depends_on = [
     # Ensure both principals have network rights before ARM evaluates ARO create.
     azurerm_role_assignment.aro_vnet_contributor,
     azurerm_role_assignment.aro_rp_vnet_contributor,
+  ]
+}
+
+# The RP-managed cluster resource group is created outside Terraform's graph.
+# Overlay required tags so cleanup/discovery tooling can identify it reliably.
+data "azurerm_resource_group" "aro_cluster_rg_current" {
+  count = var.enable_cluster_rg_tag_overlay ? 1 : 0
+  name  = local.cluster_resource_group_name
+
+  depends_on = [
+    azapi_resource.aro_cluster,
+  ]
+}
+
+resource "azapi_update_resource" "aro_cluster_rg_tags" {
+  count       = var.enable_cluster_rg_tag_overlay ? 1 : 0
+  type        = "Microsoft.Resources/resourceGroups@2021-04-01"
+  resource_id = local.cluster_resource_group_id
+
+  body = {
+    tags = merge(
+      try(data.azurerm_resource_group.aro_cluster_rg_current[0].tags, {}),
+      local.tags
+    )
+  }
+
+  depends_on = [
+    azapi_resource.aro_cluster,
   ]
 }

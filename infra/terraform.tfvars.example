@@ -42,6 +42,8 @@ budget_alert_emails = ["your-email@example.com"]
 # extra_tags = {
 #   team = "your-team"
 # }
+# Disable only when deny assignments block writes on <alias>-test-cluster-rg.
+# enable_cluster_rg_tag_overlay = false
 #
 # For test-tagged environments, prefer:
 # extra_tags = {
