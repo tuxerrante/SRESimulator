@@ -41,3 +41,7 @@ budget_amount       = 200
 extra_tags = {
   test = "true"
 }
+
+# Set to false only if Azure deny assignments block writes on
+# aaffinit-test-cluster-rg in your subscription.
+# enable_cluster_rg_tag_overlay = false

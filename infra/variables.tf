@@ -130,6 +130,12 @@ variable "extra_tags" {
   default     = {}
 }
 
+variable "enable_cluster_rg_tag_overlay" {
+  description = "Whether to attempt applying shared tags to the RP-managed <alias>-test-cluster-rg resource group. Disable when deny assignments block RG writes."
+  type        = bool
+  default     = true
+}
+
 # ---------------------------------------------------------------------------
 # Azure SQL Database (optional, default off)
 # ---------------------------------------------------------------------------

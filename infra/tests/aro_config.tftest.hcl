@@ -71,18 +71,32 @@ run "aro_cluster_rg_tags_overlay" {
   command = plan
 
   assert {
-    condition     = azapi_update_resource.aro_cluster_rg_tags.type == "Microsoft.Resources/resourceGroups@2021-04-01"
+    condition     = azapi_update_resource.aro_cluster_rg_tags[0].type == "Microsoft.Resources/resourceGroups@2021-04-01"
     error_message = "Cluster RG tag overlay should use the resource group ARM type."
   }
 
   assert {
-    condition     = azapi_update_resource.aro_cluster_rg_tags.resource_id == "/subscriptions/00000000-0000-0000-0000-000000000003/resourcegroups/jdoe-test-cluster-rg"
+    condition     = azapi_update_resource.aro_cluster_rg_tags[0].resource_id == "/subscriptions/00000000-0000-0000-0000-000000000003/resourcegroups/jdoe-test-cluster-rg"
     error_message = "Cluster RG tag overlay should target the RP-managed cluster resource group id."
   }
 
   assert {
-    condition     = azapi_update_resource.aro_cluster_rg_tags.body.tags["persist"] == "true"
+    condition     = azapi_update_resource.aro_cluster_rg_tags[0].body.tags["persist"] == "true"
     error_message = "Cluster RG tag overlay must include persist=true."
+  }
+}
+
+run "aro_cluster_rg_tags_overlay_can_be_disabled" {
+  command = plan
+
+  variables {
+    owner_alias                   = "jdoe"
+    enable_cluster_rg_tag_overlay = false
+  }
+
+  assert {
+    condition     = length(azapi_update_resource.aro_cluster_rg_tags) == 0
+    error_message = "Cluster RG tag overlay should be omitted when enable_cluster_rg_tag_overlay=false."
   }
 }
 

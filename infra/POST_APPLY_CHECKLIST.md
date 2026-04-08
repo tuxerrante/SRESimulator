@@ -213,3 +213,11 @@ az group delete --name <owner_alias>-test-rg --yes --no-wait
 > can be protected by Azure deny assignments. In that case, even Owner/Contributor
 > principals cannot write tags on that RG, and `persist=true` cannot be enforced there
 > via Terraform.
+>
+> **Workaround for locked-down subscriptions:** Disable the cluster RG tag overlay
+> by setting `enable_cluster_rg_tag_overlay=false` for plan/apply. Example:
+>
+> ```bash
+> terraform -chdir=infra plan -var="enable_cluster_rg_tag_overlay=false"
+> terraform -chdir=infra apply -var="enable_cluster_rg_tag_overlay=false"
+> ```
