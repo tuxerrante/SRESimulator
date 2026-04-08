@@ -719,7 +719,21 @@ jobs:
           git -c user.name="github-actions[bot]" \
             -c user.email="github-actions[bot]@users.noreply.github.com" \
             commit -m "chore(ci): update coverage badge [skip ci]"
-          if ! git push origin HEAD:main; then
+          push_output="$(mktemp)"
+          if git push origin HEAD:main >"${push_output}" 2>&1; then
+            rm -f "${push_output}"
+            exit 0
+          fi
+          if grep -Eiq \
+            '(protected branch|GH006|repository rule violations|ruleset)' \
+            "${push_output}"; then
             echo "::warning::Coverage badge push blocked by repository rules."
             echo "::warning::Skipping badge update push on protected main."
+            cat "${push_output}"
+            rm -f "${push_output}"
+            exit 0
           fi
+          echo "::error::Failed to push updated coverage badge."
+          cat "${push_output}"
+          rm -f "${push_output}"
+          exit 1
