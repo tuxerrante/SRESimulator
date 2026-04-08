@@ -55,6 +55,7 @@ export default function HomePage() {
   const hydrateNickname = useGameStore((s) => s.hydrateNickname);
   const [loading, setLoading] = useState<Difficulty | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [showReleaseNotes, setShowReleaseNotes] = useState(false);
   const hasCallsign = Boolean(nickname);
 
   useEffect(() => { hydrateNickname(); }, [hydrateNickname]);
@@ -95,30 +96,21 @@ export default function HomePage() {
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100 flex flex-col">
       <div className="flex-1 flex flex-col items-center justify-center px-6 py-16">
+        <div className="mb-4 inline-flex items-center rounded-full border border-amber-500/30 bg-amber-500/10 px-3 py-1 text-xs font-medium text-amber-200">
+          AI-guided incident response training
+        </div>
         <div className="flex items-center gap-3 mb-2">
           <Shield size={36} className="text-amber-500" />
-          <h1 className="text-3xl font-bold tracking-tight">SRE Simulator</h1>
+          <h1 className="text-4xl font-bold tracking-tight text-zinc-100">SRE Simulator</h1>
         </div>
-        <p className="text-zinc-500 text-center mb-2 max-w-lg">
-          The Break-Fix Game for Azure Red Hat OpenShift
+        <p className="text-zinc-200 text-center mb-2 max-w-xl text-lg">
+          Learn to investigate outages before they hit production.
         </p>
-        <p className="text-zinc-600 text-sm text-center mb-10 max-w-md">
+        <p className="text-zinc-300 text-sm text-center mb-10 max-w-lg leading-relaxed">
           An AI Dungeon Master will break a cluster. Your job is to investigate
-          and fix it using the proper SRE methodology.
+          and fix it using the proper SRE methodology for Azure Red Hat
+          OpenShift.
         </p>
-
-        <section className="mb-8 w-full max-w-2xl rounded-xl border border-zinc-800 bg-zinc-900/50 p-4">
-          <h2 className="mb-2 text-sm font-semibold text-zinc-200">
-            Main feature updates
-          </h2>
-          <ul className="space-y-1 text-sm text-zinc-400">
-            {HOME_FEATURE_HIGHLIGHTS.map((feature) => (
-              <li key={feature} className="leading-relaxed">
-                - {feature}
-              </li>
-            ))}
-          </ul>
-        </section>
 
         <div className="flex items-center gap-2 mb-8 w-full max-w-xs">
           <User size={18} className="text-zinc-500 shrink-0" />
@@ -132,6 +124,11 @@ export default function HomePage() {
             className="flex-1 px-3 py-2 rounded-lg bg-zinc-900 border border-zinc-700 text-sm text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-amber-600 transition-colors"
           />
         </div>
+        {!hasCallsign && (
+          <p className="mb-8 -mt-5 text-xs text-zinc-400">
+            Enter a callsign to unlock scenarios.
+          </p>
+        )}
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 w-full max-w-3xl">
           {DIFFICULTIES.map((d) => (
@@ -228,15 +225,41 @@ export default function HomePage() {
           </div>
         </a>
 
-        <div className="text-zinc-700 text-xs text-center">
+        <div className="text-zinc-500 text-xs text-center">
           ARO SRE Simulator &mdash; Investigation training powered by AI
           <span className="mx-2">&middot;</span>
-          <span>{APP_VERSION}</span>
+          <button
+            type="button"
+            onClick={() => setShowReleaseNotes((prev) => !prev)}
+            className="underline decoration-zinc-600 underline-offset-2 hover:text-zinc-200 hover:decoration-zinc-300 transition-colors"
+            aria-expanded={showReleaseNotes}
+            aria-controls="release-notes-panel"
+            aria-label={`${showReleaseNotes ? "Hide" : "Show"} release notes (${APP_VERSION})`}
+          >
+            {APP_VERSION}
+          </button>
           <span className="mx-2">&middot;</span>
-          <Link href="/about" className="hover:text-zinc-400 transition-colors">
+          <Link href="/about" className="hover:text-zinc-200 transition-colors">
             About
           </Link>
         </div>
+        <section
+          id="release-notes-panel"
+          hidden={!showReleaseNotes}
+          aria-hidden={!showReleaseNotes}
+          className="w-full max-w-2xl rounded-xl border border-zinc-800 bg-zinc-900/70 p-4 text-left"
+        >
+          <h2 className="mb-2 text-sm font-semibold text-zinc-100">
+            Main feature updates
+          </h2>
+          <ul className="space-y-1 text-sm text-zinc-300">
+            {HOME_FEATURE_HIGHLIGHTS.map((feature) => (
+              <li key={feature} className="leading-relaxed">
+                - {feature}
+              </li>
+            ))}
+          </ul>
+        </section>
       </footer>
     </div>
   );
