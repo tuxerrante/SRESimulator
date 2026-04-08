@@ -197,5 +197,6 @@ locals {
     project     = "sre-simulator"
     purpose     = "development-testing"
     auto-delete = "safe-to-delete"
+    persist     = "true" # ARO-RP nightly cleaner can purge old groups without this tag.
   })
 }
