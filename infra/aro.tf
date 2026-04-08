@@ -165,13 +165,25 @@ resource "azapi_resource" "aro_cluster" {
 
 # The RP-managed cluster resource group is created outside Terraform's graph.
 # Overlay required tags so cleanup/discovery tooling can identify it reliably.
+data "azurerm_resource_group" "aro_cluster_rg_current" {
+  count = var.enable_cluster_rg_tag_overlay ? 1 : 0
+  name  = local.cluster_resource_group_name
+
+  depends_on = [
+    azapi_resource.aro_cluster,
+  ]
+}
+
 resource "azapi_update_resource" "aro_cluster_rg_tags" {
   count       = var.enable_cluster_rg_tag_overlay ? 1 : 0
   type        = "Microsoft.Resources/resourceGroups@2021-04-01"
   resource_id = local.cluster_resource_group_id
 
   body = {
-    tags = local.tags
+    tags = merge(
+      try(data.azurerm_resource_group.aro_cluster_rg_current[0].tags, {}),
+      local.tags
+    )
   }
 
   depends_on = [
