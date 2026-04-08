@@ -66,6 +66,11 @@ run "vnet_has_required_tags" {
     condition     = azurerm_virtual_network.aro.tags["owner"] == "jdoe"
     error_message = "VNet must have owner tag matching owner_alias."
   }
+
+  assert {
+    condition     = azurerm_virtual_network.aro.tags["persist"] == "true"
+    error_message = "VNet must have persist=true tag."
+  }
 }
 
 run "aoai_has_required_tags" {
@@ -79,6 +84,11 @@ run "aoai_has_required_tags" {
   assert {
     condition     = azurerm_cognitive_account.openai.tags["owner"] == "jdoe"
     error_message = "Azure OpenAI account must have owner tag matching owner_alias."
+  }
+
+  assert {
+    condition     = azurerm_cognitive_account.openai.tags["persist"] == "true"
+    error_message = "Azure OpenAI account must have persist=true tag."
   }
 }
 

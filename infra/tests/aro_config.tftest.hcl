@@ -46,6 +46,11 @@ run "aro_cluster_tags_applied" {
     condition     = azapi_resource.aro_cluster.tags["owner"] == "jdoe"
     error_message = "ARO cluster resource must have owner tag matching alias."
   }
+
+  assert {
+    condition     = azapi_resource.aro_cluster.tags["persist"] == "true"
+    error_message = "ARO cluster resource must have persist=true tag."
+  }
 }
 
 run "aro_cluster_domain" {
