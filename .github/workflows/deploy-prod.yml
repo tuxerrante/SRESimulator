@@ -111,7 +111,8 @@ jobs:
           fi
 
           git fetch --tags --force
-          git fetch origin main --depth=1
+          # Fetch full main history so older semver tags stay deployable.
+          git fetch origin main
           if ! git merge-base --is-ancestor "${RELEASE_SHA}" "origin/main"; then
             echo "Refusing deploy: ${RELEASE_TAG} is not from main history."
             exit 1
