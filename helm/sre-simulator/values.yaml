@@ -72,6 +72,7 @@ database:
   secretConnectionStringKey: "connection-string"
 
 storage:
+  enabled: true
   storageClass: azurefile-csi
   size: 1Gi
 
