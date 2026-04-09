@@ -4,7 +4,7 @@
        typecheck typecheck-backend validate \
        security audit lockfile-lint gitleaks grype \
        test test-integration test-mssql dev-db smoke-backend-mssql smoke-local-vertex env-check e2e-azure-route e2e-azure-route-up e2e-azure-route-refresh e2e-azure-route-down \
-       prod-up prod-up-tag prod-down prod-status public-exposure-audit db-port-forward-check geneva-suppression-check prod-up-final \
+       prod-up prod-up-tag prod-down prod-status public-exposure-audit db-port-forward-check db-inspect geneva-suppression-check prod-up-final \
        build dev start \
        docker-build-frontend docker-build-backend docker-build \
        pre-commit all \
@@ -603,6 +603,51 @@ db-port-forward-check: ## Verify backend-to-DB path through local oc port-forwar
 		exit 1; \
 	fi; \
 	echo "Port-forward DB check passed."
+
+db-inspect: install-backend ## Inspect DB rows from deployed backend (set SQL='...' for custom query)
+	@set -e; \
+	NS="$${NS:-$(PROD_NAMESPACE)}"; \
+	RELEASE="$${RELEASE:-$(E2E_RELEASE)}"; \
+	DEPLOY="$${DEPLOY:-$$RELEASE-backend}"; \
+	LIMIT="$${LIMIT:-10}"; \
+	QUERY="$${SQL:-}"; \
+	if ! oc -n "$$NS" get deployment "$$DEPLOY" >/dev/null 2>/tmp/sre-db-inspect-oc.err; then \
+		echo "Cannot access deployment $$NS/$$DEPLOY."; \
+		cat /tmp/sre-db-inspect-oc.err; \
+		rm -f /tmp/sre-db-inspect-oc.err; \
+		exit 1; \
+	fi; \
+	rm -f /tmp/sre-db-inspect-oc.err; \
+	DB_SECRET_NAME=$$(oc -n "$$NS" get deployment "$$DEPLOY" -o jsonpath="{.spec.template.spec.containers[0].env[?(@.name=='DATABASE_URL')].valueFrom.secretKeyRef.name}"); \
+	DB_SECRET_KEY=$$(oc -n "$$NS" get deployment "$$DEPLOY" -o jsonpath="{.spec.template.spec.containers[0].env[?(@.name=='DATABASE_URL')].valueFrom.secretKeyRef.key}"); \
+	if [ -z "$$DB_SECRET_NAME" ] || [ -z "$$DB_SECRET_KEY" ]; then \
+		echo "DATABASE_URL secret ref not found on deployment $$NS/$$DEPLOY."; \
+		echo "Make sure this release uses database.enabled=true."; \
+		exit 1; \
+	fi; \
+	if ! oc -n "$$NS" get secret "$$DB_SECRET_NAME" >/dev/null 2>/tmp/sre-db-inspect-oc.err; then \
+		echo "Cannot access secret $$NS/$$DB_SECRET_NAME."; \
+		cat /tmp/sre-db-inspect-oc.err; \
+		rm -f /tmp/sre-db-inspect-oc.err; \
+		exit 1; \
+	fi; \
+	rm -f /tmp/sre-db-inspect-oc.err; \
+	ENCODED_DB_URL=$$(oc -n "$$NS" get secret "$$DB_SECRET_NAME" -o jsonpath="{.data['$$DB_SECRET_KEY']}"); \
+	if [ -z "$$ENCODED_DB_URL" ]; then \
+		echo "Could not read key '$$DB_SECRET_KEY' from secret '$$DB_SECRET_NAME'."; \
+		exit 1; \
+	fi; \
+	DB_URL=$$(printf '%s' "$$ENCODED_DB_URL" | base64 --decode 2>/dev/null || printf '%s' "$$ENCODED_DB_URL" | base64 -D 2>/dev/null || true); \
+	if [ -z "$$DB_URL" ]; then \
+		echo "Failed to decode DATABASE_URL from secret '$$DB_SECRET_NAME'."; \
+		exit 1; \
+	fi; \
+	echo "Inspecting DB for $$NS/$$DEPLOY (secret: $$DB_SECRET_NAME, key: $$DB_SECRET_KEY)"; \
+	NODE_PATH="$(CURDIR)/$(BACKEND_DIR)/node_modules" \
+	DATABASE_URL="$$DB_URL" \
+	LIMIT="$$LIMIT" \
+	SQL="$$QUERY" \
+	node scripts/db-inspect.cjs
 
 prod-up-final: geneva-suppression-check env-check ## Deploy final env then run exposure + DB fallback checks
 	@set -e; \
