@@ -58,8 +58,10 @@ spec:
             - configMapRef:
                 name: {{ include "sre-simulator.fullname" . }}-config
           volumeMounts:
+            {{- if not .Values.database.enabled }}
             - name: data
               mountPath: /data
+            {{- end }}
             {{- if .Values.ai.vertex.credentials.existingSecretName }}
             - name: gcp-credentials
               mountPath: {{ .Values.ai.vertex.credentials.mountPath }}
@@ -85,9 +87,15 @@ spec:
             initialDelaySeconds: 5
             periodSeconds: 10
       volumes:
+        {{- if not .Values.database.enabled }}
         - name: data
+          {{- if .Values.storage.enabled }}
           persistentVolumeClaim:
             claimName: {{ include "sre-simulator.fullname" . }}-data
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+        {{- end }}
         {{- if .Values.ai.vertex.credentials.existingSecretName }}
         - name: gcp-credentials
           secret:
