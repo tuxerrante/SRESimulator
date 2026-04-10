@@ -6,6 +6,8 @@ const databaseUrl = process.env.DATABASE_URL;
 const limitRaw = process.env.LIMIT ?? "10";
 const customSql = process.env.SQL?.trim() ?? "";
 const customSqlUpper = customSql.replace(/^\s+/, "").toUpperCase();
+const disallowedSqlPattern =
+  /\b(INSERT|UPDATE|DELETE|MERGE|DROP|ALTER|CREATE|EXEC|EXECUTE|TRUNCATE|INTO)\b/;
 
 const limit = Number.parseInt(limitRaw, 10);
 if (!Number.isInteger(limit) || limit <= 0 || limit > 200) {
@@ -18,8 +20,18 @@ if (!databaseUrl) {
   process.exit(1);
 }
 
-if (customSql && !/^(SELECT|WITH)\b/.test(customSqlUpper)) {
-  console.error("[db-inspect] SQL must start with SELECT or WITH.");
+if (customSql && !/^SELECT\b/.test(customSqlUpper)) {
+  console.error("[db-inspect] SQL must start with SELECT.");
+  process.exit(1);
+}
+
+if (customSql && customSql.includes(";")) {
+  console.error("[db-inspect] SQL must be a single statement (semicolon is not allowed).");
+  process.exit(1);
+}
+
+if (customSql && (/--|\/\*/.test(customSql) || disallowedSqlPattern.test(customSqlUpper))) {
+  console.error("[db-inspect] SQL contains disallowed tokens for read-only inspection.");
   process.exit(1);
 }
 
@@ -31,9 +43,10 @@ function printSection(title) {
 
 async function run() {
   const pool = new sql.ConnectionPool(databaseUrl);
-  await pool.connect();
 
   try {
+    await pool.connect();
+
     if (customSql) {
       const result = await pool.request().query(customSql);
       printSection("Custom Query Result");
@@ -82,7 +95,11 @@ async function run() {
       .input("limit", limit)
       .query(`
         SELECT TOP (@limit)
-          token,
+          CONCAT(
+            LEFT(CONVERT(varchar(36), token), 8),
+            '...',
+            RIGHT(CONVERT(varchar(36), token), 4)
+          ) AS token_hint,
           difficulty,
           scenario_title,
           start_time,
@@ -124,7 +141,11 @@ async function run() {
       console.log("No rows.");
     }
   } finally {
-    await pool.close();
+    try {
+      await pool.close();
+    } catch {
+      // Ignore close errors during failed connection attempts.
+    }
   }
 }
 

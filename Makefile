@@ -611,13 +611,13 @@ db-inspect: install-backend ## Inspect DB rows from deployed backend (set SQL='.
 	DEPLOY="$${DEPLOY:-$$RELEASE-backend}"; \
 	LIMIT="$${LIMIT:-10}"; \
 	QUERY="$${SQL:-}"; \
-	if ! oc -n "$$NS" get deployment "$$DEPLOY" >/dev/null 2>/tmp/sre-db-inspect-oc.err; then \
+	ERR_FILE="$$(mktemp /tmp/sre-db-inspect-oc.err.XXXXXX)"; \
+	trap 'rm -f "$$ERR_FILE"' EXIT INT TERM; \
+	if ! oc -n "$$NS" get deployment "$$DEPLOY" >/dev/null 2>"$$ERR_FILE"; then \
 		echo "Cannot access deployment $$NS/$$DEPLOY."; \
-		cat /tmp/sre-db-inspect-oc.err; \
-		rm -f /tmp/sre-db-inspect-oc.err; \
+		cat "$$ERR_FILE"; \
 		exit 1; \
 	fi; \
-	rm -f /tmp/sre-db-inspect-oc.err; \
 	DB_SECRET_NAME=$$(oc -n "$$NS" get deployment "$$DEPLOY" -o jsonpath="{.spec.template.spec.containers[0].env[?(@.name=='DATABASE_URL')].valueFrom.secretKeyRef.name}"); \
 	DB_SECRET_KEY=$$(oc -n "$$NS" get deployment "$$DEPLOY" -o jsonpath="{.spec.template.spec.containers[0].env[?(@.name=='DATABASE_URL')].valueFrom.secretKeyRef.key}"); \
 	if [ -z "$$DB_SECRET_NAME" ] || [ -z "$$DB_SECRET_KEY" ]; then \
@@ -625,13 +625,11 @@ db-inspect: install-backend ## Inspect DB rows from deployed backend (set SQL='.
 		echo "Make sure this release uses database.enabled=true."; \
 		exit 1; \
 	fi; \
-	if ! oc -n "$$NS" get secret "$$DB_SECRET_NAME" >/dev/null 2>/tmp/sre-db-inspect-oc.err; then \
+	if ! oc -n "$$NS" get secret "$$DB_SECRET_NAME" >/dev/null 2>"$$ERR_FILE"; then \
 		echo "Cannot access secret $$NS/$$DB_SECRET_NAME."; \
-		cat /tmp/sre-db-inspect-oc.err; \
-		rm -f /tmp/sre-db-inspect-oc.err; \
+		cat "$$ERR_FILE"; \
 		exit 1; \
 	fi; \
-	rm -f /tmp/sre-db-inspect-oc.err; \
 	ENCODED_DB_URL=$$(oc -n "$$NS" get secret "$$DB_SECRET_NAME" -o jsonpath="{.data['$$DB_SECRET_KEY']}"); \
 	if [ -z "$$ENCODED_DB_URL" ]; then \
 		echo "Could not read key '$$DB_SECRET_KEY' from secret '$$DB_SECRET_NAME'."; \
