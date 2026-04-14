@@ -492,6 +492,9 @@ make db-inspect-live NS=sre-simulator
 NS=sre-simulator SQL="SELECT TOP 5 * FROM leaderboard_entries ORDER BY created_at DESC" make db-inspect-live
 ```
 
+For custom queries, prefer single quotes around the outer `SQL=...` value when
+your statement contains shell-sensitive characters.
+
 #### Teardown
 
 The database is on the free tier ($0/month), so the recommended default
