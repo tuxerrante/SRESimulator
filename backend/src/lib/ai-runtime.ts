@@ -392,18 +392,21 @@ async function callAzureOpenAi(request: AiTextRequest): Promise<string> {
       try {
         response = await executeAzureRequest(base, key, deployment, apiVersion, request);
       } catch (error) {
-        if (
-          error instanceof AzureDeploymentNotFoundError &&
-          canDeploymentFallback &&
-          !consumedDeploymentFallback &&
-          deployment === routeSpecificDeployment
-        ) {
-          console.warn(
-            `[ai-runtime] route-specific Azure OpenAI deployment not found (deployment=${deployment}, route=${request.route ?? "none"}); retrying once with deployment=${globalDeployment}`,
-          );
-          deployment = globalDeployment;
-          consumedDeploymentFallback = true;
-          continue outer;
+        if (error instanceof AzureDeploymentNotFoundError) {
+          if (
+            canDeploymentFallback &&
+            !consumedDeploymentFallback &&
+            deployment === routeSpecificDeployment
+          ) {
+            console.warn(
+              `[ai-runtime] route-specific Azure OpenAI deployment not found (deployment=${deployment}, route=${request.route ?? "none"}); retrying once with deployment=${globalDeployment}`,
+            );
+            deployment = globalDeployment;
+            consumedDeploymentFallback = true;
+            continue outer;
+          }
+
+          if (request.route) logTokenError(request.route, error.message);
         }
         throw error;
       }

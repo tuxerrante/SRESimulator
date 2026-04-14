@@ -1,5 +1,6 @@
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { generateAiText } from "./ai-runtime";
+import { _resetForTests, getTokenMetrics } from "./token-logger";
 
 const TEST_ENV_KEYS = [
   "AI_PROVIDER",
@@ -54,6 +55,7 @@ function okResponse(text: string): Response {
 describe("ai-runtime reasoning_effort compatibility", () => {
   beforeEach(() => {
     clearTestEnv();
+    _resetForTests();
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
 
@@ -152,6 +154,7 @@ function deploymentNotFoundResponse(): Response {
 describe("ai-runtime Azure deployment fallback", () => {
   beforeEach(() => {
     clearTestEnv();
+    _resetForTests();
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
 
@@ -198,6 +201,7 @@ describe("ai-runtime Azure deployment fallback", () => {
     expect(warnLine).toContain("gpt-4o-mini");
     expect(warnLine).toContain("retrying once");
     expect(warnLine).toContain("gpt-5.2");
+    expect(getTokenMetrics().perRoute.scenario.errors).toBe(0);
     warnSpy.mockRestore();
   });
 
@@ -239,6 +243,7 @@ describe("ai-runtime Azure deployment fallback", () => {
     ).rejects.toThrow(/Azure OpenAI request failed \(404\): .*DeploymentNotFound/);
 
     expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(getTokenMetrics().perRoute.scenario.errors).toBe(1);
     warnSpy.mockRestore();
   });
 
@@ -258,5 +263,6 @@ describe("ai-runtime Azure deployment fallback", () => {
     ).rejects.toThrow(/Azure OpenAI request failed \(404\): .*DeploymentNotFound/);
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(getTokenMetrics().perRoute.scenario.errors).toBe(1);
   });
 });
