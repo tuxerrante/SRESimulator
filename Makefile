@@ -4,7 +4,7 @@
        typecheck typecheck-backend validate \
        security audit lockfile-lint gitleaks grype \
        test test-integration test-mssql dev-db smoke-backend-mssql smoke-local-vertex env-check e2e-azure-route e2e-azure-route-up e2e-azure-route-refresh e2e-azure-route-down \
-       prod-up prod-up-tag prod-down prod-status public-exposure-audit db-port-forward-check db-inspect geneva-suppression-check prod-up-final \
+       prod-up prod-up-tag prod-down prod-status public-exposure-audit db-port-forward-check db-inspect db-inspect-live geneva-suppression-check prod-up-final \
        build dev start \
        docker-build-frontend docker-build-backend docker-build \
        pre-commit all \
@@ -655,6 +655,33 @@ db-inspect: install-backend ## Inspect DB rows from deployed backend (set SQL='.
 	LIMIT="$$LIMIT" \
 	SQL="$$QUERY" \
 	node scripts/db-inspect.cjs
+
+db-inspect-live: ## Inspect DB rows from inside the deployed backend pod (bypasses local SQL firewall)
+	@set -e; \
+	NS="$${NS:-$(PROD_NAMESPACE)}"; \
+	RELEASE="$${RELEASE:-$(E2E_RELEASE)}"; \
+	DEPLOY="$${DEPLOY:-$$RELEASE-backend}"; \
+	LIMIT="$${LIMIT:-10}"; \
+	QUERY="$${SQL:-}"; \
+	DB_SECRET_NAME=""; \
+	DB_SECRET_KEY=""; \
+	ERR_FILE="$$(mktemp /tmp/sre-db-inspect-live-oc.err.XXXXXX)"; \
+	trap 'rm -f "$$ERR_FILE"' EXIT INT TERM; \
+	if ! oc -n "$$NS" get deployment "$$DEPLOY" >/dev/null 2>"$$ERR_FILE"; then \
+		echo "Cannot access deployment $$NS/$$DEPLOY."; \
+		cat "$$ERR_FILE"; \
+		exit 1; \
+	fi; \
+	DB_SECRET_NAME=$$(oc -n "$$NS" get deployment "$$DEPLOY" -o jsonpath="{.spec.template.spec.containers[0].env[?(@.name=='DATABASE_URL')].valueFrom.secretKeyRef.name}"); \
+	DB_SECRET_KEY=$$(oc -n "$$NS" get deployment "$$DEPLOY" -o jsonpath="{.spec.template.spec.containers[0].env[?(@.name=='DATABASE_URL')].valueFrom.secretKeyRef.key}"); \
+	if [ -z "$$DB_SECRET_NAME" ] || [ -z "$$DB_SECRET_KEY" ]; then \
+		echo "DATABASE_URL secret ref not found on deployment $$NS/$$DEPLOY."; \
+		echo "Make sure this release uses database.enabled=true."; \
+		exit 1; \
+	fi; \
+	echo "Inspecting DB live for $$NS/$$DEPLOY via in-cluster node"; \
+	oc -n "$$NS" exec -i "deploy/$$DEPLOY" -- \
+		env LIMIT="$$LIMIT" SQL="$$QUERY" node - < scripts/db-inspect.cjs
 
 prod-up-final: geneva-suppression-check env-check ## Deploy final env then run exposure + DB fallback checks
 	@set -e; \
