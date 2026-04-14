@@ -102,6 +102,32 @@ function getDeploymentForRoute(route?: AiRoute): string {
   );
 }
 
+/** Route-only override from `AI_AZURE_OPENAI_DEPLOYMENT_<ROUTE>` when set. */
+function getRouteSpecificAzureDeployment(route?: AiRoute): string | null {
+  if (!route) return null;
+  const routeEnvKey = `AI_AZURE_OPENAI_DEPLOYMENT_${route.toUpperCase()}`;
+  const routeDeployment = process.env[routeEnvKey]?.trim();
+  return routeDeployment && routeDeployment.length > 0 ? routeDeployment : null;
+}
+
+function isAzureDeploymentNotFoundResponse(status: number, details: string): boolean {
+  if (status !== 404) return false;
+  if (/deploymentnotfound/i.test(details)) return true;
+  try {
+    const parsed = JSON.parse(details) as { error?: { code?: string } };
+    return parsed?.error?.code === "DeploymentNotFound";
+  } catch {
+    return false;
+  }
+}
+
+class AzureDeploymentNotFoundError extends Error {
+  override readonly name = "AzureDeploymentNotFoundError";
+  constructor(message: string) {
+    super(message);
+  }
+}
+
 async function generateVertexText(request: AiTextRequest): Promise<string> {
   const client = getVertexClient();
   const model = getConfiguredModel();
@@ -330,6 +356,12 @@ async function executeAzureRequest(
       continue;
     }
 
+    if (isAzureDeploymentNotFoundResponse(response.status, details)) {
+      throw new AzureDeploymentNotFoundError(
+        `Azure OpenAI request failed (${response.status}): ${details}`,
+      );
+    }
+
     if (request.route) logTokenError(request.route, details.slice(0, 200));
     throw new Error(
       `Azure OpenAI request failed (${response.status}): ${details}`
@@ -340,33 +372,61 @@ async function executeAzureRequest(
 async function callAzureOpenAi(request: AiTextRequest): Promise<string> {
   const endpoint = process.env.AI_AZURE_OPENAI_ENDPOINT!;
   const key = process.env.AI_AZURE_OPENAI_API_KEY!;
-  const deployment = getDeploymentForRoute(request.route);
+  let deployment = getDeploymentForRoute(request.route);
+  const routeSpecificDeployment = getRouteSpecificAzureDeployment(request.route);
+  const globalDeployment = process.env.AI_AZURE_OPENAI_DEPLOYMENT?.trim() ?? "";
+  const canDeploymentFallback =
+    Boolean(routeSpecificDeployment) &&
+    globalDeployment.length > 0 &&
+    routeSpecificDeployment !== globalDeployment;
   const apiVersion = getAzureOpenAiApiVersion();
   const start = Date.now();
 
   const base = endpoint.replace(/\/+$/, "");
 
   let response: Response | undefined;
-  for (let attempt = 0; attempt < RETRY_MAX_ATTEMPTS; attempt++) {
-    response = await executeAzureRequest(base, key, deployment, apiVersion, request);
+  let consumedDeploymentFallback = false;
 
-    if (response.status === 429) {
-      if (attempt < RETRY_MAX_ATTEMPTS - 1) {
-        const delay = retryDelayMs(attempt, response.headers.get("retry-after"));
-        const route = request.route ?? "unknown";
-        console.warn(
-          `[ai-runtime] 429 throttled on route=${route} attempt=${attempt + 1}/${RETRY_MAX_ATTEMPTS}, retrying in ${Math.round(delay)}ms`,
-        );
-        await sleep(delay);
-        continue;
+  outer: while (true) {
+    for (let attempt = 0; attempt < RETRY_MAX_ATTEMPTS; attempt++) {
+      try {
+        response = await executeAzureRequest(base, key, deployment, apiVersion, request);
+      } catch (error) {
+        if (
+          error instanceof AzureDeploymentNotFoundError &&
+          canDeploymentFallback &&
+          !consumedDeploymentFallback &&
+          deployment === routeSpecificDeployment
+        ) {
+          console.warn(
+            `[ai-runtime] route-specific Azure OpenAI deployment not found (deployment=${deployment}, route=${request.route ?? "none"}); retrying once with deployment=${globalDeployment}`,
+          );
+          deployment = globalDeployment;
+          consumedDeploymentFallback = true;
+          continue outer;
+        }
+        throw error;
       }
-      if (request.route) logTokenError(request.route, "429 throttled after max retries");
-      throw new AiThrottledError(
-        "Azure OpenAI is currently rate-limited. Please wait a moment and try again.",
-      );
-    }
 
-    break;
+      if (response.status === 429) {
+        if (attempt < RETRY_MAX_ATTEMPTS - 1) {
+          const delay = retryDelayMs(attempt, response.headers.get("retry-after"));
+          const route = request.route ?? "unknown";
+          console.warn(
+            `[ai-runtime] 429 throttled on route=${route} attempt=${attempt + 1}/${RETRY_MAX_ATTEMPTS}, retrying in ${Math.round(delay)}ms`,
+          );
+          await sleep(delay);
+          continue;
+        }
+        if (request.route) logTokenError(request.route, "429 throttled after max retries");
+        throw new AiThrottledError(
+          "Azure OpenAI is currently rate-limited. Please wait a moment and try again.",
+        );
+      }
+
+      break;
+    }
+    break outer;
   }
 
   if (!response!.ok) {
