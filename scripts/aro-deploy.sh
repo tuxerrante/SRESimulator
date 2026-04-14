@@ -114,6 +114,10 @@ copy_secret_across_namespaces() {
     echo "error: secret '$secret_name' not found in namespace '$src_ns' (cannot copy into '$dst_ns')" >&2
     return 1
   fi
+  if ! command -v jq >/dev/null 2>&1; then
+    echo "error: jq is required to copy secret '$secret_name' from namespace '$src_ns' to '$dst_ns'" >&2
+    return 1
+  fi
   oc -n "$src_ns" get "secret/$secret_name" -o json \
     | jq '
         .metadata |= (
