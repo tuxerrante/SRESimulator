@@ -28,6 +28,70 @@ type LooseHistoryEntry = {
   type?: unknown;
 };
 
+const DEFAULT_MAX_COMMAND_TOKENS = 8192;
+const DEFAULT_COMMAND_TIMEOUT_MS = 20000;
+
+function parsePositiveIntEnv(raw: string | undefined, fallback: number): number {
+  const parsed = Number.parseInt(raw ?? "", 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function getMaxCommandTokens(): number {
+  return parsePositiveIntEnv(process.env.AI_MAX_COMMAND_TOKENS, DEFAULT_MAX_COMMAND_TOKENS);
+}
+
+function getCommandTimeoutMs(): number {
+  return parsePositiveIntEnv(process.env.AI_COMMAND_TIMEOUT_MS, DEFAULT_COMMAND_TIMEOUT_MS);
+}
+
+class CommandGenerationTimeoutError extends Error {
+  constructor(timeoutMs: number) {
+    super(`Command generation timed out after ${timeoutMs}ms`);
+    this.name = "CommandGenerationTimeoutError";
+  }
+}
+
+function isAbortError(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    (error.name === "AbortError" || error.name === "TimeoutError")
+  );
+}
+
+function buildMockCommandResponse(command: string, type: "oc" | "kql" | "geneva") {
+  return {
+    output: stripTerminalCommandEcho(generateMockCommandOutput(command, type), command),
+    exitCode: 0,
+  };
+}
+
+async function withTimeout<T>(
+  run: (signal: AbortSignal) => Promise<T>,
+  timeoutMs: number,
+): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const controller = new AbortController();
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      controller.abort(new CommandGenerationTimeoutError(timeoutMs));
+      reject(new CommandGenerationTimeoutError(timeoutMs));
+    }, timeoutMs);
+
+    run(controller.signal).then(
+      (value) => {
+        clearTimeout(timer);
+        if (!timedOut) resolve(value);
+      },
+      (error) => {
+        clearTimeout(timer);
+        if (timedOut && isAbortError(error)) return;
+        reject(error);
+      },
+    );
+  });
+}
+
 export function resolveCommandHistoryPlaceholders(
   commandHistory: unknown,
   scenario: Scenario | null,
@@ -67,11 +131,7 @@ commandRouter.post("/", async (req: Request, res: Response) => {
 
     const readiness = getAiReadiness();
     if (readiness.mockMode) {
-      const raw = generateMockCommandOutput(commandResolved, type);
-      res.json({
-        output: stripTerminalCommandEcho(raw, commandResolved),
-        exitCode: 0,
-      });
+      res.json(buildMockCommandResponse(commandResolved, type));
       return;
     }
     if (!readiness.ready) {
@@ -91,17 +151,22 @@ commandRouter.post("/", async (req: Request, res: Response) => {
       commandHistoryResolved,
     );
 
-    const responseText = await generateAiText({
-      maxTokens: 2048,
-      system: systemPrompt,
-      messages: [
-        {
-          role: "user",
-          content: `Simulate the output for this ${type} command:\n\n${commandResolved}`,
-        },
-      ],
-      route: "command",
-    });
+    const responseText = await withTimeout(
+      (signal) =>
+        generateAiText({
+          maxTokens: getMaxCommandTokens(),
+          system: systemPrompt,
+          messages: [
+            {
+              role: "user",
+              content: `Simulate the output for this ${type} command:\n\n${commandResolved}`,
+            },
+          ],
+          route: "command",
+          signal,
+        }),
+      getCommandTimeoutMs(),
+    );
 
     let output = responseText;
     output = output.replace(/^```(?:\w*)\s*\n?/i, "").replace(/\n?```\s*$/i, "").trim();
@@ -113,20 +178,20 @@ commandRouter.post("/", async (req: Request, res: Response) => {
       error instanceof Error ? error.message : "Command simulation failed";
 
     if (
+      error instanceof CommandGenerationTimeoutError ||
       message.includes("without output text") ||
       message.includes("did not include text content")
     ) {
-      const fallbackCommand = resolveAngleBracketPlaceholders(
-        req.body.command,
-        req.body.scenario,
-      );
-      res.json({
-        output: stripTerminalCommandEcho(
-          generateMockCommandOutput(fallbackCommand, req.body.type),
-          fallbackCommand,
-        ),
-        exitCode: 0,
-      });
+      const fallbackType = VALID_COMMAND_TYPES.includes(req.body.type)
+        ? req.body.type
+        : "oc";
+      const fallbackCommand = resolveAngleBracketPlaceholders(req.body.command, req.body.scenario);
+      if (error instanceof CommandGenerationTimeoutError) {
+        console.warn(
+          `[command] timed out after ${getCommandTimeoutMs()}ms; returning mock fallback for ${fallbackType} command`,
+        );
+      }
+      res.json(buildMockCommandResponse(fallbackCommand, fallbackType));
       return;
     }
 

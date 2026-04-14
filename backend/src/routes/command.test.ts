@@ -1,3 +1,17 @@
+import { vi } from "vitest";
+
+const { generateAiTextMock } = vi.hoisted(() => ({
+  generateAiTextMock: vi.fn(),
+}));
+
+vi.mock("../lib/ai-runtime", async () => {
+  const actual = await vi.importActual<typeof import("../lib/ai-runtime")>("../lib/ai-runtime");
+  return {
+    ...actual,
+    generateAiText: generateAiTextMock,
+  };
+});
+
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
 import express from "express";
 import { commandRouter, resolveCommandHistoryPlaceholders } from "./command";
@@ -104,16 +118,35 @@ describe("POST /api/command", () => {
 
   beforeEach(() => {
     originalEnv.AI_MOCK_MODE = process.env.AI_MOCK_MODE;
+    originalEnv.AI_PROVIDER = process.env.AI_PROVIDER;
+    originalEnv.AI_MODEL = process.env.AI_MODEL;
+    originalEnv.AI_AZURE_OPENAI_ENDPOINT = process.env.AI_AZURE_OPENAI_ENDPOINT;
+    originalEnv.AI_AZURE_OPENAI_API_KEY = process.env.AI_AZURE_OPENAI_API_KEY;
+    originalEnv.AI_AZURE_OPENAI_DEPLOYMENT = process.env.AI_AZURE_OPENAI_DEPLOYMENT;
+    originalEnv.AI_MAX_COMMAND_TOKENS = process.env.AI_MAX_COMMAND_TOKENS;
+    originalEnv.AI_COMMAND_TIMEOUT_MS = process.env.AI_COMMAND_TIMEOUT_MS;
     process.env.AI_MOCK_MODE = "true";
+    generateAiTextMock.mockReset();
   });
 
   afterEach(() => {
-    if (originalEnv.AI_MOCK_MODE === undefined) {
-      delete process.env.AI_MOCK_MODE;
-    } else {
-      process.env.AI_MOCK_MODE = originalEnv.AI_MOCK_MODE;
+    for (const [key, value] of Object.entries(originalEnv)) {
+      if (value === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = value;
+      }
     }
   });
+
+  function enableLiveAiRuntime(): void {
+    process.env.AI_MOCK_MODE = "false";
+    process.env.AI_PROVIDER = "azure-openai";
+    process.env.AI_MODEL = "gpt-5.2";
+    process.env.AI_AZURE_OPENAI_ENDPOINT = "https://example.openai.azure.com";
+    process.env.AI_AZURE_OPENAI_API_KEY = "test-key";
+    process.env.AI_AZURE_OPENAI_DEPLOYMENT = "gpt-5.2";
+  }
 
   it("returns mock oc output in mock mode", async () => {
     const app = createApp();
@@ -235,5 +268,50 @@ describe("POST /api/command", () => {
 
     expect(res.status).toBe(200);
     expect(res.body.exitCode).toBe(0);
+  });
+
+  it("uses the configured max command token budget for live command simulation", async () => {
+    enableLiveAiRuntime();
+    process.env.AI_MAX_COMMAND_TOKENS = "8192";
+    generateAiTextMock.mockResolvedValue("NAME   STATUS\nworker-0 Ready");
+
+    const app = createApp();
+    const res = await postJson(app, "/api/command", {
+      command: "oc get nodes",
+      type: "oc",
+      scenario: makeScenario(),
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body.exitCode).toBe(0);
+    expect(generateAiTextMock).toHaveBeenCalledTimes(1);
+    expect(generateAiTextMock.mock.calls[0]?.[0]?.maxTokens).toBe(8192);
+  });
+
+  it("falls back to mock output when live command generation exceeds the timeout budget", async () => {
+    enableLiveAiRuntime();
+    process.env.AI_COMMAND_TIMEOUT_MS = "50";
+    let aborted = false;
+    generateAiTextMock.mockImplementation(
+      (request: { signal?: AbortSignal }) =>
+        new Promise(() => {
+          request?.signal?.addEventListener("abort", () => {
+            aborted = true;
+          });
+        })
+    );
+
+    const app = createApp();
+    const res = await postJson(app, "/api/command", {
+      command: "oc describe node master-0",
+      type: "oc",
+      scenario: null,
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body.exitCode).toBe(0);
+    expect(res.body.output).toContain("Name:");
+    expect(res.body.output).not.toContain("delayed synthetic response");
+    expect(aborted).toBe(true);
   });
 });

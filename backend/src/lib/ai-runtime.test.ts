@@ -1,5 +1,6 @@
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { generateAiText } from "./ai-runtime";
+import { _resetForTests, getTokenMetrics } from "./token-logger";
 
 const TEST_ENV_KEYS = [
   "AI_PROVIDER",
@@ -9,6 +10,7 @@ const TEST_ENV_KEYS = [
   "AI_AZURE_OPENAI_API_KEY",
   "AI_AZURE_OPENAI_DEPLOYMENT",
   "AI_AZURE_OPENAI_DEPLOYMENT_COMMAND",
+  "AI_AZURE_OPENAI_DEPLOYMENT_SCENARIO",
 ] as const;
 
 const ORIGINAL_ENV_VALUES: Record<string, string | undefined> = {};
@@ -53,6 +55,7 @@ function okResponse(text: string): Response {
 describe("ai-runtime reasoning_effort compatibility", () => {
   beforeEach(() => {
     clearTestEnv();
+    _resetForTests();
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
 
@@ -133,5 +136,161 @@ describe("ai-runtime reasoning_effort compatibility", () => {
     expect(firstBody.reasoning_effort).toBe("medium");
     expect(secondBody.reasoning_effort).toBeUndefined();
     expect(thirdBody.reasoning_effort).toBeUndefined();
+  });
+});
+
+function deploymentNotFoundResponse(): Response {
+  return new Response(
+    JSON.stringify({
+      error: {
+        code: "DeploymentNotFound",
+        message: "The API deployment for this resource does not exist.",
+      },
+    }),
+    { status: 404, headers: { "content-type": "application/json" } },
+  );
+}
+
+describe("ai-runtime Azure deployment fallback", () => {
+  beforeEach(() => {
+    clearTestEnv();
+    _resetForTests();
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+
+    process.env.AI_PROVIDER = "azure-openai";
+    process.env.AI_MODEL = "gpt-5.2";
+    process.env.AI_AZURE_OPENAI_ENDPOINT = "https://example.openai.azure.com";
+    process.env.AI_AZURE_OPENAI_API_KEY = "test-key";
+    process.env.AI_AZURE_OPENAI_DEPLOYMENT = "gpt-5.2";
+  });
+
+  afterAll(() => {
+    vi.unstubAllGlobals();
+    restoreTestEnv();
+  });
+
+  it("retries once against global deployment when route-specific returns DeploymentNotFound", async () => {
+    process.env.AI_AZURE_OPENAI_DEPLOYMENT_SCENARIO = "gpt-4o-mini";
+
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(deploymentNotFoundResponse())
+      .mockResolvedValueOnce(okResponse("scenario-text"));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await generateAiText({
+      system: "You are helpful.",
+      messages: [{ role: "user", content: "create scenario" }],
+      maxTokens: 64,
+      route: "scenario",
+    });
+
+    expect(result).toBe("scenario-text");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+
+    const firstUrl = String(fetchMock.mock.calls[0]?.[0]);
+    const secondUrl = String(fetchMock.mock.calls[1]?.[0]);
+    expect(firstUrl).toContain("/deployments/gpt-4o-mini/");
+    expect(secondUrl).toContain("/deployments/gpt-5.2/");
+
+    const warnLine = String(warnSpy.mock.calls[0]?.[0] ?? "");
+    expect(warnLine).toContain("[ai-runtime]");
+    expect(warnLine).toContain("deployment not found");
+    expect(warnLine).toContain("gpt-4o-mini");
+    expect(warnLine).toContain("retrying once");
+    expect(warnLine).toContain("gpt-5.2");
+    expect(getTokenMetrics().perRoute.scenario.errors).toBe(0);
+    warnSpy.mockRestore();
+  });
+
+  it("does not retry when route-specific deployment succeeds on first request", async () => {
+    process.env.AI_AZURE_OPENAI_DEPLOYMENT_SCENARIO = "gpt-4o-mini";
+
+    const fetchMock = vi.fn().mockResolvedValue(okResponse("ok"));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await generateAiText({
+      system: "You are helpful.",
+      messages: [{ role: "user", content: "x" }],
+      maxTokens: 64,
+      route: "scenario",
+    });
+
+    expect(result).toBe("ok");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain("/deployments/gpt-4o-mini/");
+  });
+
+  it("throws after one fallback when global deployment also returns DeploymentNotFound", async () => {
+    process.env.AI_AZURE_OPENAI_DEPLOYMENT_SCENARIO = "gpt-4o-mini";
+
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(deploymentNotFoundResponse())
+      .mockResolvedValueOnce(deploymentNotFoundResponse());
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      generateAiText({
+        system: "You are helpful.",
+        messages: [{ role: "user", content: "x" }],
+        maxTokens: 64,
+        route: "scenario",
+      }),
+    ).rejects.toThrow(/Azure OpenAI request failed \(404\): .*DeploymentNotFound/);
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(getTokenMetrics().perRoute.scenario.errors).toBe(1);
+    warnSpy.mockRestore();
+  });
+
+  it("does not retry when route override matches global deployment", async () => {
+    process.env.AI_AZURE_OPENAI_DEPLOYMENT_SCENARIO = "gpt-5.2";
+
+    const fetchMock = vi.fn().mockResolvedValueOnce(deploymentNotFoundResponse());
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      generateAiText({
+        system: "You are helpful.",
+        messages: [{ role: "user", content: "x" }],
+        maxTokens: 64,
+        route: "scenario",
+      }),
+    ).rejects.toThrow(/Azure OpenAI request failed \(404\): .*DeploymentNotFound/);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(getTokenMetrics().perRoute.scenario.errors).toBe(1);
+  });
+
+  it("forwards AbortSignal to Azure fetch requests", async () => {
+    const controller = new AbortController();
+    const fetchMock = vi.fn((_url: string, init?: RequestInit) =>
+      new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => {
+          const abortError = new Error("The operation was aborted.");
+          abortError.name = "AbortError";
+          reject(abortError);
+        });
+      })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const requestPromise = generateAiText({
+      system: "You are helpful.",
+      messages: [{ role: "user", content: "x" }],
+      maxTokens: 64,
+      route: "scenario",
+      signal: controller.signal,
+    });
+
+    controller.abort();
+
+    await expect(requestPromise).rejects.toMatchObject({ name: "AbortError" });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0]?.[1]?.signal).toBe(controller.signal);
   });
 });

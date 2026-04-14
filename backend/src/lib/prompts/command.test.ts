@@ -201,6 +201,19 @@ describe("buildCommandSystemPrompt", () => {
     expect(prompt).toContain("master-0 Ready");
   });
 
+  it("preserves a deeper recent command history window for larger investigations", () => {
+    const history = Array.from({ length: 20 }, (_, index) => ({
+      command: `oc get pods -n ns-${index}`,
+      output: `pod-${index} Running`,
+      type: "oc" as const,
+    }));
+
+    const prompt = buildCommandSystemPrompt("oc", "ctx", "now", history);
+
+    expect(prompt).toContain("$ oc get pods -n ns-0");
+    expect(prompt).toContain("$ oc get pods -n ns-19");
+  });
+
   it("omits history section when no history provided", () => {
     const prompt = buildCommandSystemPrompt("oc", "ctx", "now");
     expect(prompt).not.toContain("Previously Executed Commands");
