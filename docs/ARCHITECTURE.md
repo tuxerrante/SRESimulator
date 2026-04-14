@@ -154,6 +154,35 @@ make public-exposure-audit NS=sre-simulator
 
 ---
 
+## Manual E2E with Azure SQL (optional)
+
+The default manual E2E flow (`make e2e-azure-route-up`) deploys without cluster
+database credentials. To exercise **Helm database mode** in a throwaway E2E
+namespace, reuse an existing Kubernetes `Secret` that already holds the ADO.NET
+connection string (Helm default key: `connection-string` on
+`database.secretConnectionStringKey`).
+
+Prerequisites:
+
+1. A source namespace containing the canonical DB secret (for example the
+   stable production namespace `sre-simulator` or a dedicated shared namespace).
+2. RBAC allowing the deployer identity to **read** the secret in the source
+   namespace and **create/update** secrets in the target E2E namespace.
+3. `jq` must be installed on the machine running the Make target because the
+   secret-copy helper rewrites Kubernetes metadata client-side before `oc apply`.
+4. In `backend/.env.local` (or the environment), set `DB_SECRET_NAME` to the
+   secret resource name. Optionally set `DB_SECRET_SOURCE_NAMESPACE` to the
+   namespace that already holds that secret; if omitted, the automation copies
+   from `PROD_NAMESPACE` (Makefile default `sre-simulator`).
+
+Before `helm upgrade`, `scripts/aro-deploy.sh` copies the secret into the new or
+refreshed E2E namespace using `oc` and `jq` only (secret values are not printed).
+`make e2e-azure-route-up` and `make e2e-azure-route-refresh` both run this step
+when `DB_SECRET_NAME` is set. When it is unset, behavior matches the previous
+non-DB E2E path.
+
+---
+
 ## Investigation Methodology
 
 The game enforces the SRE "Scientific Method of Investigation":
