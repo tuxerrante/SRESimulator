@@ -477,6 +477,24 @@ from your machine via `oc port-forward`:
 make db-port-forward-check NS=sre-simulator
 ```
 
+For read-only inspection of live Azure SQL contents, use the local helper first:
+
+```bash
+make db-inspect NS=sre-simulator
+```
+
+If your local machine cannot reach Azure SQL directly because of firewall
+rules, run the same inspector inside the deployed backend pod instead:
+
+```bash
+make db-inspect-live NS=sre-simulator
+# or with a custom read-only query:
+NS=sre-simulator SQL="SELECT TOP 5 * FROM leaderboard_entries ORDER BY created_at DESC" make db-inspect-live
+```
+
+For custom queries, prefer single quotes around the outer `SQL=...` value when
+your statement contains shell-sensitive characters.
+
 #### Teardown
 
 The database is on the free tier ($0/month), so the recommended default
