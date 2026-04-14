@@ -8,9 +8,9 @@ export interface CommandHistoryEntry {
   type: "oc" | "kql" | "geneva";
 }
 
-const MAX_HISTORY_ENTRIES = 15;
-const MAX_HISTORY_CHARS = 4000;
-const MAX_ENTRY_OUTPUT_CHARS = 400;
+const MAX_HISTORY_ENTRIES = 24;
+const MAX_HISTORY_CHARS = 12000;
+const MAX_ENTRY_OUTPUT_CHARS = 800;
 
 function formatCommandHistory(history: CommandHistoryEntry[] | undefined): string {
   if (!Array.isArray(history) || history.length === 0) return "";

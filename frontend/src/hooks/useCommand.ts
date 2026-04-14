@@ -4,8 +4,8 @@ import { useCallback } from "react";
 import { useGameStore } from "@/stores/gameStore";
 import type { TerminalEntry } from "@shared/types/terminal";
 
-const MAX_COMMAND_HISTORY = 15;
-const MAX_ENTRY_OUTPUT_CHARS = 400;
+const MAX_COMMAND_HISTORY = 24;
+const MAX_ENTRY_OUTPUT_CHARS = 800;
 
 export function useCommand() {
   const { scenario, addTerminalEntry, addScoringEvent, recalculateScore, setExecuting } =
