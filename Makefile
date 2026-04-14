@@ -679,7 +679,12 @@ db-inspect-live: ## Inspect DB rows from inside the deployed backend pod (bypass
 		echo "Make sure this release uses database.enabled=true."; \
 		exit 1; \
 	fi; \
-	echo "Inspecting DB live for $$NS/$$DEPLOY via in-cluster node"; \
+	if ! oc -n "$$NS" get secret "$$DB_SECRET_NAME" >/dev/null 2>"$$ERR_FILE"; then \
+		echo "Cannot access secret $$NS/$$DB_SECRET_NAME."; \
+		cat "$$ERR_FILE"; \
+		exit 1; \
+	fi; \
+	echo "Inspecting DB live for $$NS/$$DEPLOY via in-cluster node (secret: $$DB_SECRET_NAME, key: $$DB_SECRET_KEY)"; \
 	oc -n "$$NS" exec -i "deploy/$$DEPLOY" -- \
 		env LIMIT="$$LIMIT" SQL="$$QUERY" node - < scripts/db-inspect.cjs
 
