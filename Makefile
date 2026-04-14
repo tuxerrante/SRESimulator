@@ -4,7 +4,7 @@
        typecheck typecheck-backend validate \
        security audit lockfile-lint gitleaks grype \
        test test-integration test-mssql dev-db smoke-backend-mssql smoke-local-vertex env-check e2e-azure-route e2e-azure-route-up e2e-azure-route-refresh e2e-azure-route-down \
-       prod-up prod-up-tag prod-down prod-status public-exposure-audit db-port-forward-check db-inspect geneva-suppression-check prod-up-final \
+       prod-up prod-up-tag prod-down prod-status public-exposure-audit db-port-forward-check db-inspect db-inspect-live geneva-suppression-check prod-up-final \
        build dev start \
        docker-build-frontend docker-build-backend docker-build \
        pre-commit all \
@@ -39,11 +39,15 @@ E2E_REQUIRED_VARS := AZURE_SUBSCRIPTION_ID ARO_RG ARO_CLUSTER AOAI_RG AOAI_ACCOU
 PROD_NAMESPACE ?= sre-simulator
 PROD_METADATA_FILE ?= data/prod-route.env
 GENEVA_SUPPRESSION_RULE_ACTIVE ?= false
+# Optional: when set with DB_SECRET_NAME, copy the DB secret from this namespace into the E2E namespace before Helm.
+# If unset, the copy step uses PROD_NAMESPACE (same default as stable prod): $(PROD_NAMESPACE)
+DB_SECRET_SOURCE_NAMESPACE ?=
 
 export AZURE_SUBSCRIPTION_ID ARO_RG ARO_CLUSTER
 export AOAI_RG AOAI_ACCOUNT AOAI_DEPLOYMENT
 export AOAI_DEPLOYMENT_CHAT AOAI_DEPLOYMENT_COMMAND AOAI_DEPLOYMENT_SCENARIO AOAI_DEPLOYMENT_PROBE
 export E2E_RELEASE NPM_VERSION
+export PROD_NAMESPACE DB_SECRET_NAME DB_SECRET_SOURCE_NAMESPACE
 
 define e2e_var_source
 $(if $(findstring environment,$(origin $(1))),shell,$(if $(findstring command line,$(origin $(1))),shell (command line),$(if $(filter file,$(origin $(1))),$(E2E_ENV_FILE),make ($(origin $(1))))))
@@ -311,13 +315,16 @@ env-check: ## Show source of required e2e vars (values hidden)
 	@echo "  AOAI_RG: $(call e2e_var_source,AOAI_RG)"
 	@echo "  AOAI_ACCOUNT: $(call e2e_var_source,AOAI_ACCOUNT)"
 	@echo "  AOAI_DEPLOYMENT: $(call e2e_var_source,AOAI_DEPLOYMENT)"
+	@echo "  PROD_NAMESPACE: $(call e2e_var_source,PROD_NAMESPACE)"
+	@echo "  DB_SECRET_NAME: $(if $(strip $(DB_SECRET_NAME)),set ($(call e2e_var_source,DB_SECRET_NAME)),unset - no DB secret copy or Helm DB mode)"
+	@echo "  DB_SECRET_SOURCE_NAMESPACE: $(if $(strip $(DB_SECRET_SOURCE_NAMESPACE)),set ($(call e2e_var_source,DB_SECRET_SOURCE_NAMESPACE)),unset - copy uses PROD_NAMESPACE when DB_SECRET_NAME is set)"
 	@if [ -n "$(E2E_MISSING_VARS)" ]; then \
 		echo "Missing required e2e vars: $(E2E_MISSING_VARS)"; \
 		exit 1; \
 	fi
 
 e2e-azure-route-up: env-check ## Build+deploy frontend/backend to ARO and print temporary UI route URL
-	@set -e; \
+	@set -eo pipefail; \
 	if [ -n "$(E2E_MISSING_VARS)" ]; then \
 		echo "Missing required env vars. Export: AZURE_SUBSCRIPTION_ID, ARO_RG, ARO_CLUSTER, AOAI_RG, AOAI_ACCOUNT, AOAI_DEPLOYMENT (or set them in $(E2E_ENV_FILE))."; \
 		exit 1; \
@@ -339,6 +346,7 @@ e2e-azure-route-up: env-check ## Build+deploy frontend/backend to ARO and print 
 	patch_bc_strategy "$$NS" sre-simulator-backend backend/Dockerfile; \
 	oc_build_timed "$$NS" sre-simulator-frontend; \
 	oc_build_timed "$$NS" sre-simulator-backend; \
+	ensure_db_secret_for_e2e_namespace "$$NS"; \
 	helm_deploy_sre "$$NS" "$$TAG" "$$PROBE_TOKEN"; \
 	wait_for_rollout "$$NS"; \
 	mkdir -p "$$(dirname "$(E2E_METADATA_FILE)")"; \
@@ -350,7 +358,7 @@ e2e-azure-route-up: env-check ## Build+deploy frontend/backend to ARO and print 
 	echo "Metadata saved to $(E2E_METADATA_FILE)"
 
 e2e-azure-route-refresh: env-check ## Rebuild+helm upgrade into existing e2e ns (NS=... or $(E2E_METADATA_FILE))
-	@set -e; \
+	@set -eo pipefail; \
 	if [ -n "$(E2E_MISSING_VARS)" ]; then \
 		echo "Missing required env vars. Export: AZURE_SUBSCRIPTION_ID, ARO_RG, ARO_CLUSTER, AOAI_RG, AOAI_ACCOUNT, AOAI_DEPLOYMENT (or set them in $(E2E_ENV_FILE))."; \
 		exit 1; \
@@ -392,6 +400,7 @@ e2e-azure-route-refresh: env-check ## Rebuild+helm upgrade into existing e2e ns 
 	patch_bc_strategy "$$TARGET_NS" sre-simulator-backend backend/Dockerfile; \
 	oc_build_timed "$$TARGET_NS" sre-simulator-frontend; \
 	oc_build_timed "$$TARGET_NS" sre-simulator-backend; \
+	ensure_db_secret_for_e2e_namespace "$$TARGET_NS"; \
 	helm_deploy_sre "$$TARGET_NS" "$$TAG" "$$PROBE_TOKEN"; \
 	wait_for_rollout "$$TARGET_NS"; \
 	mkdir -p "$$(dirname "$(E2E_METADATA_FILE)")"; \
@@ -646,6 +655,38 @@ db-inspect: install-backend ## Inspect DB rows from deployed backend (set SQL='.
 	LIMIT="$$LIMIT" \
 	SQL="$$QUERY" \
 	node scripts/db-inspect.cjs
+
+db-inspect-live: ## Inspect DB rows from inside the deployed backend pod (bypasses local SQL firewall)
+	@set -e; \
+	NS="$${NS:-$(PROD_NAMESPACE)}"; \
+	RELEASE="$${RELEASE:-$(E2E_RELEASE)}"; \
+	DEPLOY="$${DEPLOY:-$$RELEASE-backend}"; \
+	LIMIT="$${LIMIT:-10}"; \
+	QUERY="$${SQL:-}"; \
+	DB_SECRET_NAME=""; \
+	DB_SECRET_KEY=""; \
+	ERR_FILE="$$(mktemp /tmp/sre-db-inspect-live-oc.err.XXXXXX)"; \
+	trap 'rm -f "$$ERR_FILE"' EXIT INT TERM; \
+	if ! oc -n "$$NS" get deployment "$$DEPLOY" >/dev/null 2>"$$ERR_FILE"; then \
+		echo "Cannot access deployment $$NS/$$DEPLOY."; \
+		cat "$$ERR_FILE"; \
+		exit 1; \
+	fi; \
+	DB_SECRET_NAME=$$(oc -n "$$NS" get deployment "$$DEPLOY" -o jsonpath="{.spec.template.spec.containers[0].env[?(@.name=='DATABASE_URL')].valueFrom.secretKeyRef.name}"); \
+	DB_SECRET_KEY=$$(oc -n "$$NS" get deployment "$$DEPLOY" -o jsonpath="{.spec.template.spec.containers[0].env[?(@.name=='DATABASE_URL')].valueFrom.secretKeyRef.key}"); \
+	if [ -z "$$DB_SECRET_NAME" ] || [ -z "$$DB_SECRET_KEY" ]; then \
+		echo "DATABASE_URL secret ref not found on deployment $$NS/$$DEPLOY."; \
+		echo "Make sure this release uses database.enabled=true."; \
+		exit 1; \
+	fi; \
+	if ! oc -n "$$NS" get secret "$$DB_SECRET_NAME" >/dev/null 2>"$$ERR_FILE"; then \
+		echo "Cannot access secret $$NS/$$DB_SECRET_NAME."; \
+		cat "$$ERR_FILE"; \
+		exit 1; \
+	fi; \
+	echo "Inspecting DB live for $$NS/$$DEPLOY via in-cluster node (secret: $$DB_SECRET_NAME, key: $$DB_SECRET_KEY)"; \
+	oc -n "$$NS" exec -i "deploy/$$DEPLOY" -- \
+		env LIMIT="$$LIMIT" SQL="$$QUERY" node - < scripts/db-inspect.cjs
 
 prod-up-final: geneva-suppression-check env-check ## Deploy final env then run exposure + DB fallback checks
 	@set -e; \

@@ -5,6 +5,7 @@
 #   AZURE_SUBSCRIPTION_ID, ARO_RG, ARO_CLUSTER
 #   AOAI_RG, AOAI_ACCOUNT, AOAI_DEPLOYMENT
 #   E2E_RELEASE, NPM_VERSION
+#   PROD_NAMESPACE, DB_SECRET_NAME, DB_SECRET_SOURCE_NAMESPACE
 
 aro_login() {
   az account set -s "$AZURE_SUBSCRIPTION_ID" >/dev/null
@@ -96,10 +97,70 @@ oc_build_timed() {
   echo "  $name build completed in $(( t1 - t0 ))s (attempt $attempt/$max_retries)"
 }
 
+# Usage: copy_secret_across_namespaces <src_ns> <dst_ns> <secret_name>
+# Re-applies the Secret in dst_ns from a live object in src_ns. Strips
+# server-populated metadata with jq. Does not echo .data or stringData
+# (stdout from oc apply is discarded).
+copy_secret_across_namespaces() {
+  local src_ns=$1 dst_ns=$2 secret_name=$3
+  if [ "$src_ns" = "$dst_ns" ]; then
+    if ! oc -n "$src_ns" get "secret/$secret_name" >/dev/null 2>&1; then
+      echo "error: secret '$secret_name' not found in namespace '$src_ns'" >&2
+      return 1
+    fi
+    return 0
+  fi
+  if ! oc -n "$src_ns" get "secret/$secret_name" >/dev/null 2>&1; then
+    echo "error: secret '$secret_name' not found in namespace '$src_ns' (cannot copy into '$dst_ns')" >&2
+    return 1
+  fi
+  if ! command -v jq >/dev/null 2>&1; then
+    echo "error: jq is required to copy secret '$secret_name' from namespace '$src_ns' to '$dst_ns'" >&2
+    return 1
+  fi
+  oc -n "$src_ns" get "secret/$secret_name" -o json \
+    | jq '
+        .metadata |= (
+          del(
+            .namespace,
+            .uid,
+            .resourceVersion,
+            .creationTimestamp,
+            .managedFields,
+            .ownerReferences,
+            .generation
+          )
+          | if .annotations then
+              .annotations |= del(.["kubectl.kubernetes.io/last-applied-configuration"])
+            else
+              .
+            end
+        )
+        | del(.status)
+      ' \
+    | oc -n "$dst_ns" apply -f - >/dev/null
+}
+
+# Usage: ensure_db_secret_for_e2e_namespace <dst_ns>
+# When DB_SECRET_NAME is set, copies that secret from DB_SECRET_SOURCE_NAMESPACE
+# if set, otherwise from PROD_NAMESPACE (default sre-simulator). No-op when
+# DB_SECRET_NAME is unset. Skips copy when source and destination namespaces match.
+ensure_db_secret_for_e2e_namespace() {
+  local dst_ns=$1
+  if [ -z "${DB_SECRET_NAME:-}" ]; then
+    return 0
+  fi
+  local src_ns="${DB_SECRET_SOURCE_NAMESPACE:-${PROD_NAMESPACE:-sre-simulator}}"
+  echo "Ensuring DB secret in '$dst_ns' (from namespace '$src_ns', secret '${DB_SECRET_NAME}'; payload not logged)."
+  copy_secret_across_namespaces "$src_ns" "$dst_ns" "$DB_SECRET_NAME"
+}
+
 # Usage: helm_deploy_sre <namespace> <tag> <probe-token>
 # Sets DEPLOY_HOST for use by caller.
 # Optional env: DB_SECRET_NAME — when set, enables Azure SQL persistence
-#   via database.enabled=true and database.existingSecretName.
+#   via database.enabled=true and database.existingSecretName. Callers should
+#   run ensure_db_secret_for_e2e_namespace <namespace> first so the secret exists
+#   in that namespace when reusing credentials from elsewhere.
 helm_deploy_sre() {
   local ns=$1 tag=$2 probe_token=$3
   DEPLOY_DOMAIN=$(oc get ingresses.config/cluster -o jsonpath='{.spec.domain}')
