@@ -265,4 +265,32 @@ describe("ai-runtime Azure deployment fallback", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(getTokenMetrics().perRoute.scenario.errors).toBe(1);
   });
+
+  it("forwards AbortSignal to Azure fetch requests", async () => {
+    const controller = new AbortController();
+    const fetchMock = vi.fn((_url: string, init?: RequestInit) =>
+      new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener("abort", () => {
+          const abortError = new Error("The operation was aborted.");
+          abortError.name = "AbortError";
+          reject(abortError);
+        });
+      })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const requestPromise = generateAiText({
+      system: "You are helpful.",
+      messages: [{ role: "user", content: "x" }],
+      maxTokens: 64,
+      route: "scenario",
+      signal: controller.signal,
+    });
+
+    controller.abort();
+
+    await expect(requestPromise).rejects.toMatchObject({ name: "AbortError" });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0]?.[1]?.signal).toBe(controller.signal);
+  });
 });

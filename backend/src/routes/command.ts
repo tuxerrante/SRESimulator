@@ -51,6 +51,13 @@ class CommandGenerationTimeoutError extends Error {
   }
 }
 
+function isAbortError(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    (error.name === "AbortError" || error.name === "TimeoutError")
+  );
+}
+
 function buildMockCommandResponse(command: string, type: "oc" | "kql" | "geneva") {
   return {
     output: stripTerminalCommandEcho(generateMockCommandOutput(command, type), command),
@@ -58,17 +65,27 @@ function buildMockCommandResponse(command: string, type: "oc" | "kql" | "geneva"
   };
 }
 
-async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+async function withTimeout<T>(
+  run: (signal: AbortSignal) => Promise<T>,
+  timeoutMs: number,
+): Promise<T> {
   return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new CommandGenerationTimeoutError(timeoutMs)), timeoutMs);
+    const controller = new AbortController();
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      controller.abort(new CommandGenerationTimeoutError(timeoutMs));
+      reject(new CommandGenerationTimeoutError(timeoutMs));
+    }, timeoutMs);
 
-    promise.then(
+    run(controller.signal).then(
       (value) => {
         clearTimeout(timer);
-        resolve(value);
+        if (!timedOut) resolve(value);
       },
       (error) => {
         clearTimeout(timer);
+        if (timedOut && isAbortError(error)) return;
         reject(error);
       },
     );
@@ -135,17 +152,19 @@ commandRouter.post("/", async (req: Request, res: Response) => {
     );
 
     const responseText = await withTimeout(
-      generateAiText({
-        maxTokens: getMaxCommandTokens(),
-        system: systemPrompt,
-        messages: [
-          {
-            role: "user",
-            content: `Simulate the output for this ${type} command:\n\n${commandResolved}`,
-          },
-        ],
-        route: "command",
-      }),
+      (signal) =>
+        generateAiText({
+          maxTokens: getMaxCommandTokens(),
+          system: systemPrompt,
+          messages: [
+            {
+              role: "user",
+              content: `Simulate the output for this ${type} command:\n\n${commandResolved}`,
+            },
+          ],
+          route: "command",
+          signal,
+        }),
       getCommandTimeoutMs(),
     );
 

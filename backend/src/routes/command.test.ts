@@ -291,10 +291,13 @@ describe("POST /api/command", () => {
   it("falls back to mock output when live command generation exceeds the timeout budget", async () => {
     enableLiveAiRuntime();
     process.env.AI_COMMAND_TIMEOUT_MS = "50";
+    let aborted = false;
     generateAiTextMock.mockImplementation(
-      () =>
-        new Promise((resolve) => {
-          setTimeout(() => resolve("delayed synthetic response"), 5000);
+      (request: { signal?: AbortSignal }) =>
+        new Promise(() => {
+          request?.signal?.addEventListener("abort", () => {
+            aborted = true;
+          });
         })
     );
 
@@ -309,5 +312,6 @@ describe("POST /api/command", () => {
     expect(res.body.exitCode).toBe(0);
     expect(res.body.output).toContain("Name:");
     expect(res.body.output).not.toContain("delayed synthetic response");
+    expect(aborted).toBe(true);
   });
 });

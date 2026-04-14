@@ -28,8 +28,38 @@ function retryDelayMs(attempt: number, retryAfterHeader?: string | null): number
   return Math.min(exponential + jitter, RETRY_MAX_DELAY_MS);
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+function toAbortError(reason?: unknown): Error {
+  if (reason instanceof Error) return reason;
+  const error = new Error(typeof reason === "string" ? reason : "The operation was aborted.");
+  error.name = "AbortError";
+  return error;
+}
+
+function throwIfAborted(signal?: AbortSignal): void {
+  if (!signal?.aborted) return;
+  throw toAbortError(signal.reason);
+}
+
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  if (!signal) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+  if (signal.aborted) {
+    return Promise.reject(toAbortError(signal.reason));
+  }
+
+  return new Promise((resolve, reject) => {
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(toAbortError(signal.reason));
+    };
+    const timer = setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
 }
 
 export interface AiTextMessage {
@@ -49,6 +79,7 @@ interface AiTextRequest {
   route?: AiRoute;
   compactionMeta?: AiCompactionMeta;
   cacheKey?: string;
+  signal?: AbortSignal;
   /** @internal Override reasoning_effort on retry. */
   _reasoningEffortOverride?: string;
 }
@@ -129,6 +160,7 @@ class AzureDeploymentNotFoundError extends Error {
 }
 
 async function generateVertexText(request: AiTextRequest): Promise<string> {
+  throwIfAborted(request.signal);
   const client = getVertexClient();
   const model = getConfiguredModel();
   const start = Date.now();
@@ -280,6 +312,7 @@ async function runAzureOpenAiRequest(
   useLegacyMaxTokens: boolean,
   includeReasoningEffort: boolean
 ): Promise<Response> {
+  throwIfAborted(request.signal);
   const reasoningEffort = includeReasoningEffort
     ? validReasoningEffort(
       request._reasoningEffortOverride ?? process.env.AI_REASONING_EFFORT,
@@ -314,6 +347,7 @@ async function runAzureOpenAiRequest(
         "content-type": "application/json",
       },
       body: JSON.stringify(body),
+      signal: request.signal,
     }
   );
 }
@@ -325,6 +359,7 @@ async function executeAzureRequest(
   apiVersion: string,
   request: AiTextRequest,
 ): Promise<Response> {
+  throwIfAborted(request.signal);
   const deploymentKey = deployment.trim().toLowerCase();
   let useLegacyMaxTokens = false;
   let includeReasoningEffort = shouldSendReasoningEffort(deployment);
@@ -370,6 +405,7 @@ async function executeAzureRequest(
 }
 
 async function callAzureOpenAi(request: AiTextRequest): Promise<string> {
+  throwIfAborted(request.signal);
   const endpoint = process.env.AI_AZURE_OPENAI_ENDPOINT!;
   const key = process.env.AI_AZURE_OPENAI_API_KEY!;
   let deployment = getDeploymentForRoute(request.route);
@@ -418,7 +454,7 @@ async function callAzureOpenAi(request: AiTextRequest): Promise<string> {
           console.warn(
             `[ai-runtime] 429 throttled on route=${route} attempt=${attempt + 1}/${RETRY_MAX_ATTEMPTS}, retrying in ${Math.round(delay)}ms`,
           );
-          await sleep(delay);
+          await sleep(delay, request.signal);
           continue;
         }
         if (request.route) logTokenError(request.route, "429 throttled after max retries");
