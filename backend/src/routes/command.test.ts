@@ -1,16 +1,21 @@
-import { describe, expect, it, beforeEach, afterEach, vi } from "vitest";
-import express from "express";
-import { commandRouter, resolveCommandHistoryPlaceholders } from "./command";
-import { generateAiText } from "../lib/ai-runtime";
-import type { Scenario } from "../../../shared/types/game";
+import { vi } from "vitest";
+
+const { generateAiTextMock } = vi.hoisted(() => ({
+  generateAiTextMock: vi.fn(),
+}));
 
 vi.mock("../lib/ai-runtime", async () => {
   const actual = await vi.importActual<typeof import("../lib/ai-runtime")>("../lib/ai-runtime");
   return {
     ...actual,
-    generateAiText: vi.fn(),
+    generateAiText: generateAiTextMock,
   };
 });
+
+import { describe, expect, it, beforeEach, afterEach } from "vitest";
+import express from "express";
+import { commandRouter, resolveCommandHistoryPlaceholders } from "./command";
+import type { Scenario } from "../../../shared/types/game";
 
 function createApp() {
   const app = express();
@@ -110,7 +115,6 @@ describe("resolveCommandHistoryPlaceholders", () => {
 
 describe("POST /api/command", () => {
   const originalEnv: Record<string, string | undefined> = {};
-  const generateAiTextMock = vi.mocked(generateAiText);
 
   beforeEach(() => {
     originalEnv.AI_MOCK_MODE = process.env.AI_MOCK_MODE;
@@ -286,11 +290,11 @@ describe("POST /api/command", () => {
 
   it("falls back to mock output when live command generation exceeds the timeout budget", async () => {
     enableLiveAiRuntime();
-    process.env.AI_COMMAND_TIMEOUT_MS = "1";
+    process.env.AI_COMMAND_TIMEOUT_MS = "50";
     generateAiTextMock.mockImplementation(
       () =>
         new Promise((resolve) => {
-          setTimeout(() => resolve("delayed synthetic response"), 25);
+          setTimeout(() => resolve("delayed synthetic response"), 5000);
         })
     );
 
