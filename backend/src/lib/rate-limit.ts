@@ -1,4 +1,4 @@
-import rateLimit from "express-rate-limit";
+import rateLimit, { ipKeyGenerator } from "express-rate-limit";
 
 /**
  * Per-IP rate limiter for AI-backed routes to prevent a single client
@@ -16,10 +16,13 @@ export const aiRateLimit = rateLimit({
     error: "Too many requests. Please slow down and try again in a moment.",
   },
   keyGenerator: (req) => {
-    return (
+    const clientIp =
       req.ip ??
       req.headers["x-forwarded-for"]?.toString().split(",")[0]?.trim() ??
-      "unknown"
-    );
+      "";
+    if (!clientIp) {
+      return "unknown";
+    }
+    return ipKeyGenerator(clientIp);
   },
 });
