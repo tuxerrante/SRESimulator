@@ -40,6 +40,15 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}
 
 {{/*
+Helm test selector labels
+*/}}
+{{- define "sre-simulator.helmTest.selectorLabels" -}}
+app.kubernetes.io/name: {{ include "sre-simulator.name" . }}
+app.kubernetes.io/component: helm-test
+app.kubernetes.io/instance: {{ .Release.Name }}
+{{- end }}
+
+{{/*
 Backend selector labels
 */}}
 {{- define "sre-simulator.backend.selectorLabels" -}}
