@@ -111,6 +111,7 @@ jobs:
       AOAI_DEPLOYMENT_COMMAND: ${{ secrets.AOAI_DEPLOYMENT_COMMAND }}
       AOAI_DEPLOYMENT_SCENARIO: ${{ secrets.AOAI_DEPLOYMENT_SCENARIO }}
       AOAI_DEPLOYMENT_PROBE: ${{ secrets.AOAI_DEPLOYMENT_PROBE }}
+      DB_SECRET_NAME: ${{ secrets.DB_SECRET_NAME }}
       PROD_NAMESPACE: ${{ secrets.PROD_NAMESPACE }}
       E2E_RELEASE: sre-simulator
       NPM_VERSION: "10"
@@ -169,7 +170,8 @@ jobs:
           missing=()
           for name in \
             AZURE_SUBSCRIPTION_ID ARO_RG ARO_CLUSTER \
-            AOAI_RG AOAI_ACCOUNT AOAI_DEPLOYMENT; do
+            AOAI_RG AOAI_ACCOUNT AOAI_DEPLOYMENT \
+            DB_SECRET_NAME; do
             if [[ -z "${!name:-}" ]]; then
               missing+=("$name")
             fi
@@ -226,3 +228,5 @@ jobs:
           set -euo pipefail
           make prod-up-tag TAG="${RELEASE_TAG}"
           make public-exposure-audit NS="${PROD_NAMESPACE:-sre-simulator}"
+          make db-mode-check NS="${PROD_NAMESPACE:-sre-simulator}"
+          make db-port-forward-check NS="${PROD_NAMESPACE:-sre-simulator}"
