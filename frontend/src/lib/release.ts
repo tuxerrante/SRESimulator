@@ -1,4 +1,4 @@
-export const APP_VERSION = "v0.1.1";
+export const APP_VERSION = "v0.1.2";
 
 export const HOME_FEATURE_HIGHLIGHTS: string[] = [
   "Introduced AI-guided break-fix scenarios across easy, medium, and hard SRE tracks.",

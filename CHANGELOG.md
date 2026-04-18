@@ -5,6 +5,14 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.2] - 2026-04-18
+
+### Release Hardening
+
+- Enforced Azure SQL-backed production deploys by requiring `DB_SECRET_NAME`, validating secret presence, and adding post-deploy DB-mode verification to the Makefile and GitHub deploy workflow.
+- Added guarded regression coverage for production DB deploy paths so CI catches silent JSON/PVC fallback before merge.
+- Refreshed the release metadata on `main` so the next semver tag can promote the current patch safely through CI/CD.
+
 ## [0.1.1] - 2026-04-08
 
 ### Release Alignment
