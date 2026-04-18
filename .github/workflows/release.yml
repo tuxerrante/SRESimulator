@@ -19,7 +19,7 @@ jobs:
       release_tag: ${{ steps.resolve.outputs.release_tag }}
     steps:
       - name: Harden runner
-        # v2.16.0
+        # v2.18.0
         uses: >-
           step-security/harden-runner@6c3c2f2c1c457b00c10c4848d6f5491db3b629df
         with:
@@ -67,7 +67,7 @@ jobs:
       WORKFLOW_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
     steps:
       - name: Harden runner
-        # v2.16.0
+        # v2.18.0
         uses: >-
           step-security/harden-runner@6c3c2f2c1c457b00c10c4848d6f5491db3b629df
         with:

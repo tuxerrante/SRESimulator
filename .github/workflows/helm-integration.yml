@@ -22,7 +22,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Harden runner
-        # v2.16.0
+        # v2.18.0
         uses: >-
           step-security/harden-runner@6c3c2f2c1c457b00c10c4848d6f5491db3b629df
         with:

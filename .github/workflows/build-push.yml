@@ -21,7 +21,7 @@ jobs:
       is_latest: ${{ steps.resolve.outputs.is_latest }}
     steps:
       - name: Harden runner
-        # v2.16.0
+        # v2.18.0
         uses: >-
           step-security/harden-runner@6c3c2f2c1c457b00c10c4848d6f5491db3b629df
         with:
@@ -96,7 +96,7 @@ jobs:
       IS_LATEST: ${{ needs.resolve-release-tag.outputs.is_latest }}
     steps:
       - name: Harden runner
-        # v2.16.0
+        # v2.18.0
         uses: >-
           step-security/harden-runner@6c3c2f2c1c457b00c10c4848d6f5491db3b629df
         with:
@@ -137,7 +137,7 @@ jobs:
           echo "EOF" >> "${GITHUB_OUTPUT}"
 
       - name: Build and push
-        # v7.0.0
+        # v7.1.0
         uses: >-
           docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f
         with:
