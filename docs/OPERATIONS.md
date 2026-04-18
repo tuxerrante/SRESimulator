@@ -34,6 +34,7 @@ For provider options, environment variables, and runtime behavior, use:
 | `make test` | Unit tests with coverage |
 | `make test-integration` | Integration tests |
 | `make security` | Security checks |
+| `make aro-login` | Authenticate Azure CLI if needed and log `oc` into the configured ARO cluster |
 | `make e2e-azure-route-up` | Create temporary Azure e2e namespace |
 | `make e2e-azure-route-refresh` | Refresh existing e2e namespace |
 | `make e2e-azure-route-down` | Delete temporary e2e namespace |

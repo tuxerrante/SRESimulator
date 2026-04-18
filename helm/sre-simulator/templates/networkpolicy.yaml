@@ -15,6 +15,9 @@ spec:
         - podSelector:
             matchLabels:
               {{- include "sre-simulator.frontend.selectorLabels" . | nindent 14 }}
+        - podSelector:
+            matchLabels:
+              {{- include "sre-simulator.helmTest.selectorLabels" . | nindent 14 }}
       ports:
         - port: {{ .Values.backend.port }}
           protocol: TCP

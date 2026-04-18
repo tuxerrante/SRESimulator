@@ -3,7 +3,7 @@
        lint lint-ts lint-backend lint-unused-exports lint-yaml lint-md \
        typecheck typecheck-backend validate \
        security audit lockfile-lint gitleaks grype \
-       test test-integration test-mssql dev-db smoke-backend-mssql smoke-local-vertex env-check e2e-azure-route e2e-azure-route-up e2e-azure-route-refresh e2e-azure-route-down \
+       test test-shell test-integration test-mssql dev-db smoke-backend-mssql smoke-local-vertex env-check aro-login e2e-azure-route e2e-azure-route-up e2e-azure-route-refresh e2e-azure-route-down \
        prod-up prod-up-tag prod-down prod-status public-exposure-audit db-port-forward-check db-inspect db-inspect-live geneva-suppression-check prod-up-final \
        build dev start \
        docker-build-frontend docker-build-backend docker-build \
@@ -60,6 +60,11 @@ E2E_MISSING_VARS := $(strip \
   $(if $(strip $(AOAI_RG)),,AOAI_RG) \
   $(if $(strip $(AOAI_ACCOUNT)),,AOAI_ACCOUNT) \
   $(if $(strip $(AOAI_DEPLOYMENT)),,AOAI_DEPLOYMENT))
+
+ARO_LOGIN_MISSING_VARS := $(strip \
+  $(if $(strip $(AZURE_SUBSCRIPTION_ID)),,AZURE_SUBSCRIPTION_ID) \
+  $(if $(strip $(ARO_RG)),,ARO_RG) \
+  $(if $(strip $(ARO_CLUSTER)),,ARO_CLUSTER))
 
 # ──────────────────────────────────────────────
 # Help
@@ -185,7 +190,10 @@ test: ## Run backend and frontend unit tests with coverage
 	cd $(BACKEND_DIR) && npm run test:coverage
 	cd $(FRONTEND_DIR) && npm run test:coverage
 
-test-integration: ## Run backend integration tests (full API game flow, mock mode)
+test-shell: ## Run shell regression tests
+	bash scripts/aro-login.test.sh
+
+test-integration: test-shell ## Run backend integration tests (full API game flow, mock mode)
 	cd $(BACKEND_DIR) && npm run test:integration
 
 MSSQL_SA_PASSWORD ?= DevPass@123!
@@ -322,6 +330,22 @@ env-check: ## Show source of required e2e vars (values hidden)
 		echo "Missing required e2e vars: $(E2E_MISSING_VARS)"; \
 		exit 1; \
 	fi
+
+aro-login: ## Authenticate Azure CLI if needed and log oc into the configured ARO cluster
+	@set -eo pipefail; \
+	echo "ARO login variable source check (values hidden):"; \
+	echo "  AZURE_SUBSCRIPTION_ID: $(call e2e_var_source,AZURE_SUBSCRIPTION_ID)"; \
+	echo "  ARO_RG: $(call e2e_var_source,ARO_RG)"; \
+	echo "  ARO_CLUSTER: $(call e2e_var_source,ARO_CLUSTER)"; \
+	if [ -n "$(ARO_LOGIN_MISSING_VARS)" ]; then \
+		echo "Missing required login vars: $(ARO_LOGIN_MISSING_VARS)"; \
+		echo "Export them in the shell or set them in $(E2E_ENV_FILE)."; \
+		exit 1; \
+	fi; \
+	. scripts/aro-deploy.sh; \
+	ensure_azure_login; \
+	aro_login; \
+	print_aro_login_summary
 
 e2e-azure-route-up: env-check ## Build+deploy frontend/backend to ARO and print temporary UI route URL
 	@set -eo pipefail; \

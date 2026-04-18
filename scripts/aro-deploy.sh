@@ -7,7 +7,27 @@
 #   E2E_RELEASE, NPM_VERSION
 #   PROD_NAMESPACE, DB_SECRET_NAME, DB_SECRET_SOURCE_NAMESPACE
 
+require_cli() {
+  local cli=$1
+  if ! command -v "$cli" >/dev/null 2>&1; then
+    echo "error: required CLI '$cli' is not installed or not in PATH" >&2
+    return 1
+  fi
+}
+
+ensure_azure_login() {
+  require_cli az
+  if az account show --query id -o tsv >/dev/null 2>&1; then
+    return 0
+  fi
+
+  echo "Azure CLI is not logged in. Starting interactive device-code login..."
+  az login --use-device-code
+}
+
 aro_login() {
+  require_cli az
+  require_cli oc
   az account set -s "$AZURE_SUBSCRIPTION_ID" >/dev/null
   local api pass
   api=$(az aro show -g "$ARO_RG" -n "$ARO_CLUSTER" \
@@ -16,6 +36,18 @@ aro_login() {
     --query kubeadminPassword -o tsv)
   oc login "$api" -u kubeadmin -p "$pass" \
     --insecure-skip-tls-verify=true >/dev/null
+}
+
+print_aro_login_summary() {
+  local account_name account_id oc_user oc_server
+  account_name=$(az account show --query name -o tsv)
+  account_id=$(az account show --query id -o tsv)
+  oc_user=$(oc whoami)
+  oc_server=$(oc whoami --show-server)
+
+  echo "Azure subscription: $account_name ($account_id)"
+  echo "OpenShift user: $oc_user"
+  echo "OpenShift server: $oc_server"
 }
 
 aoai_fetch_creds() {
