@@ -187,6 +187,40 @@ ensure_db_secret_for_e2e_namespace() {
   copy_secret_across_namespaces "$src_ns" "$dst_ns" "$DB_SECRET_NAME"
 }
 
+# Usage: require_prod_db_secret_name
+# Production releases must opt into Azure SQL explicitly; refuse silent
+# fallback to JSON/PVC mode when DB_SECRET_NAME is missing.
+require_prod_db_secret_name() {
+  if [ -n "${DB_SECRET_NAME:-}" ]; then
+    return 0
+  fi
+  echo "DB_SECRET_NAME is required for production deployment with STORAGE_BACKEND=mssql." >&2
+  return 1
+}
+
+# Usage: require_db_secret_exists_in_namespace <namespace>
+require_db_secret_exists_in_namespace() {
+  local ns=$1
+  require_cli oc
+  local err_file
+  err_file="$(mktemp "${TMPDIR:-/tmp}/sre-db-secret-check-XXXXXX")"
+  if oc -n "$ns" get "secret/${DB_SECRET_NAME}" >/dev/null 2>"$err_file"; then
+    rm -f "$err_file"
+    return 0
+  fi
+  if grep -Fq "secrets \"${DB_SECRET_NAME}\" not found" "$err_file" || \
+     grep -Fq "secret \"${DB_SECRET_NAME}\" not found" "$err_file" || \
+     grep -Fq "secret/${DB_SECRET_NAME}\" not found" "$err_file"; then
+    echo "DB secret '${DB_SECRET_NAME}' was not found in namespace '${ns}'." >&2
+    echo "Create or copy it before running a production deployment." >&2
+  else
+    echo "Failed to verify DB secret '${DB_SECRET_NAME}' in namespace '${ns}'." >&2
+    cat "$err_file" >&2
+  fi
+  rm -f "$err_file"
+  return 1
+}
+
 # Usage: helm_deploy_sre <namespace> <tag> <probe-token>
 # Sets DEPLOY_HOST for use by caller.
 # Optional env: DB_SECRET_NAME — when set, enables Azure SQL persistence

@@ -4,7 +4,7 @@
        typecheck typecheck-backend validate \
        security audit lockfile-lint gitleaks grype \
        test test-shell test-integration test-mssql dev-db smoke-backend-mssql smoke-local-vertex env-check aro-login e2e-azure-route e2e-azure-route-up e2e-azure-route-refresh e2e-azure-route-down \
-       prod-up prod-up-tag prod-down prod-status public-exposure-audit db-port-forward-check db-inspect db-inspect-live geneva-suppression-check prod-up-final \
+       prod-up prod-up-tag prod-down prod-status public-exposure-audit db-mode-check db-port-forward-check db-inspect db-inspect-live geneva-suppression-check prod-up-final \
        build dev start \
        docker-build-frontend docker-build-backend docker-build \
        pre-commit all \
@@ -192,6 +192,7 @@ test: ## Run backend and frontend unit tests with coverage
 
 test-shell: ## Run shell regression tests
 	bash scripts/aro-login.test.sh
+	bash scripts/prod-db-guard.test.sh
 
 test-integration: test-shell ## Run backend integration tests (full API game flow, mock mode)
 	cd $(BACKEND_DIR) && npm run test:integration
@@ -463,13 +464,15 @@ e2e-azure-route-down: ## Delete temporary Azure OpenAI e2e namespace (uses NS=..
 prod-up: env-check ## Deploy to stable production namespace (same cluster + AOAI as e2e)
 	@set -e; \
 	. scripts/aro-deploy.sh; \
+	require_prod_db_secret_name; \
 	NS="$(PROD_NAMESPACE)"; \
 	TAG="prod$$(date +%Y%m%d-%H%M%S)"; \
 	PROBE_TOKEN="probe-prod-$$(date +%s)"; \
 	echo "Deploying to PRODUCTION namespace: $$NS"; \
 	aro_login; \
+	oc get namespace "$$NS" >/dev/null 2>&1 || oc create namespace "$$NS" >/dev/null; \
+	require_db_secret_exists_in_namespace "$$NS"; \
 	aoai_fetch_creds; \
-	oc create namespace "$$NS" 2>/dev/null || true; \
 	oc -n "$$NS" delete secret azure-openai-creds 2>/dev/null || true; \
 	oc -n "$$NS" create secret generic azure-openai-creds \
 		--from-literal=endpoint="$$AOAI_ENDPOINT" --from-literal=api-key="$$AOAI_KEY" >/dev/null; \
@@ -489,6 +492,9 @@ prod-up: env-check ## Deploy to stable production namespace (same cluster + AOAI
 	oc_build_timed "$$NS" sre-simulator-backend; \
 	helm_deploy_sre "$$NS" "$$TAG" "$$PROBE_TOKEN"; \
 	wait_for_rollout "$$NS"; \
+	$(MAKE) public-exposure-audit NS="$$NS"; \
+	$(MAKE) db-mode-check NS="$$NS"; \
+	$(MAKE) db-port-forward-check NS="$$NS"; \
 	mkdir -p "$$(dirname "$(PROD_METADATA_FILE)")"; \
 	printf 'NS=%s\nRELEASE=%s\nURL=%s\nTAG=%s\n' "$$NS" "$(E2E_RELEASE)" "https://$$DEPLOY_HOST" "$$TAG" > "$(PROD_METADATA_FILE)"; \
 	echo "Production deployment ready."; \
@@ -506,12 +512,14 @@ prod-up-tag: env-check ## Deploy to production namespace with explicit semver TA
 		exit 1; \
 	fi; \
 	. scripts/aro-deploy.sh; \
+	require_prod_db_secret_name; \
 	NS="$(PROD_NAMESPACE)"; \
 	PROBE_TOKEN="probe-prod-$$(echo "$$TAG" | tr -cd '[:alnum:]-')-$$(date +%s)"; \
 	echo "Deploying semver release $$TAG to PRODUCTION namespace: $$NS"; \
 	aro_login; \
+	oc get namespace "$$NS" >/dev/null 2>&1 || oc create namespace "$$NS" >/dev/null; \
+	require_db_secret_exists_in_namespace "$$NS"; \
 	aoai_fetch_creds; \
-	oc create namespace "$$NS" 2>/dev/null || true; \
 	oc -n "$$NS" delete secret azure-openai-creds 2>/dev/null || true; \
 	oc -n "$$NS" create secret generic azure-openai-creds \
 		--from-literal=endpoint="$$AOAI_ENDPOINT" --from-literal=api-key="$$AOAI_KEY" >/dev/null; \
@@ -532,6 +540,9 @@ prod-up-tag: env-check ## Deploy to production namespace with explicit semver TA
 	helm_deploy_sre "$$NS" "$$TAG" "$$PROBE_TOKEN"; \
 	wait_for_rollout "$$NS"; \
 	probe_readiness "$$DEPLOY_HOST" "$$PROBE_TOKEN"; \
+	$(MAKE) public-exposure-audit NS="$$NS"; \
+	$(MAKE) db-mode-check NS="$$NS"; \
+	$(MAKE) db-port-forward-check NS="$$NS"; \
 	mkdir -p "$$(dirname "$(PROD_METADATA_FILE)")"; \
 	printf 'NS=%s\nRELEASE=%s\nURL=%s\nTAG=%s\n' "$$NS" "$(E2E_RELEASE)" "https://$$DEPLOY_HOST" "$$TAG" > "$(PROD_METADATA_FILE)"; \
 	echo "Production deployment ready."; \
@@ -606,6 +617,37 @@ public-exposure-audit: ## Verify frontend route is public and backend remains pr
 		exit 1; \
 	fi; \
 	echo "Exposure audit passed: frontend route exists, backend is internal-only."
+
+db-mode-check: ## Verify deployed backend is wired for Azure SQL mode
+	@set -e; \
+	NS="$${NS:-$(PROD_NAMESPACE)}"; \
+	RELEASE="$${RELEASE:-$(E2E_RELEASE)}"; \
+	DEPLOY="$${DEPLOY:-$$RELEASE-backend}"; \
+	ERR_FILE="$$(mktemp /tmp/sre-db-mode-check-oc.err.XXXXXX)"; \
+	trap 'rm -f "$$ERR_FILE"' EXIT INT TERM; \
+	if ! oc -n "$$NS" get deployment "$$DEPLOY" >/dev/null 2>"$$ERR_FILE"; then \
+		echo "Cannot access deployment $$NS/$$DEPLOY."; \
+		cat "$$ERR_FILE"; \
+		exit 1; \
+	fi; \
+	STORAGE_BACKEND=$$(oc -n "$$NS" get deployment "$$DEPLOY" -o jsonpath="{.spec.template.spec.containers[0].env[?(@.name=='STORAGE_BACKEND')].value}"); \
+	DB_SECRET_NAME=$$(oc -n "$$NS" get deployment "$$DEPLOY" -o jsonpath="{.spec.template.spec.containers[0].env[?(@.name=='DATABASE_URL')].valueFrom.secretKeyRef.name}"); \
+	DB_SECRET_KEY=$$(oc -n "$$NS" get deployment "$$DEPLOY" -o jsonpath="{.spec.template.spec.containers[0].env[?(@.name=='DATABASE_URL')].valueFrom.secretKeyRef.key}"); \
+	if [ "$$STORAGE_BACKEND" != "mssql" ]; then \
+		echo "Expected STORAGE_BACKEND=mssql for $$NS/$$DEPLOY, found '$${STORAGE_BACKEND:-<unset>}'."; \
+		exit 1; \
+	fi; \
+	if [ -z "$$DB_SECRET_NAME" ] || [ -z "$$DB_SECRET_KEY" ]; then \
+		echo "DATABASE_URL secret ref not found on deployment $$NS/$$DEPLOY."; \
+		echo "Make sure this release uses database.enabled=true."; \
+		exit 1; \
+	fi; \
+	if ! oc -n "$$NS" get secret "$$DB_SECRET_NAME" >/dev/null 2>"$$ERR_FILE"; then \
+		echo "Cannot access secret $$NS/$$DB_SECRET_NAME."; \
+		cat "$$ERR_FILE"; \
+		exit 1; \
+	fi; \
+	echo "DB mode check passed: $$NS/$$DEPLOY uses STORAGE_BACKEND=mssql with $$DB_SECRET_NAME/$$DB_SECRET_KEY."
 
 db-port-forward-check: ## Verify backend-to-DB path through local oc port-forward fallback
 	@set -e; \
@@ -720,6 +762,7 @@ prod-up-final: geneva-suppression-check env-check ## Deploy final env then run e
 	fi; \
 	$(MAKE) prod-up DB_SECRET_NAME="$(DB_SECRET_NAME)"; \
 	$(MAKE) public-exposure-audit NS="$(PROD_NAMESPACE)"; \
+	$(MAKE) db-mode-check NS="$(PROD_NAMESPACE)"; \
 	$(MAKE) db-port-forward-check NS="$(PROD_NAMESPACE)"
 
 # ──────────────────────────────────────────────
