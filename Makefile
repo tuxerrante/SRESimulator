@@ -71,6 +71,7 @@ ARO_LOGIN_MISSING_VARS := $(strip \
 # ──────────────────────────────────────────────
 help: ## Show this help
 	@grep -hE '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
+		LC_ALL=C sort -t ':' -k1,1 | \
 		awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-24s\033[0m %s\n", $$1, $$2}'
 
 # ──────────────────────────────────────────────
