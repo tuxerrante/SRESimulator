@@ -17,7 +17,7 @@ assert_contains() {
 
 assert_target_order() {
   local target=$1 first=$2 second=$3 file=$4
-  python3 - "$target" "$first" "$second" "$file" <<'PY'
+  if ! python3 - "$target" "$first" "$second" "$file" <<'PY'
 import sys
 from pathlib import Path
 
@@ -41,10 +41,12 @@ for idx, line in enumerate(lines, start=1):
 if first_line is None or second_line is None or first_line >= second_line:
     raise SystemExit(1)
 PY
-  [[ $? -eq 0 ]] || fail "expected '$first' before '$second' inside target '$target'"
+  then
+    fail "expected '$first' before '$second' inside target '$target'"
+  fi
 }
 
-assert_missing_function() {
+assert_function_exists() {
   local name=$1
   if ! declare -F "$name" >/dev/null; then
     fail "expected shell helper '$name' to exist"
@@ -73,7 +75,13 @@ case "${1:-}" in
     if [[ "${2:-}" == "secret/sre-sql-creds" || "${2:-}" == "secret" && "${3:-}" == "sre-sql-creds" ]]; then
       exit 0
     fi
-    echo "Error from server (NotFound): secrets \"${3:-${2:-unknown}}\" not found" >&2
+    secret_name="${2:-unknown}"
+    if [[ "$secret_name" == secret/* ]]; then
+      secret_name="${secret_name#secret/}"
+    elif [[ "$secret_name" == "secret" ]]; then
+      secret_name="${3:-unknown}"
+    fi
+    echo "Error from server (NotFound): secrets \"$secret_name\" not found" >&2
     exit 1
     ;;
   *)
@@ -89,8 +97,8 @@ run_helper_tests() {
   # shellcheck disable=SC1091
   source "$ROOT_DIR/scripts/aro-deploy.sh"
 
-  assert_missing_function "require_prod_db_secret_name"
-  assert_missing_function "require_db_secret_exists_in_namespace"
+  assert_function_exists "require_prod_db_secret_name"
+  assert_function_exists "require_db_secret_exists_in_namespace"
 
   if DB_SECRET_NAME="" require_prod_db_secret_name >"$TMP_DIR/missing-db-secret.txt" 2>&1; then
     fail "require_prod_db_secret_name should fail when DB_SECRET_NAME is empty"
