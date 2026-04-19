@@ -93,7 +93,7 @@ function getBuiltInReport(report) {
     };
   }
 
-  throw new Error(`[db-inspect] Unknown REPORT '${report}'.`);
+  throw new Error(`Unknown REPORT '${report}'.`);
 }
 
 function sleep(ms) {
