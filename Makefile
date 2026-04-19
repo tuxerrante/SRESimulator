@@ -4,8 +4,6 @@
        typecheck typecheck-backend validate \
        security audit lockfile-lint gitleaks grype \
        test test-shell test-integration test-mssql dev-db smoke-backend-mssql smoke-local-vertex env-check aro-login e2e-azure-route e2e-azure-route-up e2e-azure-route-refresh e2e-azure-route-down \
-       prod-up prod-up-tag prod-down prod-status public-exposure-audit db-mode-check db-port-forward-check db-inspect db-inspect-live geneva-suppression-check prod-up-final \
-       build dev start capture-readme-hero \
        prod-up prod-up-tag prod-down prod-status public-exposure-audit db-mode-check db-port-forward-check db-inspect db-inspect-live db-admin-stats db-admin-stats-live geneva-suppression-check prod-up-final \
        build dev start capture-readme-hero \
        docker-build-frontend docker-build-backend docker-build \
