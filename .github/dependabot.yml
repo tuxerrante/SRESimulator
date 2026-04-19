@@ -21,6 +21,13 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 10
+    ignore:
+      - dependency-name: vitest
+        versions:
+          - 4.1.4
+      - dependency-name: "@vitest/coverage-v8"
+        versions:
+          - 4.1.4
 
   - package-ecosystem: github-actions
     directory: /
