@@ -279,6 +279,14 @@ Streaming chat endpoint. Builds a system prompt with Dungeon Master persona, met
 
 Simulates command execution. Given an `oc`, KQL, or Geneva command and the current scenario, the configured provider generates realistic output consistent with the incident. In `AI_MOCK_MODE=true`, returns mock command output. Falls back to mock output when reasoning models exhaust the completion budget.
 
+### `POST /api/gameplay`
+
+Records gameplay lifecycle telemetry events (`started`, `completed`, `abandoned`) tied to a session token. Completion and abandonment events may include command/chat counts, score snapshots, and free-form metadata from the frontend runtime.
+
+### `GET /api/gameplay/admin`
+
+Returns aggregate gameplay analytics derived from the latest lifecycle event per session, including completion and abandonment rates, per-difficulty breakdowns, top scenarios, and recent session summaries.
+
 ### `GET /api/ai/readiness`
 
 Returns AI runtime readiness checks (safe diagnostics only, no secrets).
@@ -305,7 +313,8 @@ Best for local development and single-replica deployments.
 - **Sessions**: In-memory `Map` with 24h TTL. Lost on pod restart.
 - **Leaderboard**: JSON file on PVC (`data/leaderboard.json`). Writes are
   serialized through an in-process async mutex.
-- **Metrics**: Log-only (no persistent storage).
+- **Metrics**: In-memory only. Supports current-process gameplay lifecycle
+  analytics but does not survive pod restarts.
 
 Constraints:
 
@@ -323,8 +332,10 @@ Database free tier (100K vCore-seconds/month, 32 GB storage, $0/month).
   to atomically keep the best score per (nickname, difficulty).
   Per-difficulty trim to 10 entries happens after each insert.
 - **Metrics**: Stored in `gameplay_metrics` table. Captures per-session
-  analytics (commands executed, scoring events, AI token consumption) with
-  an open JSON `metadata` column for future extensibility.
+  lifecycle events (`started`, `completed`, `abandoned`) plus aggregate-friendly
+  fields (command count, score total, grade) and an open JSON `metadata`
+  column for future extensibility. Admin analytics are computed from the
+  latest event for each session token.
 
 To enable:
 

@@ -59,6 +59,7 @@ async function postJson(
 describe("POST /api/scenario", () => {
   const originalEnv: Record<string, string | undefined> = {};
   let scenarioRouter: typeof import("./scenario").scenarioRouter;
+  let getMetricsStore: typeof import("../lib/storage").getMetricsStore;
 
   beforeAll(async () => {
     originalEnv.AI_MOCK_MODE = process.env.AI_MOCK_MODE;
@@ -68,6 +69,7 @@ describe("POST /api/scenario", () => {
 
     const storageModule = await import("../lib/storage");
     await storageModule.initStorage();
+    getMetricsStore = storageModule.getMetricsStore;
 
     const scenarioModule = await import("./scenario");
     scenarioRouter = scenarioModule.scenarioRouter;
@@ -97,6 +99,29 @@ describe("POST /api/scenario", () => {
     const scenario = res.body.scenario as Record<string, unknown>;
     expect(scenario.difficulty).toBe("easy");
     expect(scenario.id).toBe("scenario_mock_easy");
+  });
+
+  it("records a started gameplay lifecycle event when a session is created", async () => {
+    const app = createApp(scenarioRouter);
+    const before = await getMetricsStore().getGameplayAnalytics();
+
+    const res = await postJson(app, "/api/scenario", {
+      difficulty: "medium",
+    });
+
+    expect(res.status).toBe(200);
+    const analytics = await getMetricsStore().getGameplayAnalytics();
+    expect(analytics.summary.totalSessions).toBe(before.summary.totalSessions + 1);
+    expect(analytics.summary.inProgressSessions).toBe(before.summary.inProgressSessions + 1);
+    expect(analytics.summary).toMatchObject({
+      completedSessions: 0,
+      abandonedSessions: 0,
+    });
+    expect(analytics.recentSessions[0]).toMatchObject({
+      sessionToken: res.body.sessionToken,
+      lifecycleState: "started",
+      difficulty: "medium",
+    });
   });
 
   it("rejects invalid difficulty", async () => {
