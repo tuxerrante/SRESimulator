@@ -1,10 +1,11 @@
 import { spawn } from "node:child_process";
+import { createRequire } from "node:module";
 import { createWriteStream } from "node:fs";
 import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import process from "node:process";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -12,13 +13,13 @@ const repoRoot = path.resolve(__dirname, "..");
 const frontendDir = path.join(repoRoot, "frontend");
 const outputGif = path.join(repoRoot, "img", "readme-gameplay-hero.gif");
 const outputPoster = path.join(repoRoot, "img", "readme-gameplay-hero-poster.png");
-const playwrightEntry = path.join(frontendDir, "node_modules", "playwright", "index.mjs");
+const frontendRequire = createRequire(path.join(frontendDir, "package.json"));
 
 const FRONTEND_URL = "http://127.0.0.1:3100";
 const VIEWPORT = { width: 1440, height: 900 };
 
-await assertFile(playwrightEntry, "Playwright is missing. Run `make install` and ensure frontend dependencies are installed.");
-const { chromium } = await import(pathToFileURL(playwrightEntry).href);
+await assertPlaywrightInstalled();
+const { chromium } = frontendRequire("playwright");
 
 const runtimeDir = await mkdtemp(path.join(tmpdir(), "sre-readme-hero-"));
 const framesDir = path.join(runtimeDir, "frames");
@@ -35,6 +36,14 @@ async function assertFile(filePath, message) {
     await access(filePath);
   } catch {
     throw new Error(message);
+  }
+}
+
+async function assertPlaywrightInstalled() {
+  try {
+    frontendRequire.resolve("playwright");
+  } catch {
+    throw new Error("Playwright is missing. Run `make install` and ensure frontend dependencies are installed.");
   }
 }
 
@@ -184,7 +193,18 @@ async function assembleGif(frames) {
     )
   );
 
+  await assertPythonPillow();
   await runCommand("python3", ["-c", pythonAssemblerScript(), manifestPath, outputGif, outputPoster], repoRoot);
+}
+
+async function assertPythonPillow() {
+  try {
+    await runCommand("python3", ["-c", "import PIL"], repoRoot);
+  } catch {
+    throw new Error(
+      "Pillow is required to build the README hero GIF. Install it with `python3 -m pip install Pillow` and rerun `make capture-readme-hero`."
+    );
+  }
 }
 
 async function runCommand(command, args, cwd) {
