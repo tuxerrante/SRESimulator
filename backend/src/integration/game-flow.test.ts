@@ -8,6 +8,8 @@ import {
   isExternalTarget,
   startLocalServer,
   postChatSSE,
+  getExpectedScenarioTrafficSource,
+  getScenarioRequestHeaders,
 } from "./helpers";
 
 interface ScenarioResponse {
@@ -32,10 +34,13 @@ interface ErrorResponse {
 let baseUrl: string;
 let localServer: Server | null = null;
 let savedMockMode: string | undefined;
+let savedTrafficToken: string | undefined;
 
 async function createFullApp(): Promise<Express> {
   savedMockMode = process.env.AI_MOCK_MODE;
+  savedTrafficToken = process.env.AUTOMATED_TRAFFIC_TOKEN;
   process.env.AI_MOCK_MODE = "true";
+  process.env.AUTOMATED_TRAFFIC_TOKEN = process.env.AUTOMATED_TRAFFIC_TOKEN ?? "local-test-traffic-token";
   const { initStorage } = await import("../lib/storage");
   await initStorage();
   const { default: express } = await import("express");
@@ -80,6 +85,11 @@ afterAll(() => {
   } else {
     process.env.AI_MOCK_MODE = savedMockMode;
   }
+  if (savedTrafficToken === undefined) {
+    delete process.env.AUTOMATED_TRAFFIC_TOKEN;
+  } else {
+    process.env.AUTOMATED_TRAFFIC_TOKEN = savedTrafficToken;
+  }
 });
 
 describe("health endpoints", () => {
@@ -105,7 +115,10 @@ describe("full game flow: scenario -> chat -> command -> scores", () => {
   it("POST /api/scenario creates a scenario and session token", async () => {
     const res = await fetch(`${baseUrl}/api/scenario`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        ...getScenarioRequestHeaders(),
+      },
       body: JSON.stringify({ difficulty: "easy" }),
     });
     expect(res.status).toBe(200);
@@ -237,6 +250,7 @@ describe("full game flow: scenario -> chat -> command -> scores", () => {
     expect(body.nickname).toBe("TestSRE");
     expect(body.difficulty).toBe("easy");
     expect(body.score.total).toBe(75);
+    expect(body.trafficSource).toBe(getExpectedScenarioTrafficSource());
   });
 
   it("POST /api/scores rejects reuse of consumed session token", async () => {

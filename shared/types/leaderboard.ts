@@ -1,6 +1,8 @@
 import type { Difficulty } from "./game";
 import type { Score } from "./scoring";
 
+export type TrafficSource = "player" | "automated";
+
 export interface LeaderboardEntry {
   id: string;
   nickname: string;
@@ -11,6 +13,7 @@ export interface LeaderboardEntry {
   durationMs: number;
   scenarioTitle: string;
   timestamp: number;
+  trafficSource?: TrafficSource;
 }
 
 export interface HallOfFameEntry {

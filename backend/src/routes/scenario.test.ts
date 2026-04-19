@@ -11,7 +11,8 @@ function createApp(scenarioRouter: import("express").Router) {
 async function postJson(
   app: express.Express,
   path: string,
-  body: unknown
+  body: unknown,
+  headers: Record<string, string> = {},
 ): Promise<{ status: number; body: Record<string, unknown> }> {
   const { request } = await import("http");
   return new Promise((resolve, reject) => {
@@ -32,6 +33,7 @@ async function postJson(
           headers: {
             "Content-Type": "application/json",
             "Content-Length": Buffer.byteLength(payload),
+            ...headers,
           },
         },
         (res) => {
@@ -59,15 +61,18 @@ async function postJson(
 describe("POST /api/scenario", () => {
   const originalEnv: Record<string, string | undefined> = {};
   let scenarioRouter: typeof import("./scenario").scenarioRouter;
+  let getSessionStore: typeof import("../lib/storage").getSessionStore;
 
   beforeAll(async () => {
     originalEnv.AI_MOCK_MODE = process.env.AI_MOCK_MODE;
+    originalEnv.AUTOMATED_TRAFFIC_TOKEN = process.env.AUTOMATED_TRAFFIC_TOKEN;
     process.env.AI_MOCK_MODE = "true";
 
     vi.resetModules();
 
     const storageModule = await import("../lib/storage");
     await storageModule.initStorage();
+    getSessionStore = storageModule.getSessionStore;
 
     const scenarioModule = await import("./scenario");
     scenarioRouter = scenarioModule.scenarioRouter;
@@ -83,6 +88,11 @@ describe("POST /api/scenario", () => {
     } else {
       process.env.AI_MOCK_MODE = originalEnv.AI_MOCK_MODE;
     }
+    if (originalEnv.AUTOMATED_TRAFFIC_TOKEN === undefined) {
+      delete process.env.AUTOMATED_TRAFFIC_TOKEN;
+    } else {
+      process.env.AUTOMATED_TRAFFIC_TOKEN = originalEnv.AUTOMATED_TRAFFIC_TOKEN;
+    }
   });
 
   it("returns a mock scenario and session token in mock mode", async () => {
@@ -97,6 +107,41 @@ describe("POST /api/scenario", () => {
     const scenario = res.body.scenario as Record<string, unknown>;
     expect(scenario.difficulty).toBe("easy");
     expect(scenario.id).toBe("scenario_mock_easy");
+  });
+
+  it("ignores an automated traffic header without the matching server token", async () => {
+    const app = createApp(scenarioRouter);
+    const res = await postJson(
+      app,
+      "/api/scenario",
+      { difficulty: "easy" },
+      { "x-traffic-source": "automated" },
+    );
+
+    expect(res.status).toBe(200);
+    const sessionToken = res.body.sessionToken as string;
+    const session = await getSessionStore().validateAndConsume(sessionToken);
+    expect(session?.trafficSource).toBe("player");
+  });
+
+  it("stores automated traffic when the request presents the configured server token", async () => {
+    process.env.AUTOMATED_TRAFFIC_TOKEN = "test-secret";
+
+    const app = createApp(scenarioRouter);
+    const res = await postJson(
+      app,
+      "/api/scenario",
+      { difficulty: "easy" },
+      {
+        "x-traffic-source": "automated",
+        "x-traffic-source-token": "test-secret",
+      },
+    );
+
+    expect(res.status).toBe(200);
+    const sessionToken = res.body.sessionToken as string;
+    const session = await getSessionStore().validateAndConsume(sessionToken);
+    expect(session?.trafficSource).toBe("automated");
   });
 
   it("rejects invalid difficulty", async () => {

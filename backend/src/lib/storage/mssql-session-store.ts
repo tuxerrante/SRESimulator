@@ -1,13 +1,17 @@
 import type sql from "mssql";
 import type { Difficulty } from "../../../../shared/types/game";
-import type { ISessionStore, GameSession } from "./types";
+import type { ISessionStore, GameSession, TrafficSource } from "./types";
 
 const SESSION_TTL_MS = 24 * 60 * 60 * 1000;
 
 export class MssqlSessionStore implements ISessionStore {
   constructor(private pool: sql.ConnectionPool) {}
 
-  async create(difficulty: Difficulty, scenarioTitle: string): Promise<string> {
+  async create(
+    difficulty: Difficulty,
+    scenarioTitle: string,
+    trafficSource: TrafficSource = "player"
+  ): Promise<string> {
     const token = crypto.randomUUID();
     const startTime = Date.now();
 
@@ -16,9 +20,10 @@ export class MssqlSessionStore implements ISessionStore {
       .input("difficulty", difficulty)
       .input("scenarioTitle", scenarioTitle)
       .input("startTime", startTime)
+      .input("trafficSource", trafficSource)
       .query(`
-        INSERT INTO sessions (token, difficulty, scenario_title, start_time)
-        VALUES (@token, @difficulty, @scenarioTitle, @startTime)
+        INSERT INTO sessions (token, difficulty, scenario_title, start_time, traffic_source)
+        VALUES (@token, @difficulty, @scenarioTitle, @startTime, @trafficSource)
       `);
 
     this.cleanupStale().catch((err) => {
@@ -43,6 +48,7 @@ export class MssqlSessionStore implements ISessionStore {
         scenario_title: string;
         start_time: number;
         used: boolean;
+        traffic_source: TrafficSource;
       }>(`
         UPDATE sessions
         SET used = 1
@@ -51,7 +57,8 @@ export class MssqlSessionStore implements ISessionStore {
           INSERTED.difficulty,
           INSERTED.scenario_title,
           INSERTED.start_time,
-          INSERTED.used
+          INSERTED.used,
+          INSERTED.traffic_source
         WHERE token = @token
           AND used = 0
           AND start_time > @cutoff
@@ -66,6 +73,7 @@ export class MssqlSessionStore implements ISessionStore {
       scenarioTitle: row.scenario_title,
       startTime: Number(row.start_time),
       used: true,
+      trafficSource: row.traffic_source ?? "player",
     };
   }
 

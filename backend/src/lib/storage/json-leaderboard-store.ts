@@ -15,6 +15,10 @@ function sortEntries(entries: LeaderboardEntry[]): LeaderboardEntry[] {
   });
 }
 
+function isPlayerEntry(entry: LeaderboardEntry): boolean {
+  return (entry.trafficSource ?? "player") === "player";
+}
+
 export class JsonLeaderboardStore implements ILeaderboardStore {
   private readonly dataDir: string;
   private readonly filePath: string;
@@ -56,13 +60,13 @@ export class JsonLeaderboardStore implements ILeaderboardStore {
   async getLeaderboard(difficulty?: Difficulty): Promise<LeaderboardEntry[]> {
     const entries = await this.readEntries();
     const filtered = difficulty
-      ? entries.filter((e) => e.difficulty === difficulty)
-      : entries;
+      ? entries.filter((e) => e.difficulty === difficulty && isPlayerEntry(e))
+      : entries.filter(isPlayerEntry);
     return sortEntries(filtered).slice(0, MAX_ENTRIES_PER_DIFFICULTY);
   }
 
   async getHallOfFame(): Promise<HallOfFameEntry[]> {
-    const entries = await this.readEntries();
+    const entries = (await this.readEntries()).filter(isPlayerEntry);
 
     const playerMap = new Map<
       string,
@@ -94,7 +98,10 @@ export class JsonLeaderboardStore implements ILeaderboardStore {
       const entries = await this.readEntries();
 
       const existingIdx = entries.findIndex(
-        (e) => e.nickname === entry.nickname && e.difficulty === entry.difficulty
+        (e) =>
+          e.nickname === entry.nickname &&
+          e.difficulty === entry.difficulty &&
+          (e.trafficSource ?? "player") === (entry.trafficSource ?? "player")
       );
 
       if (existingIdx !== -1) {
@@ -113,13 +120,15 @@ export class JsonLeaderboardStore implements ILeaderboardStore {
 
       const grouped: Record<string, LeaderboardEntry[]> = {};
       for (const e of entries) {
-        if (!grouped[e.difficulty]) grouped[e.difficulty] = [];
-        grouped[e.difficulty].push(e);
+        const source = e.trafficSource ?? "player";
+        const key = `${e.difficulty}:${source}`;
+        if (!grouped[key]) grouped[key] = [];
+        grouped[key].push(e);
       }
 
       const trimmed: LeaderboardEntry[] = [];
-      for (const difficulty of Object.keys(grouped)) {
-        const sorted = sortEntries(grouped[difficulty]);
+      for (const key of Object.keys(grouped)) {
+        const sorted = sortEntries(grouped[key]);
         trimmed.push(...sorted.slice(0, MAX_ENTRIES_PER_DIFFICULTY));
       }
 

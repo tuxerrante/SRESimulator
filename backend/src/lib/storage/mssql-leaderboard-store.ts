@@ -19,6 +19,7 @@ interface LeaderboardRow {
   command_count: number;
   duration_ms: number;
   scenario_title: string;
+  traffic_source: LeaderboardEntry["trafficSource"];
   created_at: Date;
 }
 
@@ -38,6 +39,7 @@ function rowToEntry(row: LeaderboardRow): LeaderboardEntry {
     commandCount: row.command_count,
     durationMs: Number(row.duration_ms),
     scenarioTitle: row.scenario_title,
+    trafficSource: row.traffic_source ?? "player",
     timestamp: row.created_at.getTime(),
   };
 }
@@ -55,11 +57,13 @@ export class MssqlLeaderboardStore implements ILeaderboardStore {
       query = `
         SELECT TOP (@limit) * FROM leaderboard_entries
         WHERE difficulty = @difficulty
+          AND traffic_source = 'player'
         ORDER BY score_total DESC, duration_ms ASC
       `;
     } else {
       query = `
         SELECT TOP (@limit) * FROM leaderboard_entries
+        WHERE traffic_source = 'player'
         ORDER BY score_total DESC, duration_ms ASC
       `;
     }
@@ -87,6 +91,7 @@ export class MssqlLeaderboardStore implements ILeaderboardStore {
           ISNULL(MAX(CASE WHEN difficulty = 'medium' THEN score_total END), 0) +
           ISNULL(MAX(CASE WHEN difficulty = 'hard'   THEN score_total END), 0) AS composite
         FROM leaderboard_entries
+        WHERE traffic_source = 'player'
         GROUP BY nickname
         ORDER BY composite DESC
       `);
@@ -103,6 +108,8 @@ export class MssqlLeaderboardStore implements ILeaderboardStore {
   }
 
   async addEntry(entry: LeaderboardEntry): Promise<LeaderboardEntry> {
+    const trafficSource = entry.trafficSource ?? "player";
+
     await this.pool.request()
       .input("id", entry.id)
       .input("nickname", entry.nickname)
@@ -116,10 +123,18 @@ export class MssqlLeaderboardStore implements ILeaderboardStore {
       .input("commandCount", entry.commandCount)
       .input("durationMs", entry.durationMs)
       .input("scenarioTitle", entry.scenarioTitle)
+      .input("trafficSource", trafficSource)
       .query(`
         MERGE leaderboard_entries AS target
-        USING (SELECT @nickname AS nickname, @difficulty AS difficulty) AS source
-        ON target.nickname = source.nickname AND target.difficulty = source.difficulty
+        USING (
+          SELECT
+            @nickname AS nickname,
+            @difficulty AS difficulty,
+            @trafficSource AS traffic_source
+        ) AS source
+        ON target.nickname = source.nickname
+          AND target.difficulty = source.difficulty
+          AND target.traffic_source = source.traffic_source
         WHEN MATCHED AND (@scoreTotal > target.score_total OR (@scoreTotal = target.score_total AND @durationMs < target.duration_ms)) THEN
           UPDATE SET
             id = @id,
@@ -132,31 +147,35 @@ export class MssqlLeaderboardStore implements ILeaderboardStore {
             command_count = @commandCount,
             duration_ms = @durationMs,
             scenario_title = @scenarioTitle,
+            traffic_source = @trafficSource,
             created_at = SYSDATETIMEOFFSET()
         WHEN NOT MATCHED THEN
           INSERT (id, nickname, difficulty, score_efficiency, score_safety,
                   score_documentation, score_accuracy, score_total,
-                  grade, command_count, duration_ms, scenario_title)
+                  grade, command_count, duration_ms, scenario_title, traffic_source)
           VALUES (@id, @nickname, @difficulty, @scoreEfficiency, @scoreSafety,
                   @scoreDocumentation, @scoreAccuracy, @scoreTotal,
-                  @grade, @commandCount, @durationMs, @scenarioTitle);
+                  @grade, @commandCount, @durationMs, @scenarioTitle, @trafficSource);
       `);
 
-    await this.trimPerDifficulty(entry.difficulty);
+    await this.trimPerDifficulty(entry.difficulty, trafficSource);
 
     return entry;
   }
 
-  private async trimPerDifficulty(difficulty: Difficulty): Promise<void> {
+  private async trimPerDifficulty(difficulty: Difficulty, trafficSource: NonNullable<LeaderboardEntry["trafficSource"]>): Promise<void> {
     await this.pool.request()
       .input("difficulty", difficulty)
+      .input("trafficSource", trafficSource)
       .input("keepCount", MAX_ENTRIES_PER_DIFFICULTY)
       .query(`
         DELETE FROM leaderboard_entries
         WHERE difficulty = @difficulty
+          AND traffic_source = @trafficSource
           AND id NOT IN (
             SELECT TOP (@keepCount) id FROM leaderboard_entries
             WHERE difficulty = @difficulty
+              AND traffic_source = @trafficSource
             ORDER BY score_total DESC, duration_ms ASC
           )
       `);

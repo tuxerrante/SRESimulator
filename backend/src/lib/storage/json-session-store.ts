@@ -1,5 +1,5 @@
 import type { Difficulty } from "../../../../shared/types/game";
-import type { ISessionStore, GameSession } from "./types";
+import type { ISessionStore, GameSession, TrafficSource } from "./types";
 
 const sessions = new Map<string, GameSession>();
 const SESSION_TTL_MS = 24 * 60 * 60 * 1000;
@@ -14,7 +14,11 @@ function cleanup() {
 }
 
 export class JsonSessionStore implements ISessionStore {
-  async create(difficulty: Difficulty, scenarioTitle: string): Promise<string> {
+  async create(
+    difficulty: Difficulty,
+    scenarioTitle: string,
+    trafficSource: TrafficSource = "player"
+  ): Promise<string> {
     cleanup();
     const token = crypto.randomUUID();
     sessions.set(token, {
@@ -23,6 +27,7 @@ export class JsonSessionStore implements ISessionStore {
       scenarioTitle,
       startTime: Date.now(),
       used: false,
+      trafficSource,
     });
     return token;
   }

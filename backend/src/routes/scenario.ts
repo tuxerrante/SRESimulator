@@ -6,6 +6,7 @@ import { generateMockScenario } from "../lib/mock-ai";
 import { generateAiText, AiThrottledError } from "../lib/ai-runtime";
 import { utcNow } from "../lib/sim-clock";
 import type { Difficulty, Scenario } from "../../../shared/types/game";
+import type { TrafficSource } from "../lib/storage";
 
 export const scenarioRouter = Router();
 const VALID_DIFFICULTIES: Difficulty[] = ["easy", "medium", "hard"];
@@ -14,10 +15,27 @@ interface ScenarioRequestBody {
   difficulty: Difficulty;
 }
 
+function getTrafficSource(req: Request): TrafficSource {
+  const expectedToken = process.env.AUTOMATED_TRAFFIC_TOKEN?.trim() ?? "";
+  const receivedToken = req.get("x-traffic-source-token")?.trim() ?? "";
+  const requestedSource = req.get("x-traffic-source")?.trim();
+
+  if (
+    expectedToken &&
+    receivedToken === expectedToken &&
+    requestedSource === "automated"
+  ) {
+    return "automated";
+  }
+
+  return "player";
+}
+
 scenarioRouter.post("/", async (req: Request, res: Response) => {
   try {
     const body: ScenarioRequestBody = req.body;
     const { difficulty } = body;
+    const trafficSource = getTrafficSource(req);
 
     if (!VALID_DIFFICULTIES.includes(difficulty)) {
       res.status(400).json({
@@ -29,7 +47,11 @@ scenarioRouter.post("/", async (req: Request, res: Response) => {
     const readiness = getAiReadiness();
     if (readiness.mockMode) {
       const scenario = generateMockScenario(difficulty);
-      const sessionToken = await getSessionStore().create(difficulty, scenario.title);
+      const sessionToken = await getSessionStore().create(
+        difficulty,
+        scenario.title,
+        trafficSource
+      );
       res.json({ scenario, sessionToken });
       return;
     }
@@ -131,7 +153,11 @@ ${scenarioContext}`,
 
     const scenario: Scenario = JSON.parse(text);
 
-    const sessionToken = await getSessionStore().create(difficulty, scenario.title);
+    const sessionToken = await getSessionStore().create(
+      difficulty,
+      scenario.title,
+      trafficSource
+    );
 
     res.json({ scenario, sessionToken });
   } catch (error) {

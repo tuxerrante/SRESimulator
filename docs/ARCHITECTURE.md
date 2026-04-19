@@ -481,6 +481,8 @@ For read-only inspection of live Azure SQL contents, use the local helper first:
 
 ```bash
 make db-inspect NS=sre-simulator
+# quick player-only completion stats by difficulty
+make db-admin-stats NS=sre-simulator
 ```
 
 If your local machine cannot reach Azure SQL directly because of firewall
@@ -488,12 +490,17 @@ rules, run the same inspector inside the deployed backend pod instead:
 
 ```bash
 make db-inspect-live NS=sre-simulator
+# quick player-only completion stats by difficulty
+make db-admin-stats-live NS=sre-simulator
 # or with a custom read-only query:
 NS=sre-simulator SQL="SELECT TOP 5 * FROM leaderboard_entries ORDER BY created_at DESC" make db-inspect-live
 ```
 
 For custom queries, prefer single quotes around the outer `SQL=...` value when
 your statement contains shell-sensitive characters.
+
+The inspector retries transient SQL connection timeouts so Azure SQL serverless
+resume latency does not fail the first read-only inspection attempt immediately.
 
 #### Teardown
 

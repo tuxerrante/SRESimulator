@@ -19,6 +19,32 @@ export interface ChatRequestBody {
   currentPhase: string;
 }
 
+export function getAutomatedTrafficHeaders(): Record<string, string> {
+  const token = process.env.AUTOMATED_TRAFFIC_TOKEN?.trim() ?? "";
+  if (!token) return {};
+
+  return {
+    "x-traffic-source": "automated",
+    "x-traffic-source-token": token,
+  };
+}
+
+export function getScenarioRequestHeaders(): Record<string, string> {
+  if (isExternalTarget()) {
+    return {};
+  }
+
+  return getAutomatedTrafficHeaders();
+}
+
+export function getExpectedScenarioTrafficSource(): "player" | "automated" {
+  if (isExternalTarget()) {
+    return "player";
+  }
+
+  return process.env.AUTOMATED_TRAFFIC_TOKEN?.trim() ? "automated" : "player";
+}
+
 /**
  * Return the external backend URL from E2E_BACKEND_URL.
  * When unset, returns "" — the test setup in each suite handles

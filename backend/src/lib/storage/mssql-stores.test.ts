@@ -41,6 +41,7 @@ describe("MssqlSessionStore", () => {
     expect(req.input).toHaveBeenCalledWith("token", token);
     expect(req.input).toHaveBeenCalledWith("difficulty", "easy");
     expect(req.input).toHaveBeenCalledWith("scenarioTitle", "Test Scenario");
+    expect(req.input).toHaveBeenCalledWith("trafficSource", "player");
     expect(req.query).toHaveBeenCalled();
     const sql = req.query.mock.calls[0][0] as string;
     expect(sql).toContain("INSERT INTO sessions");
@@ -54,6 +55,7 @@ describe("MssqlSessionStore", () => {
       scenario_title: "Etcd Quorum Loss",
       start_time: 1700000000000,
       used: true,
+      traffic_source: "automated" as const,
     };
     const mock = createMockPool([row]);
     store = new MssqlSessionStore(mock.pool);
@@ -66,6 +68,7 @@ describe("MssqlSessionStore", () => {
       scenarioTitle: "Etcd Quorum Loss",
       startTime: 1700000000000,
       used: true,
+      trafficSource: "automated",
     });
   });
 
@@ -101,6 +104,7 @@ describe("MssqlLeaderboardStore", () => {
     expect(req.input).toHaveBeenCalledWith("difficulty", "medium");
     const sql = req.query.mock.calls[0][0] as string;
     expect(sql).toContain("WHERE difficulty = @difficulty");
+    expect(sql).toContain("traffic_source = 'player'");
   });
 
   it("getLeaderboard() maps rows to LeaderboardEntry", async () => {
@@ -117,6 +121,7 @@ describe("MssqlLeaderboardStore", () => {
       command_count: 4,
       duration_ms: 120000,
       scenario_title: "The Sleeping Cluster",
+      traffic_source: "automated" as const,
       created_at: new Date("2025-01-15T10:00:00Z"),
     };
     const { pool } = createMockPool([row]);
@@ -140,6 +145,7 @@ describe("MssqlLeaderboardStore", () => {
       commandCount: 4,
       durationMs: 120000,
       scenarioTitle: "The Sleeping Cluster",
+      trafficSource: "automated",
       timestamp: new Date("2025-01-15T10:00:00Z").getTime(),
     });
   });
@@ -166,6 +172,28 @@ describe("MssqlLeaderboardStore", () => {
     ]);
   });
 
+  it("addEntry() upserts within the same traffic source only", async () => {
+    const entry = {
+      id: "e2",
+      nickname: "player",
+      difficulty: "easy" as const,
+      score: { efficiency: 20, safety: 20, documentation: 20, accuracy: 20, total: 80 },
+      grade: "B",
+      commandCount: 6,
+      durationMs: 90000,
+      scenarioTitle: "Master Down",
+      trafficSource: "automated" as const,
+      timestamp: Date.now(),
+    };
+    const { pool, req } = createMockPool();
+    const store = new MssqlLeaderboardStore(pool);
+
+    await store.addEntry(entry);
+
+    const sql = req.query.mock.calls[0][0] as string;
+    expect(sql).toContain("target.traffic_source = source.traffic_source");
+  });
+
   it("addEntry() uses MERGE for upsert and trims", async () => {
     const entry = {
       id: "e1",
@@ -176,6 +204,7 @@ describe("MssqlLeaderboardStore", () => {
       commandCount: 6,
       durationMs: 90000,
       scenarioTitle: "Master Down",
+      trafficSource: "automated" as const,
       timestamp: Date.now(),
     };
     const { pool, req } = createMockPool();
@@ -184,9 +213,36 @@ describe("MssqlLeaderboardStore", () => {
     const result = await store.addEntry(entry);
 
     expect(result).toBe(entry);
+    expect(req.input).toHaveBeenCalledWith("trafficSource", "automated");
     const queries = req.query.mock.calls.map((c: unknown[]) => c[0] as string);
     expect(queries.some((q: string) => q.includes("MERGE"))).toBe(true);
     expect(queries.some((q: string) => q.includes("DELETE FROM leaderboard_entries"))).toBe(true);
+  });
+
+  it("addEntry() trims only the entry traffic source", async () => {
+    const entry = {
+      id: "e3",
+      nickname: "player",
+      difficulty: "hard" as const,
+      score: { efficiency: 20, safety: 20, documentation: 20, accuracy: 20, total: 80 },
+      grade: "B",
+      commandCount: 6,
+      durationMs: 90000,
+      scenarioTitle: "Master Down",
+      trafficSource: "automated" as const,
+      timestamp: Date.now(),
+    };
+    const { pool, req } = createMockPool();
+    const store = new MssqlLeaderboardStore(pool);
+
+    await store.addEntry(entry);
+
+    const trimQueries = req.query.mock.calls
+      .map((c: unknown[]) => c[0] as string)
+      .filter((sql: string) => sql.includes("DELETE FROM leaderboard_entries"));
+
+    expect(trimQueries).toHaveLength(1);
+    expect(req.input).toHaveBeenCalledWith("trafficSource", "automated");
   });
 });
 
@@ -207,11 +263,13 @@ describe("MssqlMetricsStore", () => {
       aiCompletionTokens: 2000,
       durationMs: 300000,
       completed: true,
+      trafficSource: "automated",
       metadata: { version: "1.0" },
     });
 
     expect(req.input).toHaveBeenCalledWith("sessionToken", "tok-1");
     expect(req.input).toHaveBeenCalledWith("nickname", "tester");
+    expect(req.input).toHaveBeenCalledWith("trafficSource", "automated");
     expect(req.input).toHaveBeenCalledWith(
       "commandsExecuted",
       JSON.stringify(["oc get pods"])
@@ -250,6 +308,7 @@ describe("MssqlMetricsStore", () => {
       ai_completion_tokens: 1500,
       duration_ms: 60000,
       completed: true,
+      traffic_source: "automated",
       metadata: '{"v":2}',
       created_at: new Date("2025-06-01T12:00:00Z"),
     };
@@ -263,5 +322,6 @@ describe("MssqlMetricsStore", () => {
     expect(history[0].scoringEvents).toEqual([{ type: "accuracy", points: 10 }]);
     expect(history[0].metadata).toEqual({ v: 2 });
     expect(history[0].durationMs).toBe(60000);
+    expect(history[0].trafficSource).toBe("automated");
   });
 });
