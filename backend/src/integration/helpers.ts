@@ -29,6 +29,22 @@ export function getAutomatedTrafficHeaders(): Record<string, string> {
   };
 }
 
+export function getScenarioRequestHeaders(): Record<string, string> {
+  if (isExternalTarget()) {
+    return {};
+  }
+
+  return getAutomatedTrafficHeaders();
+}
+
+export function getExpectedScenarioTrafficSource(): "player" | "automated" {
+  if (isExternalTarget()) {
+    return "player";
+  }
+
+  return process.env.AUTOMATED_TRAFFIC_TOKEN?.trim() ? "automated" : "player";
+}
+
 /**
  * Return the external backend URL from E2E_BACKEND_URL.
  * When unset, returns "" — the test setup in each suite handles

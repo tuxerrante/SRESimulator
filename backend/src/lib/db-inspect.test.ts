@@ -161,4 +161,35 @@ describe("db-inspect CLI", () => {
     expect(stdout).toContain("traffic_source column not found");
     expect(stdout).toContain("hard");
   });
+
+  it("prints the unknown report error with a single db-inspect prefix", async () => {
+    const fakeNodePath = await createFakeMssqlModule();
+    tempDirs.push(fakeNodePath);
+
+    await expect(
+      execFileAsync(process.execPath, [SCRIPT_PATH], {
+        env: {
+          ...process.env,
+          DATABASE_URL: "Server=fake;Database=test;",
+          NODE_PATH: fakeNodePath,
+          REPORT: "unknown-report",
+        },
+      }),
+    ).rejects.toMatchObject({
+      stderr: expect.stringContaining("[db-inspect] Unknown REPORT 'unknown-report'."),
+    });
+
+    await expect(
+      execFileAsync(process.execPath, [SCRIPT_PATH], {
+        env: {
+          ...process.env,
+          DATABASE_URL: "Server=fake;Database=test;",
+          NODE_PATH: fakeNodePath,
+          REPORT: "unknown-report",
+        },
+      }),
+    ).rejects.not.toMatchObject({
+      stderr: expect.stringContaining("[db-inspect] [db-inspect] Unknown REPORT 'unknown-report'."),
+    });
+  });
 });

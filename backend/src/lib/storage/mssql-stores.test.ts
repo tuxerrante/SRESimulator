@@ -218,6 +218,32 @@ describe("MssqlLeaderboardStore", () => {
     expect(queries.some((q: string) => q.includes("MERGE"))).toBe(true);
     expect(queries.some((q: string) => q.includes("DELETE FROM leaderboard_entries"))).toBe(true);
   });
+
+  it("addEntry() trims only the entry traffic source", async () => {
+    const entry = {
+      id: "e3",
+      nickname: "player",
+      difficulty: "hard" as const,
+      score: { efficiency: 20, safety: 20, documentation: 20, accuracy: 20, total: 80 },
+      grade: "B",
+      commandCount: 6,
+      durationMs: 90000,
+      scenarioTitle: "Master Down",
+      trafficSource: "automated" as const,
+      timestamp: Date.now(),
+    };
+    const { pool, req } = createMockPool();
+    const store = new MssqlLeaderboardStore(pool);
+
+    await store.addEntry(entry);
+
+    const trimQueries = req.query.mock.calls
+      .map((c: unknown[]) => c[0] as string)
+      .filter((sql: string) => sql.includes("DELETE FROM leaderboard_entries"));
+
+    expect(trimQueries).toHaveLength(1);
+    expect(req.input).toHaveBeenCalledWith("trafficSource", "automated");
+  });
 });
 
 describe("MssqlMetricsStore", () => {

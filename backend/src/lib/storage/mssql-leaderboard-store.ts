@@ -108,6 +108,8 @@ export class MssqlLeaderboardStore implements ILeaderboardStore {
   }
 
   async addEntry(entry: LeaderboardEntry): Promise<LeaderboardEntry> {
+    const trafficSource = entry.trafficSource ?? "player";
+
     await this.pool.request()
       .input("id", entry.id)
       .input("nickname", entry.nickname)
@@ -121,7 +123,7 @@ export class MssqlLeaderboardStore implements ILeaderboardStore {
       .input("commandCount", entry.commandCount)
       .input("durationMs", entry.durationMs)
       .input("scenarioTitle", entry.scenarioTitle)
-      .input("trafficSource", entry.trafficSource ?? "player")
+      .input("trafficSource", trafficSource)
       .query(`
         MERGE leaderboard_entries AS target
         USING (
@@ -156,28 +158,26 @@ export class MssqlLeaderboardStore implements ILeaderboardStore {
                   @grade, @commandCount, @durationMs, @scenarioTitle, @trafficSource);
       `);
 
-    await this.trimPerDifficulty(entry.difficulty);
+    await this.trimPerDifficulty(entry.difficulty, trafficSource);
 
     return entry;
   }
 
-  private async trimPerDifficulty(difficulty: Difficulty): Promise<void> {
-    for (const trafficSource of ["player", "automated"] as const) {
-      await this.pool.request()
-        .input("difficulty", difficulty)
-        .input("trafficSource", trafficSource)
-        .input("keepCount", MAX_ENTRIES_PER_DIFFICULTY)
-        .query(`
-          DELETE FROM leaderboard_entries
-          WHERE difficulty = @difficulty
-            AND traffic_source = @trafficSource
-            AND id NOT IN (
-              SELECT TOP (@keepCount) id FROM leaderboard_entries
-              WHERE difficulty = @difficulty
-                AND traffic_source = @trafficSource
-              ORDER BY score_total DESC, duration_ms ASC
-            )
-        `);
-    }
+  private async trimPerDifficulty(difficulty: Difficulty, trafficSource: NonNullable<LeaderboardEntry["trafficSource"]>): Promise<void> {
+    await this.pool.request()
+      .input("difficulty", difficulty)
+      .input("trafficSource", trafficSource)
+      .input("keepCount", MAX_ENTRIES_PER_DIFFICULTY)
+      .query(`
+        DELETE FROM leaderboard_entries
+        WHERE difficulty = @difficulty
+          AND traffic_source = @trafficSource
+          AND id NOT IN (
+            SELECT TOP (@keepCount) id FROM leaderboard_entries
+            WHERE difficulty = @difficulty
+              AND traffic_source = @trafficSource
+            ORDER BY score_total DESC, duration_ms ASC
+          )
+      `);
   }
 }

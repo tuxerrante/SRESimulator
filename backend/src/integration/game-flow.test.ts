@@ -8,7 +8,8 @@ import {
   isExternalTarget,
   startLocalServer,
   postChatSSE,
-  getAutomatedTrafficHeaders,
+  getExpectedScenarioTrafficSource,
+  getScenarioRequestHeaders,
 } from "./helpers";
 
 interface ScenarioResponse {
@@ -116,7 +117,7 @@ describe("full game flow: scenario -> chat -> command -> scores", () => {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        ...getAutomatedTrafficHeaders(),
+        ...getScenarioRequestHeaders(),
       },
       body: JSON.stringify({ difficulty: "easy" }),
     });
@@ -249,9 +250,7 @@ describe("full game flow: scenario -> chat -> command -> scores", () => {
     expect(body.nickname).toBe("TestSRE");
     expect(body.difficulty).toBe("easy");
     expect(body.score.total).toBe(75);
-    expect(body.trafficSource).toBe(
-      process.env.AUTOMATED_TRAFFIC_TOKEN ? "automated" : "player",
-    );
+    expect(body.trafficSource).toBe(getExpectedScenarioTrafficSource());
   });
 
   it("POST /api/scores rejects reuse of consumed session token", async () => {
