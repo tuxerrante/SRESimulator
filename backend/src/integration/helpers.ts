@@ -19,6 +19,16 @@ export interface ChatRequestBody {
   currentPhase: string;
 }
 
+export function getAutomatedTrafficHeaders(): Record<string, string> {
+  const token = process.env.AUTOMATED_TRAFFIC_TOKEN?.trim() ?? "";
+  if (!token) return {};
+
+  return {
+    "x-traffic-source": "automated",
+    "x-traffic-source-token": token,
+  };
+}
+
 /**
  * Return the external backend URL from E2E_BACKEND_URL.
  * When unset, returns "" — the test setup in each suite handles

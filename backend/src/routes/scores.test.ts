@@ -8,7 +8,8 @@ async function httpRequest(
   app: express.Express,
   method: "GET" | "POST",
   path: string,
-  body?: unknown
+  body?: unknown,
+  extraHeaders: Record<string, string> = {},
 ): Promise<{ status: number; body: Record<string, unknown> }> {
   const { request } = await import("http");
   return new Promise((resolve, reject) => {
@@ -25,6 +26,7 @@ async function httpRequest(
         headers["Content-Type"] = "application/json";
         headers["Content-Length"] = String(Buffer.byteLength(payload));
       }
+      Object.assign(headers, extraHeaders);
       const req = request(
         {
           hostname: "127.0.0.1",
@@ -216,5 +218,33 @@ describe("scores routes", () => {
     expect(res.status).toBe(201);
     expect(res.body.nickname).toBe("testuser");
     expect(res.body.difficulty).toBe("easy");
+  });
+
+  it("POST /api/scores preserves automated traffic source from the session", async () => {
+    const token = await getSessionStore().create("easy", "Test Scenario", "automated");
+
+    const app = createApp();
+    const submit = await httpRequest(app, "POST", "/api/scores", {
+      sessionToken: token,
+      nickname: "autouser",
+      score: {
+        efficiency: 20,
+        safety: 20,
+        documentation: 20,
+        accuracy: 20,
+        total: 80,
+      },
+      grade: "A",
+      commandCount: 5,
+    });
+
+    expect(submit.status).toBe(201);
+
+    const leaderboard = await httpRequest(app, "GET", "/api/scores");
+    expect(leaderboard.status).toBe(200);
+    const entry = (leaderboard.body.entries as Record<string, unknown>[]).find(
+      (candidate) => candidate.nickname === "autouser",
+    );
+    expect(entry).toBeUndefined();
   });
 });

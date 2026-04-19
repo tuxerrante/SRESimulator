@@ -4,7 +4,14 @@ import { JsonSessionStore } from "./json-session-store";
 import { JsonLeaderboardStore } from "./json-leaderboard-store";
 import { JsonMetricsStore } from "./json-metrics-store";
 
-export type { ISessionStore, ILeaderboardStore, IMetricsStore, GameSession, GameplayRecord } from "./types";
+export type {
+  ISessionStore,
+  ILeaderboardStore,
+  IMetricsStore,
+  GameSession,
+  GameplayRecord,
+  TrafficSource,
+} from "./types";
 
 let sessionStore: ISessionStore;
 let leaderboardStore: ILeaderboardStore;

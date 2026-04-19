@@ -76,6 +76,7 @@ scoresRouter.post("/", async (req: Request, res: Response) => {
       commandCount,
       durationMs,
       scenarioTitle: session.scenarioTitle,
+      trafficSource: session.trafficSource,
       timestamp: Date.now(),
     };
 

@@ -1,12 +1,15 @@
 import type { Difficulty } from "../../../../shared/types/game";
 import type { LeaderboardEntry, HallOfFameEntry } from "../../../../shared/types/leaderboard";
 
+export type TrafficSource = "player" | "automated";
+
 export interface GameSession {
   token: string;
   difficulty: Difficulty;
   scenarioTitle: string;
   startTime: number;
   used: boolean;
+  trafficSource: TrafficSource;
 }
 
 export interface GameplayRecord {
@@ -22,12 +25,17 @@ export interface GameplayRecord {
   aiCompletionTokens?: number;
   durationMs?: number;
   completed?: boolean;
+  trafficSource?: TrafficSource;
   metadata?: Record<string, unknown>;
   createdAt?: Date;
 }
 
 export interface ISessionStore {
-  create(difficulty: Difficulty, scenarioTitle: string): Promise<string>;
+  create(
+    difficulty: Difficulty,
+    scenarioTitle: string,
+    trafficSource?: TrafficSource
+  ): Promise<string>;
   validateAndConsume(token: string): Promise<GameSession | null>;
 }
 
