@@ -9,7 +9,7 @@ hands-on game. An AI Dungeon Master generates realistic ARO incidents, and
 players investigate and resolve them using a structured SRE method.
 
 <p align="center">
-  <img src="img/landing.png" alt="Landing page" width="100%">
+  <img src="img/readme-gameplay-hero.gif" alt="Scripted gameplay demo of SRE Simulator" width="100%">
 </p>
 
 ## Why teams use it

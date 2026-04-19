@@ -5,7 +5,7 @@
        security audit lockfile-lint gitleaks grype \
        test test-shell test-integration test-mssql dev-db smoke-backend-mssql smoke-local-vertex env-check aro-login e2e-azure-route e2e-azure-route-up e2e-azure-route-refresh e2e-azure-route-down \
        prod-up prod-up-tag prod-down prod-status public-exposure-audit db-mode-check db-port-forward-check db-inspect db-inspect-live geneva-suppression-check prod-up-final \
-       build dev start \
+       build dev start capture-readme-hero \
        docker-build-frontend docker-build-backend docker-build \
        pre-commit all \
        tf-bootstrap tf-pull-secret tf-preflight tf-init tf-init-local tf-init-isolated tf-validate tf-fmt tf-test tf-plan tf-apply tf-destroy tf-kubeconfig tf-output
@@ -777,6 +777,9 @@ dev: ## Start Next.js dev server
 
 start: build ## Build and start production server
 	cd $(FRONTEND_DIR) && npm run start
+
+capture-readme-hero: ## Generate README gameplay hero GIF from local mock flow
+	node scripts/capture-readme-hero.mjs
 
 # ──────────────────────────────────────────────
 # Docker
