@@ -18,9 +18,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Harden runner
-        # v2.16.0
+        # v2.18.0
         uses: >-
-          step-security/harden-runner@fe104658747b27e96e4f7e80cd0a94068e53901d
+          step-security/harden-runner@6c3c2f2c1c457b00c10c4848d6f5491db3b629df
         with:
           egress-policy: audit
 
@@ -36,9 +36,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Harden runner
-        # v2.16.0
+        # v2.18.0
         uses: >-
-          step-security/harden-runner@fe104658747b27e96e4f7e80cd0a94068e53901d
+          step-security/harden-runner@6c3c2f2c1c457b00c10c4848d6f5491db3b629df
         with:
           egress-policy: audit
 
@@ -80,9 +80,9 @@ jobs:
       run_integration: ${{ steps.detect.outputs.run_integration }}
     steps:
       - name: Harden runner
-        # v2.16.0
+        # v2.18.0
         uses: >-
-          step-security/harden-runner@fe104658747b27e96e4f7e80cd0a94068e53901d
+          step-security/harden-runner@6c3c2f2c1c457b00c10c4848d6f5491db3b629df
         with:
           egress-policy: audit
 
@@ -168,9 +168,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Harden runner
-        # v2.16.0
+        # v2.18.0
         uses: >-
-          step-security/harden-runner@fe104658747b27e96e4f7e80cd0a94068e53901d
+          step-security/harden-runner@6c3c2f2c1c457b00c10c4848d6f5491db3b629df
         with:
           egress-policy: audit
 
@@ -215,9 +215,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Harden runner
-        # v2.16.0
+        # v2.18.0
         uses: >-
-          step-security/harden-runner@fe104658747b27e96e4f7e80cd0a94068e53901d
+          step-security/harden-runner@6c3c2f2c1c457b00c10c4848d6f5491db3b629df
         with:
           egress-policy: audit
 
@@ -286,9 +286,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Harden runner
-        # v2.16.0
+        # v2.18.0
         uses: >-
-          step-security/harden-runner@fe104658747b27e96e4f7e80cd0a94068e53901d
+          step-security/harden-runner@6c3c2f2c1c457b00c10c4848d6f5491db3b629df
         with:
           egress-policy: audit
 
@@ -344,9 +344,9 @@ jobs:
           --health-retries 10
     steps:
       - name: Harden runner
-        # v2.16.0
+        # v2.18.0
         uses: >-
-          step-security/harden-runner@fe104658747b27e96e4f7e80cd0a94068e53901d
+          step-security/harden-runner@6c3c2f2c1c457b00c10c4848d6f5491db3b629df
         with:
           egress-policy: audit
 
@@ -421,9 +421,9 @@ jobs:
       SECURITY_FAIL_LEVEL: high
     steps:
       - name: Harden runner
-        # v2.16.0
+        # v2.18.0
         uses: >-
-          step-security/harden-runner@fe104658747b27e96e4f7e80cd0a94068e53901d
+          step-security/harden-runner@6c3c2f2c1c457b00c10c4848d6f5491db3b629df
         with:
           egress-policy: audit
 
@@ -478,9 +478,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Harden runner
-        # v2.16.0
+        # v2.18.0
         uses: >-
-          step-security/harden-runner@fe104658747b27e96e4f7e80cd0a94068e53901d
+          step-security/harden-runner@6c3c2f2c1c457b00c10c4848d6f5491db3b629df
         with:
           egress-policy: audit
 
@@ -520,9 +520,9 @@ jobs:
             dockerfile: backend/Dockerfile
     steps:
       - name: Harden runner
-        # v2.16.0
+        # v2.18.0
         uses: >-
-          step-security/harden-runner@fe104658747b27e96e4f7e80cd0a94068e53901d
+          step-security/harden-runner@6c3c2f2c1c457b00c10c4848d6f5491db3b629df
         with:
           egress-policy: audit
 
@@ -645,9 +645,9 @@ jobs:
       contents: write
     steps:
       - name: Harden runner
-        # v2.16.0
+        # v2.18.0
         uses: >-
-          step-security/harden-runner@fe104658747b27e96e4f7e80cd0a94068e53901d
+          step-security/harden-runner@6c3c2f2c1c457b00c10c4848d6f5491db3b629df
         with:
           egress-policy: audit
 
