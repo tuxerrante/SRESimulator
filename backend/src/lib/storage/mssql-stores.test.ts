@@ -43,6 +43,7 @@ describe("MssqlSessionStore", () => {
     expect(req.input).toHaveBeenCalledWith("token", token);
     expect(req.input).toHaveBeenCalledWith("difficulty", "easy");
     expect(req.input).toHaveBeenCalledWith("scenarioTitle", "Test Scenario");
+    expect(req.input).toHaveBeenCalledWith("trafficSource", "player");
     expect(req.query).toHaveBeenCalled();
     const sql = req.query.mock.calls[0][0] as string;
     expect(sql).toContain("INSERT INTO sessions");
@@ -282,6 +283,7 @@ describe("MssqlLeaderboardStore", () => {
     const result = await store.addEntry(entry);
 
     expect(result).toBe(entry);
+    expect(req.input).toHaveBeenCalledWith("trafficSource", "automated");
     const queries = req.query.mock.calls.map((c: unknown[]) => c[0] as string);
     expect(queries.some((q: string) => q.includes("MERGE"))).toBe(true);
     expect(req.input).toHaveBeenCalledWith("githubUserId", "12345");
@@ -364,6 +366,7 @@ describe("MssqlMetricsStore", () => {
       scoreTotal: 88,
       grade: "B",
       completed: true,
+      trafficSource: "automated",
       metadata: { version: "1.0" },
     });
 
@@ -458,6 +461,7 @@ describe("MssqlMetricsStore", () => {
       score_total: 70,
       grade: "C",
       completed: true,
+      traffic_source: "automated",
       metadata: '{"v":2}',
       created_at: new Date("2025-06-01T12:00:00Z"),
     };

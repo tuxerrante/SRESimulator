@@ -74,7 +74,7 @@ export class JsonLeaderboardStore implements ILeaderboardStore {
   }
 
   async getHallOfFame(): Promise<HallOfFameEntry[]> {
-    const entries = await this.readEntries();
+    const entries = (await this.readEntries()).filter(isPublicPlayerEntry);
 
     const playerMap = new Map<
       string,

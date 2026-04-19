@@ -95,7 +95,7 @@ describe.skipIf(SKIP)("MssqlSessionStore (real SQL)", () => {
     );
     const store = new MssqlSessionStore(pool);
 
-    const token = await store.create("easy", "The Sleeping Cluster");
+    const token = await store.create("easy", "The Sleeping Cluster", "automated");
     createdSessionTokens.push(token);
     expect(token).toMatch(
       /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
@@ -190,6 +190,7 @@ describe.skipIf(SKIP)("MssqlLeaderboardStore (real SQL)", () => {
     expect(found).toBeDefined();
     expect(found!.nickname).toBe(entry.nickname);
     expect(found!.score.total).toBe(85);
+    expect(found!.trafficSource).toBe("player");
   });
 
   it("MERGE upserts when the same nickname+difficulty has a higher score", async () => {
@@ -281,6 +282,58 @@ describe.skipIf(SKIP)("MssqlLeaderboardStore (real SQL)", () => {
     expect(found!.scores.easy).toBe(80);
     expect(found!.scores.medium).toBe(80);
   });
+
+  it("keeps automated and player rows separate for the same nickname and difficulty", async () => {
+    const { MssqlLeaderboardStore } = await import(
+      "../lib/storage/mssql-leaderboard-store"
+    );
+    const store = new MssqlLeaderboardStore(pool);
+    const nick = trackNickname(shortId("mix"));
+
+    await store.addEntry({
+      id: crypto.randomUUID(),
+      nickname: nick,
+      difficulty: "hard",
+      score: {
+        efficiency: 25,
+        safety: 25,
+        documentation: 25,
+        accuracy: 25,
+        total: 100,
+      },
+      grade: "A+",
+      commandCount: 1,
+      durationMs: 30_000,
+      scenarioTitle: "Etcd Quorum Loss",
+      trafficSource: "automated",
+      timestamp: Date.now(),
+    });
+
+    await store.addEntry({
+      id: crypto.randomUUID(),
+      nickname: nick,
+      difficulty: "hard",
+      score: {
+        efficiency: 10,
+        safety: 10,
+        documentation: 10,
+        accuracy: 10,
+        total: 40,
+      },
+      grade: "C",
+      commandCount: 12,
+      durationMs: 300_000,
+      scenarioTitle: "Etcd Quorum Loss",
+      trafficSource: "player",
+      timestamp: Date.now(),
+    });
+
+    const entries = await store.getLeaderboard("hard");
+    const found = entries.find((e) => e.nickname === nick);
+    expect(found).toBeDefined();
+    expect(found!.trafficSource).toBe("player");
+    expect(found!.score.total).toBe(40);
+  });
 });
 
 describe.skipIf(SKIP)("MssqlPlayerStore (real SQL)", () => {
@@ -355,6 +408,7 @@ describe.skipIf(SKIP)("MssqlMetricsStore (real SQL)", () => {
       scoreTotal: 88,
       grade: "B",
       completed: true,
+      trafficSource: "automated",
       metadata: { version: "test" },
     });
 
@@ -373,6 +427,7 @@ describe.skipIf(SKIP)("MssqlMetricsStore (real SQL)", () => {
     expect(record.scoreTotal).toBe(88);
     expect(record.grade).toBe("B");
     expect(record.completed).toBe(true);
+    expect(record.trafficSource).toBe("automated");
     expect(record.metadata).toEqual({ version: "test" });
   });
 
