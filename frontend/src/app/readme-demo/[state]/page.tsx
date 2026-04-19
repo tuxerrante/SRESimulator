@@ -72,7 +72,7 @@ export default async function ReadmeDemoPage({
           <div className="rounded bg-amber-600/20 px-2 py-0.5 text-xs font-medium text-amber-400 ring-1 ring-amber-600/50">
             Reading
           </div>
-          <button className="flex items-center gap-1.5 rounded px-2 py-1 text-sm font-mono hover:bg-zinc-800 transition-colors">
+          <button type="button" className="flex items-center gap-1.5 rounded px-2 py-1 text-sm font-mono hover:bg-zinc-800 transition-colors">
             <span className="text-zinc-500">Score:</span>
             <span className="font-bold text-amber-400">{score}</span>
             <span className="text-zinc-600">/100</span>

@@ -1,10 +1,11 @@
 import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
 import { createWriteStream } from "node:fs";
-import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import process from "node:process";
+import { finished } from "node:stream/promises";
 import { fileURLToPath } from "node:url";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -30,14 +31,6 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function assertFile(filePath, message) {
-  try {
-    await access(filePath);
-  } catch {
-    throw new Error(message);
-  }
-}
-
 async function assertPlaywrightInstalled() {
   try {
     frontendRequire.resolve("playwright");
@@ -59,12 +52,31 @@ function startProcess(name, command, args, cwd, extraEnv = {}) {
   child.stdout.pipe(logStream);
   child.stderr.pipe(logStream);
 
+  let logStreamClosed;
+  function closeLogStream() {
+    if (!logStreamClosed) {
+      child.stdout.unpipe(logStream);
+      child.stderr.unpipe(logStream);
+      logStream.end();
+      logStreamClosed = finished(logStream).catch(() => undefined);
+    }
+    return logStreamClosed;
+  }
+
+  child.once("close", () => {
+    void closeLogStream();
+  });
+  child.once("error", () => {
+    void closeLogStream();
+  });
+
   const handle = {
     name,
     child,
     logPath,
     async stop() {
       if (child.exitCode !== null || child.signalCode !== null) {
+        await closeLogStream();
         return;
       }
       if (process.platform !== "win32") {
@@ -73,6 +85,7 @@ function startProcess(name, command, args, cwd, extraEnv = {}) {
         child.kill("SIGINT");
       }
       await waitForExit(child, 15_000);
+      await closeLogStream();
     },
   };
 
