@@ -102,7 +102,7 @@ function sleep(ms) {
 
 function isRetryableConnectError(error) {
   const message = error instanceof Error ? error.message : String(error);
-  return /failed to connect|timeout|ecconnreset|econnrefused|socket hang up/i.test(message);
+  return /failed to connect|timeout|econnreset|econnrefused|socket hang up/i.test(message);
 }
 
 async function connectWithRetry(pool, attempts = 3) {

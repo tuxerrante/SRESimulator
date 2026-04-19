@@ -1,7 +1,11 @@
 import type { Difficulty } from "../../../../shared/types/game";
-import type { LeaderboardEntry, HallOfFameEntry } from "../../../../shared/types/leaderboard";
+import type {
+  LeaderboardEntry,
+  HallOfFameEntry,
+  TrafficSource,
+} from "../../../../shared/types/leaderboard";
 
-export type TrafficSource = "player" | "automated";
+export type { TrafficSource } from "../../../../shared/types/leaderboard";
 
 export interface GameSession {
   token: string;
