@@ -4,6 +4,7 @@ import type { GameplayAnalytics, GameplayLifecycleState } from "../../../../shar
 import type { GithubViewer } from "../../../../shared/auth/viewer";
 
 export type SessionIdentityKind = "github" | "anonymous";
+export type { TrafficSource } from "../../../../shared/types/leaderboard";
 
 export interface GameSession {
   token: string;
