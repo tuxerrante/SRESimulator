@@ -12,7 +12,6 @@ const __dirname = path.dirname(__filename);
 const repoRoot = path.resolve(__dirname, "..");
 const frontendDir = path.join(repoRoot, "frontend");
 const outputGif = path.join(repoRoot, "img", "readme-gameplay-hero.gif");
-const outputPoster = path.join(repoRoot, "img", "readme-gameplay-hero-poster.png");
 const frontendRequire = createRequire(path.join(frontendDir, "package.json"));
 
 const FRONTEND_URL = "http://127.0.0.1:3100";
@@ -139,7 +138,6 @@ from PIL import Image
 
 manifest_path = Path(sys.argv[1])
 gif_path = Path(sys.argv[2])
-poster_path = Path(sys.argv[3])
 manifest = json.loads(manifest_path.read_text())
 
 width = manifest["width"]
@@ -174,8 +172,6 @@ gif_frames[0].save(
     optimize=True,
     disposal=2,
 )
-
-base_frames[-1][0].convert("RGB").save(poster_path, optimize=True)
 `;
 }
 
@@ -194,7 +190,7 @@ async function assembleGif(frames) {
   );
 
   await assertPythonPillow();
-  await runCommand("python3", ["-c", pythonAssemblerScript(), manifestPath, outputGif, outputPoster], repoRoot);
+  await runCommand("python3", ["-c", pythonAssemblerScript(), manifestPath, outputGif], repoRoot);
 }
 
 async function assertPythonPillow() {
@@ -314,7 +310,6 @@ async function main() {
 
   const stats = await readFile(outputGif);
   console.log(`Generated ${path.relative(repoRoot, outputGif)} (${Math.round(stats.byteLength / 1024)} KiB)`);
-  console.log(`Generated ${path.relative(repoRoot, outputPoster)}`);
 }
 
 try {
