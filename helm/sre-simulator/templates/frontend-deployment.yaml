@@ -6,7 +6,7 @@ metadata:
     {{- include "sre-simulator.labels" . | nindent 4 }}
     {{- include "sre-simulator.frontend.selectorLabels" . | nindent 4 }}
 spec:
-  replicas: {{ .Values.frontend.replicas }}
+  replicas: {{ ternary .Values.frontend.autoscaling.minReplicas .Values.frontend.replicas .Values.frontend.autoscaling.enabled }}
   selector:
     matchLabels:
       {{- include "sre-simulator.frontend.selectorLabels" . | nindent 6 }}
@@ -15,6 +15,7 @@ spec:
       labels:
         {{- include "sre-simulator.frontend.selectorLabels" . | nindent 8 }}
     spec:
+      {{- include "sre-simulator.imagePullSecrets" . | nindent 6 }}
       containers:
         - name: frontend
           image: "{{ .Values.frontend.image.repository }}:{{ .Values.frontend.image.tag }}"

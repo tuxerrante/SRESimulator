@@ -88,6 +88,13 @@ jobs:
             --set ai.strictStartup=false \
             --set storage.storageClass=standard \
             --set route.enabled=false \
+            --set ingress.enabled=true \
+            --set ingress.className=nginx \
+            --set ingress.host=sre-simulator.localtest.me \
+            --set publicOrigin=http://sre-simulator.localtest.me \
+            --set frontend.autoscaling.enabled=true \
+            --set frontend.autoscaling.minReplicas=1 \
+            --set frontend.autoscaling.maxReplicas=2 \
             --wait --timeout 3m
 
       - name: Verify pods are running

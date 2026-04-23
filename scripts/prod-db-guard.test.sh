@@ -131,16 +131,22 @@ run_helper_tests() {
 run_static_wiring_checks() {
   assert_contains "require_prod_db_secret_name" "$ROOT_DIR/Makefile"
   assert_contains "require_db_secret_exists_in_namespace" "$ROOT_DIR/Makefile"
+  assert_contains "create_or_update_aoai_secret" "$ROOT_DIR/Makefile"
+  assert_contains ". scripts/select-deploy.sh" "$ROOT_DIR/Makefile"
   assert_contains "db-mode-check:" "$ROOT_DIR/Makefile"
   assert_contains '$(MAKE) public-exposure-audit NS="$$NS"' "$ROOT_DIR/Makefile"
   assert_contains '$(MAKE) db-mode-check NS="$$NS"' "$ROOT_DIR/Makefile"
   assert_contains '$(MAKE) db-port-forward-check NS="$$NS"' "$ROOT_DIR/Makefile"
-  assert_contains 'oc get namespace "$$NS" >/dev/null 2>&1 || oc create namespace "$$NS" >/dev/null' "$ROOT_DIR/Makefile"
+  assert_contains 'ensure_namespace "$$NS"' "$ROOT_DIR/Makefile"
   assert_contains '$(MAKE) db-mode-check NS="$(PROD_NAMESPACE)"' "$ROOT_DIR/Makefile"
-  assert_target_order "prod-up" 'oc create namespace "$$NS"' 'require_db_secret_exists_in_namespace "$$NS"' "$ROOT_DIR/Makefile"
-  assert_target_order "prod-up-tag" 'oc create namespace "$$NS"' 'require_db_secret_exists_in_namespace "$$NS"' "$ROOT_DIR/Makefile"
+  assert_target_order "prod-up" 'ensure_namespace "$$NS"' 'require_db_secret_exists_in_namespace "$$NS"' "$ROOT_DIR/Makefile"
+  assert_target_order "prod-up-tag" 'ensure_namespace "$$NS"' 'require_db_secret_exists_in_namespace "$$NS"' "$ROOT_DIR/Makefile"
   assert_contains 'DB_SECRET_NAME: ${{ secrets.DB_SECRET_NAME }}' "$ROOT_DIR/.github/workflows/deploy-prod.yml"
-  assert_contains "make db-mode-check NS=\"\${PROD_NAMESPACE:-sre-simulator}\"" "$ROOT_DIR/.github/workflows/deploy-prod.yml"
+  assert_contains 'PROD_CLUSTER_FLAVOR: >-' "$ROOT_DIR/.github/workflows/deploy-prod.yml"
+  assert_contains '${{ needs.resolve-release-tag.outputs.prod_cluster_flavor }}' "$ROOT_DIR/.github/workflows/deploy-prod.yml"
+  assert_contains 'CLUSTER_FLAVOR="${PROD_CLUSTER_FLAVOR}"' "$ROOT_DIR/.github/workflows/deploy-prod.yml"
+  assert_contains 'make db-mode-check \' "$ROOT_DIR/.github/workflows/deploy-prod.yml"
+  assert_contains 'NS="${PROD_NAMESPACE:-sre-simulator}"' "$ROOT_DIR/.github/workflows/deploy-prod.yml"
 }
 
 main() {

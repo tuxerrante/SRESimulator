@@ -14,6 +14,17 @@ variable "location" {
   default     = "eastus"
 }
 
+variable "cluster_flavor" {
+  description = "Which cluster platform to provision. Use aks for the default low-cost path or aro to retain the existing OpenShift flow."
+  type        = string
+  default     = "aks"
+
+  validation {
+    condition     = contains(["aks", "aro"], var.cluster_flavor)
+    error_message = "cluster_flavor must be either \"aks\" or \"aro\"."
+  }
+}
+
 variable "aro_version" {
   description = "OpenShift version for the ARO cluster (run `az aro get-versions --location <region>` to list available versions)."
   type        = string
@@ -38,7 +49,7 @@ variable "worker_count" {
   default     = 2
 
   validation {
-    condition     = var.worker_count >= 2
+    condition     = var.cluster_flavor != "aro" || var.worker_count >= 2
     error_message = "ARO requires at least 2 worker nodes."
   }
 }
@@ -47,6 +58,109 @@ variable "pull_secret_path" {
   description = "Path to a Red Hat pull secret JSON file (optional but recommended)."
   type        = string
   default     = ""
+}
+
+# ---------------------------------------------------------------------------
+# AKS sizing and networking
+# ---------------------------------------------------------------------------
+variable "aks_kubernetes_version" {
+  description = "Optional AKS Kubernetes version. Leave empty to use the provider default/latest supported version."
+  type        = string
+  default     = ""
+}
+
+variable "aks_node_vm_size" {
+  description = "VM size for the minimal AKS system/user node pool."
+  type        = string
+  default     = "Standard_B2s"
+}
+
+variable "aks_node_count_min" {
+  description = "Minimum number of nodes for the AKS autoscaling node pool."
+  type        = number
+  default     = 1
+
+  validation {
+    condition     = var.aks_node_count_min >= 1
+    error_message = "aks_node_count_min must be at least 1."
+  }
+}
+
+variable "aks_node_count_max" {
+  description = "Maximum number of nodes for the AKS autoscaling node pool."
+  type        = number
+  default     = 3
+
+  validation {
+    condition     = var.aks_node_count_max >= var.aks_node_count_min
+    error_message = "aks_node_count_max must be greater than or equal to aks_node_count_min."
+  }
+}
+
+variable "aks_vnet_address_space" {
+  description = "Address space for the AKS virtual network."
+  type        = string
+  default     = "10.10.0.0/22"
+}
+
+variable "aks_node_subnet_cidr" {
+  description = "CIDR for the AKS node subnet."
+  type        = string
+  default     = "10.10.0.0/24"
+}
+
+variable "aks_service_cidr" {
+  description = "CIDR used by Kubernetes services in the AKS cluster. Must not overlap with the VNet."
+  type        = string
+  default     = "10.10.4.0/24"
+}
+
+variable "aks_dns_service_ip" {
+  description = "Cluster DNS service IP inside aks_service_cidr."
+  type        = string
+  default     = "10.10.4.10"
+}
+
+variable "aks_node_resource_group_name" {
+  description = "Optional override for the AKS-managed node resource group name. Leave empty to use the deterministic default."
+  type        = string
+  default     = ""
+
+  validation {
+    condition = (
+      var.aks_node_resource_group_name == "" ||
+      can(regex("^[A-Za-z0-9._()\\-]{1,80}$", var.aks_node_resource_group_name))
+    )
+    error_message = "aks_node_resource_group_name must be 1-80 chars using letters, numbers, period, underscore, parentheses, or hyphen."
+  }
+}
+
+variable "aks_ingress_public_ip_name" {
+  description = "Optional override for the static public IP resource used by the AKS ingress controller."
+  type        = string
+  default     = ""
+
+  validation {
+    condition = (
+      var.aks_ingress_public_ip_name == "" ||
+      can(regex("^[A-Za-z0-9._-]{1,80}$", var.aks_ingress_public_ip_name))
+    )
+    error_message = "aks_ingress_public_ip_name must be 1-80 chars using letters, numbers, period, underscore, or hyphen."
+  }
+}
+
+variable "aks_public_ip_dns_label" {
+  description = "Optional DNS label for the static AKS ingress public IP. Leave empty to default to <owner_alias>-test."
+  type        = string
+  default     = ""
+
+  validation {
+    condition = (
+      var.aks_public_ip_dns_label == "" ||
+      can(regex("^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$", var.aks_public_ip_dns_label))
+    )
+    error_message = "aks_public_ip_dns_label must be 1-63 lowercase letters, numbers, or hyphens, starting and ending with an alphanumeric character."
+  }
 }
 
 variable "aoai_model_name" {
@@ -196,8 +310,25 @@ locals {
   cluster_resource_group_id   = "/subscriptions/${data.azurerm_client_config.current.subscription_id}/resourcegroups/${local.cluster_resource_group_name}"
   cluster_name                = local.prefix
   vnet_name                   = "${local.prefix}-vnet"
-  aoai_account_name           = "${local.prefix}-aoai"
-  sql_server_name             = var.sql_server_name != "" ? var.sql_server_name : "${local.prefix}-sql"
+  is_aro                      = var.cluster_flavor == "aro"
+  is_aks                      = var.cluster_flavor == "aks"
+  aks_vnet_name               = "${local.prefix}-aks-vnet"
+  aks_node_subnet_name        = "aks-node-subnet"
+  aks_dns_prefix              = var.aks_public_ip_dns_label != "" ? var.aks_public_ip_dns_label : local.prefix
+  aks_node_resource_group_name = (
+    var.aks_node_resource_group_name != "" ?
+    var.aks_node_resource_group_name :
+    "${local.prefix}-aks-nodes-rg"
+  )
+  aks_ingress_public_ip_name = (
+    var.aks_ingress_public_ip_name != "" ?
+    var.aks_ingress_public_ip_name :
+    "${local.prefix}-aks-ingress-pip"
+  )
+  aro_sp_password_ttl      = "8760h"
+  aro_sp_password_end_date = timeadd(timestamp(), local.aro_sp_password_ttl)
+  aoai_account_name        = "${local.prefix}-aoai"
+  sql_server_name          = var.sql_server_name != "" ? var.sql_server_name : "${local.prefix}-sql"
 
   tags = merge(var.extra_tags, {
     environment = "test"

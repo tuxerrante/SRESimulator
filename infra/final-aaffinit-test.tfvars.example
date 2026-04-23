@@ -1,26 +1,33 @@
 # Final environment baseline for the production infra rehearsal.
+# Defaults to AKS; keep ARO settings below as the documented fallback path.
 # Copy this file to infra/terraform.tfvars and fill in required values.
 # terraform.tfvars is gitignored.
 #
 # Before plan/apply:
-#   1) make tf-preflight OWNER_ALIAS=aaffinit TF_STATE_ACCOUNT=<state-account> GENEVA_SUPPRESSION_ACCESS_CONFIRMED=true
-#   2) make tf-init-isolated OWNER_ALIAS=aaffinit TF_STATE_ACCOUNT=<state-account>
+#   1) make tf-preflight OWNER_ALIAS=aaffinit CLUSTER_FLAVOR=aks TF_STATE_ACCOUNT=<state-account> GENEVA_SUPPRESSION_ACCESS_CONFIRMED=true
+#   2) make tf-init-isolated OWNER_ALIAS=aaffinit CLUSTER_FLAVOR=aks TF_STATE_ACCOUNT=<state-account>
 
 owner_alias = "aaffinit"
 location    = "eastus"
+cluster_flavor = "aks"
 
-# Pin to the latest compatible version returned by:
-#   az aro get-versions --location eastus -o table
-# Last validated from preflight on 2026-04-03.
-aro_version = "4.20.15"
+# Optional AKS version pin. Leave empty to use the provider default/latest
+# supported version for the region.
+# aks_kubernetes_version = ""
 
 # In westeurope, gpt-4o-mini requires GlobalStandard (Standard is unsupported).
 aoai_sku_name = "GlobalStandard"
 
-# Minimum supported ARO sizing.
-master_vm_size = "Standard_D8s_v3"
-worker_vm_size = "Standard_D4s_v3"
-worker_count   = 2
+# Minimum-cost AKS sizing with node autoscaling.
+aks_node_vm_size   = "Standard_B2s"
+aks_node_count_min = 1
+aks_node_count_max = 3
+
+# Optional overrides. The ingress public IP stays in the main RG; Azure still
+# creates a separate AKS-managed node RG, which is expected.
+# aks_node_resource_group_name = "aaffinit-test-aks-nodes"
+# aks_ingress_public_ip_name   = "aaffinit-test-ingress-pip"
+# aks_public_ip_dns_label      = "aaffinit-test"
 
 # Shared stable namespace.
 prod_namespace = "sre-simulator"
@@ -41,6 +48,12 @@ budget_amount       = 200
 extra_tags = {
   test = "true"
 }
+
+# ARO fallback example: uncomment these only when cluster_flavor = "aro".
+# aro_version    = "4.20.15"        # Last validated from preflight on 2026-04-03
+# master_vm_size = "Standard_D8s_v3"
+# worker_vm_size = "Standard_D4s_v3"
+# worker_count   = 2
 
 # Set to false only if Azure deny assignments block writes on
 # aaffinit-test-cluster-rg in your subscription.

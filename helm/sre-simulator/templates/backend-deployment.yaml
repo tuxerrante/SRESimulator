@@ -6,7 +6,7 @@ metadata:
     {{- include "sre-simulator.labels" . | nindent 4 }}
     {{- include "sre-simulator.backend.selectorLabels" . | nindent 4 }}
 spec:
-  replicas: {{ .Values.backend.replicas }}
+  replicas: {{ ternary .Values.backend.autoscaling.minReplicas .Values.backend.replicas .Values.backend.autoscaling.enabled }}
   selector:
     matchLabels:
       {{- include "sre-simulator.backend.selectorLabels" . | nindent 6 }}
@@ -15,6 +15,7 @@ spec:
       labels:
         {{- include "sre-simulator.backend.selectorLabels" . | nindent 8 }}
     spec:
+      {{- include "sre-simulator.imagePullSecrets" . | nindent 6 }}
       containers:
         - name: backend
           image: "{{ .Values.backend.image.repository }}:{{ .Values.backend.image.tag }}"
@@ -26,7 +27,7 @@ spec:
             - name: DATA_DIR
               value: /data
             - name: CORS_ORIGIN
-              value: "https://{{ .Values.route.host }}"
+              value: {{ include "sre-simulator.publicOrigin" . | quote }}
             {{- if .Values.ai.azureOpenai.endpointFromSecret.existingSecretName }}
             - name: AI_AZURE_OPENAI_ENDPOINT
               valueFrom:

@@ -7,6 +7,7 @@ Before `terraform apply`, run the preflight gates for the final environment:
 ```bash
 make tf-preflight \
   OWNER_ALIAS=aaffinit \
+  CLUSTER_FLAVOR=aks \
   TF_STATE_ACCOUNT=<state-account> \
   LOCATION=westeurope \
   TF_STATE_KEY=aaffinit-test-sre-simulator.tfstate \
@@ -45,7 +46,7 @@ export GENEVA_SUPPRESSION_RULE_ACTIVE=true
 ## 2. Extract Kubeconfig
 
 ```bash
-make tf-kubeconfig
+make tf-kubeconfig CLUSTER_FLAVOR=aks
 # or
 export KUBECONFIG=~/.kube/<owner_alias>-test
 ```
@@ -84,12 +85,13 @@ az cognitiveservices account keys list \
 
 ## 4. Namespace Model (Shared Cluster + Shared AOAI)
 
-The ARO cluster and Azure OpenAI deployment are **shared** between the
-stable ("production") namespace and ephemeral e2e namespaces:
+The selected cluster (`CLUSTER_FLAVOR=aks` by default, `aro` as fallback) and
+Azure OpenAI deployment are **shared** between the stable ("production")
+namespace and ephemeral e2e namespaces:
 
 ```text
 ┌─────────────────────────────────────────────┐
-│  ARO Cluster (<alias>-test)                 │
+│  Selected Cluster (<alias>-test)            │
 │                                             │
 │  ┌─────────────────────┐  ┌──────────────┐  │
 │  │ sre-simulator (prod)│  │ sre-manual-  │  │
@@ -105,7 +107,7 @@ stable ("production") namespace and ephemeral e2e namespaces:
 ### Deploy to production namespace
 
 ```bash
-make prod-up
+CLUSTER_FLAVOR=aks make prod-up
 ```
 
 For the final environment run (DB enabled + mandatory checks), use:
@@ -113,26 +115,27 @@ For the final environment run (DB enabled + mandatory checks), use:
 ```bash
 DB_SECRET_NAME=sre-sql-creds \
 GENEVA_SUPPRESSION_RULE_ACTIVE=true \
+CLUSTER_FLAVOR=aks \
 make prod-up-final
 ```
 
 ### Check production status
 
 ```bash
-make prod-status
+CLUSTER_FLAVOR=aks make prod-status
 ```
 
 ### Delete production namespace (requires typing namespace name)
 
 ```bash
-make prod-down
+CLUSTER_FLAVOR=aks make prod-down
 ```
 
 ### Deploy ephemeral e2e (disposable, no confirmation needed)
 
 ```bash
-make e2e-azure-route-up    # creates timestamped namespace
-make e2e-azure-route-down  # deletes it (refuses if it matches prod namespace)
+CLUSTER_FLAVOR=aks make e2e-azure-route-up    # creates timestamped namespace
+CLUSTER_FLAVOR=aks make e2e-azure-route-down  # deletes it (refuses if it matches prod namespace)
 ```
 
 ## 5. Validate exposure and DB connectivity
@@ -140,16 +143,17 @@ make e2e-azure-route-down  # deletes it (refuses if it matches prod namespace)
 Run these checks after each final deployment:
 
 ```bash
-# Frontend route exists; backend remains private ClusterIP and non-routable
-make public-exposure-audit NS=sre-simulator
+# Frontend ingress/route exists; backend remains private ClusterIP and
+# non-routable
+CLUSTER_FLAVOR=aks make public-exposure-audit NS=sre-simulator
 
 # Fallback DB check when GH pipelines are unavailable
-make db-port-forward-check NS=sre-simulator
+CLUSTER_FLAVOR=aks make db-port-forward-check NS=sre-simulator
 ```
 
 `db-port-forward-check` calls `/api/scores?difficulty=easy` through a local
-`oc port-forward` tunnel to the backend service. A `200` response confirms the
-backend can serve DB-backed queries.
+`kubectl port-forward` or `oc port-forward` tunnel to the backend service. A
+`200` response confirms the backend can serve DB-backed queries.
 
 ## 6. AOAI Capacity & Scaling Notes
 
@@ -196,7 +200,7 @@ for the full reference. Quota tiers auto-upgrade with usage.
 ## 7. Tear Down (when done)
 
 ```bash
-make tf-destroy
+CLUSTER_FLAVOR=aks make tf-destroy
 ```
 
 Most customer-managed resources are in a single resource group, so you can also run:
@@ -206,13 +210,14 @@ az group delete --name <owner_alias>-test-rg --yes --no-wait
 ```
 
 > **Note:** `tf-destroy` / `az group delete` removes the cluster and AOAI
-> account in the customer-managed RG. The ARO RP-managed cluster RG is cleaned
-> up by the provider when cluster deletion completes.
+> account in the customer-managed RG. AKS still has an Azure-managed node
+> resource group, and ARO still has an RP-managed cluster resource group; both
+> are cleaned up by the provider when cluster deletion completes.
 >
-> **Tagging caveat:** The RP-managed cluster resource group (`<owner_alias>-test-cluster-rg`)
-> can be protected by Azure deny assignments. In that case, even Owner/Contributor
-> principals cannot write tags on that RG, and `persist=true` cannot be enforced there
-> via Terraform.
+> **Tagging caveat:** Managed cluster resource groups can be protected by Azure
+> deny assignments. In that case, even Owner/Contributor principals cannot
+> write tags on that RG, and `persist=true` cannot be enforced there via
+> Terraform.
 >
 > **Workaround for locked-down subscriptions:** Disable the cluster RG tag overlay
 > by setting `enable_cluster_rg_tag_overlay=false` for plan/apply. Example:

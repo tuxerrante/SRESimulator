@@ -6,12 +6,30 @@
 owner_alias = ""  # required - your alias, e.g. "jdoe"
 location    = "eastus"
 
-# ARO cluster sizing (defaults are minimal for testing)
+# Cluster platform selector. AKS is the default low-cost path; ARO remains
+# available as a fallback.
+# cluster_flavor = "aks"
+
+# AKS defaults (small, autoscaled baseline)
+# aks_kubernetes_version      = ""                # leave empty for provider default
+# aks_node_vm_size            = "Standard_B2s"
+# aks_node_count_min          = 1
+# aks_node_count_max          = 3
+# aks_vnet_address_space      = "10.10.0.0/22"
+# aks_node_subnet_cidr        = "10.10.0.0/24"
+# aks_service_cidr            = "10.10.4.0/24"
+# aks_dns_service_ip          = "10.10.4.10"
+# aks_node_resource_group_name = "jdoe-test-aks-nodes"  # optional override
+# aks_ingress_public_ip_name  = "jdoe-test-ingress-pip" # optional override
+# aks_public_ip_dns_label     = "jdoe-test"             # optional DNS label for public IP
+
+# ARO fallback settings (used only when cluster_flavor = "aro")
 # master_vm_size = "Standard_D8s_v3"   # minimum, cannot go smaller
 # worker_vm_size = "Standard_D4s_v3"
 # worker_count   = 2
 
-# ARO version - leave empty for latest, or pin to a specific version
+# ARO version - used only for cluster_flavor = "aro"
+# Leave empty for latest, or pin to a specific version
 # (run: az aro get-versions --location eastus -o table)
 # aro_version = "4.17.27"
 

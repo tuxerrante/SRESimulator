@@ -6,6 +6,11 @@ frontend:
     pullPolicy: IfNotPresent
   replicas: 2
   port: 3000
+  autoscaling:
+    enabled: false
+    minReplicas: 1
+    maxReplicas: 3
+    targetCPUUtilizationPercentage: 70
   resources:
     requests:
       cpu: 100m
@@ -21,6 +26,12 @@ backend:
     pullPolicy: IfNotPresent
   replicas: 1
   port: 8080
+  autoscaling:
+    enabled: false
+    minReplicas: 1
+    maxReplicas: 4
+    targetCPUUtilizationPercentage: 70
+    targetMemoryUtilizationPercentage: 75
   resources:
     requests:
       cpu: 100m
@@ -64,6 +75,19 @@ route:
   tls:
     termination: edge
 
+publicOrigin: ""
+
+ingress:
+  enabled: false
+  className: nginx
+  host: ""
+  path: /
+  pathType: Prefix
+  annotations: {}
+  tls:
+    enabled: false
+    secretName: ""
+
 database:
   enabled: false
   # Full ADO.NET-style connection string stored in a K8s Secret.
@@ -83,3 +107,5 @@ keyvault:
 secrets:
   - CLOUD_ML_REGION
   - ANTHROPIC_VERTEX_PROJECT_ID
+
+imagePullSecrets: []
