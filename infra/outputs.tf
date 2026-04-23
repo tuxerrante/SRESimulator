@@ -44,7 +44,7 @@ output "aks_ingress_public_fqdn" {
 }
 
 output "public_ingress_host" {
-  description = "Best available public host for the active cluster flavor. AKS uses the public IP FQDN when available, otherwise the raw IP."
+  description = "Best available public host for the active cluster flavor. AKS returns the static ingress public IP FQDN when available, otherwise the raw IP. ARO returns an empty string because the app route host is namespace-specific and is discovered after cluster login."
   value = local.is_aks ? (
     try(azurerm_public_ip.aks_ingress[0].fqdn, "") != "" ?
     azurerm_public_ip.aks_ingress[0].fqdn :

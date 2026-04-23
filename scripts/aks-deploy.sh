@@ -68,7 +68,7 @@ ensure_ingress_controller() {
 
   local values_file
   values_file="$(mktemp "${TMPDIR:-/tmp}/ingress-nginx-values-XXXXXX.yaml")"
-  cat >"$values_file" <<EOF
+  if ! cat >"$values_file" <<EOF
 controller:
   replicaCount: 1
   ingressClassResource:
@@ -80,12 +80,19 @@ controller:
       service.beta.kubernetes.io/azure-load-balancer-resource-group: "${AKS_RG}"
       service.beta.kubernetes.io/azure-pip-name: "${AKS_INGRESS_PUBLIC_IP_NAME}"
 EOF
+  then
+    rm -f "$values_file"
+    return 1
+  fi
 
-  helm upgrade --install "${AKS_INGRESS_RELEASE:-ingress-nginx}" ingress-nginx/ingress-nginx \
+  if ! helm upgrade --install "${AKS_INGRESS_RELEASE:-ingress-nginx}" ingress-nginx/ingress-nginx \
     --namespace "${AKS_INGRESS_NAMESPACE:-ingress-nginx}" \
     --create-namespace \
     -f "$values_file" \
-    --wait --timeout 15m >/dev/null
+    --wait --timeout 15m >/dev/null; then
+    rm -f "$values_file"
+    return 1
+  fi
 
   rm -f "$values_file"
 

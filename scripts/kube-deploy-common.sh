@@ -124,8 +124,8 @@ require_db_secret_exists_in_namespace() {
     rm -f "$err_file"
     return 0
   fi
-  if rg -Fq "secrets \"${DB_SECRET_NAME}\" not found" "$err_file" || \
-     rg -Fq "secret \"${DB_SECRET_NAME}\" not found" "$err_file"; then
+  if grep -Fq "secrets \"${DB_SECRET_NAME}\" not found" "$err_file" || \
+     grep -Fq "secret \"${DB_SECRET_NAME}\" not found" "$err_file"; then
     echo "DB secret '${DB_SECRET_NAME}' was not found in namespace '${ns}'." >&2
     echo "Create or copy it before running a production deployment." >&2
   else
