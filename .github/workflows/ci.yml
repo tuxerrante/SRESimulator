@@ -317,6 +317,16 @@ jobs:
       - name: Install backend dependencies
         run: make install-backend
 
+      - name: Install Helm
+        run: |
+          set -euo pipefail
+          HELM_VERSION="v3.14.4"
+          HELM_TARBALL_URL="https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz"
+          curl -fsSL "${HELM_TARBALL_URL}" -o /tmp/helm.tar.gz
+          tar -C /tmp -zxvf /tmp/helm.tar.gz
+          sudo mv /tmp/linux-amd64/helm /usr/local/bin/helm
+          helm version
+
       - name: Run integration tests (mock mode)
         run: make test-integration
 
@@ -374,6 +384,16 @@ jobs:
 
       - name: Install backend dependencies
         run: make install-backend
+
+      - name: Install Helm
+        run: |
+          set -euo pipefail
+          HELM_VERSION="v3.14.4"
+          HELM_TARBALL_URL="https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz"
+          curl -fsSL "${HELM_TARBALL_URL}" -o /tmp/helm.tar.gz
+          tar -C /tmp -zxvf /tmp/helm.tar.gz
+          sudo mv /tmp/linux-amd64/helm /usr/local/bin/helm
+          helm version
 
       - name: Create sresimulator database
         working-directory: backend
