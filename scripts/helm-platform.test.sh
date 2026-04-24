@@ -47,6 +47,12 @@ grep -Eq 'type: LoadBalancer' "${lb_render}" || \
 grep -Eq 'loadBalancerIP: "?203\.0\.113\.10"?' "${lb_render}" || \
   fail "AKS mode should preserve the requested static public IP."
 
+grep -Eq '^[[:space:]]+- port: 80$' "${lb_render}" || \
+  fail "AKS public service mode should expose the frontend on port 80."
+
+grep -Eq 'targetPort: 3000' "${lb_render}" || \
+  fail "AKS public service mode should still target the frontend container port."
+
 if grep -Eq '^kind: Ingress$' "${lb_render}"; then
   fail "AKS mode must not render a Kubernetes Ingress."
 fi

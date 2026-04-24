@@ -631,6 +631,11 @@ public-exposure-audit: ## Verify frontend edge exists and backend remains privat
 			echo "Frontend service type must be LoadBalancer on AKS, found $$FRONT_TYPE"; \
 			exit 1; \
 		fi; \
+		FRONT_PORT=$$("$$KUBE_CLI" -n "$$NS" get "svc/$$FRONT_SVC" -o jsonpath='{.spec.ports[0].port}'); \
+		if [ "$$FRONT_PORT" != "80" ]; then \
+			echo "Frontend service port must be 80 on AKS, found $$FRONT_PORT"; \
+			exit 1; \
+		fi; \
 	else \
 		"$$KUBE_CLI" -n "$$NS" get "route/$$RELEASE" >/dev/null; \
 		if "$$KUBE_CLI" -n "$$NS" get "route/$$RELEASE-backend" >/dev/null 2>&1; then \
