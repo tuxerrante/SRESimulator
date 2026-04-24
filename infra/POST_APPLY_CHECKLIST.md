@@ -143,7 +143,7 @@ CLUSTER_FLAVOR=aks make e2e-azure-route-down  # deletes it (refuses if it matche
 Run these checks after each final deployment:
 
 ```bash
-# Frontend ingress/route exists; backend remains private ClusterIP and
+# Frontend public edge exists; backend remains private ClusterIP and
 # non-routable
 CLUSTER_FLAVOR=aks make public-exposure-audit NS=sre-simulator
 

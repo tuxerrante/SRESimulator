@@ -91,7 +91,7 @@ through `infra/` with:
   `aaffinit-test-sre-simulator.tfstate`) to avoid side effects on other stacks.
 - Explicit `extra_tags.test = "true"` in addition to mandatory infra tags.
 - Minimum-cost AKS sizing (`Standard_B2s`, autoscaled from `1` to `3` nodes).
-- Static ingress public IP kept in the main resource group so the public
+- Static frontend public IP kept in the main resource group so the public
   endpoint stays alongside the other customer-managed resources.
 - Acceptance of the AKS-managed node resource group as the one planned
   resource-group exception; Azure creates and owns that RG automatically.
@@ -129,10 +129,11 @@ inside the cluster**.
 
 ### What is exposed
 
-- On the AKS default path, a single NGINX-backed Kubernetes `Ingress` maps
-  `https://<host>/` to the frontend `ClusterIP` service.
+- On the AKS default path, the frontend Kubernetes `Service` is promoted to
+  `LoadBalancer` and bound to the reserved public IP/FQDN.
 - On the ARO fallback path, a single OpenShift `Route` serves the same role.
-- There is **no** backend Route or Ingress (`/api` is not published directly).
+- There is **no** backend Route, Ingress, or public `LoadBalancer` service
+  (`/api` is not published directly).
 - The backend remains a private `ClusterIP` service reachable only from inside the namespace network.
 
 ### How the internal proxy works
@@ -144,7 +145,7 @@ inside the cluster**.
 
 ### Request flow in cluster
 
-1. User opens `https://<host>/` (frontend Ingress or Route).
+1. User opens `<scheme>://<host>/` (frontend `LoadBalancer` service or Route).
 2. Frontend calls `fetch("/api/...")`.
 3. Frontend pod proxies the request internally to backend `ClusterIP`.
 4. Backend responds to frontend pod; frontend returns response to client.

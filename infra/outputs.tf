@@ -29,22 +29,22 @@ output "aks_node_resource_group_name" {
 }
 
 output "aks_ingress_public_ip_name" {
-  description = "Static public IP resource reserved for the AKS ingress controller."
+  description = "Static public IP resource reserved for the AKS frontend public service."
   value       = local.is_aks ? azurerm_public_ip.aks_ingress[0].name : ""
 }
 
 output "aks_ingress_public_ip_address" {
-  description = "Static public IP address reserved for the AKS ingress controller."
+  description = "Static public IP address reserved for the AKS frontend public service."
   value       = local.is_aks ? azurerm_public_ip.aks_ingress[0].ip_address : ""
 }
 
 output "aks_ingress_public_fqdn" {
-  description = "Public DNS name attached to the AKS ingress public IP when a DNS label is configured."
+  description = "Public DNS name attached to the AKS frontend public IP when a DNS label is configured."
   value       = local.is_aks ? azurerm_public_ip.aks_ingress[0].fqdn : ""
 }
 
-output "public_ingress_host" {
-  description = "Best available public host for the active cluster flavor. AKS returns the static ingress public IP FQDN when available, otherwise the raw IP. ARO returns an empty string because the app route host is namespace-specific and is discovered after cluster login."
+output "public_frontend_host" {
+  description = "Best available public host for the active cluster flavor. AKS returns the static frontend public IP FQDN when available, otherwise the raw IP. ARO returns an empty string because the app route host is namespace-specific and is discovered after cluster login."
   value = local.is_aks ? (
     try(azurerm_public_ip.aks_ingress[0].fqdn, "") != "" ?
     azurerm_public_ip.aks_ingress[0].fqdn :

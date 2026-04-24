@@ -23,7 +23,7 @@ aks_node_vm_size   = "Standard_B2s"
 aks_node_count_min = 1
 aks_node_count_max = 3
 
-# Optional overrides. The ingress public IP stays in the main RG; Azure still
+# Optional overrides. The frontend public IP stays in the main RG; Azure still
 # creates a separate AKS-managed node RG, which is expected.
 # aks_node_resource_group_name = "aaffinit-test-aks-nodes"
 # aks_ingress_public_ip_name   = "aaffinit-test-ingress-pip"

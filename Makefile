@@ -29,9 +29,6 @@ ARO_CLUSTER ?=
 AKS_RG ?=
 AKS_CLUSTER ?=
 AKS_INGRESS_PUBLIC_IP_NAME ?= $(if $(strip $(AKS_CLUSTER)),$(AKS_CLUSTER)-aks-ingress-pip,)
-AKS_INGRESS_NAMESPACE ?= ingress-nginx
-AKS_INGRESS_RELEASE ?= ingress-nginx
-AKS_INGRESS_CLASS_NAME ?= nginx
 AKS_PUBLIC_HOST ?=
 AKS_PUBLIC_ORIGIN_SCHEME ?= http
 AKS_FRONTEND_IMAGE_REPO ?= ghcr.io/tuxerrante/sre-simulator-frontend
@@ -56,7 +53,7 @@ GENEVA_SUPPRESSION_RULE_ACTIVE ?= false
 DB_SECRET_SOURCE_NAMESPACE ?=
 
 export AZURE_SUBSCRIPTION_ID CLUSTER_FLAVOR ARO_RG ARO_CLUSTER
-export AKS_RG AKS_CLUSTER AKS_INGRESS_PUBLIC_IP_NAME AKS_INGRESS_NAMESPACE AKS_INGRESS_RELEASE AKS_INGRESS_CLASS_NAME AKS_PUBLIC_HOST AKS_PUBLIC_ORIGIN_SCHEME AKS_FRONTEND_IMAGE_REPO AKS_BACKEND_IMAGE_REPO GHCR_IMAGE_PULL_SECRET
+export AKS_RG AKS_CLUSTER AKS_INGRESS_PUBLIC_IP_NAME AKS_PUBLIC_HOST AKS_PUBLIC_ORIGIN_SCHEME AKS_FRONTEND_IMAGE_REPO AKS_BACKEND_IMAGE_REPO GHCR_IMAGE_PULL_SECRET
 export AOAI_RG AOAI_ACCOUNT AOAI_DEPLOYMENT
 export AOAI_DEPLOYMENT_CHAT AOAI_DEPLOYMENT_COMMAND AOAI_DEPLOYMENT_SCENARIO AOAI_DEPLOYMENT_PROBE
 export E2E_RELEASE NPM_VERSION
@@ -590,8 +587,8 @@ prod-status: ## Show production namespace status (pods plus active public edge)
 	"$$KUBE_CLI" -n "$$NS" get pods -o wide 2>/dev/null || echo "  (no pods)"; \
 	echo ""; \
 	if [ "$(CLUSTER_FLAVOR)" = "aks" ]; then \
-		echo "Ingress:"; \
-		"$$KUBE_CLI" -n "$$NS" get ingress 2>/dev/null || echo "  (no ingress)"; \
+		echo "Frontend service:"; \
+		"$$KUBE_CLI" -n "$$NS" get "svc/$(E2E_RELEASE)-frontend" 2>/dev/null || echo "  (no frontend service)"; \
 	else \
 		echo "Route:"; \
 		"$$KUBE_CLI" -n "$$NS" get route 2>/dev/null || echo "  (no routes)"; \
@@ -615,12 +612,21 @@ public-exposure-audit: ## Verify frontend edge exists and backend remains privat
 	. scripts/select-deploy.sh; \
 	NS="$${NS:-$(PROD_NAMESPACE)}"; \
 	RELEASE="$${RELEASE:-$(E2E_RELEASE)}"; \
+	FRONT_SVC="$$RELEASE-frontend"; \
 	BACK_SVC="$$RELEASE-backend"; \
 	echo "Auditing exposure in namespace $$NS (release $$RELEASE, flavor $(CLUSTER_FLAVOR))"; \
 	if [ "$(CLUSTER_FLAVOR)" = "aks" ]; then \
-		"$$KUBE_CLI" -n "$$NS" get "ingress/$$RELEASE" >/dev/null; \
+		if "$$KUBE_CLI" -n "$$NS" get "ingress/$$RELEASE" >/dev/null 2>&1; then \
+			echo "Unexpected frontend ingress found: $$RELEASE"; \
+			exit 1; \
+		fi; \
 		if "$$KUBE_CLI" -n "$$NS" get "ingress/$$RELEASE-backend" >/dev/null 2>&1; then \
 			echo "Unexpected backend ingress found: $$RELEASE-backend"; \
+			exit 1; \
+		fi; \
+		FRONT_TYPE=$$("$$KUBE_CLI" -n "$$NS" get "svc/$$FRONT_SVC" -o jsonpath='{.spec.type}'); \
+		if [ "$$FRONT_TYPE" != "LoadBalancer" ]; then \
+			echo "Frontend service type must be LoadBalancer on AKS, found $$FRONT_TYPE"; \
 			exit 1; \
 		fi; \
 	else \

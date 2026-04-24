@@ -136,7 +136,7 @@ variable "aks_node_resource_group_name" {
 }
 
 variable "aks_ingress_public_ip_name" {
-  description = "Optional override for the static public IP resource used by the AKS ingress controller."
+  description = "Optional override for the static public IP resource bound to the AKS frontend public service."
   type        = string
   default     = ""
 
@@ -150,7 +150,7 @@ variable "aks_ingress_public_ip_name" {
 }
 
 variable "aks_public_ip_dns_label" {
-  description = "Optional DNS label for the static AKS ingress public IP. Leave empty to default to <owner_alias>-test."
+  description = "Optional DNS label for the static AKS frontend public IP. Leave empty to default to <owner_alias>-test."
   type        = string
   default     = ""
 

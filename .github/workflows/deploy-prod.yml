@@ -301,15 +301,10 @@ jobs:
             kubectl version --client
           fi
 
-      - name: Install Helm
-        run: |
-          set -euo pipefail
-          HELM_VERSION="v3.14.4"
-          HELM_TARBALL_URL="https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz"
-          curl -fsSL "${HELM_TARBALL_URL}" -o /tmp/helm.tar.gz
-          tar -C /tmp -zxvf /tmp/helm.tar.gz
-          sudo mv /tmp/linux-amd64/helm /usr/local/bin/helm
-          helm version
+      - name: Setup Helm
+        # v5.0.0
+        uses: >-
+          azure/setup-helm@dda3372f752e03dde6b3237bc9431cdc2f7a02a2
 
       - name: Deploy tagged release to production
         run: |

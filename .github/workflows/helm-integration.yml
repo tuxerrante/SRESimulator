@@ -36,17 +36,10 @@ jobs:
       - name: Load npm version
         run: echo "NPM_VERSION=$(tr -d '\n' < .npm-version)" >> "$GITHUB_ENV"
 
-      - name: Install Helm
-        run: |
-          set -euo pipefail
-          HELM_VERSION="v3.14.4"
-          HELM_URL="https://get.helm.sh"
-          HELM_TAR="helm-${HELM_VERSION}-linux-amd64.tar.gz"
-          curl -fsSL "${HELM_URL}/${HELM_TAR}" \
-            -o /tmp/helm.tar.gz
-          tar -C /tmp -zxvf /tmp/helm.tar.gz
-          sudo mv /tmp/linux-amd64/helm /usr/local/bin/helm
-          helm version
+      - name: Setup Helm
+        # v5.0.0
+        uses: >-
+          azure/setup-helm@dda3372f752e03dde6b3237bc9431cdc2f7a02a2
 
       - name: Create kind cluster
         run: |
@@ -88,9 +81,7 @@ jobs:
             --set ai.strictStartup=false \
             --set storage.storageClass=standard \
             --set route.enabled=false \
-            --set ingress.enabled=true \
-            --set ingress.className=nginx \
-            --set ingress.host=sre-simulator.localtest.me \
+            --set ingress.enabled=false \
             --set publicOrigin=http://sre-simulator.localtest.me \
             --set frontend.autoscaling.enabled=true \
             --set frontend.autoscaling.minReplicas=1 \

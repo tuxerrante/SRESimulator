@@ -63,17 +63,17 @@ run "aks_cluster_naming" {
 
   assert {
     condition     = azurerm_public_ip.aks_ingress[0].name == "jdoe-test-aks-ingress-pip"
-    error_message = "AKS ingress public IP should use the default shared-resource-group name."
+    error_message = "AKS frontend public IP should use the default shared-resource-group name."
   }
 
   assert {
     condition     = azurerm_public_ip.aks_ingress[0].resource_group_name == "jdoe-test-rg"
-    error_message = "AKS ingress public IP should stay in the main resource group."
+    error_message = "AKS frontend public IP should stay in the main resource group."
   }
 
   assert {
     condition     = azurerm_public_ip.aks_ingress[0].domain_name_label == "jdoe-test"
-    error_message = "AKS ingress public IP should default its DNS label to the shared prefix."
+    error_message = "AKS frontend public IP should default its DNS label to the shared prefix."
   }
 }
 

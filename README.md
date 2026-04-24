@@ -53,8 +53,8 @@ Open `http://localhost:3000` in your browser.
 ## Deployment targets
 
 Production-style semver deployments now target **AKS by default**. That path
-uses GHCR images, a public NGINX Ingress endpoint for the frontend, and Azure
-SQL-backed backend scaling when `DB_SECRET_NAME` is provided.
+uses GHCR images, a public AKS `LoadBalancer` service for the frontend, and
+Azure SQL-backed backend scaling when `DB_SECRET_NAME` is provided.
 
 The previous **ARO** deployment flow is still supported as a fallback. Switch
 between platforms with `CLUSTER_FLAVOR=aks|aro` locally or

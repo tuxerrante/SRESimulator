@@ -37,7 +37,7 @@ print_cluster_login_summary() {
   print_aks_login_summary
 }
 
-resolve_aks_ingress_public_endpoint() {
+resolve_aks_public_endpoint() {
   local pip_name fqdn ip
   pip_name="${AKS_INGRESS_PUBLIC_IP_NAME:-${AKS_CLUSTER}-aks-ingress-pip}"
 
@@ -49,32 +49,23 @@ resolve_aks_ingress_public_endpoint() {
     --query dnsSettings.fqdn -o tsv 2>/dev/null || true)
 
   if [ -z "$ip" ]; then
-    echo "error: failed to resolve AKS ingress public IP '$pip_name' in resource group '$AKS_RG'" >&2
+    echo "error: failed to resolve AKS public IP '$pip_name' in resource group '$AKS_RG'" >&2
     return 1
   fi
 
   AKS_INGRESS_PUBLIC_IP_NAME="$pip_name"
   AKS_INGRESS_PUBLIC_IP="$ip"
   AKS_INGRESS_PUBLIC_FQDN="$fqdn"
-  AKS_INGRESS_HOST="${AKS_PUBLIC_HOST:-${fqdn:-$ip}}"
+  AKS_PUBLIC_ENDPOINT_HOST="${AKS_PUBLIC_HOST:-${fqdn:-$ip}}"
 }
 
-ensure_ingress_controller() {
-  require_cli helm
-  resolve_aks_ingress_public_endpoint
-
-  helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx >/dev/null 2>&1 || true
-  helm repo update ingress-nginx >/dev/null
-
+write_aks_frontend_service_values() {
   local values_file
-  values_file="$(mktemp "${TMPDIR:-/tmp}/ingress-nginx-values-XXXXXX.yaml")"
+  values_file="$(mktemp "${TMPDIR:-/tmp}/sre-aks-frontend-service-XXXXXX.yaml")"
   if ! cat >"$values_file" <<EOF
-controller:
-  replicaCount: 1
-  ingressClassResource:
-    name: ${AKS_INGRESS_CLASS_NAME:-nginx}
-  ingressClass: ${AKS_INGRESS_CLASS_NAME:-nginx}
+frontend:
   service:
+    type: LoadBalancer
     loadBalancerIP: "${AKS_INGRESS_PUBLIC_IP}"
     annotations:
       service.beta.kubernetes.io/azure-load-balancer-resource-group: "${AKS_RG}"
@@ -84,20 +75,7 @@ EOF
     rm -f "$values_file"
     return 1
   fi
-
-  if ! helm upgrade --install "${AKS_INGRESS_RELEASE:-ingress-nginx}" ingress-nginx/ingress-nginx \
-    --namespace "${AKS_INGRESS_NAMESPACE:-ingress-nginx}" \
-    --create-namespace \
-    -f "$values_file" \
-    --wait --timeout 15m >/dev/null; then
-    rm -f "$values_file"
-    return 1
-  fi
-
-  rm -f "$values_file"
-
-  kubectl -n "${AKS_INGRESS_NAMESPACE:-ingress-nginx}" rollout status \
-    "deployment/${AKS_INGRESS_RELEASE:-ingress-nginx}-controller" --timeout=6m >/dev/null
+  printf '%s\n' "$values_file"
 }
 
 prepare_release_images() {
@@ -110,10 +88,16 @@ prepare_release_images() {
 helm_deploy_sre() {
   local ns=$1 tag=$2 probe_token=$3
 
+  require_cli helm
   ensure_namespace "$ns"
-  ensure_ingress_controller
+  resolve_aks_public_endpoint
 
-  DEPLOY_HOST="$AKS_INGRESS_HOST"
+  local frontend_service_values_file
+  if ! frontend_service_values_file="$(write_aks_frontend_service_values)"; then
+    return 1
+  fi
+
+  DEPLOY_HOST="$AKS_PUBLIC_ENDPOINT_HOST"
   DEPLOY_SCHEME="${AKS_PUBLIC_ORIGIN_SCHEME:-http}"
 
   local db_flags=()
@@ -152,12 +136,11 @@ helm_deploy_sre() {
     aoai_route_flags+=(--set "ai.azureOpenai.routeDeployments.probe=${AOAI_DEPLOYMENT_PROBE}")
   fi
 
-  helm upgrade --install "$E2E_RELEASE" ./helm/sre-simulator -n "$ns" \
+  if ! helm upgrade --install "$E2E_RELEASE" ./helm/sre-simulator -n "$ns" \
     --create-namespace \
+    -f "$frontend_service_values_file" \
     --set route.enabled=false \
-    --set ingress.enabled=true \
-    --set "ingress.className=${AKS_INGRESS_CLASS_NAME:-nginx}" \
-    --set "ingress.host=${DEPLOY_HOST}" \
+    --set ingress.enabled=false \
     --set "publicOrigin=${DEPLOY_SCHEME}://${DEPLOY_HOST}" \
     --set "frontend.image.repository=${AKS_FRONTEND_IMAGE_REPO:-ghcr.io/tuxerrante/sre-simulator-frontend}" \
     --set "frontend.image.tag=${tag}" \
@@ -178,5 +161,10 @@ helm_deploy_sre() {
     "${aoai_route_flags[@]}" \
     "${image_pull_flags[@]}" \
     "${db_flags[@]}" \
-    --wait --timeout 15m >/dev/null
+    --wait --timeout 15m >/dev/null; then
+    rm -f "$frontend_service_values_file"
+    return 1
+  fi
+
+  rm -f "$frontend_service_values_file"
 }

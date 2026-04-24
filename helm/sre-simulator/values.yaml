@@ -6,6 +6,10 @@ frontend:
     pullPolicy: IfNotPresent
   replicas: 2
   port: 3000
+  service:
+    type: ClusterIP
+    annotations: {}
+    loadBalancerIP: ""
   autoscaling:
     enabled: false
     minReplicas: 1
