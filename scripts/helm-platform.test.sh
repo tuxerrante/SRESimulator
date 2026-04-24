@@ -73,6 +73,11 @@ if grep -Eq '^  replicas:' "${lb_render}"; then
   fail "Autoscaled AKS deployments should omit spec.replicas so the HPA owns the scale subresource."
 fi
 
+checksum_count="$(grep -Ec 'checksum/config:' "${lb_render}" || true)"
+if [[ "${checksum_count}" -lt 2 ]]; then
+  fail "Autoscaled AKS deployments should include a config checksum annotation so config changes trigger rollouts."
+fi
+
 grep -Eq 'name: sre-simulator-frontend-hpa' "${lb_render}" || \
   fail "Frontend autoscaling should render the frontend HPA."
 
