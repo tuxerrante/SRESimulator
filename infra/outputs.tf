@@ -28,22 +28,22 @@ output "aks_node_resource_group_name" {
   value       = local.is_aks ? azurerm_kubernetes_cluster.aks[0].node_resource_group : ""
 }
 
-output "aks_ingress_public_ip_name" {
+output "aks_frontend_public_ip_name" {
   description = "Static public IP resource reserved for the AKS frontend public service."
   value       = local.is_aks ? azurerm_public_ip.aks_ingress[0].name : ""
 }
 
-output "aks_ingress_public_ip_address" {
+output "aks_frontend_public_ip_address" {
   description = "Static public IP address reserved for the AKS frontend public service."
   value       = local.is_aks ? azurerm_public_ip.aks_ingress[0].ip_address : ""
 }
 
-output "aks_ingress_public_fqdn" {
+output "aks_frontend_public_fqdn" {
   description = "Public DNS name attached to the AKS frontend public IP when a DNS label is configured."
   value       = local.is_aks ? azurerm_public_ip.aks_ingress[0].fqdn : ""
 }
 
-output "public_frontend_host" {
+output "aks_frontend_public_host" {
   description = "Best available public host for the active cluster flavor. AKS returns the static frontend public IP FQDN when available, otherwise the raw IP. ARO returns an empty string because the app route host is namespace-specific and is discovered after cluster login."
   value = local.is_aks ? (
     try(azurerm_public_ip.aks_ingress[0].fqdn, "") != "" ?
@@ -134,10 +134,10 @@ output "env_file_snippet" {
     AKS_RG=${azurerm_resource_group.main.name}
     AKS_CLUSTER=${azurerm_kubernetes_cluster.aks[0].name}
     AKS_NODE_RG=${azurerm_kubernetes_cluster.aks[0].node_resource_group}
-    AKS_INGRESS_PUBLIC_IP_NAME=${azurerm_public_ip.aks_ingress[0].name}
-    AKS_INGRESS_PUBLIC_IP=${azurerm_public_ip.aks_ingress[0].ip_address}
-    AKS_INGRESS_PUBLIC_FQDN=${azurerm_public_ip.aks_ingress[0].fqdn}
-    AKS_PUBLIC_HOST=${try(azurerm_public_ip.aks_ingress[0].fqdn, "") != "" ? azurerm_public_ip.aks_ingress[0].fqdn : try(azurerm_public_ip.aks_ingress[0].ip_address, "")}
+    AKS_FRONTEND_PUBLIC_IP_NAME=${azurerm_public_ip.aks_ingress[0].name}
+    AKS_FRONTEND_PUBLIC_IP=${azurerm_public_ip.aks_ingress[0].ip_address}
+    AKS_FRONTEND_PUBLIC_FQDN=${azurerm_public_ip.aks_ingress[0].fqdn}
+    AKS_FRONTEND_PUBLIC_HOST=${try(azurerm_public_ip.aks_ingress[0].fqdn, "") != "" ? azurerm_public_ip.aks_ingress[0].fqdn : try(azurerm_public_ip.aks_ingress[0].ip_address, "")}
     AKS
     : <<-ARO
     # --- ARO cluster connection ---

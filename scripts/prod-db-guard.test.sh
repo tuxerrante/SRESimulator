@@ -15,6 +15,13 @@ assert_contains() {
   grep -Fq "$needle" "$file" || fail "expected '$needle' in $file"
 }
 
+assert_not_contains() {
+  local needle=$1 file=$2
+  if grep -Fq "$needle" "$file"; then
+    fail "did not expect '$needle' in $file"
+  fi
+}
+
 assert_target_order() {
   local target=$1 first=$2 second=$3 file=$4
   if ! python3 - "$target" "$first" "$second" "$file" <<'PY'
@@ -132,6 +139,12 @@ run_static_wiring_checks() {
   assert_contains "require_prod_db_secret_name" "$ROOT_DIR/Makefile"
   assert_contains "require_db_secret_exists_in_namespace" "$ROOT_DIR/Makefile"
   assert_contains "create_or_update_aoai_secret" "$ROOT_DIR/Makefile"
+  assert_contains "AKS_FRONTEND_PUBLIC_IP_NAME" "$ROOT_DIR/Makefile"
+  assert_contains "AKS_FRONTEND_PUBLIC_HOST" "$ROOT_DIR/Makefile"
+  assert_contains "AKS_FRONTEND_PUBLIC_ORIGIN_SCHEME" "$ROOT_DIR/Makefile"
+  assert_not_contains "AKS_INGRESS_PUBLIC_IP_NAME" "$ROOT_DIR/Makefile"
+  assert_not_contains "AKS_PUBLIC_HOST" "$ROOT_DIR/Makefile"
+  assert_not_contains "AKS_PUBLIC_ORIGIN_SCHEME" "$ROOT_DIR/Makefile"
   assert_contains ". scripts/select-deploy.sh" "$ROOT_DIR/Makefile"
   assert_contains "db-mode-check:" "$ROOT_DIR/Makefile"
   assert_contains '$(MAKE) public-exposure-audit NS="$$NS"' "$ROOT_DIR/Makefile"
@@ -142,11 +155,19 @@ run_static_wiring_checks() {
   assert_target_order "prod-up" 'ensure_namespace "$$NS"' 'require_db_secret_exists_in_namespace "$$NS"' "$ROOT_DIR/Makefile"
   assert_target_order "prod-up-tag" 'ensure_namespace "$$NS"' 'require_db_secret_exists_in_namespace "$$NS"' "$ROOT_DIR/Makefile"
   assert_contains 'DB_SECRET_NAME: ${{ secrets.DB_SECRET_NAME }}' "$ROOT_DIR/.github/workflows/deploy-prod.yml"
+  assert_contains 'AKS_FRONTEND_PUBLIC_IP_NAME: ${{ secrets.AKS_FRONTEND_PUBLIC_IP_NAME }}' "$ROOT_DIR/.github/workflows/deploy-prod.yml"
+  assert_not_contains 'AKS_INGRESS_PUBLIC_IP_NAME: ${{ secrets.AKS_INGRESS_PUBLIC_IP_NAME }}' "$ROOT_DIR/.github/workflows/deploy-prod.yml"
   assert_contains 'PROD_CLUSTER_FLAVOR: >-' "$ROOT_DIR/.github/workflows/deploy-prod.yml"
   assert_contains '${{ needs.resolve-release-tag.outputs.prod_cluster_flavor }}' "$ROOT_DIR/.github/workflows/deploy-prod.yml"
   assert_contains 'CLUSTER_FLAVOR="${PROD_CLUSTER_FLAVOR}"' "$ROOT_DIR/.github/workflows/deploy-prod.yml"
   assert_contains 'make db-mode-check \' "$ROOT_DIR/.github/workflows/deploy-prod.yml"
   assert_contains 'NS="${PROD_NAMESPACE:-sre-simulator}"' "$ROOT_DIR/.github/workflows/deploy-prod.yml"
+  assert_contains 'AKS_FRONTEND_PUBLIC_IP_NAME=' "$ROOT_DIR/infra/outputs.tf"
+  assert_contains 'AKS_FRONTEND_PUBLIC_HOST=' "$ROOT_DIR/infra/outputs.tf"
+  assert_contains 'output "aks_frontend_public_host"' "$ROOT_DIR/infra/outputs.tf"
+  assert_not_contains 'AKS_INGRESS_PUBLIC_IP_NAME=' "$ROOT_DIR/infra/outputs.tf"
+  assert_not_contains 'AKS_PUBLIC_HOST=' "$ROOT_DIR/infra/outputs.tf"
+  assert_not_contains 'output "public_frontend_host"' "$ROOT_DIR/infra/outputs.tf"
 }
 
 main() {

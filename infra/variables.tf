@@ -135,17 +135,17 @@ variable "aks_node_resource_group_name" {
   }
 }
 
-variable "aks_ingress_public_ip_name" {
+variable "aks_frontend_public_ip_name" {
   description = "Optional override for the static public IP resource bound to the AKS frontend public service."
   type        = string
   default     = ""
 
   validation {
     condition = (
-      var.aks_ingress_public_ip_name == "" ||
-      can(regex("^[A-Za-z0-9._-]{1,80}$", var.aks_ingress_public_ip_name))
+      var.aks_frontend_public_ip_name == "" ||
+      can(regex("^[A-Za-z0-9._-]{1,80}$", var.aks_frontend_public_ip_name))
     )
-    error_message = "aks_ingress_public_ip_name must be 1-80 chars using letters, numbers, period, underscore, or hyphen."
+    error_message = "aks_frontend_public_ip_name must be 1-80 chars using letters, numbers, period, underscore, or hyphen."
   }
 }
 
@@ -320,10 +320,10 @@ locals {
     var.aks_node_resource_group_name :
     "${local.prefix}-aks-nodes-rg"
   )
-  aks_ingress_public_ip_name = (
-    var.aks_ingress_public_ip_name != "" ?
-    var.aks_ingress_public_ip_name :
-    "${local.prefix}-aks-ingress-pip"
+  aks_frontend_public_ip_name = (
+    var.aks_frontend_public_ip_name != "" ?
+    var.aks_frontend_public_ip_name :
+    "${local.prefix}-aks-frontend-pip"
   )
   aro_sp_password_ttl      = "8760h"
   aro_sp_password_end_date = timeadd(timestamp(), local.aro_sp_password_ttl)

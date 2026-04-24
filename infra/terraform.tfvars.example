@@ -20,7 +20,7 @@ location    = "eastus"
 # aks_service_cidr            = "10.10.4.0/24"
 # aks_dns_service_ip          = "10.10.4.10"
 # aks_node_resource_group_name = "jdoe-test-aks-nodes"  # optional override
-# aks_ingress_public_ip_name  = "jdoe-test-ingress-pip" # optional override for the frontend public IP resource
+# aks_frontend_public_ip_name  = "jdoe-test-frontend-pip" # optional override for the frontend public IP resource
 # aks_public_ip_dns_label     = "jdoe-test"             # optional DNS label for the frontend public IP
 
 # ARO fallback settings (used only when cluster_flavor = "aro")

@@ -26,7 +26,7 @@ aks_node_count_max = 3
 # Optional overrides. The frontend public IP stays in the main RG; Azure still
 # creates a separate AKS-managed node RG, which is expected.
 # aks_node_resource_group_name = "aaffinit-test-aks-nodes"
-# aks_ingress_public_ip_name   = "aaffinit-test-ingress-pip"
+# aks_frontend_public_ip_name   = "aaffinit-test-frontend-pip"
 # aks_public_ip_dns_label      = "aaffinit-test"
 
 # Shared stable namespace.

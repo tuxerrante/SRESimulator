@@ -62,7 +62,7 @@ run "aks_cluster_naming" {
   }
 
   assert {
-    condition     = azurerm_public_ip.aks_ingress[0].name == "jdoe-test-aks-ingress-pip"
+    condition     = azurerm_public_ip.aks_ingress[0].name == "jdoe-test-aks-frontend-pip"
     error_message = "AKS frontend public IP should use the default shared-resource-group name."
   }
 

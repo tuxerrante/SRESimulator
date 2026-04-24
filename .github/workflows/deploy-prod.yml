@@ -171,7 +171,7 @@ jobs:
       AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
       AKS_RG: ${{ secrets.AKS_RG }}
       AKS_CLUSTER: ${{ secrets.AKS_CLUSTER }}
-      AKS_INGRESS_PUBLIC_IP_NAME: ${{ secrets.AKS_INGRESS_PUBLIC_IP_NAME }}
+      AKS_FRONTEND_PUBLIC_IP_NAME: ${{ secrets.AKS_FRONTEND_PUBLIC_IP_NAME }}
       ARO_RG: ${{ secrets.ARO_RG }}
       ARO_CLUSTER: ${{ secrets.ARO_CLUSTER }}
       AOAI_RG: ${{ secrets.AOAI_RG }}

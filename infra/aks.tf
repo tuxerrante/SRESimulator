@@ -21,7 +21,7 @@ resource "azurerm_subnet" "aks" {
 
 resource "azurerm_public_ip" "aks_ingress" {
   count               = local.is_aks ? 1 : 0
-  name                = local.aks_ingress_public_ip_name
+  name                = local.aks_frontend_public_ip_name
   location            = azurerm_resource_group.main.location
   resource_group_name = azurerm_resource_group.main.name
   allocation_method   = "Static"

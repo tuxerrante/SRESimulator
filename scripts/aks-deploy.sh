@@ -39,7 +39,7 @@ print_cluster_login_summary() {
 
 resolve_aks_public_endpoint() {
   local pip_name fqdn ip
-  pip_name="${AKS_INGRESS_PUBLIC_IP_NAME:-${AKS_CLUSTER}-aks-ingress-pip}"
+  pip_name="${AKS_FRONTEND_PUBLIC_IP_NAME:-${AKS_CLUSTER}-aks-frontend-pip}"
 
   ip=$(az network public-ip show \
     -g "$AKS_RG" -n "$pip_name" \
@@ -53,10 +53,10 @@ resolve_aks_public_endpoint() {
     return 1
   fi
 
-  AKS_INGRESS_PUBLIC_IP_NAME="$pip_name"
-  AKS_INGRESS_PUBLIC_IP="$ip"
-  AKS_INGRESS_PUBLIC_FQDN="$fqdn"
-  AKS_PUBLIC_ENDPOINT_HOST="${AKS_PUBLIC_HOST:-${fqdn:-$ip}}"
+  AKS_FRONTEND_PUBLIC_IP_NAME="$pip_name"
+  AKS_FRONTEND_PUBLIC_IP="$ip"
+  AKS_FRONTEND_PUBLIC_FQDN="$fqdn"
+  AKS_FRONTEND_PUBLIC_ENDPOINT_HOST="${AKS_FRONTEND_PUBLIC_HOST:-${fqdn:-$ip}}"
 }
 
 write_aks_frontend_service_values() {
@@ -66,10 +66,10 @@ write_aks_frontend_service_values() {
 frontend:
   service:
     type: LoadBalancer
-    loadBalancerIP: "${AKS_INGRESS_PUBLIC_IP}"
+    loadBalancerIP: "${AKS_FRONTEND_PUBLIC_IP}"
     annotations:
       service.beta.kubernetes.io/azure-load-balancer-resource-group: "${AKS_RG}"
-      service.beta.kubernetes.io/azure-pip-name: "${AKS_INGRESS_PUBLIC_IP_NAME}"
+      service.beta.kubernetes.io/azure-pip-name: "${AKS_FRONTEND_PUBLIC_IP_NAME}"
 EOF
   then
     rm -f "$values_file"
@@ -97,8 +97,8 @@ helm_deploy_sre() {
     return 1
   fi
 
-  DEPLOY_HOST="$AKS_PUBLIC_ENDPOINT_HOST"
-  DEPLOY_SCHEME="${AKS_PUBLIC_ORIGIN_SCHEME:-http}"
+  DEPLOY_HOST="$AKS_FRONTEND_PUBLIC_ENDPOINT_HOST"
+  DEPLOY_SCHEME="${AKS_FRONTEND_PUBLIC_ORIGIN_SCHEME:-http}"
 
   local db_flags=()
   local image_pull_flags=()
