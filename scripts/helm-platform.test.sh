@@ -69,6 +69,10 @@ if [[ "${frontend_hpa_count}" -lt 2 ]]; then
   fail "AKS mode with frontend/backend autoscaling enabled should render two HPAs."
 fi
 
+if grep -Eq '^  replicas:' "${lb_render}"; then
+  fail "Autoscaled AKS deployments should omit spec.replicas so the HPA owns the scale subresource."
+fi
+
 grep -Eq 'name: sre-simulator-frontend-hpa' "${lb_render}" || \
   fail "Frontend autoscaling should render the frontend HPA."
 

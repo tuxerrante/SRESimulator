@@ -6,7 +6,9 @@ metadata:
     {{- include "sre-simulator.labels" . | nindent 4 }}
     {{- include "sre-simulator.frontend.selectorLabels" . | nindent 4 }}
 spec:
-  replicas: {{ ternary .Values.frontend.autoscaling.minReplicas .Values.frontend.replicas .Values.frontend.autoscaling.enabled }}
+  {{- if not .Values.frontend.autoscaling.enabled }}
+  replicas: {{ .Values.frontend.replicas }}
+  {{- end }}
   selector:
     matchLabels:
       {{- include "sre-simulator.frontend.selectorLabels" . | nindent 6 }}
