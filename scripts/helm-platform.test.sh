@@ -31,8 +31,8 @@ grep -Eq 'value: "https://public\.example\.com"' "${route_render}" || \
 helm template sre-simulator "${CHART_DIR}" \
   --set route.enabled=false \
   --set ingress.enabled=false \
-  --set frontend.service.type=LoadBalancer \
-  --set frontend.service.loadBalancerIP=203.0.113.10 \
+  --set frontend.service.public.enabled=true \
+  --set frontend.service.public.loadBalancerIP=203.0.113.10 \
   --set publicOrigin=http://public.example.com \
   --set frontend.autoscaling.enabled=true \
   --set frontend.autoscaling.minReplicas=1 \
@@ -74,8 +74,8 @@ grep -Eq 'name: sre-simulator-backend-hpa' "${lb_render}" || \
 helm template sre-simulator "${CHART_DIR}" \
   --set route.enabled=false \
   --set ingress.enabled=false \
-  --set frontend.service.type=LoadBalancer \
-  --set frontend.service.loadBalancerIP=203.0.113.10 \
+  --set frontend.service.public.enabled=true \
+  --set frontend.service.public.loadBalancerIP=203.0.113.10 \
   --set publicOrigin=http://public.example.com \
   --set backend.autoscaling.enabled=true \
   --set backend.autoscaling.minReplicas=1 \

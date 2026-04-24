@@ -65,11 +65,12 @@ write_aks_frontend_service_values() {
   if ! cat >"$values_file" <<EOF
 frontend:
   service:
-    type: LoadBalancer
-    loadBalancerIP: "${AKS_FRONTEND_PUBLIC_IP}"
-    annotations:
-      service.beta.kubernetes.io/azure-load-balancer-resource-group: "${AKS_RG}"
-      service.beta.kubernetes.io/azure-pip-name: "${AKS_FRONTEND_PUBLIC_IP_NAME}"
+    public:
+      enabled: true
+      loadBalancerIP: "${AKS_FRONTEND_PUBLIC_IP}"
+      annotations:
+        service.beta.kubernetes.io/azure-load-balancer-resource-group: "${AKS_RG}"
+        service.beta.kubernetes.io/azure-pip-name: "${AKS_FRONTEND_PUBLIC_IP_NAME}"
 EOF
   then
     rm -f "$values_file"

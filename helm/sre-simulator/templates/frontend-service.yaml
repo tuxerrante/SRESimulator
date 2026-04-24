@@ -1,3 +1,4 @@
+{{- $publicService := .Values.frontend.service.public -}}
 apiVersion: v1
 kind: Service
 metadata:
@@ -5,14 +6,14 @@ metadata:
   labels:
     {{- include "sre-simulator.labels" . | nindent 4 }}
     {{- include "sre-simulator.frontend.selectorLabels" . | nindent 4 }}
-  {{- with .Values.frontend.service.annotations }}
+  {{- with $publicService.annotations }}
   annotations:
     {{- toYaml . | nindent 4 }}
   {{- end }}
 spec:
-  type: {{ .Values.frontend.service.type }}
-  {{- if and (eq .Values.frontend.service.type "LoadBalancer") .Values.frontend.service.loadBalancerIP }}
-  loadBalancerIP: {{ .Values.frontend.service.loadBalancerIP | quote }}
+  type: {{ ternary "LoadBalancer" "ClusterIP" $publicService.enabled }}
+  {{- if and $publicService.enabled $publicService.loadBalancerIP }}
+  loadBalancerIP: {{ $publicService.loadBalancerIP | quote }}
   {{- end }}
   ports:
     - port: {{ .Values.frontend.port }}

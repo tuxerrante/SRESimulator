@@ -520,8 +520,8 @@ jobs:
             --values ./helm/sre-simulator/values.yaml \
             --set route.enabled=false \
             --set ingress.enabled=false \
-            --set frontend.service.type=LoadBalancer \
-            --set frontend.service.loadBalancerIP=203.0.113.10 \
+            --set frontend.service.public.enabled=true \
+            --set frontend.service.public.loadBalancerIP=203.0.113.10 \
             --set publicOrigin=http://aks.example.test \
             --set frontend.autoscaling.enabled=true \
             --set frontend.autoscaling.minReplicas=1 \
