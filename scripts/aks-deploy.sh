@@ -61,7 +61,7 @@ resolve_aks_public_endpoint() {
 
 write_aks_public_exposure_values() {
   local values_file
-  values_file="$(mktemp "${TMPDIR:-/tmp}/sre-aks-exposure-XXXXXX.yaml")"
+  values_file="$(mktemp "${TMPDIR:-/tmp}/sre-aks-exposure.XXXXXX")"
   if ! cat >"$values_file" <<EOF
 exposure:
   mode: publicService

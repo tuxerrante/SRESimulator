@@ -107,9 +107,40 @@ run_immutable_tag_check() {
   assert_contains "ai.model=gpt-4.1" "$TMP_DIR/helm-args.txt"
 }
 
+run_tempfile_collision_check() {
+  local collision_dir values_file
+
+  # shellcheck disable=SC1091
+  source "$ROOT_DIR/scripts/aks-deploy.sh"
+
+  collision_dir="$TMP_DIR/mktemp-collision"
+  mkdir -p "$collision_dir"
+  touch "$collision_dir/sre-aks-exposure-XXXXXX.yaml"
+
+  TMPDIR="$collision_dir"
+  DEPLOY_HOST="aks.example.test"
+  DEPLOY_SCHEME="http"
+  AKS_RG="example-aks-rg"
+  AKS_FRONTEND_PUBLIC_IP="203.0.113.10"
+  AKS_FRONTEND_PUBLIC_IP_NAME="example-frontend-pip"
+
+  if ! values_file="$(write_aks_public_exposure_values 2>"$TMP_DIR/mktemp-collision.txt")"; then
+    cat "$TMP_DIR/mktemp-collision.txt" >&2 || true
+    fail "write_aks_public_exposure_values should use a unique temp file template"
+  fi
+
+  if [[ "$values_file" == "$collision_dir/sre-aks-exposure-XXXXXX.yaml" ]]; then
+    fail "write_aks_public_exposure_values should not reuse the literal XXXXXX template path"
+  fi
+
+  [[ -f "$values_file" ]] || fail "expected write_aks_public_exposure_values to create a temp values file"
+  rm -f "$values_file"
+}
+
 main() {
   run_latest_tag_check
   run_immutable_tag_check
+  run_tempfile_collision_check
   echo "AKS deploy helper tests passed."
 }
 
