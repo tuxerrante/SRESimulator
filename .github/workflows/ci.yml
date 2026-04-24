@@ -518,11 +518,10 @@ jobs:
           set -euo pipefail
           helm template sre-simulator ./helm/sre-simulator \
             --values ./helm/sre-simulator/values.yaml \
-            --set route.enabled=false \
-            --set ingress.enabled=false \
-            --set frontend.service.public.enabled=true \
+            --set exposure.mode=publicService \
+            --set exposure.host=aks.example.test \
+            --set exposure.scheme=http \
             --set frontend.service.public.loadBalancerIP=203.0.113.10 \
-            --set publicOrigin=http://aks.example.test \
             --set frontend.autoscaling.enabled=true \
             --set frontend.autoscaling.minReplicas=1 \
             --set frontend.autoscaling.maxReplicas=3 \

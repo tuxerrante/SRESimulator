@@ -59,14 +59,17 @@ resolve_aks_public_endpoint() {
   AKS_FRONTEND_PUBLIC_ENDPOINT_HOST="${AKS_FRONTEND_PUBLIC_HOST:-${fqdn:-$ip}}"
 }
 
-write_aks_frontend_service_values() {
+write_aks_public_exposure_values() {
   local values_file
-  values_file="$(mktemp "${TMPDIR:-/tmp}/sre-aks-frontend-service-XXXXXX.yaml")"
+  values_file="$(mktemp "${TMPDIR:-/tmp}/sre-aks-exposure-XXXXXX.yaml")"
   if ! cat >"$values_file" <<EOF
+exposure:
+  mode: publicService
+  host: "${DEPLOY_HOST}"
+  scheme: "${DEPLOY_SCHEME}"
 frontend:
   service:
     public:
-      enabled: true
       loadBalancerIP: "${AKS_FRONTEND_PUBLIC_IP}"
       annotations:
         service.beta.kubernetes.io/azure-load-balancer-resource-group: "${AKS_RG}"
@@ -84,6 +87,17 @@ prepare_release_images() {
   return 0
 }
 
+image_pull_policy_for_tag() {
+  case "$1" in
+    latest)
+      printf '%s\n' "Always"
+      ;;
+    *)
+      printf '%s\n' "IfNotPresent"
+      ;;
+  esac
+}
+
 # Usage: helm_deploy_sre <namespace> <tag> <probe-token>
 # Sets DEPLOY_HOST/DEPLOY_SCHEME for use by caller.
 helm_deploy_sre() {
@@ -93,17 +107,22 @@ helm_deploy_sre() {
   ensure_namespace "$ns"
   resolve_aks_public_endpoint
 
-  local frontend_service_values_file
-  if ! frontend_service_values_file="$(write_aks_frontend_service_values)"; then
-    return 1
-  fi
-
   DEPLOY_HOST="$AKS_FRONTEND_PUBLIC_ENDPOINT_HOST"
   DEPLOY_SCHEME="${AKS_FRONTEND_PUBLIC_ORIGIN_SCHEME:-http}"
+
+  local frontend_service_values_file
+  if ! frontend_service_values_file="$(write_aks_public_exposure_values)"; then
+    return 1
+  fi
 
   local db_flags=()
   local image_pull_flags=()
   local aoai_route_flags=()
+  local image_pull_policy
+  local aoai_model
+
+  image_pull_policy="$(image_pull_policy_for_tag "$tag")"
+  aoai_model="${AOAI_MODEL:-${AOAI_DEPLOYMENT}}"
 
   if [ -n "${GHCR_IMAGE_PULL_SECRET:-}" ]; then
     image_pull_flags+=(--set "imagePullSecrets[0]=${GHCR_IMAGE_PULL_SECRET}")
@@ -140,24 +159,27 @@ helm_deploy_sre() {
   if ! helm upgrade --install "$E2E_RELEASE" ./helm/sre-simulator -n "$ns" \
     --create-namespace \
     -f "$frontend_service_values_file" \
-    --set route.enabled=false \
-    --set ingress.enabled=false \
-    --set "publicOrigin=${DEPLOY_SCHEME}://${DEPLOY_HOST}" \
     --set "frontend.image.repository=${AKS_FRONTEND_IMAGE_REPO:-ghcr.io/tuxerrante/sre-simulator-frontend}" \
     --set "frontend.image.tag=${tag}" \
-    --set frontend.image.pullPolicy=IfNotPresent \
+    --set "frontend.image.pullPolicy=${image_pull_policy}" \
     --set frontend.replicas=1 \
     --set frontend.autoscaling.enabled=true \
     --set "frontend.autoscaling.minReplicas=${AKS_FRONTEND_MIN_REPLICAS:-1}" \
     --set "frontend.autoscaling.maxReplicas=${AKS_FRONTEND_MAX_REPLICAS:-3}" \
     --set "backend.image.repository=${AKS_BACKEND_IMAGE_REPO:-ghcr.io/tuxerrante/sre-simulator-backend}" \
     --set "backend.image.tag=${tag}" \
-    --set backend.image.pullPolicy=IfNotPresent \
+    --set "backend.image.pullPolicy=${image_pull_policy}" \
     --set backend.replicas=1 \
     --set "backend.port=${BACKEND_PORT:-8080}" \
     --set "frontend.port=${FRONTEND_PORT:-3000}" \
-    --set "ai.azureOpenai.existingSecretName=azure-openai-creds" \
+    --set ai.provider=azure-openai \
+    --set ai.mockMode=false \
+    --set "ai.model=${aoai_model}" \
+    --set "ai.azureOpenai.endpointFromSecret.existingSecretName=azure-openai-creds" \
+    --set "ai.azureOpenai.endpointFromSecret.key=endpoint" \
     --set "ai.azureOpenai.deployment=${AOAI_DEPLOYMENT}" \
+    --set "ai.azureOpenai.credentials.existingSecretName=azure-openai-creds" \
+    --set "ai.azureOpenai.credentials.key=api-key" \
     --set "ai.liveProbeToken=${probe_token}" \
     "${aoai_route_flags[@]}" \
     "${image_pull_flags[@]}" \

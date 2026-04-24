@@ -15,6 +15,7 @@ AOAI_MODEL_NAME="${AOAI_MODEL_NAME:-gpt-4o-mini}"
 AOAI_MODEL_VERSION="${AOAI_MODEL_VERSION:-2024-07-18}"
 AOAI_SKU_NAME="${AOAI_SKU_NAME:-GlobalStandard}"
 ENABLE_SQL_FREE_TIER="${ENABLE_SQL_FREE_TIER:-false}"
+AKS_NODE_RESOURCE_GROUP_NAME="${AKS_NODE_RESOURCE_GROUP_NAME:-}"
 
 failures=()
 warnings=()
@@ -169,6 +170,9 @@ echo "SQL server name: ${SQL_SERVER_NAME:-<default from alias>}"
 echo "AOAI model/version: ${AOAI_MODEL_NAME}/${AOAI_MODEL_VERSION}"
 echo "AOAI deployment sku: ${AOAI_SKU_NAME}"
 echo "Enable SQL free tier: ${ENABLE_SQL_FREE_TIER}"
+if [[ "$CLUSTER_FLAVOR" == "aks" ]]; then
+  echo "AKS node resource group override: ${AKS_NODE_RESOURCE_GROUP_NAME:-<default>}"
+fi
 echo
 
 if [[ -z "$OWNER_ALIAS" ]]; then
@@ -257,7 +261,7 @@ if ((${#failures[@]} == 0)); then
   if [[ "$CLUSTER_FLAVOR" == "aro" ]]; then
     managed_rg="${OWNER_ALIAS}-test-cluster-rg"
   else
-    managed_rg="${OWNER_ALIAS}-test-aks-nodes-rg"
+    managed_rg="${AKS_NODE_RESOURCE_GROUP_NAME:-${OWNER_ALIAS}-test-aks-nodes-rg}"
   fi
   sql_server_name="${SQL_SERVER_NAME:-${OWNER_ALIAS}-test-sql}"
 
@@ -357,6 +361,9 @@ else
   echo "  aks_node_count_min = 1"
   echo "  aks_node_count_max = 3"
   echo "  aks_public_ip_dns_label = \"aaffinit-test\""
+  if [[ -n "$AKS_NODE_RESOURCE_GROUP_NAME" ]]; then
+    echo "  aks_node_resource_group_name = \"${AKS_NODE_RESOURCE_GROUP_NAME}\""
+  fi
 fi
 echo "  aoai_model_name = \"${AOAI_MODEL_NAME}\""
 echo "  aoai_model_version = \"${AOAI_MODEL_VERSION}\""

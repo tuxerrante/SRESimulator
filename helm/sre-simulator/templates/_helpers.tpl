@@ -58,19 +58,59 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}
 
 {{/*
+Resolve the public exposure mode.
+*/}}
+{{- define "sre-simulator.exposureMode" -}}
+{{- if .Values.exposure.mode -}}
+{{- .Values.exposure.mode -}}
+{{- else if .Values.route.enabled -}}
+{{- print "route" -}}
+{{- else if .Values.ingress.enabled -}}
+{{- print "ingress" -}}
+{{- else if .Values.frontend.service.public.enabled -}}
+{{- print "publicService" -}}
+{{- else -}}
+{{- print "none" -}}
+{{- end -}}
+{{- end }}
+
+{{/*
+Resolve the externally visible host.
+*/}}
+{{- define "sre-simulator.publicHost" -}}
+{{- if .Values.exposure.host -}}
+{{- .Values.exposure.host -}}
+{{- else if .Values.route.host -}}
+{{- .Values.route.host -}}
+{{- else if .Values.ingress.host -}}
+{{- .Values.ingress.host -}}
+{{- end -}}
+{{- end }}
+
+{{/*
+Resolve the externally visible scheme.
+*/}}
+{{- define "sre-simulator.publicScheme" -}}
+{{- $mode := include "sre-simulator.exposureMode" . -}}
+{{- if .Values.exposure.scheme -}}
+{{- .Values.exposure.scheme -}}
+{{- else if eq $mode "route" -}}
+{{- print "https" -}}
+{{- else if and (eq $mode "ingress") .Values.ingress.tls.enabled -}}
+{{- print "https" -}}
+{{- else -}}
+{{- print "http" -}}
+{{- end -}}
+{{- end }}
+
+{{/*
 Resolve the externally visible origin used by the backend for same-origin checks.
 */}}
 {{- define "sre-simulator.publicOrigin" -}}
 {{- if .Values.publicOrigin -}}
 {{- .Values.publicOrigin -}}
-{{- else if and .Values.ingress.enabled .Values.ingress.host -}}
-{{- if .Values.ingress.tls.enabled -}}
-{{- printf "https://%s" .Values.ingress.host -}}
-{{- else -}}
-{{- printf "http://%s" .Values.ingress.host -}}
-{{- end -}}
-{{- else if and .Values.route.enabled .Values.route.host -}}
-{{- printf "https://%s" .Values.route.host -}}
+{{- else if include "sre-simulator.publicHost" . -}}
+{{- printf "%s://%s" (include "sre-simulator.publicScheme" .) (include "sre-simulator.publicHost" .) -}}
 {{- else -}}
 {{- printf "http://localhost" -}}
 {{- end -}}

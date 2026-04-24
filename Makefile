@@ -210,9 +210,11 @@ test: ## Run backend and frontend unit tests with coverage
 
 test-shell: ## Run shell regression tests
 	bash scripts/aro-login.test.sh
+	bash scripts/aks-deploy.test.sh
 	bash scripts/helm-platform.test.sh
 	bash scripts/prod-db-guard.test.sh
 	bash scripts/select-deploy.test.sh
+	bash infra/scripts/tf-preflight.test.sh
 
 test-integration: test-shell ## Run backend integration tests (full API game flow, mock mode)
 	cd $(BACKEND_DIR) && npm run test:integration

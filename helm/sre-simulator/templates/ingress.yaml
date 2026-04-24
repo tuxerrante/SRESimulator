@@ -1,4 +1,5 @@
-{{- if .Values.ingress.enabled }}
+{{- $publicHost := include "sre-simulator.publicHost" . -}}
+{{- if eq (include "sre-simulator.exposureMode" .) "ingress" }}
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -14,8 +15,8 @@ spec:
   ingressClassName: {{ .Values.ingress.className }}
   {{- end }}
   rules:
-    {{- if .Values.ingress.host }}
-    - host: {{ .Values.ingress.host }}
+    {{- if $publicHost }}
+    - host: {{ $publicHost }}
       http:
         paths:
           - path: {{ .Values.ingress.path }}
@@ -36,10 +37,10 @@ spec:
                 port:
                   number: {{ .Values.frontend.port }}
     {{- end }}
-  {{- if and .Values.ingress.tls.enabled .Values.ingress.host .Values.ingress.tls.secretName }}
+  {{- if and .Values.ingress.tls.enabled $publicHost .Values.ingress.tls.secretName }}
   tls:
     - hosts:
-        - {{ .Values.ingress.host }}
+        - {{ $publicHost }}
       secretName: {{ .Values.ingress.tls.secretName }}
   {{- end }}
 {{- end }}

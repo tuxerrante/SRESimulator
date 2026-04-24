@@ -9,6 +9,7 @@ source "${SCRIPT_DIR}/kube-deploy-common.sh"
 aro_login() {
   require_cli az
   require_cli oc
+  ensure_azure_login
   az account set -s "$AZURE_SUBSCRIPTION_ID" >/dev/null
   local api pass
   api=$(az aro show -g "$ARO_RG" -n "$ARO_CLUSTER" \
@@ -164,10 +165,8 @@ helm_deploy_sre() {
   fi
 
   helm upgrade --install "$E2E_RELEASE" ./helm/sre-simulator -n "$ns" \
-    --set publicOrigin="${DEPLOY_SCHEME}://$DEPLOY_HOST" \
-    --set route.enabled=true \
-    --set route.host="$DEPLOY_HOST" \
-    --set ingress.enabled=false \
+    --set-string exposure.mode=route \
+    --set-string "exposure.host=$DEPLOY_HOST" \
     --set frontend.image.repository="image-registry.openshift-image-registry.svc:5000/$ns/sre-simulator-frontend" \
     --set frontend.image.tag="$tag" \
     --set frontend.image.pullPolicy=Always \

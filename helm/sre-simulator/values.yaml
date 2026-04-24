@@ -10,7 +10,6 @@ frontend:
     # Default stays internal. AKS enables this block and binds the service to
     # the reserved Azure public IP.
     public:
-      enabled: false
       annotations: {}
       loadBalancerIP: ""
   autoscaling:
@@ -76,18 +75,27 @@ ai:
       existingSecretName: ""
       key: api-key
 
-route:
-  enabled: true
+exposure:
+  # route: OpenShift Route
+  # ingress: Kubernetes Ingress
+  # publicService: Kubernetes Service type LoadBalancer
+  # none: no public edge object
+  mode: route
   host: sre-simulator.apps.example.com
+  # Optional override. Defaults to https for Route, ingress TLS-aware, and
+  # http for a public Service.
+  scheme: ""
+
+route:
   tls:
     termination: edge
 
+# Escape hatch when the externally visible origin is not derivable from the
+# chart-managed public edge.
 publicOrigin: ""
 
 ingress:
-  enabled: false
   className: nginx
-  host: ""
   path: /
   pathType: Prefix
   annotations: {}

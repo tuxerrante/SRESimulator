@@ -15,9 +15,8 @@ fail() {
 }
 
 helm template sre-simulator "${CHART_DIR}" \
-  --set route.enabled=true \
-  --set route.host=route.example.com \
-  --set publicOrigin=https://public.example.com >"${route_render}"
+  --set exposure.mode=route \
+  --set exposure.host=route.example.com >"${route_render}"
 
 grep -Eq '^kind: Route$' "${route_render}" || \
   fail "Route mode should render an OpenShift Route."
@@ -25,15 +24,14 @@ grep -Eq '^kind: Route$' "${route_render}" || \
 grep -Eq 'host: route\.example\.com' "${route_render}" || \
   fail "Route mode should preserve the route host."
 
-grep -Eq 'value: "https://public\.example\.com"' "${route_render}" || \
-  fail "Backend CORS origin should come from publicOrigin, not route.host."
+grep -Eq 'value: "https://route\.example\.com"' "${route_render}" || \
+  fail "Route mode should derive backend CORS origin from the public route host."
 
 helm template sre-simulator "${CHART_DIR}" \
-  --set route.enabled=false \
-  --set ingress.enabled=false \
-  --set frontend.service.public.enabled=true \
+  --set exposure.mode=publicService \
+  --set exposure.host=public.example.com \
+  --set exposure.scheme=http \
   --set frontend.service.public.loadBalancerIP=203.0.113.10 \
-  --set publicOrigin=http://public.example.com \
   --set frontend.autoscaling.enabled=true \
   --set frontend.autoscaling.minReplicas=1 \
   --set frontend.autoscaling.maxReplicas=3 \
@@ -58,7 +56,7 @@ if grep -Eq '^kind: Route$' "${lb_render}"; then
 fi
 
 grep -Eq 'value: "http://public\.example\.com"' "${lb_render}" || \
-  fail "AKS mode should feed publicOrigin into backend CORS configuration."
+  fail "Public service mode should derive backend CORS origin from exposure.host and exposure.scheme."
 
 frontend_hpa_count="$(grep -Ec '^kind: HorizontalPodAutoscaler$' "${lb_render}")"
 if [[ "${frontend_hpa_count}" -lt 2 ]]; then
@@ -72,18 +70,20 @@ grep -Eq 'name: sre-simulator-backend-hpa' "${lb_render}" || \
   fail "Backend autoscaling with database mode should render the backend HPA."
 
 helm template sre-simulator "${CHART_DIR}" \
-  --set route.enabled=false \
-  --set ingress.enabled=false \
-  --set frontend.service.public.enabled=true \
+  --set exposure.mode=publicService \
+  --set exposure.host=public.example.com \
+  --set exposure.scheme=http \
   --set frontend.service.public.loadBalancerIP=203.0.113.10 \
-  --set publicOrigin=http://public.example.com \
   --set backend.autoscaling.enabled=true \
-  --set backend.autoscaling.minReplicas=1 \
+  --set backend.autoscaling.minReplicas=2 \
   --set backend.autoscaling.maxReplicas=4 \
   --set database.enabled=false >"${lb_no_db_render}"
 
 if grep -Eq 'name: sre-simulator-backend-hpa' "${lb_no_db_render}"; then
   fail "Backend HPA must not render when database mode is disabled."
 fi
+
+grep -Eq 'replicas: 1' "${lb_no_db_render}" || \
+  fail "Backend replicas must stay at the fixed replica count when database mode is disabled."
 
 echo "Helm platform rendering checks passed."

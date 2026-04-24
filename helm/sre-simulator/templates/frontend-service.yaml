@@ -1,4 +1,5 @@
 {{- $publicService := .Values.frontend.service.public -}}
+{{- $publicServiceEnabled := eq (include "sre-simulator.exposureMode" .) "publicService" -}}
 apiVersion: v1
 kind: Service
 metadata:
@@ -11,8 +12,8 @@ metadata:
     {{- toYaml . | nindent 4 }}
   {{- end }}
 spec:
-  type: {{ ternary "LoadBalancer" "ClusterIP" $publicService.enabled }}
-  {{- if and $publicService.enabled $publicService.loadBalancerIP }}
+  type: {{ ternary "LoadBalancer" "ClusterIP" $publicServiceEnabled }}
+  {{- if and $publicServiceEnabled $publicService.loadBalancerIP }}
   loadBalancerIP: {{ $publicService.loadBalancerIP | quote }}
   {{- end }}
   ports:

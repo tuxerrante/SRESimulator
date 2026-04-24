@@ -80,9 +80,9 @@ jobs:
             --set ai.mockMode=true \
             --set ai.strictStartup=false \
             --set storage.storageClass=standard \
-            --set route.enabled=false \
-            --set ingress.enabled=false \
-            --set publicOrigin=http://sre-simulator.localtest.me \
+            --set exposure.mode=publicService \
+            --set exposure.host=sre-simulator.localtest.me \
+            --set exposure.scheme=http \
             --set frontend.autoscaling.enabled=true \
             --set frontend.autoscaling.minReplicas=1 \
             --set frontend.autoscaling.maxReplicas=2 \
