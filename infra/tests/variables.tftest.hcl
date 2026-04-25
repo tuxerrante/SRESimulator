@@ -103,8 +103,9 @@ run "worker_count_minimum_accepted" {
   command = plan
 
   variables {
-    owner_alias  = "test"
-    worker_count = 2
+    owner_alias    = "test"
+    cluster_flavor = "aro"
+    worker_count   = 2
   }
 
   assert {
@@ -117,8 +118,9 @@ run "worker_count_below_minimum_rejected" {
   command = plan
 
   variables {
-    owner_alias  = "test"
-    worker_count = 1
+    owner_alias    = "test"
+    cluster_flavor = "aro"
+    worker_count   = 1
   }
 
   expect_failures = [

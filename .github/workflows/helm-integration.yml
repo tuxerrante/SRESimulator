@@ -22,9 +22,9 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Harden runner
-        # v2.16.0
+        # v2.18.0
         uses: >-
-          step-security/harden-runner@fe104658747b27e96e4f7e80cd0a94068e53901d
+          step-security/harden-runner@6c3c2f2c1c457b00c10c4848d6f5491db3b629df
         with:
           egress-policy: audit
 
@@ -36,18 +36,28 @@ jobs:
       - name: Load npm version
         run: echo "NPM_VERSION=$(tr -d '\n' < .npm-version)" >> "$GITHUB_ENV"
 
-      - name: Install Helm
+      - name: Setup Helm
+        # v5.0.0
+        uses: >-
+          azure/setup-helm@dda3372f752e03dde6b3237bc9431cdc2f7a02a2
+
+      - name: Helm template (AKS Gateway mode)
         run: |
           set -euo pipefail
-          HELM_VERSION="v3.14.4"
-          HELM_URL="https://get.helm.sh"
-          HELM_TAR="helm-${HELM_VERSION}-linux-amd64.tar.gz"
-          curl -fsSL "${HELM_URL}/${HELM_TAR}" \
-            -o /tmp/helm.tar.gz
-          tar -C /tmp -zxvf /tmp/helm.tar.gz
-          sudo mv /tmp/linux-amd64/helm /usr/local/bin/helm
-          helm version
+          helm template sre-simulator ./helm/sre-simulator \
+            --values ./helm/sre-simulator/values.yaml \
+            --set exposure.mode=gateway \
+            --set exposure.host=play.sresimulator.osadev.cloud \
+            --set exposure.scheme=https \
+            --set gateway.className=eg \
+            --set gateway.tls.secretName=sre-simulator-gateway-tls \
+            --set gateway.certManager.clusterIssuer=letsencrypt-azuredns-prod \
+            --set gateway.envoyProxy.name=sre-simulator-public-edge
 
+      # Keep the Kind runtime path lightweight here.
+      # Gateway-specific behavior is covered by this render check plus
+      # shell tests, while the in-cluster install below stays on
+      # publicService mode for a faster smoke.
       - name: Create kind cluster
         run: |
           set -euo pipefail
@@ -74,7 +84,7 @@ jobs:
           kind load docker-image sre-simulator-frontend:test --name helm-test
           kind load docker-image sre-simulator-backend:test --name helm-test
 
-      - name: Deploy chart with mock AI mode
+      - name: Deploy chart with mock AI mode (publicService runtime)
         run: |
           set -euo pipefail
           helm install sre-simulator ./helm/sre-simulator \
@@ -87,7 +97,12 @@ jobs:
             --set ai.mockMode=true \
             --set ai.strictStartup=false \
             --set storage.storageClass=standard \
-            --set route.enabled=false \
+            --set exposure.mode=publicService \
+            --set exposure.host=sre-simulator.localtest.me \
+            --set exposure.scheme=http \
+            --set frontend.autoscaling.enabled=true \
+            --set frontend.autoscaling.minReplicas=1 \
+            --set frontend.autoscaling.maxReplicas=2 \
             --wait --timeout 3m
 
       - name: Verify pods are running

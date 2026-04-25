@@ -1,0 +1,46 @@
+{{- $publicHost := include "sre-simulator.publicHost" . -}}
+{{- if eq (include "sre-simulator.exposureMode" .) "ingress" }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "sre-simulator.fullname" . }}
+  labels:
+    {{- include "sre-simulator.labels" . | nindent 4 }}
+  {{- with .Values.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- if .Values.ingress.className }}
+  ingressClassName: {{ .Values.ingress.className }}
+  {{- end }}
+  rules:
+    {{- if $publicHost }}
+    - host: {{ $publicHost }}
+      http:
+        paths:
+          - path: {{ .Values.ingress.path }}
+            pathType: {{ .Values.ingress.pathType }}
+            backend:
+              service:
+                name: {{ include "sre-simulator.fullname" . }}-frontend
+                port:
+                  number: {{ .Values.frontend.port }}
+    {{- else }}
+    - http:
+        paths:
+          - path: {{ .Values.ingress.path }}
+            pathType: {{ .Values.ingress.pathType }}
+            backend:
+              service:
+                name: {{ include "sre-simulator.fullname" . }}-frontend
+                port:
+                  number: {{ .Values.frontend.port }}
+    {{- end }}
+  {{- if and .Values.ingress.tls.enabled $publicHost .Values.ingress.tls.secretName }}
+  tls:
+    - hosts:
+        - {{ $publicHost }}
+      secretName: {{ .Values.ingress.tls.secretName }}
+  {{- end }}
+{{- end }}

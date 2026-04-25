@@ -1,7 +1,8 @@
 .PHONY: help tf-bootstrap tf-pull-secret tf-preflight tf-init tf-init-local tf-init-isolated tf-validate tf-test tf-plan tf-apply tf-destroy tf-kubeconfig tf-fmt tf-output
 
 OWNER_ALIAS ?=
-TF_VAR_FLAGS := $(if $(OWNER_ALIAS),-var owner_alias=$(OWNER_ALIAS),)
+CLUSTER_FLAVOR ?=
+TF_VAR_FLAGS := $(if $(OWNER_ALIAS),-var owner_alias=$(OWNER_ALIAS),) $(if $(CLUSTER_FLAVOR),-var cluster_flavor=$(CLUSTER_FLAVOR),)
 CONFIRM_APPLY ?=
 CONFIRM_DESTROY ?=
 LOCATION ?= eastus
@@ -55,6 +56,7 @@ tf-pull-secret: ## Extract PULL_SECRET JSON from a user-provided env source
 
 tf-preflight: ## Run Azure preflight checks for final isolated environment
 	@OWNER_ALIAS="$(OWNER_ALIAS)" \
+	CLUSTER_FLAVOR="$(CLUSTER_FLAVOR)" \
 	LOCATION="$(LOCATION)" \
 	TF_STATE_KEY="$(TF_STATE_KEY)" \
 	TF_STATE_RG="$(TF_STATE_RG)" \
@@ -158,14 +160,27 @@ tf-destroy: ## Destroy all managed infrastructure
 	fi
 	terraform destroy $(TF_VAR_FLAGS)
 
-tf-kubeconfig: ## Extract kubeconfig from ARO and write to ~/.kube/<cluster-name>
+tf-kubeconfig: ## Extract kubeconfig from the active cluster flavor
 	@set -e; \
+	FLAVOR=$$(terraform output -raw cluster_flavor); \
 	RG=$$(terraform output -raw resource_group_name); \
-	CLUSTER=$$(terraform output -raw aro_cluster_name); \
-	API=$$(az aro show -g "$$RG" -n "$$CLUSTER" --query apiserverProfile.url -o tsv); \
-	PASS=$$(az aro list-credentials -g "$$RG" -n "$$CLUSTER" --query kubeadminPassword -o tsv); \
+	if [ "$$FLAVOR" = "aks" ]; then \
+		CLUSTER=$$(terraform output -raw aks_cluster_name); \
+	else \
+		CLUSTER=$$(terraform output -raw aro_cluster_name); \
+	fi; \
 	KUBECONFIG_PATH="$$HOME/.kube/$$CLUSTER"; \
-	KUBECONFIG="$$KUBECONFIG_PATH" oc login "$$API" -u kubeadmin -p "$$PASS" --insecure-skip-tls-verify=true; \
+	if [ "$$FLAVOR" = "aks" ]; then \
+		az aks get-credentials \
+			--resource-group "$$RG" \
+			--name "$$CLUSTER" \
+			--file "$$KUBECONFIG_PATH" \
+			--overwrite-existing >/dev/null; \
+	else \
+		API=$$(az aro show -g "$$RG" -n "$$CLUSTER" --query apiserverProfile.url -o tsv); \
+		PASS=$$(az aro list-credentials -g "$$RG" -n "$$CLUSTER" --query kubeadminPassword -o tsv); \
+		KUBECONFIG="$$KUBECONFIG_PATH" oc login "$$API" -u kubeadmin -p "$$PASS" --insecure-skip-tls-verify=true >/dev/null; \
+	fi; \
 	echo "Kubeconfig written to $$KUBECONFIG_PATH"; \
 	echo "Usage: export KUBECONFIG=$$KUBECONFIG_PATH"
 

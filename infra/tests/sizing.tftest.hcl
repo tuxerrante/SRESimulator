@@ -18,7 +18,8 @@ mock_provider "azuread" {
 }
 
 variables {
-  owner_alias = "jdoe"
+  owner_alias    = "jdoe"
+  cluster_flavor = "aro"
 }
 
 # ---------------------------------------------------------------------------
@@ -120,7 +121,7 @@ run "default_vnet_address_space" {
   command = plan
 
   assert {
-    condition     = contains(azurerm_virtual_network.aro.address_space, "10.0.0.0/22")
+    condition     = contains(azurerm_virtual_network.aro[0].address_space, "10.0.0.0/22")
     error_message = "Default VNet address space should be 10.0.0.0/22."
   }
 }
@@ -129,12 +130,12 @@ run "default_subnet_cidrs" {
   command = plan
 
   assert {
-    condition     = azurerm_subnet.master.address_prefixes[0] == "10.0.0.0/23"
+    condition     = azurerm_subnet.master[0].address_prefixes[0] == "10.0.0.0/23"
     error_message = "Default master subnet CIDR should be 10.0.0.0/23."
   }
 
   assert {
-    condition     = azurerm_subnet.worker.address_prefixes[0] == "10.0.2.0/23"
+    condition     = azurerm_subnet.worker[0].address_prefixes[0] == "10.0.2.0/23"
     error_message = "Default worker subnet CIDR should be 10.0.2.0/23."
   }
 }

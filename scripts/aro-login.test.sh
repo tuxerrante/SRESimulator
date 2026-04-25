@@ -56,6 +56,10 @@ case "${1:-}" in
         printf '{"id":"%s","name":"%s"}\n' "$AZ_SUB_ID" "$AZ_SUB_NAME"
         ;;
       set)
+        if [[ "$(cat "$AZ_STATE")" != "logged_in" ]]; then
+          echo "ERROR: Azure CLI not logged in" >&2
+          exit 1
+        fi
         [[ "${3:-}" == "-s" ]] || exit 1
         [[ "${4:-}" == "$AZ_SUB_ID" ]] || exit 1
         ;;
@@ -70,6 +74,10 @@ case "${1:-}" in
     echo "Interactive device-code login completed."
     ;;
   aro)
+    if [[ "$(cat "$AZ_STATE")" != "logged_in" ]]; then
+      echo "ERROR: Azure CLI not logged in" >&2
+      exit 1
+    fi
     case "${2:-}" in
       show)
         [[ "${4:-}" == "example-aro-rg" ]] || exit 1
@@ -191,10 +199,43 @@ run_logged_in_flow() {
   assert_contains "OpenShift server: $ARO_API_SERVER" "$TMP_DIR/logged-in.txt"
 }
 
+run_cluster_login_helper_flow() {
+  : >"$AZ_LOG"
+  : >"$OC_LOG"
+  printf 'logged_out\n' >"$AZ_STATE"
+
+  if ! PATH="$TMP_DIR:$PATH" \
+    AZ_LOG="$AZ_LOG" \
+    OC_LOG="$OC_LOG" \
+    AZ_STATE="$AZ_STATE" \
+    AZ_SUB_ID="$AZ_SUB_ID" \
+    AZ_SUB_NAME="$AZ_SUB_NAME" \
+    ARO_API_SERVER="$ARO_API_SERVER" \
+    KUBEADMIN_PASSWORD="$KUBEADMIN_PASSWORD" \
+    OC_USER="$OC_USER" \
+    AZURE_SUBSCRIPTION_ID="$AZ_SUB_ID" \
+    ARO_RG=example-aro-rg \
+    ARO_CLUSTER=example-aro-cluster \
+    bash -c 'set -euo pipefail; source "$1"; cluster_login' _ \
+    "$ROOT_DIR/scripts/aro-deploy.sh" >"$TMP_DIR/cluster-login.txt" 2>&1; then
+    cat "$TMP_DIR/cluster-login.txt" >&2 || true
+    echo "--- az log ---" >&2
+    cat "$AZ_LOG" >&2 || true
+    echo "--- oc log ---" >&2
+    cat "$OC_LOG" >&2 || true
+    fail "cluster_login should authenticate Azure before querying the ARO cluster"
+  fi
+
+  assert_contains "login --use-device-code" "$AZ_LOG"
+  assert_contains "account set -s $AZ_SUB_ID" "$AZ_LOG"
+  assert_contains "login $ARO_API_SERVER -u kubeadmin -p $KUBEADMIN_PASSWORD --insecure-skip-tls-verify=true" "$OC_LOG"
+}
+
 main() {
   write_stubs
   run_logged_out_flow
   run_logged_in_flow
+  run_cluster_login_helper_flow
   echo "aro-login target tests passed."
 }
 

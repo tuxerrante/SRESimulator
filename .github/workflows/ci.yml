@@ -18,9 +18,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Harden runner
-        # v2.16.0
+        # v2.18.0
         uses: >-
-          step-security/harden-runner@fe104658747b27e96e4f7e80cd0a94068e53901d
+          step-security/harden-runner@6c3c2f2c1c457b00c10c4848d6f5491db3b629df
         with:
           egress-policy: audit
 
@@ -36,9 +36,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Harden runner
-        # v2.16.0
+        # v2.18.0
         uses: >-
-          step-security/harden-runner@fe104658747b27e96e4f7e80cd0a94068e53901d
+          step-security/harden-runner@6c3c2f2c1c457b00c10c4848d6f5491db3b629df
         with:
           egress-policy: audit
 
@@ -80,9 +80,9 @@ jobs:
       run_integration: ${{ steps.detect.outputs.run_integration }}
     steps:
       - name: Harden runner
-        # v2.16.0
+        # v2.18.0
         uses: >-
-          step-security/harden-runner@fe104658747b27e96e4f7e80cd0a94068e53901d
+          step-security/harden-runner@6c3c2f2c1c457b00c10c4848d6f5491db3b629df
         with:
           egress-policy: audit
 
@@ -168,9 +168,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Harden runner
-        # v2.16.0
+        # v2.18.0
         uses: >-
-          step-security/harden-runner@fe104658747b27e96e4f7e80cd0a94068e53901d
+          step-security/harden-runner@6c3c2f2c1c457b00c10c4848d6f5491db3b629df
         with:
           egress-policy: audit
 
@@ -215,9 +215,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Harden runner
-        # v2.16.0
+        # v2.18.0
         uses: >-
-          step-security/harden-runner@fe104658747b27e96e4f7e80cd0a94068e53901d
+          step-security/harden-runner@6c3c2f2c1c457b00c10c4848d6f5491db3b629df
         with:
           egress-policy: audit
 
@@ -286,9 +286,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Harden runner
-        # v2.16.0
+        # v2.18.0
         uses: >-
-          step-security/harden-runner@fe104658747b27e96e4f7e80cd0a94068e53901d
+          step-security/harden-runner@6c3c2f2c1c457b00c10c4848d6f5491db3b629df
         with:
           egress-policy: audit
 
@@ -316,6 +316,11 @@ jobs:
 
       - name: Install backend dependencies
         run: make install-backend
+
+      - name: Setup Helm
+        # v5.0.0
+        uses: >-
+          azure/setup-helm@dda3372f752e03dde6b3237bc9431cdc2f7a02a2
 
       - name: Run integration tests (mock mode)
         run: make test-integration
@@ -344,9 +349,9 @@ jobs:
           --health-retries 10
     steps:
       - name: Harden runner
-        # v2.16.0
+        # v2.18.0
         uses: >-
-          step-security/harden-runner@fe104658747b27e96e4f7e80cd0a94068e53901d
+          step-security/harden-runner@6c3c2f2c1c457b00c10c4848d6f5491db3b629df
         with:
           egress-policy: audit
 
@@ -374,6 +379,11 @@ jobs:
 
       - name: Install backend dependencies
         run: make install-backend
+
+      - name: Setup Helm
+        # v5.0.0
+        uses: >-
+          azure/setup-helm@dda3372f752e03dde6b3237bc9431cdc2f7a02a2
 
       - name: Create sresimulator database
         working-directory: backend
@@ -421,9 +431,9 @@ jobs:
       SECURITY_FAIL_LEVEL: high
     steps:
       - name: Harden runner
-        # v2.16.0
+        # v2.18.0
         uses: >-
-          step-security/harden-runner@fe104658747b27e96e4f7e80cd0a94068e53901d
+          step-security/harden-runner@6c3c2f2c1c457b00c10c4848d6f5491db3b629df
         with:
           egress-policy: audit
 
@@ -478,9 +488,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Harden runner
-        # v2.16.0
+        # v2.18.0
         uses: >-
-          step-security/harden-runner@fe104658747b27e96e4f7e80cd0a94068e53901d
+          step-security/harden-runner@6c3c2f2c1c457b00c10c4848d6f5491db3b629df
         with:
           egress-policy: audit
 
@@ -489,24 +499,50 @@ jobs:
         uses: >-
           actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
 
-      - name: Install Helm
-        run: |
-          set -euo pipefail
-          HELM_VERSION="v3.14.4"
-          HELM_TARBALL_URL="https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz"
-          curl -fsSL "${HELM_TARBALL_URL}" -o /tmp/helm.tar.gz
-          tar -C /tmp -zxvf /tmp/helm.tar.gz
-          sudo mv /tmp/linux-amd64/helm /usr/local/bin/helm
-          helm version
+      - name: Setup Helm
+        # v5.0.0
+        uses: >-
+          azure/setup-helm@dda3372f752e03dde6b3237bc9431cdc2f7a02a2
 
       - name: Helm lint
         run: helm lint ./helm/sre-simulator
 
-      - name: Helm template
+      - name: Helm template (Route mode)
         run: |
           set -euo pipefail
           helm template sre-simulator ./helm/sre-simulator \
             --values ./helm/sre-simulator/values.yaml
+
+      - name: Helm template (AKS Gateway mode)
+        run: |
+          set -euo pipefail
+          helm template sre-simulator ./helm/sre-simulator \
+            --values ./helm/sre-simulator/values.yaml \
+            --set exposure.mode=gateway \
+            --set exposure.host=play.sresimulator.osadev.cloud \
+            --set exposure.scheme=https \
+            --set gateway.className=eg \
+            --set gateway.tls.secretName=sre-simulator-gateway-tls \
+            --set gateway.certManager.clusterIssuer=letsencrypt-azuredns-prod \
+            --set gateway.envoyProxy.name=sre-simulator-public-edge
+
+      - name: Helm template (AKS publicService mode)
+        run: |
+          set -euo pipefail
+          helm template sre-simulator ./helm/sre-simulator \
+            --values ./helm/sre-simulator/values.yaml \
+            --set exposure.mode=publicService \
+            --set exposure.host=aks.example.test \
+            --set exposure.scheme=http \
+            --set frontend.service.public.loadBalancerIP=203.0.113.10 \
+            --set frontend.autoscaling.enabled=true \
+            --set frontend.autoscaling.minReplicas=1 \
+            --set frontend.autoscaling.maxReplicas=3 \
+            --set backend.autoscaling.enabled=true \
+            --set backend.autoscaling.minReplicas=1 \
+            --set backend.autoscaling.maxReplicas=4 \
+            --set database.enabled=true \
+            --set database.existingSecretName=sre-sql-creds
 
   docker-build:
     runs-on: ubuntu-latest
@@ -520,9 +556,9 @@ jobs:
             dockerfile: backend/Dockerfile
     steps:
       - name: Harden runner
-        # v2.16.0
+        # v2.18.0
         uses: >-
-          step-security/harden-runner@fe104658747b27e96e4f7e80cd0a94068e53901d
+          step-security/harden-runner@6c3c2f2c1c457b00c10c4848d6f5491db3b629df
         with:
           egress-policy: audit
 
@@ -645,9 +681,9 @@ jobs:
       contents: write
     steps:
       - name: Harden runner
-        # v2.16.0
+        # v2.18.0
         uses: >-
-          step-security/harden-runner@fe104658747b27e96e4f7e80cd0a94068e53901d
+          step-security/harden-runner@6c3c2f2c1c457b00c10c4848d6f5491db3b629df
         with:
           egress-policy: audit
 

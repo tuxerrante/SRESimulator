@@ -1,20 +1,22 @@
 # SRE Simulator
 
-## The Break-Fix Game for Azure Red Hat OpenShift
+## The Break-Fix Game for Azure Kubernetes Platforms
 
 ![Coverage](badges/coverage.svg)
 
 SRE Simulator is a training product that turns incident response into a
-hands-on game. An AI Dungeon Master generates realistic ARO incidents, and
-players investigate and resolve them using a structured SRE method.
+hands-on game. An AI Dungeon Master generates realistic Kubernetes and
+OpenShift incidents, and players investigate and resolve them using a
+structured SRE method.
 
 <p align="center">
-  <img src="img/landing.png" alt="Landing page" width="100%">
+  <img src="img/readme-gameplay-hero.gif" alt="Scripted gameplay demo of SRE Simulator" width="100%">
 </p>
 
 ## Why teams use it
 
-- Practice real-world ARO troubleshooting in a safe environment.
+- Practice real-world Kubernetes and OpenShift troubleshooting in a safe
+  environment.
 - Reinforce disciplined investigation phases instead of random command spam.
 - Build confidence in incident handling across junior to principal levels.
 - Measure decision quality with objective scoring, not only final outcome.
@@ -47,6 +49,26 @@ make dev
 ```
 
 Open `http://localhost:3000` in your browser.
+
+## Deployment targets
+
+Production-style semver deployments now target **AKS by default**. That path
+uses GHCR images, Envoy Gateway on the existing static public IP, and the
+custom hostname `https://play.sresimulator.osadev.cloud`. The frontend stays on
+a cluster-internal `ClusterIP` service, while the backend remains private and
+is reached only through the frontend's same-origin proxy. Azure SQL-backed
+backend scaling still activates when `DB_SECRET_NAME` is provided.
+
+The explicit AKS rollback path is still `publicService` mode, which promotes
+only the frontend back to a public `LoadBalancer` service without changing the
+rest of the deployment workflow. The previous **ARO** deployment flow remains
+supported as a platform fallback; switch between platforms with
+`CLUSTER_FLAVOR=aks|aro` locally or `PROD_CLUSTER_FLAVOR=aks|aro` in GitHub
+Actions.
+
+Most customer-managed Azure resources remain in the main resource group. The
+only expected exception is the AKS-managed node resource group, which Azure
+creates automatically.
 
 ## Documentation
 
