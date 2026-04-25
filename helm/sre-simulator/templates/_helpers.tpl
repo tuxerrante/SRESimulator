@@ -75,10 +75,30 @@ Resolve the public exposure mode.
 {{- end }}
 
 {{/*
+Validate gateway-mode exposure settings before rendering dependent resources.
+*/}}
+{{- define "sre-simulator.validateGatewayExposure" -}}
+{{- $mode := include "sre-simulator.exposureMode" . -}}
+{{- if eq $mode "gateway" -}}
+{{- $host := .Values.exposure.host | default "" | trim -}}
+{{- if not $host -}}
+{{- fail "exposure.host is required when exposure.mode=gateway" -}}
+{{- end -}}
+{{- if and .Values.exposure.scheme (ne .Values.exposure.scheme "https") -}}
+{{- fail "exposure.scheme must be empty or https when exposure.mode=gateway" -}}
+{{- end -}}
+{{- end -}}
+{{- end }}
+
+{{/*
 Resolve the externally visible host.
 */}}
 {{- define "sre-simulator.publicHost" -}}
-{{- if .Values.exposure.host -}}
+{{- $mode := include "sre-simulator.exposureMode" . -}}
+{{- include "sre-simulator.validateGatewayExposure" . -}}
+{{- if eq $mode "gateway" -}}
+{{- .Values.exposure.host | default "" | trim -}}
+{{- else if .Values.exposure.host -}}
 {{- .Values.exposure.host -}}
 {{- else if .Values.route.host -}}
 {{- .Values.route.host -}}
@@ -92,7 +112,10 @@ Resolve the externally visible scheme.
 */}}
 {{- define "sre-simulator.publicScheme" -}}
 {{- $mode := include "sre-simulator.exposureMode" . -}}
-{{- if .Values.exposure.scheme -}}
+{{- include "sre-simulator.validateGatewayExposure" . -}}
+{{- if eq $mode "gateway" -}}
+{{- print "https" -}}
+{{- else if .Values.exposure.scheme -}}
 {{- .Values.exposure.scheme -}}
 {{- else if eq $mode "route" -}}
 {{- print "https" -}}

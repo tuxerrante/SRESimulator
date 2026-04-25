@@ -79,11 +79,12 @@ exposure:
   # route: OpenShift Route
   # ingress: Kubernetes Ingress
   # publicService: Kubernetes Service type LoadBalancer
+  # gateway: Kubernetes Gateway API public edge
   # none: no public edge object
   mode: route
   host: sre-simulator.apps.example.com
-  # Optional override. Defaults to https for Route, ingress TLS-aware, and
-  # http for a public Service.
+  # Optional override. Defaults to https for Route and Gateway, ingress
+  # when TLS is enabled, and http for a public Service.
   scheme: ""
 
 route:
@@ -103,6 +104,15 @@ ingress:
     enabled: false
     secretName: ""
 
+gateway:
+  className: eg
+  tls:
+    secretName: sre-simulator-gateway-tls
+  certManager:
+    clusterIssuer: letsencrypt-azuredns-prod
+  envoyProxy:
+    name: sre-simulator-public-edge
+
 database:
   enabled: false
   # Full ADO.NET-style connection string stored in a K8s Secret.
@@ -114,13 +124,5 @@ storage:
   enabled: true
   storageClass: azurefile-csi
   size: 1Gi
-
-keyvault:
-  name: ""
-  tenantId: ""
-
-secrets:
-  - CLOUD_ML_REGION
-  - ANTHROPIC_VERTEX_PROJECT_ID
 
 imagePullSecrets: []

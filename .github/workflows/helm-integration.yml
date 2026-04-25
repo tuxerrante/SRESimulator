@@ -41,6 +41,23 @@ jobs:
         uses: >-
           azure/setup-helm@dda3372f752e03dde6b3237bc9431cdc2f7a02a2
 
+      - name: Helm template (AKS Gateway mode)
+        run: |
+          set -euo pipefail
+          helm template sre-simulator ./helm/sre-simulator \
+            --values ./helm/sre-simulator/values.yaml \
+            --set exposure.mode=gateway \
+            --set exposure.host=play.sresimulator.osadev.cloud \
+            --set exposure.scheme=https \
+            --set gateway.className=eg \
+            --set gateway.tls.secretName=sre-simulator-gateway-tls \
+            --set gateway.certManager.clusterIssuer=letsencrypt-azuredns-prod \
+            --set gateway.envoyProxy.name=sre-simulator-public-edge
+
+      # Keep the Kind runtime path lightweight here.
+      # Gateway-specific behavior is covered by this render check plus
+      # shell tests, while the in-cluster install below stays on
+      # publicService mode for a faster smoke.
       - name: Create kind cluster
         run: |
           set -euo pipefail
@@ -67,7 +84,7 @@ jobs:
           kind load docker-image sre-simulator-frontend:test --name helm-test
           kind load docker-image sre-simulator-backend:test --name helm-test
 
-      - name: Deploy chart with mock AI mode
+      - name: Deploy chart with mock AI mode (publicService runtime)
         run: |
           set -euo pipefail
           helm install sre-simulator ./helm/sre-simulator \

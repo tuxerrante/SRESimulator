@@ -72,11 +72,6 @@ spec:
               mountPath: {{ .Values.ai.vertex.credentials.mountPath }}
               readOnly: true
             {{- end }}
-            {{- if .Values.keyvault.name }}
-            - name: secrets
-              mountPath: /mnt/secrets
-              readOnly: true
-            {{- end }}
           resources:
             {{- toYaml .Values.backend.resources | nindent 12 }}
           livenessProbe:
@@ -105,12 +100,4 @@ spec:
         - name: gcp-credentials
           secret:
             secretName: {{ .Values.ai.vertex.credentials.existingSecretName }}
-        {{- end }}
-        {{- if .Values.keyvault.name }}
-        - name: secrets
-          csi:
-            driver: secrets-store.csi.k8s.io
-            readOnly: true
-            volumeAttributes:
-              secretProviderClass: {{ include "sre-simulator.fullname" . }}-secrets
         {{- end }}

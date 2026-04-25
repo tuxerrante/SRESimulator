@@ -7,7 +7,14 @@ CHART_DIR="${ROOT_DIR}/helm/sre-simulator"
 route_render="$(mktemp)"
 lb_render="$(mktemp)"
 lb_no_db_render="$(mktemp)"
-trap 'rm -f "${route_render}" "${lb_render}" "${lb_no_db_render}"' EXIT
+gw_render="$(mktemp)"
+legacy_kv_render="$(mktemp)"
+gw_bad_scheme_err="$(mktemp)"
+gw_missing_host_err="$(mktemp)"
+gw_route_host_bypass_err="$(mktemp)"
+gw_ingress_host_bypass_err="$(mktemp)"
+gw_whitespace_host_err="$(mktemp)"
+trap 'rm -f "${route_render}" "${lb_render}" "${lb_no_db_render}" "${gw_render}" "${legacy_kv_render}" "${gw_bad_scheme_err}" "${gw_missing_host_err}" "${gw_route_host_bypass_err}" "${gw_ingress_host_bypass_err}" "${gw_whitespace_host_err}"' EXIT
 
 fail() {
   echo "FAIL: $*" >&2
@@ -83,6 +90,113 @@ grep -Eq 'name: sre-simulator-frontend-hpa' "${lb_render}" || \
 
 grep -Eq 'name: sre-simulator-backend-hpa' "${lb_render}" || \
   fail "Backend autoscaling with database mode should render the backend HPA."
+
+helm template sre-simulator "${CHART_DIR}" \
+  --set exposure.mode=gateway \
+  --set-string exposure.host="  play.sresimulator.osadev.cloud  " \
+  --set exposure.scheme=https \
+  --set gateway.className=eg \
+  --set gateway.tls.secretName=sre-simulator-gateway-tls \
+  --set gateway.certManager.clusterIssuer=letsencrypt-azuredns-prod \
+  --set gateway.envoyProxy.name=sre-simulator-public-edge >"${gw_render}"
+
+grep -Eq '^kind: Gateway$' "${gw_render}" || \
+  fail "Gateway mode should render a Gateway resource."
+
+grep -Eq '^kind: HTTPRoute$' "${gw_render}" || \
+  fail "Gateway mode should render HTTPRoute resources."
+
+grep -Eq 'type: ClusterIP' "${gw_render}" || \
+  fail "Gateway mode should keep the frontend Service internal."
+
+if grep -Eq 'type: LoadBalancer' "${gw_render}"; then
+  fail "Gateway mode must not expose the frontend directly as a LoadBalancer."
+fi
+
+grep -Eq 'hostname: "play\.sresimulator\.osadev\.cloud"' "${gw_render}" || \
+  fail "Gateway mode should trim surrounding whitespace from rendered Gateway hostnames."
+
+grep -Eq '^[[:space:]]+- "play\.sresimulator\.osadev\.cloud"$' "${gw_render}" || \
+  fail "Gateway mode should trim surrounding whitespace from rendered HTTPRoute hostnames."
+
+grep -Eq 'value: "https://play\.sresimulator\.osadev\.cloud"' "${gw_render}" || \
+  fail "Gateway mode should derive a HTTPS public origin for backend CORS."
+
+if helm template sre-simulator "${CHART_DIR}" \
+  --set exposure.mode=gateway \
+  --set exposure.host=play.sresimulator.osadev.cloud \
+  --set exposure.scheme=http \
+  --set gateway.className=eg \
+  --set gateway.tls.secretName=sre-simulator-gateway-tls \
+  --set gateway.certManager.clusterIssuer=letsencrypt-azuredns-prod \
+  --set gateway.envoyProxy.name=sre-simulator-public-edge > /dev/null 2>"${gw_bad_scheme_err}"; then
+  fail "Gateway mode must reject non-HTTPS exposure.scheme overrides."
+fi
+
+grep -Eq 'exposure\.scheme must be empty or https when exposure\.mode=gateway' "${gw_bad_scheme_err}" || \
+  fail "Gateway mode should fail with a clear scheme validation error."
+
+if helm template sre-simulator "${CHART_DIR}" \
+  --set exposure.mode=gateway \
+  --set-string exposure.host= \
+  --set gateway.className=eg \
+  --set gateway.tls.secretName=sre-simulator-gateway-tls \
+  --set gateway.certManager.clusterIssuer=letsencrypt-azuredns-prod \
+  --set gateway.envoyProxy.name=sre-simulator-public-edge > /dev/null 2>"${gw_missing_host_err}"; then
+  fail "Gateway mode must require exposure.host."
+fi
+
+grep -Eq 'exposure\.host is required when exposure\.mode=gateway' "${gw_missing_host_err}" || \
+  fail "Gateway mode should fail with a clear host validation error."
+
+if helm template sre-simulator "${CHART_DIR}" \
+  --set exposure.mode=gateway \
+  --set-string exposure.host="   " \
+  --set gateway.className=eg \
+  --set gateway.tls.secretName=sre-simulator-gateway-tls \
+  --set gateway.certManager.clusterIssuer=letsencrypt-azuredns-prod \
+  --set gateway.envoyProxy.name=sre-simulator-public-edge > /dev/null 2>"${gw_whitespace_host_err}"; then
+  fail "Gateway mode must reject whitespace-only exposure.host."
+fi
+
+grep -Eq 'exposure\.host is required when exposure\.mode=gateway' "${gw_whitespace_host_err}" || \
+  fail "Gateway mode should fail with a clear validation error for whitespace-only hosts."
+
+if helm template sre-simulator "${CHART_DIR}" \
+  --set exposure.mode=gateway \
+  --set-string exposure.host= \
+  --set route.host=legacy-route.example.com \
+  --set gateway.className=eg \
+  --set gateway.tls.secretName=sre-simulator-gateway-tls \
+  --set gateway.certManager.clusterIssuer=letsencrypt-azuredns-prod \
+  --set gateway.envoyProxy.name=sre-simulator-public-edge > /dev/null 2>"${gw_route_host_bypass_err}"; then
+  fail "Gateway mode must not fall back to route.host when exposure.host is blank."
+fi
+
+grep -Eq 'exposure\.host is required when exposure\.mode=gateway' "${gw_route_host_bypass_err}" || \
+  fail "Gateway mode should reject route.host as a host fallback bypass."
+
+if helm template sre-simulator "${CHART_DIR}" \
+  --set exposure.mode=gateway \
+  --set-string exposure.host= \
+  --set ingress.host=legacy-ingress.example.com \
+  --set gateway.className=eg \
+  --set gateway.tls.secretName=sre-simulator-gateway-tls \
+  --set gateway.certManager.clusterIssuer=letsencrypt-azuredns-prod \
+  --set gateway.envoyProxy.name=sre-simulator-public-edge > /dev/null 2>"${gw_ingress_host_bypass_err}"; then
+  fail "Gateway mode must not fall back to ingress.host when exposure.host is blank."
+fi
+
+grep -Eq 'exposure\.host is required when exposure\.mode=gateway' "${gw_ingress_host_bypass_err}" || \
+  fail "Gateway mode should reject ingress.host as a host fallback bypass."
+
+helm template sre-simulator "${CHART_DIR}" \
+  --set keyvault.name=legacy-vault \
+  --set keyvault.tenantId=00000000-0000-0000-0000-000000000000 >"${legacy_kv_render}"
+
+if grep -Eq '^kind: SecretProviderClass$' "${legacy_kv_render}"; then
+  fail "The chart must not render the legacy Key Vault SecretProviderClass path."
+fi
 
 helm template sre-simulator "${CHART_DIR}" \
   --set exposure.mode=publicService \

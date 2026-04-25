@@ -163,6 +163,74 @@ variable "aks_public_ip_dns_label" {
   }
 }
 
+variable "aks_gateway_host" {
+  description = "Optional custom public host for the AKS gateway. When set with the DNS zone inputs, Terraform provisions DNS automation resources for cert-manager."
+  type        = string
+  default     = ""
+
+  validation {
+    condition = (
+      var.aks_gateway_host == "" ||
+      can(regex("^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$", var.aks_gateway_host))
+    )
+    error_message = "aks_gateway_host must be a lowercase FQDN without a trailing dot."
+  }
+
+  validation {
+    condition = (
+      (var.aks_gateway_host == "" && var.aks_dns_zone_name == "" && var.aks_dns_zone_resource_group_name == "") ||
+      (var.aks_gateway_host != "" && var.aks_dns_zone_name != "" && trimspace(var.aks_dns_zone_resource_group_name) != "")
+    )
+    error_message = "aks_gateway_host, aks_dns_zone_name, and aks_dns_zone_resource_group_name must be set together or all left empty."
+  }
+
+  validation {
+    condition = (
+      var.aks_gateway_host == "" ||
+      var.aks_dns_zone_name == "" ||
+      (
+        var.aks_gateway_host != var.aks_dns_zone_name &&
+        endswith(var.aks_gateway_host, ".${var.aks_dns_zone_name}")
+      )
+    )
+    error_message = "aks_gateway_host must be a record below aks_dns_zone_name (for example play.sresimulator.osadev.cloud under osadev.cloud)."
+  }
+}
+
+variable "aks_dns_zone_name" {
+  description = "Public Azure DNS zone name containing aks_gateway_host (for example osadev.cloud)."
+  type        = string
+  default     = ""
+
+  validation {
+    condition = (
+      var.aks_dns_zone_name == "" ||
+      can(regex("^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$", var.aks_dns_zone_name))
+    )
+    error_message = "aks_dns_zone_name must be a lowercase DNS zone name without a trailing dot."
+  }
+}
+
+variable "aks_dns_zone_resource_group_name" {
+  description = "Resource group containing the public Azure DNS zone used for AKS gateway records."
+  type        = string
+  default     = ""
+
+  validation {
+    condition = (
+      var.aks_dns_zone_resource_group_name == "" ||
+      can(regex("^[A-Za-z0-9._()\\-]{1,90}$", var.aks_dns_zone_resource_group_name))
+    )
+    error_message = "aks_dns_zone_resource_group_name must be 1-90 chars using letters, numbers, period, underscore, parentheses, or hyphen."
+  }
+}
+
+variable "aks_cert_manager_identity_name" {
+  description = "Optional override for the user-assigned identity used by cert-manager DNS01 automation. Leave empty to use the deterministic default."
+  type        = string
+  default     = ""
+}
+
 variable "aoai_model_name" {
   description = "Azure OpenAI model to deploy (must be available in the chosen region)."
   type        = string
@@ -324,6 +392,18 @@ locals {
     var.aks_frontend_public_ip_name != "" ?
     var.aks_frontend_public_ip_name :
     "${local.prefix}-aks-frontend-pip"
+  )
+  aks_gateway_enabled = (
+    local.is_aks &&
+    var.aks_gateway_host != "" &&
+    var.aks_dns_zone_name != "" &&
+    trimspace(var.aks_dns_zone_resource_group_name) != ""
+  )
+  aks_gateway_record_name = local.aks_gateway_enabled ? trimsuffix(var.aks_gateway_host, ".${var.aks_dns_zone_name}") : ""
+  aks_cert_manager_identity_name = (
+    var.aks_cert_manager_identity_name != "" ?
+    var.aks_cert_manager_identity_name :
+    "${local.prefix}-cert-manager-dns"
   )
   aro_sp_password_ttl      = "8760h"
   aro_sp_password_end_date = timeadd(timestamp(), local.aro_sp_password_ttl)

@@ -135,9 +135,58 @@ run_custom_node_rg_override_check() {
   assert_not_contains "AKS node resource group aaffinit-test-aks-nodes-rg already exists." "$output_file"
 }
 
+run_aks_geneva_confirmation_not_required_check() {
+  local output_file="$TMP_DIR/preflight-aks-geneva.txt"
+
+  if ! PATH="$TMP_DIR:$PATH" \
+    AZ_SUB_ID="00000000-0000-0000-0000-000000000000" \
+    AZ_ASSIGNEE="operator@example.com" \
+    OWNER_ALIAS="aaffinit" \
+    LOCATION="westeurope" \
+    CLUSTER_FLAVOR="aks" \
+    TF_STATE_ACCOUNT="aaffinitstate" \
+    TF_STATE_RG="tfstate-rg" \
+    TF_STATE_CONTAINER="tfstate" \
+    TF_STATE_KEY="aaffinit-test-sre-simulator.tfstate" \
+    TF_BACKEND_ENV_FILE="$TMP_DIR/.tf-backend.env" \
+    GENEVA_SUPPRESSION_ACCESS_CONFIRMED="false" \
+    bash "$ROOT_DIR/infra/scripts/tf-preflight.sh" >"$output_file" 2>&1; then
+    cat "$output_file" >&2 || true
+    fail "tf-preflight should not require Geneva suppression confirmation for AKS"
+  fi
+
+  assert_contains "Preflight passed." "$output_file"
+  assert_not_contains "Geneva suppression access was not confirmed" "$output_file"
+}
+
+run_aro_geneva_confirmation_required_check() {
+  local output_file="$TMP_DIR/preflight-aro-geneva.txt"
+
+  if PATH="$TMP_DIR:$PATH" \
+    AZ_SUB_ID="00000000-0000-0000-0000-000000000000" \
+    AZ_ASSIGNEE="operator@example.com" \
+    OWNER_ALIAS="aaffinit" \
+    LOCATION="westeurope" \
+    CLUSTER_FLAVOR="aro" \
+    TF_STATE_ACCOUNT="aaffinitstate" \
+    TF_STATE_RG="tfstate-rg" \
+    TF_STATE_CONTAINER="tfstate" \
+    TF_STATE_KEY="aaffinit-test-sre-simulator.tfstate" \
+    TF_BACKEND_ENV_FILE="$TMP_DIR/.tf-backend.env" \
+    GENEVA_SUPPRESSION_ACCESS_CONFIRMED="false" \
+    bash "$ROOT_DIR/infra/scripts/tf-preflight.sh" >"$output_file" 2>&1; then
+    cat "$output_file" >&2 || true
+    fail "tf-preflight should still require Geneva suppression confirmation for ARO"
+  fi
+
+  assert_contains "Geneva suppression access was not confirmed for the ARO path. Set GENEVA_SUPPRESSION_ACCESS_CONFIRMED=true after validating access." "$output_file"
+}
+
 main() {
   write_stubs
   run_custom_node_rg_override_check
+  run_aks_geneva_confirmation_not_required_check
+  run_aro_geneva_confirmation_required_check
   echo "tf-preflight tests passed."
 }
 

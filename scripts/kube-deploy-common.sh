@@ -141,6 +141,234 @@ wait_for_rollout() {
   local ns=$1
   "$KUBE_CLI" -n "$ns" rollout status "deployment/${E2E_RELEASE}-frontend" --timeout=6m >/dev/null
   "$KUBE_CLI" -n "$ns" rollout status "deployment/${E2E_RELEASE}-backend" --timeout=6m >/dev/null
+  if [ "${CLUSTER_FLAVOR:-}" = "aks" ] && [ "${AKS_EXPOSURE_MODE:-gateway}" = "gateway" ]; then
+    wait_for_gateway_ready "$ns" "${E2E_RELEASE}"
+    wait_for_certificate_ready "$ns" "${AKS_GATEWAY_TLS_SECRET_NAME:-sre-simulator-gateway-tls}"
+  fi
+}
+
+gateway_wait_append_requirement() {
+  local requirement=$1
+  if [ -n "${GATEWAY_WAIT_PENDING:-}" ]; then
+    GATEWAY_WAIT_PENDING="${GATEWAY_WAIT_PENDING}; ${requirement}"
+  else
+    GATEWAY_WAIT_PENDING="${requirement}"
+  fi
+}
+
+gateway_wait_compact_error() {
+  local err_file=$1
+  sed -n '1,20p' "$err_file" 2>/dev/null \
+    | tr '\n' ' ' \
+    | sed 's/[[:space:]]\+/ /g; s/^ //; s/ $//'
+}
+
+gateway_wait_read_jsonpath() {
+  local ns=$1 gateway_name=$2 query=$3 err_file=$4 output
+
+  if ! output="$("$KUBE_CLI" -n "$ns" get "gateway/${gateway_name}" -o "jsonpath=${query}" 2>"$err_file")"; then
+    return 1
+  fi
+
+  printf '%s' "$output"
+}
+
+gateway_wait_lookup_condition() {
+  local conditions=$1 target_type=$2 line condition_type condition_fields
+
+  GATEWAY_WAIT_CONDITION_STATUS=""
+  GATEWAY_WAIT_CONDITION_OBSERVED=""
+
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    condition_type=${line%%=*}
+    condition_fields=${line#*=}
+    if [ "$condition_type" = "$target_type" ]; then
+      GATEWAY_WAIT_CONDITION_STATUS=${condition_fields%%:*}
+      GATEWAY_WAIT_CONDITION_OBSERVED=${condition_fields#*:}
+      return 0
+    fi
+  done <<<"$conditions"
+
+  return 1
+}
+
+gateway_wait_lookup_csv_condition() {
+  local conditions_csv=$1 target_type=$2 entry condition_type condition_fields
+  local old_ifs=$IFS
+
+  GATEWAY_WAIT_CONDITION_STATUS=""
+  GATEWAY_WAIT_CONDITION_OBSERVED=""
+  IFS=','
+  for entry in $conditions_csv; do
+    [ -n "$entry" ] || continue
+    condition_type=${entry%%=*}
+    condition_fields=${entry#*=}
+    if [ "$condition_type" = "$target_type" ]; then
+      GATEWAY_WAIT_CONDITION_STATUS=${condition_fields%%:*}
+      GATEWAY_WAIT_CONDITION_OBSERVED=${condition_fields#*:}
+      IFS=$old_ifs
+      return 0
+    fi
+  done
+  IFS=$old_ifs
+
+  return 1
+}
+
+gateway_wait_require_condition() {
+  local scope=$1 source=$2 generation=$3 target_type=$4 source_kind=$5
+  local found_condition=1
+
+  if [ "$source_kind" = "csv" ]; then
+    gateway_wait_lookup_csv_condition "$source" "$target_type" || found_condition=0
+  else
+    gateway_wait_lookup_condition "$source" "$target_type" || found_condition=0
+  fi
+
+  if [ "$found_condition" -eq 1 ] && \
+     [ "$GATEWAY_WAIT_CONDITION_STATUS" = "True" ] && \
+     [ "$GATEWAY_WAIT_CONDITION_OBSERVED" = "$generation" ]; then
+    return 0
+  fi
+
+  if [ "$found_condition" -eq 1 ] && \
+     [ -n "$GATEWAY_WAIT_CONDITION_OBSERVED" ] && \
+     [ "$GATEWAY_WAIT_CONDITION_OBSERVED" != "$generation" ]; then
+    GATEWAY_WAIT_STALE=1
+  fi
+
+  gateway_wait_append_requirement \
+    "${scope} ${target_type}=True@${generation} (actual: ${GATEWAY_WAIT_CONDITION_STATUS:-<missing>}@${GATEWAY_WAIT_CONDITION_OBSERVED:-<missing>})"
+  return 1
+}
+
+gateway_wait_evaluate_status() {
+  local generation=$1 gateway_conditions=$2 listener_conditions=$3
+  local listener_line listener_name listener_condition_csv saw_listener_status=0
+
+  GATEWAY_WAIT_PENDING=""
+  GATEWAY_WAIT_STALE=0
+
+  gateway_wait_require_condition "gateway" "$gateway_conditions" "$generation" "Accepted" "lines" || true
+  gateway_wait_require_condition "gateway" "$gateway_conditions" "$generation" "Programmed" "lines" || true
+
+  while IFS='|' read -r listener_name listener_condition_csv; do
+    [ -n "$listener_name" ] || continue
+    saw_listener_status=1
+    gateway_wait_require_condition "listener '${listener_name}'" "$listener_condition_csv" "$generation" "Accepted" "csv" || true
+    gateway_wait_require_condition "listener '${listener_name}'" "$listener_condition_csv" "$generation" "Programmed" "csv" || true
+    gateway_wait_require_condition "listener '${listener_name}'" "$listener_condition_csv" "$generation" "ResolvedRefs" "csv" || true
+  done <<<"$listener_conditions"
+
+  if [ "$saw_listener_status" -ne 1 ]; then
+    gateway_wait_append_requirement "listener status entries at generation ${generation}"
+  fi
+
+  [ -z "$GATEWAY_WAIT_PENDING" ]
+}
+
+# Usage: wait_for_gateway_ready <namespace> <gateway-name>
+wait_for_gateway_ready() {
+  local ns=$1 gateway_name=$2
+  local err_file gateway_conditions="" generation="" i=0 listener_conditions="" poll_seconds total_seconds
+  local max_polls="${WAIT_FOR_GATEWAY_READY_MAX_POLLS:-72}"
+
+  poll_seconds="${WAIT_FOR_GATEWAY_READY_POLL_SECONDS:-5}"
+  total_seconds=$((max_polls * poll_seconds))
+  err_file="$(mktemp "${TMPDIR:-/tmp}/sre-gateway-ready-XXXXXX")"
+
+  while [ "$i" -lt "$max_polls" ]; do
+    if ! generation="$(gateway_wait_read_jsonpath "$ns" "$gateway_name" '{.metadata.generation}' "$err_file")"; then
+      echo "Gateway '${gateway_name}' in namespace '${ns}' could not be fetched: $(gateway_wait_compact_error "$err_file")" >&2
+      rm -f "$err_file"
+      return 1
+    fi
+
+    if ! gateway_conditions="$(gateway_wait_read_jsonpath "$ns" "$gateway_name" '{range .status.conditions[*]}{.type}={.status}:{.observedGeneration}{"\n"}{end}' "$err_file")"; then
+      echo "Gateway '${gateway_name}' in namespace '${ns}' could not be fetched: $(gateway_wait_compact_error "$err_file")" >&2
+      rm -f "$err_file"
+      return 1
+    fi
+
+    if ! listener_conditions="$(gateway_wait_read_jsonpath "$ns" "$gateway_name" '{range .status.listeners[*]}{.name}{"|"}{range .conditions[*]}{.type}={.status}:{.observedGeneration}{","}{end}{"\n"}{end}' "$err_file")"; then
+      echo "Gateway '${gateway_name}' in namespace '${ns}' could not be fetched: $(gateway_wait_compact_error "$err_file")" >&2
+      rm -f "$err_file"
+      return 1
+    fi
+
+    if gateway_wait_evaluate_status "$generation" "$gateway_conditions" "$listener_conditions"; then
+      rm -f "$err_file"
+      return 0
+    fi
+
+    i=$((i + 1))
+    sleep "$poll_seconds"
+  done
+
+  echo "Gateway '${gateway_name}' in namespace '${ns}' did not become ready within ${total_seconds} seconds." >&2
+  if [ "${GATEWAY_WAIT_STALE:-0}" -eq 1 ]; then
+    echo "Gateway '${gateway_name}' status is stale: observedGeneration does not match metadata.generation." >&2
+  fi
+  if [ -n "${GATEWAY_WAIT_PENDING:-}" ]; then
+    echo "Still waiting on: ${GATEWAY_WAIT_PENDING}" >&2
+  fi
+  "$KUBE_CLI" -n "$ns" get "gateway/${gateway_name}" -o yaml >&2 || true
+  rm -f "$err_file"
+  return 1
+}
+
+# Usage: wait_for_certificate_ready <namespace> <tls-secret-name>
+wait_for_certificate_ready() {
+  local ns=$1 secret_name=$2
+  local certificate_list="" certificate_name="" certificate_entry="" certificate_secret=""
+  local err_file i=0 poll_seconds total_seconds
+  local max_polls="${WAIT_FOR_CERTIFICATE_READY_MAX_POLLS:-72}"
+  local wait_timeout="${WAIT_FOR_CERTIFICATE_READY_WAIT_TIMEOUT:-10m}"
+
+  poll_seconds="${WAIT_FOR_CERTIFICATE_READY_POLL_SECONDS:-5}"
+  total_seconds=$((max_polls * poll_seconds))
+  err_file="$(mktemp "${TMPDIR:-/tmp}/sre-certificate-ready-XXXXXX")"
+
+  while [ "$i" -lt "$max_polls" ]; do
+    if ! certificate_list="$("$KUBE_CLI" -n "$ns" get certificate -o jsonpath='{range .items[*]}{.metadata.name}{"|"}{.spec.secretName}{"\n"}{end}' 2>"$err_file")"; then
+      echo "Certificates in namespace '${ns}' could not be fetched: $(gateway_wait_compact_error "$err_file")" >&2
+      rm -f "$err_file"
+      return 1
+    fi
+
+    certificate_name=""
+    for certificate_entry in $certificate_list; do
+      certificate_secret=${certificate_entry#*|}
+      if [ "$certificate_secret" = "$secret_name" ]; then
+        certificate_name=${certificate_entry%%|*}
+        break
+      fi
+    done
+
+    if [ -n "$certificate_name" ]; then
+      break
+    fi
+
+    i=$((i + 1))
+    sleep "$poll_seconds"
+  done
+
+  if [ -z "$certificate_name" ]; then
+    echo "Certificate for TLS secret '${secret_name}' in namespace '${ns}' was not created within ${total_seconds} seconds." >&2
+    rm -f "$err_file"
+    return 1
+  fi
+
+  if ! "$KUBE_CLI" -n "$ns" wait --for=jsonpath='{.status.conditions[?(@.type=="Ready")].status}'=True \
+    "certificate/${certificate_name}" --timeout="$wait_timeout" >/dev/null 2>"$err_file"; then
+    echo "Certificate '${certificate_name}' in namespace '${ns}' did not become Ready: $(gateway_wait_compact_error "$err_file")" >&2
+    "$KUBE_CLI" -n "$ns" get "certificate/${certificate_name}" -o yaml >&2 || true
+    rm -f "$err_file"
+    return 1
+  fi
+
+  rm -f "$err_file"
 }
 
 # Usage: probe_readiness <scheme> <host> <probe-token>

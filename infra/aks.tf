@@ -35,15 +35,17 @@ resource "azurerm_public_ip" "aks_ingress" {
 # ---------------------------------------------------------------------------
 
 resource "azurerm_kubernetes_cluster" "aks" {
-  count               = local.is_aks ? 1 : 0
-  name                = local.cluster_name
-  location            = azurerm_resource_group.main.location
-  resource_group_name = azurerm_resource_group.main.name
-  dns_prefix          = local.aks_dns_prefix
-  sku_tier            = "Free"
-  node_resource_group = local.aks_node_resource_group_name
-  kubernetes_version  = var.aks_kubernetes_version != "" ? var.aks_kubernetes_version : null
-  tags                = local.tags
+  count                     = local.is_aks ? 1 : 0
+  name                      = local.cluster_name
+  location                  = azurerm_resource_group.main.location
+  resource_group_name       = azurerm_resource_group.main.name
+  dns_prefix                = local.aks_dns_prefix
+  sku_tier                  = "Free"
+  node_resource_group       = local.aks_node_resource_group_name
+  kubernetes_version        = var.aks_kubernetes_version != "" ? var.aks_kubernetes_version : null
+  oidc_issuer_enabled       = true
+  workload_identity_enabled = true
+  tags                      = local.tags
 
   default_node_pool {
     name                 = "system"

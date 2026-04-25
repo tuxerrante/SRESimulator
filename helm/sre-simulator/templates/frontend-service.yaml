@@ -8,7 +8,7 @@ metadata:
   labels:
     {{- include "sre-simulator.labels" . | nindent 4 }}
     {{- include "sre-simulator.frontend.selectorLabels" . | nindent 4 }}
-  {{- with $publicService.annotations }}
+  {{- with (and $publicServiceEnabled $publicService.annotations) }}
   annotations:
     {{- toYaml . | nindent 4 }}
   {{- end }}

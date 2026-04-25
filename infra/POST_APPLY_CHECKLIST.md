@@ -11,15 +11,23 @@ make tf-preflight \
   TF_STATE_ACCOUNT=<state-account> \
   LOCATION=westeurope \
   TF_STATE_KEY=aaffinit-test-sre-simulator.tfstate \
-  SQL_SERVER_NAME=aaffinit-test-sql-20260403 \
-  GENEVA_SUPPRESSION_ACCESS_CONFIRMED=true
+  SQL_SERVER_NAME=aaffinit-test-sql-20260403
+```
+
+If you are using the ARO fallback path instead of AKS, add:
+
+```bash
+GENEVA_SUPPRESSION_ACCESS_CONFIRMED=true
 ```
 
 If this is your first run and the backend does not exist yet, preflight will
 ask to create the state resource group/storage account/container and persist
 backend defaults to `infra/.tf-backend.env`.
 
-## 1. Silence Cluster in Geneva Health
+## 1. ARO-only: Silence Cluster in Geneva Health
+
+Skip this section for AKS. Geneva suppression is only required for ARO
+deployments.
 
 To avoid production alert noise from this test cluster, create a suppression
 rule in Geneva Health and confirm it is active before any break/fix traffic:
@@ -37,7 +45,7 @@ rule in Geneva Health and confirm it is active before any break/fix traffic:
 > **Why?** Without suppression, the test cluster's incidents (synthetic ones are only simulated)
 > will fire real alerts and page the on-call team.
 
-For guarded final deployment targets, export:
+For ARO final deployment targets, export:
 
 ```bash
 export GENEVA_SUPPRESSION_RULE_ACTIVE=true
@@ -114,7 +122,6 @@ For the final environment run (DB enabled + mandatory checks), use:
 
 ```bash
 DB_SECRET_NAME=sre-sql-creds \
-GENEVA_SUPPRESSION_RULE_ACTIVE=true \
 CLUSTER_FLAVOR=aks \
 make prod-up-final
 ```
@@ -138,22 +145,78 @@ CLUSTER_FLAVOR=aks make e2e-azure-route-up    # creates timestamped namespace
 CLUSTER_FLAVOR=aks make e2e-azure-route-down  # deletes it (refuses if it matches prod namespace)
 ```
 
-## 5. Validate exposure and DB connectivity
+## 5. Validate exposure, TLS, and DB connectivity
 
 Run these checks after each final deployment:
 
 ```bash
-# Frontend public edge exists; backend remains private ClusterIP and
-# non-routable
-CLUSTER_FLAVOR=aks make public-exposure-audit NS=sre-simulator
+# Snapshot pods plus Gateway/HTTPRoute/certificate state
+CLUSTER_FLAVOR=aks make prod-status
 
-# Fallback DB check when GH pipelines are unavailable
+# Frontend public edge exists; backend remains private ClusterIP and non-routable
+CLUSTER_FLAVOR=aks make public-exposure-audit NS=sre-simulator
+```
+
+### Confirm the custom DNS record
+
+```bash
+terraform -chdir=infra output -raw aks_gateway_public_host
+terraform -chdir=infra output -raw aks_frontend_public_ip_address
+terraform -chdir=infra output -raw aks_frontend_public_fqdn
+
+dig +short play.sresimulator.osadev.cloud
+dig +short "$(terraform -chdir=infra output -raw aks_frontend_public_fqdn)"
+```
+
+`play.sresimulator.osadev.cloud` should resolve to the same public IP returned
+by `aks_frontend_public_ip_address`. Use the Azure-generated hostname from
+`aks_frontend_public_fqdn` only as an operator fallback while the custom DNS
+record propagates or during DNS troubleshooting.
+
+### Confirm Gateway and certificate readiness
+
+```bash
+kubectl -n sre-simulator get gateway,httproute,certificate
+
+kubectl -n sre-simulator wait \
+  --for=jsonpath='{.status.conditions[?(@.type=="Programmed")].status}'=True \
+  gateway/sre-simulator --timeout=5m
+
+CERT_NAME="$(kubectl -n sre-simulator get certificate -o jsonpath='{range .items[*]}{.metadata.name}{\"|\"}{.spec.secretName}{\"\\n\"}{end}' | awk -F'|' '$2 == \"sre-simulator-gateway-tls\" {print $1; exit}')"
+kubectl -n sre-simulator wait \
+  --for=jsonpath='{.status.conditions[?(@.type=="Ready")].status}'=True \
+  "certificate/${CERT_NAME}" --timeout=10m
+```
+
+If `CERT_NAME` is empty, the gateway shim did not create a certificate for
+`sre-simulator-gateway-tls`, so investigate the `Gateway` annotation,
+cert-manager controllers, and DNS solver identity before continuing.
+
+### Verify HTTPS on the customer-facing host
+
+```bash
+curl -fsS -o /dev/null -w '%{http_code}\n' https://play.sresimulator.osadev.cloud/
+curl -I https://play.sresimulator.osadev.cloud/
+```
+
+Expect the custom host to present a valid certificate and return the normal
+frontend response for the deployed release.
+
+### Fallback DB check when GitHub pipelines are unavailable
+
+```bash
+CLUSTER_FLAVOR=aks make db-mode-check NS=sre-simulator
 CLUSTER_FLAVOR=aks make db-port-forward-check NS=sre-simulator
 ```
 
-`db-port-forward-check` calls `/api/scores?difficulty=easy` through a local
-`kubectl port-forward` or `oc port-forward` tunnel to the backend service. A
-`200` response confirms the backend can serve DB-backed queries.
+Use `db-mode-check` as the primary proof that the deployed backend is wired for
+Azure SQL mode: it verifies `STORAGE_BACKEND=mssql` plus the `DATABASE_URL`
+secret reference on the backend deployment.
+
+`db-port-forward-check` is an additional reachability smoke test. It calls
+`/api/scores?difficulty=easy` through a local `kubectl port-forward` or
+`oc port-forward` tunnel to the backend service and confirms that this path
+responds with `200`.
 
 ## 6. AOAI Capacity & Scaling Notes
 

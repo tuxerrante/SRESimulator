@@ -22,6 +22,10 @@ location    = "eastus"
 # aks_node_resource_group_name = "jdoe-test-aks-nodes"  # optional override
 # aks_frontend_public_ip_name  = "jdoe-test-frontend-pip" # optional override for the frontend public IP resource
 # aks_public_ip_dns_label     = "jdoe-test"             # optional DNS label for the frontend public IP
+# aks_gateway_host                 = "play.sresimulator.osadev.cloud"
+# aks_dns_zone_name                = "osadev.cloud"
+# aks_dns_zone_resource_group_name = "dns"
+# aks_cert_manager_identity_name   = "jdoe-test-cert-manager-dns" # optional override for the cert-manager DNS identity
 
 # ARO fallback settings (used only when cluster_flavor = "aro")
 # master_vm_size = "Standard_D8s_v3"   # minimum, cannot go smaller

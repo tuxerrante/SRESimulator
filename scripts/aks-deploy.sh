@@ -6,6 +6,39 @@ KUBE_CLI=kubectl
 # shellcheck disable=SC1091
 source "${SCRIPT_DIR}/kube-deploy-common.sh"
 
+ENVOY_GATEWAY_CHART="oci://docker.io/envoyproxy/gateway-helm"
+ENVOY_GATEWAY_VERSION="v1.6.5"
+ENVOY_GATEWAY_CONTROLLER_NAME="gateway.envoyproxy.io/gatewayclass-controller"
+CERT_MANAGER_CHART="jetstack/cert-manager"
+CERT_MANAGER_VERSION="v1.20.1"
+
+apply_aks_gateway_defaults() {
+  AKS_EXPOSURE_MODE="${AKS_EXPOSURE_MODE:-gateway}"
+  AKS_SKIP_GATEWAY_BOOTSTRAP="${AKS_SKIP_GATEWAY_BOOTSTRAP:-false}"
+  AKS_GATEWAY_HOST="${AKS_GATEWAY_HOST:-play.sresimulator.osadev.cloud}"
+  AKS_GATEWAY_CLASS_NAME="${AKS_GATEWAY_CLASS_NAME:-eg}"
+  AKS_GATEWAY_TLS_SECRET_NAME="${AKS_GATEWAY_TLS_SECRET_NAME:-sre-simulator-gateway-tls}"
+  AKS_CLUSTER_ISSUER_NAME="${AKS_CLUSTER_ISSUER_NAME:-letsencrypt-azuredns-prod}"
+  AKS_DNS_ZONE_NAME="${AKS_DNS_ZONE_NAME:-osadev.cloud}"
+  AKS_DNS_ZONE_RESOURCE_GROUP="${AKS_DNS_ZONE_RESOURCE_GROUP:-dns}"
+  AKS_CERT_MANAGER_ACME_EMAIL="${AKS_CERT_MANAGER_ACME_EMAIL:-aaffinit@redhat.com}"
+  if [ -z "${AKS_CERT_MANAGER_IDENTITY_NAME:-}" ] && [ -n "${AKS_CLUSTER:-}" ]; then
+    AKS_CERT_MANAGER_IDENTITY_NAME="${AKS_CLUSTER}-cert-manager-dns"
+  fi
+}
+
+aks_gateway_bootstrap_enabled() {
+  apply_aks_gateway_defaults
+  case "${AKS_SKIP_GATEWAY_BOOTSTRAP}" in
+    1|true|TRUE|yes|YES)
+      return 1
+      ;;
+    *)
+      return 0
+      ;;
+  esac
+}
+
 aks_login() {
   require_cli az
   require_cli kubectl
@@ -59,14 +92,168 @@ resolve_aks_public_endpoint() {
   AKS_FRONTEND_PUBLIC_ENDPOINT_HOST="${AKS_FRONTEND_PUBLIC_HOST:-${fqdn:-$ip}}"
 }
 
-write_aks_public_exposure_values() {
-  local values_file
+resolve_aks_gateway_identity_client_id() {
+  local client_id identity_name
+
+  require_cli az
+  apply_aks_gateway_defaults
+  identity_name="${AKS_CERT_MANAGER_IDENTITY_NAME}"
+
+  if [ -z "$identity_name" ]; then
+    echo "error: AKS_CERT_MANAGER_IDENTITY_NAME or AKS_CLUSTER is required to resolve the AKS gateway identity client ID" >&2
+    return 1
+  fi
+
+  client_id="$(az identity show \
+    -g "$AKS_RG" \
+    -n "$identity_name" \
+    --query clientId -o tsv)"
+
+  if [ -z "$client_id" ]; then
+    echo "error: failed to resolve AKS gateway identity client ID for '$identity_name' in resource group '$AKS_RG'" >&2
+    return 1
+  fi
+
+  AKS_CERT_MANAGER_IDENTITY_CLIENT_ID="$client_id"
+}
+
+write_aks_clusterissuer_manifest() {
+  local manifest_file
+
+  apply_aks_gateway_defaults
+  manifest_file="$(mktemp "${TMPDIR:-/tmp}/sre-aks-clusterissuer.XXXXXX")"
+  if ! cat >"$manifest_file" <<EOF
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-azuredns-staging
+spec:
+  acme:
+    email: ${AKS_CERT_MANAGER_ACME_EMAIL}
+    server: https://acme-staging-v02.api.letsencrypt.org/directory
+    privateKeySecretRef:
+      name: letsencrypt-azuredns-staging-account-key
+    solvers:
+      - dns01:
+          azureDNS:
+            subscriptionID: ${AZURE_SUBSCRIPTION_ID}
+            resourceGroupName: ${AKS_DNS_ZONE_RESOURCE_GROUP}
+            hostedZoneName: ${AKS_DNS_ZONE_NAME}
+            environment: AzurePublicCloud
+            managedIdentity:
+              clientID: ${AKS_CERT_MANAGER_IDENTITY_CLIENT_ID}
+---
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-azuredns-prod
+spec:
+  acme:
+    email: ${AKS_CERT_MANAGER_ACME_EMAIL}
+    server: https://acme-v02.api.letsencrypt.org/directory
+    privateKeySecretRef:
+      name: letsencrypt-azuredns-prod-account-key
+    solvers:
+      - dns01:
+          azureDNS:
+            subscriptionID: ${AZURE_SUBSCRIPTION_ID}
+            resourceGroupName: ${AKS_DNS_ZONE_RESOURCE_GROUP}
+            hostedZoneName: ${AKS_DNS_ZONE_NAME}
+            environment: AzurePublicCloud
+            managedIdentity:
+              clientID: ${AKS_CERT_MANAGER_IDENTITY_CLIENT_ID}
+EOF
+  then
+    rm -f "$manifest_file"
+    return 1
+  fi
+
+  printf '%s\n' "$manifest_file"
+}
+
+write_aks_envoyproxy_manifest() {
+  local ns=$1 manifest_file release_name
+
+  release_name="${E2E_RELEASE:-sre-simulator}"
+  manifest_file="$(mktemp "${TMPDIR:-/tmp}/sre-aks-envoyproxy.XXXXXX")"
+  if ! cat >"$manifest_file" <<EOF
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: EnvoyProxy
+metadata:
+  name: ${release_name}-public-edge
+  namespace: ${ns}
+spec:
+  provider:
+    type: Kubernetes
+    kubernetes:
+      envoyService:
+        patch:
+          type: StrategicMerge
+          value:
+            metadata:
+              annotations:
+                service.beta.kubernetes.io/azure-load-balancer-resource-group: "${AKS_RG}"
+                service.beta.kubernetes.io/azure-pip-name: "${AKS_FRONTEND_PUBLIC_IP_NAME}"
+            spec:
+              loadBalancerIP: "${AKS_FRONTEND_PUBLIC_IP}"
+EOF
+  then
+    rm -f "$manifest_file"
+    return 1
+  fi
+
+  printf '%s\n' "$manifest_file"
+}
+
+write_aks_gatewayclass_manifest() {
+  local manifest_file
+
+  apply_aks_gateway_defaults
+  manifest_file="$(mktemp "${TMPDIR:-/tmp}/sre-aks-gatewayclass.XXXXXX")"
+  if ! cat >"$manifest_file" <<EOF
+apiVersion: gateway.networking.k8s.io/v1
+kind: GatewayClass
+metadata:
+  name: ${AKS_GATEWAY_CLASS_NAME}
+spec:
+  controllerName: ${ENVOY_GATEWAY_CONTROLLER_NAME}
+EOF
+  then
+    rm -f "$manifest_file"
+    return 1
+  fi
+
+  printf '%s\n' "$manifest_file"
+}
+
+write_aks_exposure_values() {
+  local mode release_name values_file
+
+  apply_aks_gateway_defaults
+  mode="${AKS_EXPOSURE_MODE}"
+  release_name="${E2E_RELEASE:-sre-simulator}"
   values_file="$(mktemp "${TMPDIR:-/tmp}/sre-aks-exposure.XXXXXX")"
   if ! cat >"$values_file" <<EOF
 exposure:
-  mode: publicService
+  mode: "${mode}"
   host: "${DEPLOY_HOST}"
   scheme: "${DEPLOY_SCHEME}"
+gateway:
+  className: "${AKS_GATEWAY_CLASS_NAME}"
+  tls:
+    secretName: "${AKS_GATEWAY_TLS_SECRET_NAME}"
+  certManager:
+    clusterIssuer: "${AKS_CLUSTER_ISSUER_NAME}"
+  envoyProxy:
+    name: "${release_name}-public-edge"
+EOF
+  then
+    rm -f "$values_file"
+    return 1
+  fi
+
+  if [ "$mode" = "publicService" ]; then
+    if ! cat >>"$values_file" <<EOF
 frontend:
   service:
     public:
@@ -75,11 +262,82 @@ frontend:
         service.beta.kubernetes.io/azure-load-balancer-resource-group: "${AKS_RG}"
         service.beta.kubernetes.io/azure-pip-name: "${AKS_FRONTEND_PUBLIC_IP_NAME}"
 EOF
-  then
-    rm -f "$values_file"
+    then
+      rm -f "$values_file"
+      return 1
+    fi
+  fi
+
+  printf '%s\n' "$values_file"
+}
+
+write_aks_public_exposure_values() {
+  write_aks_exposure_values "$@"
+}
+
+ensure_cert_manager() {
+  local validating_webhook_selector
+
+  require_cli helm
+  validating_webhook_selector='{"matchExpressions":[{"key":"cert-manager.io/disable-validation","operator":"NotIn","values":["true"]},{"key":"control-plane","operator":"NotIn","values":["true"]},{"key":"kubernetes.azure.com/managedby","operator":"NotIn","values":["aks"]}]}'
+
+  helm repo add jetstack https://charts.jetstack.io --force-update >/dev/null
+  helm upgrade --install cert-manager "$CERT_MANAGER_CHART" \
+    --namespace cert-manager \
+    --create-namespace \
+    --version "$CERT_MANAGER_VERSION" \
+    --set crds.enabled=true \
+    --set config.enableGatewayAPI=true \
+    --set-json "webhook.validatingWebhookConfiguration.namespaceSelector=${validating_webhook_selector}" \
+    --set-string podLabels.azure\\.workload\\.identity/use=true \
+    --set-string serviceAccount.annotations.azure\\.workload\\.identity/client-id="${AKS_CERT_MANAGER_IDENTITY_CLIENT_ID}" \
+    --wait --timeout 10m >/dev/null
+}
+
+ensure_envoy_gateway() {
+  require_cli helm
+
+  helm upgrade --install envoy-gateway "$ENVOY_GATEWAY_CHART" \
+    --namespace envoy-gateway-system \
+    --create-namespace \
+    --version "$ENVOY_GATEWAY_VERSION" \
+    --wait --timeout 10m >/dev/null
+}
+
+ensure_aks_gateway_stack() {
+  local ns=$1 gatewayclass_manifest="" envoyproxy_manifest="" issuer_manifest=""
+
+  resolve_aks_public_endpoint || return 1
+  resolve_aks_gateway_identity_client_id || return 1
+  ensure_envoy_gateway || return 1
+  ensure_cert_manager || return 1
+
+  if ! gatewayclass_manifest="$(write_aks_gatewayclass_manifest)"; then
     return 1
   fi
-  printf '%s\n' "$values_file"
+  if ! issuer_manifest="$(write_aks_clusterissuer_manifest)"; then
+    rm -f "$gatewayclass_manifest"
+    return 1
+  fi
+  if ! envoyproxy_manifest="$(write_aks_envoyproxy_manifest "$ns")"; then
+    rm -f "$gatewayclass_manifest" "$issuer_manifest"
+    return 1
+  fi
+
+  if ! "$KUBE_CLI" apply -f "$gatewayclass_manifest" >/dev/null; then
+    rm -f "$gatewayclass_manifest" "$issuer_manifest" "$envoyproxy_manifest"
+    return 1
+  fi
+  if ! "$KUBE_CLI" apply -f "$issuer_manifest" >/dev/null; then
+    rm -f "$gatewayclass_manifest" "$issuer_manifest" "$envoyproxy_manifest"
+    return 1
+  fi
+  if ! "$KUBE_CLI" apply -f "$envoyproxy_manifest" >/dev/null; then
+    rm -f "$gatewayclass_manifest" "$issuer_manifest" "$envoyproxy_manifest"
+    return 1
+  fi
+
+  rm -f "$gatewayclass_manifest" "$issuer_manifest" "$envoyproxy_manifest"
 }
 
 prepare_release_images() {
@@ -105,13 +363,22 @@ helm_deploy_sre() {
 
   require_cli helm
   ensure_namespace "$ns"
-  resolve_aks_public_endpoint
+  apply_aks_gateway_defaults
 
-  DEPLOY_HOST="$AKS_FRONTEND_PUBLIC_ENDPOINT_HOST"
-  DEPLOY_SCHEME="${AKS_FRONTEND_PUBLIC_ORIGIN_SCHEME:-http}"
+  if [ "$AKS_EXPOSURE_MODE" = "gateway" ]; then
+    if aks_gateway_bootstrap_enabled; then
+      ensure_aks_gateway_stack "$ns" || return 1
+    fi
+    DEPLOY_HOST="$AKS_GATEWAY_HOST"
+    DEPLOY_SCHEME="https"
+  else
+    resolve_aks_public_endpoint || return 1
+    DEPLOY_HOST="$AKS_FRONTEND_PUBLIC_ENDPOINT_HOST"
+    DEPLOY_SCHEME="${AKS_FRONTEND_PUBLIC_ORIGIN_SCHEME:-http}"
+  fi
 
-  local frontend_service_values_file
-  if ! frontend_service_values_file="$(write_aks_public_exposure_values)"; then
+  local exposure_values_file
+  if ! exposure_values_file="$(write_aks_exposure_values)"; then
     return 1
   fi
 
@@ -158,7 +425,7 @@ helm_deploy_sre() {
 
   if ! helm upgrade --install "$E2E_RELEASE" ./helm/sre-simulator -n "$ns" \
     --create-namespace \
-    -f "$frontend_service_values_file" \
+    -f "$exposure_values_file" \
     --set "frontend.image.repository=${AKS_FRONTEND_IMAGE_REPO:-ghcr.io/tuxerrante/sre-simulator-frontend}" \
     --set "frontend.image.tag=${tag}" \
     --set "frontend.image.pullPolicy=${image_pull_policy}" \
@@ -185,9 +452,9 @@ helm_deploy_sre() {
     "${image_pull_flags[@]}" \
     "${db_flags[@]}" \
     --wait --timeout 15m >/dev/null; then
-    rm -f "$frontend_service_values_file"
+    rm -f "$exposure_values_file"
     return 1
   fi
 
-  rm -f "$frontend_service_values_file"
+  rm -f "$exposure_values_file"
 }

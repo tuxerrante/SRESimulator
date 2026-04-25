@@ -52,6 +52,21 @@ output "aks_frontend_public_host" {
   ) : ""
 }
 
+output "aks_gateway_public_host" {
+  description = "Custom public host wired to the AKS frontend public IP when gateway DNS automation is enabled."
+  value       = local.aks_gateway_enabled ? var.aks_gateway_host : ""
+}
+
+output "aks_cert_manager_identity_name" {
+  description = "User-assigned identity name used by cert-manager DNS01 automation."
+  value       = local.aks_gateway_enabled ? azurerm_user_assigned_identity.aks_dns_solver[0].name : ""
+}
+
+output "aks_cert_manager_identity_client_id" {
+  description = "Client ID of the user-assigned identity used by cert-manager DNS01 automation."
+  value       = local.aks_gateway_enabled ? azurerm_user_assigned_identity.aks_dns_solver[0].client_id : ""
+}
+
 output "aro_api_server_url" {
   description = "ARO API server URL."
   value = local.is_aro ? try(
@@ -138,6 +153,10 @@ output "env_file_snippet" {
     AKS_FRONTEND_PUBLIC_IP=${azurerm_public_ip.aks_ingress[0].ip_address}
     AKS_FRONTEND_PUBLIC_FQDN=${azurerm_public_ip.aks_ingress[0].fqdn}
     AKS_FRONTEND_PUBLIC_HOST=${try(azurerm_public_ip.aks_ingress[0].fqdn, "") != "" ? azurerm_public_ip.aks_ingress[0].fqdn : try(azurerm_public_ip.aks_ingress[0].ip_address, "")}
+    AKS_GATEWAY_HOST=${local.aks_gateway_enabled ? var.aks_gateway_host : ""}
+    AKS_DNS_ZONE_NAME=${local.aks_gateway_enabled ? var.aks_dns_zone_name : ""}
+    AKS_DNS_ZONE_RESOURCE_GROUP=${local.aks_gateway_enabled ? var.aks_dns_zone_resource_group_name : ""}
+    AKS_CERT_MANAGER_IDENTITY_NAME=${local.aks_gateway_enabled ? local.aks_cert_manager_identity_name : ""}
     AKS
     : <<-ARO
     # --- ARO cluster connection ---
@@ -155,7 +174,7 @@ output "env_file_snippet" {
 }
 
 output "post_apply_checklist" {
-  description = "Post-apply steps (Geneva suppression, kubeconfig, namespace model, optional SQL)."
+  description = "Platform-specific post-apply steps (kubeconfig, namespace model, optional SQL, ARO-only Geneva suppression)."
   value = join("", [
     <<-EOT
 
@@ -165,6 +184,9 @@ output "post_apply_checklist" {
     ║                                                                      ║
     ║  Platform: ${upper(var.cluster_flavor)}                                           ║
     ║                                                                      ║
+    EOT
+    ,
+    local.is_aro ? <<-ARO
     ║  1. SILENCE CLUSTER IN GENEVA HEALTH                                 ║
     ║     Create a suppression rule to avoid production alert noise:        ║
     ║     • Scope: Cluster = "${local.cluster_name}"                       ║
@@ -174,6 +196,14 @@ output "post_apply_checklist" {
     ║     • Reason = "Test/development cluster – not production"           ║
     ║     • Then: export GENEVA_SUPPRESSION_RULE_ACTIVE=true               ║
     ║                                                                      ║
+    ARO
+    : <<-AKS
+    ║  1. GENEVA SUPPRESSION                                               ║
+    ║     • Not required for AKS deployments.                              ║
+    ║                                                                      ║
+    AKS
+    ,
+    <<-EOT
     ║  2. GET KUBECONFIG                                                   ║
     ║     make tf-kubeconfig                                               ║
     ║                                                                      ║

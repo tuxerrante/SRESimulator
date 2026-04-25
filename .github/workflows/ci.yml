@@ -513,7 +513,20 @@ jobs:
           helm template sre-simulator ./helm/sre-simulator \
             --values ./helm/sre-simulator/values.yaml
 
-      - name: Helm template (AKS frontend LoadBalancer mode)
+      - name: Helm template (AKS Gateway mode)
+        run: |
+          set -euo pipefail
+          helm template sre-simulator ./helm/sre-simulator \
+            --values ./helm/sre-simulator/values.yaml \
+            --set exposure.mode=gateway \
+            --set exposure.host=play.sresimulator.osadev.cloud \
+            --set exposure.scheme=https \
+            --set gateway.className=eg \
+            --set gateway.tls.secretName=sre-simulator-gateway-tls \
+            --set gateway.certManager.clusterIssuer=letsencrypt-azuredns-prod \
+            --set gateway.envoyProxy.name=sre-simulator-public-edge
+
+      - name: Helm template (AKS publicService mode)
         run: |
           set -euo pipefail
           helm template sre-simulator ./helm/sre-simulator \

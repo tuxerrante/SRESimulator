@@ -53,12 +53,18 @@ Open `http://localhost:3000` in your browser.
 ## Deployment targets
 
 Production-style semver deployments now target **AKS by default**. That path
-uses GHCR images, a public AKS `LoadBalancer` service for the frontend, and
-Azure SQL-backed backend scaling when `DB_SECRET_NAME` is provided.
+uses GHCR images, Envoy Gateway on the existing static public IP, and the
+custom hostname `https://play.sresimulator.osadev.cloud`. The frontend stays on
+a cluster-internal `ClusterIP` service, while the backend remains private and
+is reached only through the frontend's same-origin proxy. Azure SQL-backed
+backend scaling still activates when `DB_SECRET_NAME` is provided.
 
-The previous **ARO** deployment flow is still supported as a fallback. Switch
-between platforms with `CLUSTER_FLAVOR=aks|aro` locally or
-`PROD_CLUSTER_FLAVOR=aks|aro` in GitHub Actions.
+The explicit AKS rollback path is still `publicService` mode, which promotes
+only the frontend back to a public `LoadBalancer` service without changing the
+rest of the deployment workflow. The previous **ARO** deployment flow remains
+supported as a platform fallback; switch between platforms with
+`CLUSTER_FLAVOR=aks|aro` locally or `PROD_CLUSTER_FLAVOR=aks|aro` in GitHub
+Actions.
 
 Most customer-managed Azure resources remain in the main resource group. The
 only expected exception is the AKS-managed node resource group, which Azure

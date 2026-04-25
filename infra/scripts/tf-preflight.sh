@@ -343,8 +343,8 @@ if ((${#failures[@]} == 0)); then
   fi
 fi
 
-if [[ "$GENEVA_SUPPRESSION_ACCESS_CONFIRMED" != "true" ]]; then
-  add_failure "Geneva suppression access was not confirmed. Set GENEVA_SUPPRESSION_ACCESS_CONFIRMED=true after validating access."
+if [[ "$CLUSTER_FLAVOR" == "aro" && "$GENEVA_SUPPRESSION_ACCESS_CONFIRMED" != "true" ]]; then
+  add_failure "Geneva suppression access was not confirmed for the ARO path. Set GENEVA_SUPPRESSION_ACCESS_CONFIRMED=true after validating access."
 fi
 
 echo

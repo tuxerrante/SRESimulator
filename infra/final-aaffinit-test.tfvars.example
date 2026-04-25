@@ -28,6 +28,10 @@ aks_node_count_max = 3
 # aks_node_resource_group_name = "aaffinit-test-aks-nodes"
 # aks_frontend_public_ip_name   = "aaffinit-test-frontend-pip"
 # aks_public_ip_dns_label      = "aaffinit-test"
+aks_gateway_host                 = "play.sresimulator.osadev.cloud"
+aks_dns_zone_name                = "osadev.cloud"
+aks_dns_zone_resource_group_name = "dns"
+aks_cert_manager_identity_name   = "aaffinit-test-cert-manager-dns"
 
 # Shared stable namespace.
 prod_namespace = "sre-simulator"

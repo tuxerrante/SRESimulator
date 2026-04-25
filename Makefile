@@ -31,6 +31,16 @@ AKS_CLUSTER ?=
 AKS_FRONTEND_PUBLIC_IP_NAME ?= $(if $(strip $(AKS_CLUSTER)),$(AKS_CLUSTER)-aks-frontend-pip,)
 AKS_FRONTEND_PUBLIC_HOST ?=
 AKS_FRONTEND_PUBLIC_ORIGIN_SCHEME ?= http
+AKS_EXPOSURE_MODE ?= gateway
+AKS_SKIP_GATEWAY_BOOTSTRAP ?= false
+AKS_GATEWAY_HOST ?= play.sresimulator.osadev.cloud
+AKS_GATEWAY_CLASS_NAME ?= eg
+AKS_GATEWAY_TLS_SECRET_NAME ?= sre-simulator-gateway-tls
+AKS_CLUSTER_ISSUER_NAME ?= letsencrypt-azuredns-prod
+AKS_DNS_ZONE_NAME ?= osadev.cloud
+AKS_DNS_ZONE_RESOURCE_GROUP ?= dns
+AKS_CERT_MANAGER_IDENTITY_NAME ?= $(if $(strip $(AKS_CLUSTER)),$(AKS_CLUSTER)-cert-manager-dns,)
+AKS_CERT_MANAGER_ACME_EMAIL ?= aaffinit@redhat.com
 AKS_FRONTEND_IMAGE_REPO ?= ghcr.io/tuxerrante/sre-simulator-frontend
 AKS_BACKEND_IMAGE_REPO ?= ghcr.io/tuxerrante/sre-simulator-backend
 GHCR_IMAGE_PULL_SECRET ?=
@@ -48,12 +58,19 @@ E2E_REQUIRED_VARS := AZURE_SUBSCRIPTION_ID AOAI_RG AOAI_ACCOUNT AOAI_DEPLOYMENT 
 PROD_NAMESPACE ?= sre-simulator
 PROD_METADATA_FILE ?= data/prod-route.env
 GENEVA_SUPPRESSION_RULE_ACTIVE ?= false
+# Treat command-line and environment-provided values as explicit operator overrides.
+AKS_EXPOSURE_MODE_EXPLICIT := $(filter-out default file undefined automatic,$(origin AKS_EXPOSURE_MODE))
 # Optional: when set with DB_SECRET_NAME, copy the DB secret from this namespace into the E2E namespace before Helm.
 # If unset, the copy step uses PROD_NAMESPACE (same default as stable prod): $(PROD_NAMESPACE)
 DB_SECRET_SOURCE_NAMESPACE ?=
 
 export AZURE_SUBSCRIPTION_ID CLUSTER_FLAVOR ARO_RG ARO_CLUSTER
 export AKS_RG AKS_CLUSTER AKS_FRONTEND_PUBLIC_IP_NAME AKS_FRONTEND_PUBLIC_HOST AKS_FRONTEND_PUBLIC_ORIGIN_SCHEME AKS_FRONTEND_IMAGE_REPO AKS_BACKEND_IMAGE_REPO GHCR_IMAGE_PULL_SECRET
+export AKS_EXPOSURE_MODE AKS_GATEWAY_HOST AKS_GATEWAY_CLASS_NAME
+export AKS_GATEWAY_TLS_SECRET_NAME AKS_CLUSTER_ISSUER_NAME
+export AKS_DNS_ZONE_NAME AKS_DNS_ZONE_RESOURCE_GROUP
+export AKS_CERT_MANAGER_IDENTITY_NAME AKS_CERT_MANAGER_ACME_EMAIL
+export AKS_SKIP_GATEWAY_BOOTSTRAP
 export AOAI_RG AOAI_ACCOUNT AOAI_DEPLOYMENT
 export AOAI_DEPLOYMENT_CHAT AOAI_DEPLOYMENT_COMMAND AOAI_DEPLOYMENT_SCENARIO AOAI_DEPLOYMENT_PROBE
 export E2E_RELEASE NPM_VERSION
@@ -510,7 +527,7 @@ prod-up: env-check ## Deploy to the stable production namespace on the selected 
 	$(MAKE) db-mode-check NS="$$NS"; \
 	$(MAKE) db-port-forward-check NS="$$NS"; \
 	mkdir -p "$$(dirname "$(PROD_METADATA_FILE)")"; \
-	printf 'NS=%s\nRELEASE=%s\nURL=%s\nTAG=%s\nCLUSTER_FLAVOR=%s\n' "$$NS" "$(E2E_RELEASE)" "$$DEPLOY_SCHEME://$$DEPLOY_HOST" "$$TAG" "$(CLUSTER_FLAVOR)" > "$(PROD_METADATA_FILE)"; \
+	printf 'NS=%s\nRELEASE=%s\nURL=%s\nTAG=%s\nCLUSTER_FLAVOR=%s\nDEPLOYED_AKS_EXPOSURE_MODE=%s\n' "$$NS" "$(E2E_RELEASE)" "$$DEPLOY_SCHEME://$$DEPLOY_HOST" "$$TAG" "$(CLUSTER_FLAVOR)" "$(if $(filter aks,$(CLUSTER_FLAVOR)),$(AKS_EXPOSURE_MODE),)" > "$(PROD_METADATA_FILE)"; \
 	echo "Production deployment ready."; \
 	echo "URL: $$DEPLOY_SCHEME://$$DEPLOY_HOST"; \
 	echo "Metadata saved to $(PROD_METADATA_FILE)"
@@ -543,7 +560,7 @@ prod-up-tag: env-check ## Deploy to production namespace with explicit semver TA
 	$(MAKE) db-mode-check NS="$$NS"; \
 	$(MAKE) db-port-forward-check NS="$$NS"; \
 	mkdir -p "$$(dirname "$(PROD_METADATA_FILE)")"; \
-	printf 'NS=%s\nRELEASE=%s\nURL=%s\nTAG=%s\nCLUSTER_FLAVOR=%s\n' "$$NS" "$(E2E_RELEASE)" "$$DEPLOY_SCHEME://$$DEPLOY_HOST" "$$TAG" "$(CLUSTER_FLAVOR)" > "$(PROD_METADATA_FILE)"; \
+	printf 'NS=%s\nRELEASE=%s\nURL=%s\nTAG=%s\nCLUSTER_FLAVOR=%s\nDEPLOYED_AKS_EXPOSURE_MODE=%s\n' "$$NS" "$(E2E_RELEASE)" "$$DEPLOY_SCHEME://$$DEPLOY_HOST" "$$TAG" "$(CLUSTER_FLAVOR)" "$(if $(filter aks,$(CLUSTER_FLAVOR)),$(AKS_EXPOSURE_MODE),)" > "$(PROD_METADATA_FILE)"; \
 	echo "Production deployment ready."; \
 	echo "URL: $$DEPLOY_SCHEME://$$DEPLOY_HOST"; \
 	echo "Probe status: 200"; \
@@ -578,6 +595,14 @@ prod-status: ## Show production namespace status (pods plus active public edge)
 	@set -e; \
 	. scripts/select-deploy.sh; \
 	NS="$(PROD_NAMESPACE)"; \
+	EFFECTIVE_AKS_EXPOSURE_MODE="$(AKS_EXPOSURE_MODE)"; \
+	if [ "$(CLUSTER_FLAVOR)" = "aks" ] && [ -z "$(AKS_EXPOSURE_MODE_EXPLICIT)" ] && [ -f "$(PROD_METADATA_FILE)" ]; then \
+		DEPLOYED_AKS_EXPOSURE_MODE=""; \
+		. "$(PROD_METADATA_FILE)"; \
+		if [ -n "$$DEPLOYED_AKS_EXPOSURE_MODE" ]; then \
+			EFFECTIVE_AKS_EXPOSURE_MODE="$$DEPLOYED_AKS_EXPOSURE_MODE"; \
+		fi; \
+	fi; \
 	if ! "$$KUBE_CLI" get namespace "$$NS" >/dev/null 2>&1; then \
 		echo "Production namespace '$$NS' does not exist. Run 'make prod-up' to create it."; \
 		exit 0; \
@@ -588,7 +613,10 @@ prod-status: ## Show production namespace status (pods plus active public edge)
 	echo "Pods:"; \
 	"$$KUBE_CLI" -n "$$NS" get pods -o wide 2>/dev/null || echo "  (no pods)"; \
 	echo ""; \
-	if [ "$(CLUSTER_FLAVOR)" = "aks" ]; then \
+	if [ "$(CLUSTER_FLAVOR)" = "aks" ] && [ "$$EFFECTIVE_AKS_EXPOSURE_MODE" = "gateway" ]; then \
+		echo "Gateway resources:"; \
+		"$$KUBE_CLI" -n "$$NS" get gateway,httproute,certificate 2>/dev/null || echo "  (no gateway resources)"; \
+	elif [ "$(CLUSTER_FLAVOR)" = "aks" ]; then \
 		echo "Frontend service:"; \
 		"$$KUBE_CLI" -n "$$NS" get "svc/$(E2E_RELEASE)-frontend" 2>/dev/null || echo "  (no frontend service)"; \
 	else \
@@ -599,13 +627,9 @@ prod-status: ## Show production namespace status (pods plus active public edge)
 	echo "Deployments:"; \
 	"$$KUBE_CLI" -n "$$NS" get deployments 2>/dev/null || echo "  (no deployments)"
 
-geneva-suppression-check: ## Require explicit confirmation that Geneva suppression rule is active
-	@if [ "$(GENEVA_SUPPRESSION_RULE_ACTIVE)" != "true" ]; then \
-		if [ "$(CLUSTER_FLAVOR)" = "aks" ]; then \
-			echo "Set GENEVA_SUPPRESSION_RULE_ACTIVE=true after verifying Geneva suppression is active for the target AKS cluster/resource group (AKS_CLUSTER, AKS_RG)."; \
-		else \
-			echo "Set GENEVA_SUPPRESSION_RULE_ACTIVE=true after verifying Geneva suppression is active for the target ARO cluster/resource group (ARO_CLUSTER, ARO_RG)."; \
-		fi; \
+geneva-suppression-check: ## Require explicit confirmation that Geneva suppression is active for ARO only
+	@if [ "$(CLUSTER_FLAVOR)" = "aro" ] && [ "$(GENEVA_SUPPRESSION_RULE_ACTIVE)" != "true" ]; then \
+		echo "Set GENEVA_SUPPRESSION_RULE_ACTIVE=true after verifying Geneva suppression is active for the target ARO cluster/resource group (ARO_CLUSTER, ARO_RG)."; \
 		exit 1; \
 	fi
 
@@ -616,6 +640,14 @@ public-exposure-audit: ## Verify frontend edge exists and backend remains privat
 	RELEASE="$${RELEASE:-$(E2E_RELEASE)}"; \
 	FRONT_SVC="$$RELEASE-frontend"; \
 	BACK_SVC="$$RELEASE-backend"; \
+	EFFECTIVE_AKS_EXPOSURE_MODE="$(AKS_EXPOSURE_MODE)"; \
+	if [ "$(CLUSTER_FLAVOR)" = "aks" ] && [ -z "$(AKS_EXPOSURE_MODE_EXPLICIT)" ] && [ -f "$(PROD_METADATA_FILE)" ]; then \
+		DEPLOYED_AKS_EXPOSURE_MODE=""; \
+		. "$(PROD_METADATA_FILE)"; \
+		if [ -n "$$DEPLOYED_AKS_EXPOSURE_MODE" ]; then \
+			EFFECTIVE_AKS_EXPOSURE_MODE="$$DEPLOYED_AKS_EXPOSURE_MODE"; \
+		fi; \
+	fi; \
 	echo "Auditing exposure in namespace $$NS (release $$RELEASE, flavor $(CLUSTER_FLAVOR))"; \
 	if [ "$(CLUSTER_FLAVOR)" = "aks" ]; then \
 		if "$$KUBE_CLI" -n "$$NS" get "ingress/$$RELEASE" >/dev/null 2>&1; then \
@@ -626,15 +658,39 @@ public-exposure-audit: ## Verify frontend edge exists and backend remains privat
 			echo "Unexpected backend ingress found: $$RELEASE-backend"; \
 			exit 1; \
 		fi; \
-		FRONT_TYPE=$$("$$KUBE_CLI" -n "$$NS" get "svc/$$FRONT_SVC" -o jsonpath='{.spec.type}'); \
-		if [ "$$FRONT_TYPE" != "LoadBalancer" ]; then \
-			echo "Frontend service type must be LoadBalancer on AKS, found $$FRONT_TYPE"; \
-			exit 1; \
-		fi; \
-		FRONT_PORT=$$("$$KUBE_CLI" -n "$$NS" get "svc/$$FRONT_SVC" -o jsonpath='{.spec.ports[0].port}'); \
-		if [ "$$FRONT_PORT" != "80" ]; then \
-			echo "Frontend service port must be 80 on AKS, found $$FRONT_PORT"; \
-			exit 1; \
+		if [ "$$EFFECTIVE_AKS_EXPOSURE_MODE" = "gateway" ]; then \
+			"$$KUBE_CLI" -n "$$NS" get "gateway/$$RELEASE" >/dev/null; \
+			"$$KUBE_CLI" -n "$$NS" get "httproute/$$RELEASE" >/dev/null; \
+			"$$KUBE_CLI" -n "$$NS" get "httproute/$$RELEASE-redirect" >/dev/null; \
+			CERT_LIST=$$("$$KUBE_CLI" -n "$$NS" get certificate -o jsonpath='{range .items[*]}{.metadata.name}{"|"}{.spec.secretName}{"\n"}{end}'); \
+			CERT_FOUND=0; \
+			for CERT_ENTRY in $$CERT_LIST; do \
+				CERT_SECRET=$${CERT_ENTRY#*|}; \
+				if [ "$$CERT_SECRET" = "$(AKS_GATEWAY_TLS_SECRET_NAME)" ]; then \
+					CERT_FOUND=1; \
+					break; \
+				fi; \
+			done; \
+			if [ "$$CERT_FOUND" -ne 1 ]; then \
+				echo "Gateway certificate must exist for TLS secret $(AKS_GATEWAY_TLS_SECRET_NAME) in namespace $$NS"; \
+				exit 1; \
+			fi; \
+			FRONT_TYPE=$$("$$KUBE_CLI" -n "$$NS" get "svc/$$FRONT_SVC" -o jsonpath='{.spec.type}'); \
+			if [ "$$FRONT_TYPE" != "ClusterIP" ]; then \
+				echo "Frontend service type must be ClusterIP in AKS gateway mode, found $$FRONT_TYPE"; \
+				exit 1; \
+			fi; \
+		else \
+			FRONT_TYPE=$$("$$KUBE_CLI" -n "$$NS" get "svc/$$FRONT_SVC" -o jsonpath='{.spec.type}'); \
+			if [ "$$FRONT_TYPE" != "LoadBalancer" ]; then \
+				echo "Frontend service type must be LoadBalancer on AKS publicService mode, found $$FRONT_TYPE"; \
+				exit 1; \
+			fi; \
+			FRONT_PORT=$$("$$KUBE_CLI" -n "$$NS" get "svc/$$FRONT_SVC" -o jsonpath='{.spec.ports[0].port}'); \
+			if [ "$$FRONT_PORT" != "80" ]; then \
+				echo "Frontend service port must be 80 on AKS publicService mode, found $$FRONT_PORT"; \
+				exit 1; \
+			fi; \
 		fi; \
 	else \
 		"$$KUBE_CLI" -n "$$NS" get "route/$$RELEASE" >/dev/null; \

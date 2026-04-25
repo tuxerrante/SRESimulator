@@ -106,9 +106,12 @@ make tf-preflight \
   TF_STATE_ACCOUNT=<state-account> \
   LOCATION=westeurope \
   TF_STATE_KEY=aaffinit-test-sre-simulator.tfstate \
-  SQL_SERVER_NAME=aaffinit-test-sql-20260403 \
-  GENEVA_SUPPRESSION_ACCESS_CONFIRMED=true
+  SQL_SERVER_NAME=aaffinit-test-sql-20260403
 ```
+
+AKS preflight does not require Geneva confirmation. If you use the ARO
+fallback path instead, add `GENEVA_SUPPRESSION_ACCESS_CONFIRMED=true` after
+validating Geneva access.
 
 Then initialize state safely:
 
@@ -129,31 +132,47 @@ inside the cluster**.
 
 ### What is exposed
 
-- On the AKS default path, the frontend Kubernetes `Service` is promoted to
-  `LoadBalancer` and bound to the reserved public IP/FQDN.
+- On the AKS default path, Envoy Gateway publishes a namespaced `Gateway` plus
+  two `HTTPRoute` objects (HTTP redirect + HTTPS app route) on the existing
+  static public IP.
+- The AKS frontend `Service` stays `ClusterIP` in Gateway mode; the public edge
+  lives on Envoy, not on the app `Service` itself.
+- cert-manager owns the `sre-simulator-gateway-tls` secret via the
+  `letsencrypt-azuredns-prod` `ClusterIssuer`, so HTTPS for
+  `play.sresimulator.osadev.cloud` is cluster-managed.
+- The Azure-generated hostname tied to the static public IP remains an
+  operator-only fallback for DNS troubleshooting or propagation delays; the
+  customer-facing URL is `https://play.sresimulator.osadev.cloud`.
 - On the ARO fallback path, a single OpenShift `Route` serves the same role.
-- There is **no** backend Route, Ingress, or public `LoadBalancer` service
-  (`/api` is not published directly).
+- `publicService` mode remains the explicit AKS rollback path when operators
+  need to promote only the frontend back to a public `LoadBalancer`.
+- There is **no** backend Route, Ingress, Gateway listener, or public
+  `LoadBalancer` service (`/api` is not published directly).
 - The backend remains a private `ClusterIP` service reachable only from inside the namespace network.
 
 ### How the internal proxy works
 
 - Browser still calls same-origin paths like `/api/chat`.
-- Those requests hit the frontend Next.js server first.
+- Those requests reach the frontend origin first.
+- In AKS Gateway mode, Envoy terminates TLS and the HTTPS `HTTPRoute` forwards
+  traffic to the frontend `ClusterIP` service.
 - Frontend route handler (`app/api/[...path]/route.ts`) proxies server-to-server to `http://<release>-backend:<port>`.
 - Backend `NetworkPolicy` only allows ingress from frontend Pods on backend port.
 
 ### Request flow in cluster
 
-1. User opens `<scheme>://<host>/` (frontend `LoadBalancer` service or Route).
-2. Frontend calls `fetch("/api/...")`.
-3. Frontend pod proxies the request internally to backend `ClusterIP`.
-4. Backend responds to frontend pod; frontend returns response to client.
+1. User opens `https://play.sresimulator.osadev.cloud/`.
+2. Envoy Gateway accepts the request on the static public IP and terminates TLS.
+3. The `HTTPRoute` forwards the request to the frontend `ClusterIP` service.
+4. Frontend calls `fetch("/api/...")`.
+5. Frontend pod proxies the request internally to backend `ClusterIP`.
+6. Backend responds to frontend pod; frontend returns response to client.
 
 ### Security outcome
 
 - Backend is not directly reachable from the internet.
-- External traffic terminates at frontend only.
+- External traffic terminates at the Gateway-managed frontend edge only.
+- Frontend and backend `Service` objects both stay private inside the namespace.
 - Backend remains isolated with least-privilege pod-to-pod access.
 
 Runtime audit command:
@@ -491,8 +510,18 @@ The free-tier database auto-pauses after 60 minutes of inactivity.
 1. The first request will take approximately 30 seconds while Azure
    resumes the database. Subsequent requests should respond normally.
 
-If GitHub pipelines are unavailable, validate backend-to-DB reachability
-from your machine via the selected cluster CLI's port-forward support:
+If GitHub pipelines are unavailable, first verify the deployed backend is wired
+for Azure SQL mode:
+
+```bash
+make db-mode-check NS=sre-simulator
+```
+
+This checks that the backend deployment is configured with
+`STORAGE_BACKEND=mssql` and a `DATABASE_URL` secret reference.
+
+Then use the selected cluster CLI's port-forward support as an additional
+reachability smoke test:
 
 ```bash
 make db-port-forward-check NS=sre-simulator
