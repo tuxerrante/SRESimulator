@@ -59,6 +59,8 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 
 {{/*
 Resolve the public exposure mode.
+Legacy boolean flags remain as compatibility fallbacks while callers move to
+the explicit exposure.mode contract.
 */}}
 {{- define "sre-simulator.exposureMode" -}}
 {{- if .Values.exposure.mode -}}
@@ -135,7 +137,7 @@ Resolve the externally visible origin used by the backend for same-origin checks
 {{- else if include "sre-simulator.publicHost" . -}}
 {{- printf "%s://%s" (include "sre-simulator.publicScheme" .) (include "sre-simulator.publicHost" .) -}}
 {{- else -}}
-{{- printf "http://localhost" -}}
+{{- printf "http://localhost:%v" .Values.frontend.port -}}
 {{- end -}}
 {{- end }}
 

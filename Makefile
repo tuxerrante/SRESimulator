@@ -40,7 +40,8 @@ AKS_CLUSTER_ISSUER_NAME ?= letsencrypt-azuredns-prod
 AKS_DNS_ZONE_NAME ?= osadev.cloud
 AKS_DNS_ZONE_RESOURCE_GROUP ?= dns
 AKS_CERT_MANAGER_IDENTITY_NAME ?= $(if $(strip $(AKS_CLUSTER)),$(AKS_CLUSTER)-cert-manager-dns,)
-AKS_CERT_MANAGER_ACME_EMAIL ?= aaffinit@redhat.com
+# Required when bootstrapping or reconciling the shared AKS Gateway issuers.
+AKS_CERT_MANAGER_ACME_EMAIL ?=
 AKS_FRONTEND_IMAGE_REPO ?= ghcr.io/tuxerrante/sre-simulator-frontend
 AKS_BACKEND_IMAGE_REPO ?= ghcr.io/tuxerrante/sre-simulator-backend
 GHCR_IMAGE_PULL_SECRET ?=

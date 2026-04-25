@@ -166,7 +166,7 @@ stub_cluster_helpers() {
     AKS_FRONTEND_PUBLIC_IP_NAME="example-frontend-pip"
     AKS_FRONTEND_PUBLIC_IP="203.0.113.10"
     AKS_FRONTEND_PUBLIC_FQDN="aks.example.test"
-    AKS_FRONTEND_PUBLIC_ENDPOINT_HOST="${AKS_FRONTEND_PUBLIC_HOST:-$AKS_FRONTEND_PUBLIC_FQDN}"
+    AKS_FRONTEND_PUBLIC_ENDPOINT_HOST="aks.example.test"
   }
 }
 
@@ -177,6 +177,7 @@ run_latest_tag_check() {
   capture_helm_invocation
 
   unset DEPLOY_HOST DEPLOY_SCHEME || true
+  unset AKS_FRONTEND_PUBLIC_HOST AKS_FRONTEND_PUBLIC_ORIGIN_SCHEME || true
   unset AKS_GATEWAY_HOST AKS_GATEWAY_CLASS_NAME \
     AKS_CLUSTER_ISSUER_NAME AKS_GATEWAY_TLS_SECRET_NAME || true
   E2E_RELEASE="sre-simulator"
@@ -322,6 +323,7 @@ run_immutable_tag_check() {
 
   unset AKS_GATEWAY_HOST AKS_GATEWAY_CLASS_NAME \
     AKS_CLUSTER_ISSUER_NAME AKS_GATEWAY_TLS_SECRET_NAME || true
+  unset AKS_FRONTEND_PUBLIC_HOST AKS_FRONTEND_PUBLIC_ORIGIN_SCHEME || true
   E2E_RELEASE="sre-simulator"
   AKS_RG="example-aks-rg"
   AKS_CLUSTER="example-aks"
@@ -359,6 +361,23 @@ run_clusterissuer_manifest_check() {
   assert_contains 'hostedZoneName: osadev.cloud' "$manifest"
   assert_contains 'clientID: 00000000-0000-0000-0000-000000000099' "$manifest"
   rm -f "$manifest"
+}
+
+run_clusterissuer_manifest_requires_email_check() {
+  # shellcheck disable=SC1091
+  source "$ROOT_DIR/scripts/aks-deploy.sh"
+
+  AZURE_SUBSCRIPTION_ID="fe16a035-e540-4ab7-80d9-373fa9a3d6ae"
+  AKS_DNS_ZONE_NAME="osadev.cloud"
+  AKS_DNS_ZONE_RESOURCE_GROUP="dns"
+  AKS_CERT_MANAGER_IDENTITY_CLIENT_ID="00000000-0000-0000-0000-000000000099"
+  unset AKS_CERT_MANAGER_ACME_EMAIL || true
+
+  if write_aks_clusterissuer_manifest >"$TMP_DIR/clusterissuer-missing-email.out" 2>"$TMP_DIR/clusterissuer-missing-email.err"; then
+    fail "write_aks_clusterissuer_manifest should require an explicit ACME email"
+  fi
+
+  assert_contains "AKS_CERT_MANAGER_ACME_EMAIL is required to render AKS cert-manager ClusterIssuers" "$TMP_DIR/clusterissuer-missing-email.err"
 }
 
 run_gatewayclass_manifest_check() {
@@ -501,6 +520,12 @@ run_gateway_stack_cleanup_check() {
   KUBE_CLI="fake_kubectl"
   fake_kubectl() {
     case "$*" in
+      *"get clusterissuer/letsencrypt-azuredns-staging"*)
+        return 1
+        ;;
+      *"get clusterissuer/letsencrypt-azuredns-prod"*)
+        return 1
+        ;;
       *"apply -f ${gatewayclass_path}"*)
         return 0
         ;;
@@ -545,6 +570,72 @@ run_gateway_stack_cleanup_check() {
   [ ! -e "$gatewayclass_path" ] || fail "ensure_aks_gateway_stack should remove the GatewayClass temp file on failure"
   [ ! -e "$clusterissuer_path" ] || fail "ensure_aks_gateway_stack should remove the ClusterIssuer temp file on failure"
   [ ! -e "$envoyproxy_path" ] || fail "ensure_aks_gateway_stack should remove the EnvoyProxy temp file on failure"
+}
+
+run_gateway_stack_existing_issuers_without_email_check() {
+  local envoyproxy_path gatewayclass_path log_file
+
+  # shellcheck disable=SC1091
+  source "$ROOT_DIR/scripts/aks-deploy.sh"
+
+  envoyproxy_path="$TMP_DIR/existing-issuers-envoyproxy.yaml"
+  gatewayclass_path="$TMP_DIR/existing-issuers-gatewayclass.yaml"
+  log_file="$TMP_DIR/existing-issuers-kubectl.log"
+  : >"$log_file"
+
+  KUBE_CLI="fake_kubectl"
+  fake_kubectl() {
+    printf '%s\n' "$*" >>"$log_file"
+    case "$*" in
+      "get clusterissuer/letsencrypt-azuredns-staging")
+        return 0
+        ;;
+      "get clusterissuer/letsencrypt-azuredns-prod")
+        return 0
+        ;;
+      "apply -f ${gatewayclass_path}")
+        return 0
+        ;;
+      "apply -f ${envoyproxy_path}")
+        return 0
+        ;;
+      *)
+        fail "unexpected fake_kubectl invocation for existing issuer check: $*"
+        ;;
+    esac
+  }
+  resolve_aks_public_endpoint() {
+    AKS_FRONTEND_PUBLIC_IP_NAME="example-frontend-pip"
+    AKS_FRONTEND_PUBLIC_IP="203.0.113.10"
+  }
+  resolve_aks_gateway_identity_client_id() {
+    AKS_CERT_MANAGER_IDENTITY_CLIENT_ID="00000000-0000-0000-0000-000000000099"
+  }
+  ensure_envoy_gateway() { :; }
+  ensure_cert_manager() { :; }
+  write_aks_gatewayclass_manifest() {
+    printf '%s\n' 'apiVersion: gateway.networking.k8s.io/v1' >"$gatewayclass_path"
+    printf '%s\n' "$gatewayclass_path"
+  }
+  write_aks_clusterissuer_manifest() {
+    fail "ensure_aks_gateway_stack should reuse existing ClusterIssuers when no ACME email override is provided"
+  }
+  write_aks_envoyproxy_manifest() {
+    printf '%s\n' 'apiVersion: gateway.envoyproxy.io/v1alpha1' >"$envoyproxy_path"
+    printf '%s\n' "$envoyproxy_path"
+  }
+
+  unset AKS_CERT_MANAGER_ACME_EMAIL || true
+
+  if ! ensure_aks_gateway_stack "sre-simulator" >"$TMP_DIR/existing-issuers.out" 2>"$TMP_DIR/existing-issuers.err"; then
+    cat "$TMP_DIR/existing-issuers.err" >&2 || true
+    fail "ensure_aks_gateway_stack should reuse existing ClusterIssuers when no ACME email override is set"
+  fi
+
+  assert_contains 'get clusterissuer/letsencrypt-azuredns-staging' "$log_file"
+  assert_contains 'get clusterissuer/letsencrypt-azuredns-prod' "$log_file"
+  [ ! -e "$gatewayclass_path" ] || fail "ensure_aks_gateway_stack should remove the GatewayClass temp file after a successful existing-issuer check"
+  [ ! -e "$envoyproxy_path" ] || fail "ensure_aks_gateway_stack should remove the EnvoyProxy temp file after a successful existing-issuer check"
 }
 
 run_tempfile_collision_check() {
@@ -797,7 +888,8 @@ run_makefile_gateway_defaults_check() {
   assert_contains 'AKS_DNS_ZONE_NAME ?= osadev.cloud' "$makefile"
   assert_contains 'AKS_DNS_ZONE_RESOURCE_GROUP ?= dns' "$makefile"
   assert_contains 'AKS_CERT_MANAGER_IDENTITY_NAME ?= $(if $(strip $(AKS_CLUSTER)),$(AKS_CLUSTER)-cert-manager-dns,)' "$makefile"
-  assert_contains 'AKS_CERT_MANAGER_ACME_EMAIL ?= aaffinit@redhat.com' "$makefile"
+  assert_contains 'AKS_CERT_MANAGER_ACME_EMAIL ?=' "$makefile"
+  assert_not_contains 'AKS_CERT_MANAGER_ACME_EMAIL ?= aaffinit@redhat.com' "$makefile"
   assert_contains 'AKS_SKIP_GATEWAY_BOOTSTRAP ?= false' "$makefile"
   assert_contains 'export AKS_EXPOSURE_MODE AKS_GATEWAY_HOST AKS_GATEWAY_CLASS_NAME' "$makefile"
   assert_contains 'export AKS_GATEWAY_TLS_SECRET_NAME AKS_CLUSTER_ISSUER_NAME' "$makefile"
@@ -857,12 +949,14 @@ main() {
   run_gateway_deploy_skip_bootstrap_check
   run_immutable_tag_check
   run_clusterissuer_manifest_check
+  run_clusterissuer_manifest_requires_email_check
   run_gatewayclass_manifest_check
   run_cert_manager_gateway_api_enable_check
   run_gateway_ready_missing_gateway_check
   run_gateway_ready_stale_status_check
   run_gateway_ready_listener_conditions_check
   run_gateway_stack_cleanup_check
+  run_gateway_stack_existing_issuers_without_email_check
   run_tempfile_collision_check
   run_wait_for_rollout_gateway_tls_check
   run_prod_status_metadata_publicservice_check

@@ -166,12 +166,11 @@ jobs:
       RELEASE_SHA: ${{ needs.resolve-release-tag.outputs.release_sha }}
       PROD_CLUSTER_FLAVOR: >-
         ${{ needs.resolve-release-tag.outputs.prod_cluster_flavor }}
-      CLUSTER_FLAVOR: >-
-        ${{ needs.resolve-release-tag.outputs.prod_cluster_flavor }}
       AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
       AKS_RG: ${{ secrets.AKS_RG }}
       AKS_CLUSTER: ${{ secrets.AKS_CLUSTER }}
       AKS_FRONTEND_PUBLIC_IP_NAME: ${{ secrets.AKS_FRONTEND_PUBLIC_IP_NAME }}
+      AKS_CERT_MANAGER_ACME_EMAIL: ${{ vars.AKS_CERT_MANAGER_ACME_EMAIL }}
       ARO_RG: ${{ secrets.ARO_RG }}
       ARO_CLUSTER: ${{ secrets.ARO_CLUSTER }}
       AOAI_RG: ${{ secrets.AOAI_RG }}

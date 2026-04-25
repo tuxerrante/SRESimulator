@@ -12,6 +12,12 @@ ENVOY_GATEWAY_CONTROLLER_NAME="gateway.envoyproxy.io/gatewayclass-controller"
 CERT_MANAGER_CHART="jetstack/cert-manager"
 CERT_MANAGER_VERSION="v1.20.1"
 
+cleanup_manifest_files() {
+  if [ "$#" -gt 0 ]; then
+    rm -f "$@"
+  fi
+}
+
 apply_aks_gateway_defaults() {
   AKS_EXPOSURE_MODE="${AKS_EXPOSURE_MODE:-gateway}"
   AKS_SKIP_GATEWAY_BOOTSTRAP="${AKS_SKIP_GATEWAY_BOOTSTRAP:-false}"
@@ -21,10 +27,20 @@ apply_aks_gateway_defaults() {
   AKS_CLUSTER_ISSUER_NAME="${AKS_CLUSTER_ISSUER_NAME:-letsencrypt-azuredns-prod}"
   AKS_DNS_ZONE_NAME="${AKS_DNS_ZONE_NAME:-osadev.cloud}"
   AKS_DNS_ZONE_RESOURCE_GROUP="${AKS_DNS_ZONE_RESOURCE_GROUP:-dns}"
-  AKS_CERT_MANAGER_ACME_EMAIL="${AKS_CERT_MANAGER_ACME_EMAIL:-aaffinit@redhat.com}"
+  AKS_CERT_MANAGER_ACME_EMAIL="${AKS_CERT_MANAGER_ACME_EMAIL:-}"
   if [ -z "${AKS_CERT_MANAGER_IDENTITY_NAME:-}" ] && [ -n "${AKS_CLUSTER:-}" ]; then
     AKS_CERT_MANAGER_IDENTITY_NAME="${AKS_CLUSTER}-cert-manager-dns"
   fi
+}
+
+require_aks_gateway_acme_email() {
+  apply_aks_gateway_defaults
+  if [ -n "${AKS_CERT_MANAGER_ACME_EMAIL}" ]; then
+    return 0
+  fi
+
+  echo "error: AKS_CERT_MANAGER_ACME_EMAIL is required to render AKS cert-manager ClusterIssuers" >&2
+  return 1
 }
 
 aks_gateway_bootstrap_enabled() {
@@ -37,6 +53,11 @@ aks_gateway_bootstrap_enabled() {
       return 0
       ;;
   esac
+}
+
+aks_gateway_issuers_exist() {
+  "$KUBE_CLI" get "clusterissuer/letsencrypt-azuredns-staging" >/dev/null 2>&1 && \
+    "$KUBE_CLI" get "clusterissuer/letsencrypt-azuredns-prod" >/dev/null 2>&1
 }
 
 aks_login() {
@@ -121,6 +142,7 @@ write_aks_clusterissuer_manifest() {
   local manifest_file
 
   apply_aks_gateway_defaults
+  require_aks_gateway_acme_email || return 1
   manifest_file="$(mktemp "${TMPDIR:-/tmp}/sre-aks-clusterissuer.XXXXXX")"
   if ! cat >"$manifest_file" <<EOF
 apiVersion: cert-manager.io/v1
@@ -306,6 +328,11 @@ ensure_envoy_gateway() {
 
 ensure_aks_gateway_stack() {
   local ns=$1 gatewayclass_manifest="" envoyproxy_manifest="" issuer_manifest=""
+  local manifest_files=()
+
+  cleanup_aks_gateway_stack_artifacts() {
+    cleanup_manifest_files "${manifest_files[@]}"
+  }
 
   resolve_aks_public_endpoint || return 1
   resolve_aks_gateway_identity_client_id || return 1
@@ -313,31 +340,39 @@ ensure_aks_gateway_stack() {
   ensure_cert_manager || return 1
 
   if ! gatewayclass_manifest="$(write_aks_gatewayclass_manifest)"; then
+    cleanup_aks_gateway_stack_artifacts
     return 1
   fi
-  if ! issuer_manifest="$(write_aks_clusterissuer_manifest)"; then
-    rm -f "$gatewayclass_manifest"
-    return 1
+  manifest_files+=("$gatewayclass_manifest")
+  if [ -n "${AKS_CERT_MANAGER_ACME_EMAIL:-}" ] || ! aks_gateway_issuers_exist; then
+    if ! issuer_manifest="$(write_aks_clusterissuer_manifest)"; then
+      cleanup_aks_gateway_stack_artifacts
+      return 1
+    fi
+    manifest_files+=("$issuer_manifest")
   fi
   if ! envoyproxy_manifest="$(write_aks_envoyproxy_manifest "$ns")"; then
-    rm -f "$gatewayclass_manifest" "$issuer_manifest"
+    cleanup_aks_gateway_stack_artifacts
     return 1
   fi
+  manifest_files+=("$envoyproxy_manifest")
 
   if ! "$KUBE_CLI" apply -f "$gatewayclass_manifest" >/dev/null; then
-    rm -f "$gatewayclass_manifest" "$issuer_manifest" "$envoyproxy_manifest"
+    cleanup_aks_gateway_stack_artifacts
     return 1
   fi
-  if ! "$KUBE_CLI" apply -f "$issuer_manifest" >/dev/null; then
-    rm -f "$gatewayclass_manifest" "$issuer_manifest" "$envoyproxy_manifest"
-    return 1
+  if [ -n "$issuer_manifest" ]; then
+    if ! "$KUBE_CLI" apply -f "$issuer_manifest" >/dev/null; then
+      cleanup_aks_gateway_stack_artifacts
+      return 1
+    fi
   fi
   if ! "$KUBE_CLI" apply -f "$envoyproxy_manifest" >/dev/null; then
-    rm -f "$gatewayclass_manifest" "$issuer_manifest" "$envoyproxy_manifest"
+    cleanup_aks_gateway_stack_artifacts
     return 1
   fi
 
-  rm -f "$gatewayclass_manifest" "$issuer_manifest" "$envoyproxy_manifest"
+  cleanup_aks_gateway_stack_artifacts
 }
 
 prepare_release_images() {

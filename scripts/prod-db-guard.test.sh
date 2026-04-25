@@ -156,6 +156,7 @@ run_static_wiring_checks() {
   assert_target_order "prod-up-tag" 'ensure_namespace "$$NS"' 'require_db_secret_exists_in_namespace "$$NS"' "$ROOT_DIR/Makefile"
   assert_contains 'DB_SECRET_NAME: ${{ secrets.DB_SECRET_NAME }}' "$ROOT_DIR/.github/workflows/deploy-prod.yml"
   assert_contains 'AKS_FRONTEND_PUBLIC_IP_NAME: ${{ secrets.AKS_FRONTEND_PUBLIC_IP_NAME }}' "$ROOT_DIR/.github/workflows/deploy-prod.yml"
+  assert_contains 'AKS_CERT_MANAGER_ACME_EMAIL: ${{ vars.AKS_CERT_MANAGER_ACME_EMAIL }}' "$ROOT_DIR/.github/workflows/deploy-prod.yml"
   assert_not_contains 'AKS_INGRESS_PUBLIC_IP_NAME: ${{ secrets.AKS_INGRESS_PUBLIC_IP_NAME }}' "$ROOT_DIR/.github/workflows/deploy-prod.yml"
   assert_contains 'PROD_CLUSTER_FLAVOR: >-' "$ROOT_DIR/.github/workflows/deploy-prod.yml"
   assert_contains '${{ needs.resolve-release-tag.outputs.prod_cluster_flavor }}' "$ROOT_DIR/.github/workflows/deploy-prod.yml"

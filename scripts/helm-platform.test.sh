@@ -7,14 +7,16 @@ CHART_DIR="${ROOT_DIR}/helm/sre-simulator"
 route_render="$(mktemp)"
 lb_render="$(mktemp)"
 lb_no_db_render="$(mktemp)"
+ingress_render="$(mktemp)"
 gw_render="$(mktemp)"
+hostless_render="$(mktemp)"
 legacy_kv_render="$(mktemp)"
 gw_bad_scheme_err="$(mktemp)"
 gw_missing_host_err="$(mktemp)"
 gw_route_host_bypass_err="$(mktemp)"
 gw_ingress_host_bypass_err="$(mktemp)"
 gw_whitespace_host_err="$(mktemp)"
-trap 'rm -f "${route_render}" "${lb_render}" "${lb_no_db_render}" "${gw_render}" "${legacy_kv_render}" "${gw_bad_scheme_err}" "${gw_missing_host_err}" "${gw_route_host_bypass_err}" "${gw_ingress_host_bypass_err}" "${gw_whitespace_host_err}"' EXIT
+trap 'rm -f "${route_render}" "${lb_render}" "${lb_no_db_render}" "${ingress_render}" "${gw_render}" "${hostless_render}" "${legacy_kv_render}" "${gw_bad_scheme_err}" "${gw_missing_host_err}" "${gw_route_host_bypass_err}" "${gw_ingress_host_bypass_err}" "${gw_whitespace_host_err}"' EXIT
 
 fail() {
   echo "FAIL: $*" >&2
@@ -71,6 +73,26 @@ fi
 grep -Eq 'value: "http://public\.example\.com"' "${lb_render}" || \
   fail "Public service mode should derive backend CORS origin from exposure.host and exposure.scheme."
 
+helm template sre-simulator "${CHART_DIR}" \
+  --set exposure.mode=ingress \
+  --set exposure.host=ingress.example.com \
+  --set exposure.scheme=https \
+  --set ingress.className=nginx \
+  --set ingress.tls.enabled=true \
+  --set ingress.tls.secretName=sre-simulator-ingress-tls >"${ingress_render}"
+
+grep -Eq '^kind: Ingress$' "${ingress_render}" || \
+  fail "Ingress mode should render a Kubernetes Ingress resource."
+
+grep -Eq 'host: ingress\.example\.com' "${ingress_render}" || \
+  fail "Ingress mode should preserve the ingress host."
+
+grep -Eq 'secretName: sre-simulator-ingress-tls' "${ingress_render}" || \
+  fail "Ingress mode should render the configured TLS secret."
+
+grep -Eq 'value: "https://ingress\.example\.com"' "${ingress_render}" || \
+  fail "Ingress mode should derive backend CORS origin from the ingress host."
+
 frontend_hpa_count="$(grep -Ec '^kind: HorizontalPodAutoscaler$' "${lb_render}")"
 if [[ "${frontend_hpa_count}" -lt 2 ]]; then
   fail "AKS mode with frontend/backend autoscaling enabled should render two HPAs."
@@ -121,6 +143,14 @@ grep -Eq '^[[:space:]]+- "play\.sresimulator\.osadev\.cloud"$' "${gw_render}" ||
 
 grep -Eq 'value: "https://play\.sresimulator\.osadev\.cloud"' "${gw_render}" || \
   fail "Gateway mode should derive a HTTPS public origin for backend CORS."
+
+helm template sre-simulator "${CHART_DIR}" \
+  --set exposure.mode=none \
+  --set-string exposure.host= \
+  --set frontend.port=3100 >"${hostless_render}"
+
+grep -Eq 'value: "http://localhost:3100"' "${hostless_render}" || \
+  fail "Hostless exposure modes should derive backend CORS origin from the frontend port."
 
 if helm template sre-simulator "${CHART_DIR}" \
   --set exposure.mode=gateway \
