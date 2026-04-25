@@ -1,0 +1,39 @@
+{{- if eq (include "sre-simulator.exposureMode" .) "gateway" }}
+{{- $fullName := include "sre-simulator.fullname" . -}}
+{{- $publicHost := include "sre-simulator.publicHost" . -}}
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: {{ $fullName }}-redirect
+  labels:
+    {{- include "sre-simulator.labels" . | nindent 4 }}
+spec:
+  parentRefs:
+    - name: {{ $fullName }}
+      sectionName: http
+  hostnames:
+    - {{ $publicHost | quote }}
+  rules:
+    - filters:
+        - type: RequestRedirect
+          requestRedirect:
+            scheme: https
+            statusCode: 301
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: {{ $fullName }}
+  labels:
+    {{- include "sre-simulator.labels" . | nindent 4 }}
+spec:
+  parentRefs:
+    - name: {{ $fullName }}
+      sectionName: https
+  hostnames:
+    - {{ $publicHost | quote }}
+  rules:
+    - backendRefs:
+        - name: {{ $fullName }}-frontend
+          port: {{ .Values.frontend.port }}
+{{- end }}

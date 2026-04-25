@@ -3,7 +3,7 @@
        lint lint-ts lint-backend lint-unused-exports lint-yaml lint-md \
        typecheck typecheck-backend validate \
        security audit lockfile-lint gitleaks grype \
-       test test-shell test-integration test-mssql dev-db smoke-backend-mssql smoke-local-vertex env-check aro-login e2e-azure-route e2e-azure-route-up e2e-azure-route-refresh e2e-azure-route-down \
+       test test-shell test-integration test-mssql dev-db smoke-backend-mssql smoke-local-vertex env-check aro-login aks-login e2e-azure-route e2e-azure-route-up e2e-azure-route-refresh e2e-azure-route-down \
        prod-up prod-up-tag prod-down prod-status public-exposure-audit db-mode-check db-port-forward-check db-inspect db-inspect-live geneva-suppression-check prod-up-final \
        build dev start capture-readme-hero \
        docker-build-frontend docker-build-backend docker-build \
@@ -23,8 +23,28 @@ GITLEAKS_VERSION ?= v8.30.0
 GITLEAKS_IMAGE ?= ghcr.io/gitleaks/gitleaks:$(GITLEAKS_VERSION)@sha256:691af3c7c5a48b16f187ce3446d5f194838f91238f27270ed36eef6359a574d9
 NPM_VERSION ?= $(shell tr -d '\n' < .npm-version)
 AZURE_SUBSCRIPTION_ID ?=
+CLUSTER_FLAVOR ?= aks
 ARO_RG ?=
 ARO_CLUSTER ?=
+AKS_RG ?=
+AKS_CLUSTER ?=
+AKS_FRONTEND_PUBLIC_IP_NAME ?= $(if $(strip $(AKS_CLUSTER)),$(AKS_CLUSTER)-aks-frontend-pip,)
+AKS_FRONTEND_PUBLIC_HOST ?=
+AKS_FRONTEND_PUBLIC_ORIGIN_SCHEME ?= http
+AKS_EXPOSURE_MODE ?= gateway
+AKS_SKIP_GATEWAY_BOOTSTRAP ?= false
+AKS_GATEWAY_HOST ?= play.sresimulator.osadev.cloud
+AKS_GATEWAY_CLASS_NAME ?= eg
+AKS_GATEWAY_TLS_SECRET_NAME ?= sre-simulator-gateway-tls
+AKS_CLUSTER_ISSUER_NAME ?= letsencrypt-azuredns-prod
+AKS_DNS_ZONE_NAME ?= osadev.cloud
+AKS_DNS_ZONE_RESOURCE_GROUP ?= dns
+AKS_CERT_MANAGER_IDENTITY_NAME ?= $(if $(strip $(AKS_CLUSTER)),$(AKS_CLUSTER)-cert-manager-dns,)
+# Required when bootstrapping or reconciling the shared AKS Gateway issuers.
+AKS_CERT_MANAGER_ACME_EMAIL ?=
+AKS_FRONTEND_IMAGE_REPO ?= ghcr.io/tuxerrante/sre-simulator-frontend
+AKS_BACKEND_IMAGE_REPO ?= ghcr.io/tuxerrante/sre-simulator-backend
+GHCR_IMAGE_PULL_SECRET ?=
 AOAI_RG ?=
 AOAI_ACCOUNT ?=
 AOAI_DEPLOYMENT ?=
@@ -35,15 +55,23 @@ AOAI_DEPLOYMENT_PROBE ?=
 E2E_NAMESPACE_PREFIX ?= sre-manual-e2e
 E2E_RELEASE ?= sre-simulator
 E2E_METADATA_FILE ?= data/e2e-azure-route.env
-E2E_REQUIRED_VARS := AZURE_SUBSCRIPTION_ID ARO_RG ARO_CLUSTER AOAI_RG AOAI_ACCOUNT AOAI_DEPLOYMENT
+E2E_REQUIRED_VARS := AZURE_SUBSCRIPTION_ID AOAI_RG AOAI_ACCOUNT AOAI_DEPLOYMENT $(if $(filter aks,$(CLUSTER_FLAVOR)),AKS_RG AKS_CLUSTER,ARO_RG ARO_CLUSTER)
 PROD_NAMESPACE ?= sre-simulator
 PROD_METADATA_FILE ?= data/prod-route.env
 GENEVA_SUPPRESSION_RULE_ACTIVE ?= false
+# Treat command-line and environment-provided values as explicit operator overrides.
+AKS_EXPOSURE_MODE_EXPLICIT := $(filter-out default file undefined automatic,$(origin AKS_EXPOSURE_MODE))
 # Optional: when set with DB_SECRET_NAME, copy the DB secret from this namespace into the E2E namespace before Helm.
 # If unset, the copy step uses PROD_NAMESPACE (same default as stable prod): $(PROD_NAMESPACE)
 DB_SECRET_SOURCE_NAMESPACE ?=
 
-export AZURE_SUBSCRIPTION_ID ARO_RG ARO_CLUSTER
+export AZURE_SUBSCRIPTION_ID CLUSTER_FLAVOR ARO_RG ARO_CLUSTER
+export AKS_RG AKS_CLUSTER AKS_FRONTEND_PUBLIC_IP_NAME AKS_FRONTEND_PUBLIC_HOST AKS_FRONTEND_PUBLIC_ORIGIN_SCHEME AKS_FRONTEND_IMAGE_REPO AKS_BACKEND_IMAGE_REPO GHCR_IMAGE_PULL_SECRET
+export AKS_EXPOSURE_MODE AKS_GATEWAY_HOST AKS_GATEWAY_CLASS_NAME
+export AKS_GATEWAY_TLS_SECRET_NAME AKS_CLUSTER_ISSUER_NAME
+export AKS_DNS_ZONE_NAME AKS_DNS_ZONE_RESOURCE_GROUP
+export AKS_CERT_MANAGER_IDENTITY_NAME AKS_CERT_MANAGER_ACME_EMAIL
+export AKS_SKIP_GATEWAY_BOOTSTRAP
 export AOAI_RG AOAI_ACCOUNT AOAI_DEPLOYMENT
 export AOAI_DEPLOYMENT_CHAT AOAI_DEPLOYMENT_COMMAND AOAI_DEPLOYMENT_SCENARIO AOAI_DEPLOYMENT_PROBE
 export E2E_RELEASE NPM_VERSION
@@ -55,16 +83,23 @@ endef
 
 E2E_MISSING_VARS := $(strip \
   $(if $(strip $(AZURE_SUBSCRIPTION_ID)),,AZURE_SUBSCRIPTION_ID) \
-  $(if $(strip $(ARO_RG)),,ARO_RG) \
-  $(if $(strip $(ARO_CLUSTER)),,ARO_CLUSTER) \
   $(if $(strip $(AOAI_RG)),,AOAI_RG) \
   $(if $(strip $(AOAI_ACCOUNT)),,AOAI_ACCOUNT) \
-  $(if $(strip $(AOAI_DEPLOYMENT)),,AOAI_DEPLOYMENT))
+  $(if $(strip $(AOAI_DEPLOYMENT)),,AOAI_DEPLOYMENT) \
+  $(if $(filter aks,$(CLUSTER_FLAVOR)),$(if $(strip $(AKS_RG)),,AKS_RG) $(if $(strip $(AKS_CLUSTER)),,AKS_CLUSTER),$(if $(strip $(ARO_RG)),,ARO_RG) $(if $(strip $(ARO_CLUSTER)),,ARO_CLUSTER)))
 
 ARO_LOGIN_MISSING_VARS := $(strip \
   $(if $(strip $(AZURE_SUBSCRIPTION_ID)),,AZURE_SUBSCRIPTION_ID) \
   $(if $(strip $(ARO_RG)),,ARO_RG) \
   $(if $(strip $(ARO_CLUSTER)),,ARO_CLUSTER))
+
+AKS_LOGIN_MISSING_VARS := $(strip \
+  $(if $(strip $(AZURE_SUBSCRIPTION_ID)),,AZURE_SUBSCRIPTION_ID) \
+  $(if $(strip $(AKS_RG)),,AKS_RG) \
+  $(if $(strip $(AKS_CLUSTER)),,AKS_CLUSTER))
+
+CLUSTER_LOGIN_MISSING_VARS := $(strip \
+  $(if $(filter aks,$(CLUSTER_FLAVOR)),$(AKS_LOGIN_MISSING_VARS),$(ARO_LOGIN_MISSING_VARS)))
 
 # ──────────────────────────────────────────────
 # Help
@@ -193,7 +228,11 @@ test: ## Run backend and frontend unit tests with coverage
 
 test-shell: ## Run shell regression tests
 	bash scripts/aro-login.test.sh
+	bash scripts/aks-deploy.test.sh
+	bash scripts/helm-platform.test.sh
 	bash scripts/prod-db-guard.test.sh
+	bash scripts/select-deploy.test.sh
+	bash infra/scripts/tf-preflight.test.sh
 
 test-integration: test-shell ## Run backend integration tests (full API game flow, mock mode)
 	cd $(BACKEND_DIR) && npm run test:integration
@@ -319,9 +358,16 @@ e2e-azure-route: e2e-azure-route-up ## Create temporary Azure OpenAI-backed rout
 
 env-check: ## Show source of required e2e vars (values hidden)
 	@echo "E2E variable source check (values hidden):"
+	@echo "  CLUSTER_FLAVOR: $(call e2e_var_source,CLUSTER_FLAVOR)"
 	@echo "  AZURE_SUBSCRIPTION_ID: $(call e2e_var_source,AZURE_SUBSCRIPTION_ID)"
-	@echo "  ARO_RG: $(call e2e_var_source,ARO_RG)"
-	@echo "  ARO_CLUSTER: $(call e2e_var_source,ARO_CLUSTER)"
+	@if [ "$(CLUSTER_FLAVOR)" = "aks" ]; then \
+		echo "  AKS_RG: $(call e2e_var_source,AKS_RG)"; \
+		echo "  AKS_CLUSTER: $(call e2e_var_source,AKS_CLUSTER)"; \
+		echo "  AKS_FRONTEND_PUBLIC_IP_NAME: $(call e2e_var_source,AKS_FRONTEND_PUBLIC_IP_NAME)"; \
+	else \
+		echo "  ARO_RG: $(call e2e_var_source,ARO_RG)"; \
+		echo "  ARO_CLUSTER: $(call e2e_var_source,ARO_CLUSTER)"; \
+	fi
 	@echo "  AOAI_RG: $(call e2e_var_source,AOAI_RG)"
 	@echo "  AOAI_ACCOUNT: $(call e2e_var_source,AOAI_ACCOUNT)"
 	@echo "  AOAI_DEPLOYMENT: $(call e2e_var_source,AOAI_DEPLOYMENT)"
@@ -349,44 +395,57 @@ aro-login: ## Authenticate Azure CLI if needed and log oc into the configured AR
 	aro_login; \
 	print_aro_login_summary
 
-e2e-azure-route-up: env-check ## Build+deploy frontend/backend to ARO and print temporary UI route URL
+aks-login: ## Authenticate Azure CLI if needed and pull kubeconfig for the configured AKS cluster
 	@set -eo pipefail; \
-	if [ -n "$(E2E_MISSING_VARS)" ]; then \
-		echo "Missing required env vars. Export: AZURE_SUBSCRIPTION_ID, ARO_RG, ARO_CLUSTER, AOAI_RG, AOAI_ACCOUNT, AOAI_DEPLOYMENT (or set them in $(E2E_ENV_FILE))."; \
+	echo "AKS login variable source check (values hidden):"; \
+	echo "  AZURE_SUBSCRIPTION_ID: $(call e2e_var_source,AZURE_SUBSCRIPTION_ID)"; \
+	echo "  AKS_RG: $(call e2e_var_source,AKS_RG)"; \
+	echo "  AKS_CLUSTER: $(call e2e_var_source,AKS_CLUSTER)"; \
+	if [ "$(CLUSTER_FLAVOR)" != "aks" ]; then \
+		echo "aks-login requires CLUSTER_FLAVOR=aks (current: $(CLUSTER_FLAVOR))."; \
 		exit 1; \
 	fi; \
-	. scripts/aro-deploy.sh; \
+	if [ -n "$(AKS_LOGIN_MISSING_VARS)" ]; then \
+		echo "Missing required login vars: $(AKS_LOGIN_MISSING_VARS)"; \
+		echo "Export them in the shell or set them in $(E2E_ENV_FILE)."; \
+		exit 1; \
+	fi; \
+	. scripts/aks-deploy.sh; \
+	cluster_login; \
+	print_cluster_login_summary
+
+e2e-azure-route-up: env-check ## Deploy frontend/backend to the selected cluster and print a temporary UI URL
+	@set -eo pipefail; \
+	if [ -n "$(E2E_MISSING_VARS)" ]; then \
+		echo "Missing required env vars. Export: $(E2E_REQUIRED_VARS) (or set them in $(E2E_ENV_FILE))."; \
+		exit 1; \
+	fi; \
+	. scripts/select-deploy.sh; \
 	TS=$$(date +%Y%m%d-%H%M%S); \
 	NS="$(E2E_NAMESPACE_PREFIX)-$$TS"; \
-	TAG="e2e$$TS"; \
+	if [ "$(CLUSTER_FLAVOR)" = "aks" ]; then TAG="$${TAG:-latest}"; else TAG="e2e$$TS"; fi; \
 	PROBE_TOKEN="probe-$$TS"; \
 	echo "Using namespace: $$NS"; \
-	aro_login; \
+	cluster_login; \
 	aoai_fetch_creds; \
-	oc create namespace "$$NS" >/dev/null; \
-	oc -n "$$NS" create secret generic azure-openai-creds \
-		--from-literal=endpoint="$$AOAI_ENDPOINT" --from-literal=api-key="$$AOAI_KEY" >/dev/null; \
-	oc -n "$$NS" new-build --name=sre-simulator-frontend --binary=true --strategy=docker --to=sre-simulator-frontend:$$TAG >/dev/null; \
-	oc -n "$$NS" new-build --name=sre-simulator-backend --binary=true --strategy=docker --to=sre-simulator-backend:$$TAG >/dev/null; \
-	patch_bc_strategy "$$NS" sre-simulator-frontend frontend/Dockerfile; \
-	patch_bc_strategy "$$NS" sre-simulator-backend backend/Dockerfile; \
-	oc_build_timed "$$NS" sre-simulator-frontend; \
-	oc_build_timed "$$NS" sre-simulator-backend; \
+	ensure_namespace "$$NS"; \
+	create_or_update_aoai_secret "$$NS"; \
 	ensure_db_secret_for_e2e_namespace "$$NS"; \
+	prepare_release_images "$$NS" "$$TAG"; \
 	helm_deploy_sre "$$NS" "$$TAG" "$$PROBE_TOKEN"; \
 	wait_for_rollout "$$NS"; \
 	mkdir -p "$$(dirname "$(E2E_METADATA_FILE)")"; \
-	printf 'NS=%s\nRELEASE=%s\nURL=%s\nTAG=%s\n' "$$NS" "$(E2E_RELEASE)" "https://$$DEPLOY_HOST" "$$TAG" > "$(E2E_METADATA_FILE)"; \
-	probe_readiness "$$DEPLOY_HOST" "$$PROBE_TOKEN"; \
+	printf 'NS=%s\nRELEASE=%s\nURL=%s\nTAG=%s\nCLUSTER_FLAVOR=%s\n' "$$NS" "$(E2E_RELEASE)" "$$DEPLOY_SCHEME://$$DEPLOY_HOST" "$$TAG" "$(CLUSTER_FLAVOR)" > "$(E2E_METADATA_FILE)"; \
+	probe_readiness "$$DEPLOY_SCHEME" "$$DEPLOY_HOST" "$$PROBE_TOKEN"; \
 	echo "Manual E2E environment is ready."; \
-	echo "URL: https://$$DEPLOY_HOST"; \
+	echo "URL: $$DEPLOY_SCHEME://$$DEPLOY_HOST"; \
 	echo "Probe status: 200"; \
 	echo "Metadata saved to $(E2E_METADATA_FILE)"
 
-e2e-azure-route-refresh: env-check ## Rebuild+helm upgrade into existing e2e ns (NS=... or $(E2E_METADATA_FILE))
+e2e-azure-route-refresh: env-check ## Refresh the selected e2e namespace (NS=... or $(E2E_METADATA_FILE))
 	@set -eo pipefail; \
 	if [ -n "$(E2E_MISSING_VARS)" ]; then \
-		echo "Missing required env vars. Export: AZURE_SUBSCRIPTION_ID, ARO_RG, ARO_CLUSTER, AOAI_RG, AOAI_ACCOUNT, AOAI_DEPLOYMENT (or set them in $(E2E_ENV_FILE))."; \
+		echo "Missing required env vars. Export: $(E2E_REQUIRED_VARS) (or set them in $(E2E_ENV_FILE))."; \
 		exit 1; \
 	fi; \
 	if [ -n "$${NS:-}" ]; then \
@@ -398,42 +457,27 @@ e2e-azure-route-refresh: env-check ## Rebuild+helm upgrade into existing e2e ns 
 		echo "Set NS=<namespace> or run e2e-azure-route-up first (needs $(E2E_METADATA_FILE))."; \
 		exit 1; \
 	fi; \
-	. scripts/aro-deploy.sh; \
+	. scripts/select-deploy.sh; \
 	TS=$$(date +%Y%m%d-%H%M%S); \
-	TAG="e2e$$TS"; \
+	if [ "$(CLUSTER_FLAVOR)" = "aks" ]; then TAG="$${TAG:-latest}"; else TAG="e2e$$TS"; fi; \
 	PROBE_TOKEN="probe-$$TS"; \
 	echo "Refreshing namespace: $$TARGET_NS (image tag $$TAG)"; \
-	aro_login; \
-	if ! oc get "namespace/$$TARGET_NS" >/dev/null 2>&1; then \
+	cluster_login; \
+	if ! "$$KUBE_CLI" get "namespace/$$TARGET_NS" >/dev/null 2>&1; then \
 		echo "Namespace $$TARGET_NS does not exist. Run make e2e-azure-route-up first."; \
 		exit 1; \
 	fi; \
 	aoai_fetch_creds; \
-	oc -n "$$TARGET_NS" create secret generic azure-openai-creds \
-		--from-literal=endpoint="$$AOAI_ENDPOINT" --from-literal=api-key="$$AOAI_KEY" \
-		--dry-run=client -o yaml | oc apply -f - >/dev/null; \
-	for BC in sre-simulator-frontend sre-simulator-backend; do \
-		if ! oc -n "$$TARGET_NS" get "bc/$$BC" >/dev/null 2>&1; then \
-			echo "BuildConfig $$BC not found in $$TARGET_NS. Use e2e-azure-route-up for a new environment."; \
-			exit 1; \
-		fi; \
-	done; \
-	oc -n "$$TARGET_NS" patch bc/sre-simulator-frontend --type=merge \
-		-p "{\"spec\":{\"output\":{\"to\":{\"kind\":\"ImageStreamTag\",\"name\":\"sre-simulator-frontend:$$TAG\"}}}}" >/dev/null; \
-	patch_bc_strategy "$$TARGET_NS" sre-simulator-frontend frontend/Dockerfile; \
-	oc -n "$$TARGET_NS" patch bc/sre-simulator-backend --type=merge \
-		-p "{\"spec\":{\"output\":{\"to\":{\"kind\":\"ImageStreamTag\",\"name\":\"sre-simulator-backend:$$TAG\"}}}}" >/dev/null; \
-	patch_bc_strategy "$$TARGET_NS" sre-simulator-backend backend/Dockerfile; \
-	oc_build_timed "$$TARGET_NS" sre-simulator-frontend; \
-	oc_build_timed "$$TARGET_NS" sre-simulator-backend; \
+	create_or_update_aoai_secret "$$TARGET_NS"; \
 	ensure_db_secret_for_e2e_namespace "$$TARGET_NS"; \
+	prepare_release_images "$$TARGET_NS" "$$TAG"; \
 	helm_deploy_sre "$$TARGET_NS" "$$TAG" "$$PROBE_TOKEN"; \
 	wait_for_rollout "$$TARGET_NS"; \
 	mkdir -p "$$(dirname "$(E2E_METADATA_FILE)")"; \
-	printf 'NS=%s\nRELEASE=%s\nURL=%s\nTAG=%s\n' "$$TARGET_NS" "$(E2E_RELEASE)" "https://$$DEPLOY_HOST" "$$TAG" > "$(E2E_METADATA_FILE)"; \
-	probe_readiness "$$DEPLOY_HOST" "$$PROBE_TOKEN"; \
+	printf 'NS=%s\nRELEASE=%s\nURL=%s\nTAG=%s\nCLUSTER_FLAVOR=%s\n' "$$TARGET_NS" "$(E2E_RELEASE)" "$$DEPLOY_SCHEME://$$DEPLOY_HOST" "$$TAG" "$(CLUSTER_FLAVOR)" > "$(E2E_METADATA_FILE)"; \
+	probe_readiness "$$DEPLOY_SCHEME" "$$DEPLOY_HOST" "$$PROBE_TOKEN"; \
 	echo "E2E namespace refreshed."; \
-	echo "URL: https://$$DEPLOY_HOST"; \
+	echo "URL: $$DEPLOY_SCHEME://$$DEPLOY_HOST"; \
 	echo "Probe status: 200"; \
 	echo "Metadata saved to $(E2E_METADATA_FILE)"
 
@@ -453,53 +497,40 @@ e2e-azure-route-down: ## Delete temporary Azure OpenAI e2e namespace (uses NS=..
 		echo "Use 'make prod-down' (with confirmation) to delete it."; \
 		exit 1; \
 	fi; \
+	. scripts/select-deploy.sh; \
 	echo "Deleting namespace $$TARGET_NS"; \
-	oc delete namespace "$$TARGET_NS" --wait=false >/dev/null; \
-	oc wait --for=delete "namespace/$$TARGET_NS" --timeout=10m >/dev/null || true; \
+	"$$KUBE_CLI" delete namespace "$$TARGET_NS" --wait=false >/dev/null; \
+	"$$KUBE_CLI" wait --for=delete "namespace/$$TARGET_NS" --timeout=10m >/dev/null || true; \
 	if [ -f "$(E2E_METADATA_FILE)" ]; then rm -f "$(E2E_METADATA_FILE)"; fi; \
 	echo "Temporary e2e environment removed."
 
 # ──────────────────────────────────────────────
 # Production namespace (stable deployment, shared cluster + AOAI)
 # ──────────────────────────────────────────────
-prod-up: env-check ## Deploy to stable production namespace (same cluster + AOAI as e2e)
+prod-up: env-check ## Deploy to the stable production namespace on the selected cluster
 	@set -e; \
-	. scripts/aro-deploy.sh; \
+	. scripts/select-deploy.sh; \
 	require_prod_db_secret_name; \
 	NS="$(PROD_NAMESPACE)"; \
-	TAG="prod$$(date +%Y%m%d-%H%M%S)"; \
+	if [ "$(CLUSTER_FLAVOR)" = "aks" ]; then TAG="$${TAG:-latest}"; else TAG="prod$$(date +%Y%m%d-%H%M%S)"; fi; \
 	PROBE_TOKEN="probe-prod-$$(date +%s)"; \
 	echo "Deploying to PRODUCTION namespace: $$NS"; \
-	aro_login; \
-	oc get namespace "$$NS" >/dev/null 2>&1 || oc create namespace "$$NS" >/dev/null; \
+	cluster_login; \
+	ensure_namespace "$$NS"; \
 	require_db_secret_exists_in_namespace "$$NS"; \
 	aoai_fetch_creds; \
-	oc -n "$$NS" delete secret azure-openai-creds 2>/dev/null || true; \
-	oc -n "$$NS" create secret generic azure-openai-creds \
-		--from-literal=endpoint="$$AOAI_ENDPOINT" --from-literal=api-key="$$AOAI_KEY" >/dev/null; \
-	if ! oc -n "$$NS" get bc/sre-simulator-frontend >/dev/null 2>&1; then \
-		oc -n "$$NS" new-build --name=sre-simulator-frontend --binary=true --strategy=docker --to=sre-simulator-frontend:$$TAG >/dev/null; \
-	fi; \
-	if ! oc -n "$$NS" get bc/sre-simulator-backend >/dev/null 2>&1; then \
-		oc -n "$$NS" new-build --name=sre-simulator-backend --binary=true --strategy=docker --to=sre-simulator-backend:$$TAG >/dev/null; \
-	fi; \
-	oc -n "$$NS" patch bc/sre-simulator-frontend --type=merge \
-		-p "{\"spec\":{\"output\":{\"to\":{\"kind\":\"ImageStreamTag\",\"name\":\"sre-simulator-frontend:$$TAG\"}}}}" >/dev/null; \
-	oc -n "$$NS" patch bc/sre-simulator-backend --type=merge \
-		-p "{\"spec\":{\"output\":{\"to\":{\"kind\":\"ImageStreamTag\",\"name\":\"sre-simulator-backend:$$TAG\"}}}}" >/dev/null; \
-	patch_bc_strategy "$$NS" sre-simulator-frontend frontend/Dockerfile; \
-	patch_bc_strategy "$$NS" sre-simulator-backend backend/Dockerfile; \
-	oc_build_timed "$$NS" sre-simulator-frontend; \
-	oc_build_timed "$$NS" sre-simulator-backend; \
+	create_or_update_aoai_secret "$$NS"; \
+	prepare_release_images "$$NS" "$$TAG"; \
 	helm_deploy_sre "$$NS" "$$TAG" "$$PROBE_TOKEN"; \
 	wait_for_rollout "$$NS"; \
+	probe_readiness "$$DEPLOY_SCHEME" "$$DEPLOY_HOST" "$$PROBE_TOKEN"; \
 	$(MAKE) public-exposure-audit NS="$$NS"; \
 	$(MAKE) db-mode-check NS="$$NS"; \
 	$(MAKE) db-port-forward-check NS="$$NS"; \
 	mkdir -p "$$(dirname "$(PROD_METADATA_FILE)")"; \
-	printf 'NS=%s\nRELEASE=%s\nURL=%s\nTAG=%s\n' "$$NS" "$(E2E_RELEASE)" "https://$$DEPLOY_HOST" "$$TAG" > "$(PROD_METADATA_FILE)"; \
+	printf 'NS=%s\nRELEASE=%s\nURL=%s\nTAG=%s\nCLUSTER_FLAVOR=%s\nDEPLOYED_AKS_EXPOSURE_MODE=%s\n' "$$NS" "$(E2E_RELEASE)" "$$DEPLOY_SCHEME://$$DEPLOY_HOST" "$$TAG" "$(CLUSTER_FLAVOR)" "$(if $(filter aks,$(CLUSTER_FLAVOR)),$(AKS_EXPOSURE_MODE),)" > "$(PROD_METADATA_FILE)"; \
 	echo "Production deployment ready."; \
-	echo "URL: https://$$DEPLOY_HOST"; \
+	echo "URL: $$DEPLOY_SCHEME://$$DEPLOY_HOST"; \
 	echo "Metadata saved to $(PROD_METADATA_FILE)"
 
 prod-up-tag: env-check ## Deploy to production namespace with explicit semver TAG (e.g. TAG=v0.1.0)
@@ -512,42 +543,27 @@ prod-up-tag: env-check ## Deploy to production namespace with explicit semver TA
 		echo "TAG must follow semver with v prefix (example: v0.1.0)."; \
 		exit 1; \
 	fi; \
-	. scripts/aro-deploy.sh; \
+	. scripts/select-deploy.sh; \
 	require_prod_db_secret_name; \
 	NS="$(PROD_NAMESPACE)"; \
 	PROBE_TOKEN="probe-prod-$$(echo "$$TAG" | tr -cd '[:alnum:]-')-$$(date +%s)"; \
 	echo "Deploying semver release $$TAG to PRODUCTION namespace: $$NS"; \
-	aro_login; \
-	oc get namespace "$$NS" >/dev/null 2>&1 || oc create namespace "$$NS" >/dev/null; \
+	cluster_login; \
+	ensure_namespace "$$NS"; \
 	require_db_secret_exists_in_namespace "$$NS"; \
 	aoai_fetch_creds; \
-	oc -n "$$NS" delete secret azure-openai-creds 2>/dev/null || true; \
-	oc -n "$$NS" create secret generic azure-openai-creds \
-		--from-literal=endpoint="$$AOAI_ENDPOINT" --from-literal=api-key="$$AOAI_KEY" >/dev/null; \
-	if ! oc -n "$$NS" get bc/sre-simulator-frontend >/dev/null 2>&1; then \
-		oc -n "$$NS" new-build --name=sre-simulator-frontend --binary=true --strategy=docker --to=sre-simulator-frontend:$$TAG >/dev/null; \
-	fi; \
-	if ! oc -n "$$NS" get bc/sre-simulator-backend >/dev/null 2>&1; then \
-		oc -n "$$NS" new-build --name=sre-simulator-backend --binary=true --strategy=docker --to=sre-simulator-backend:$$TAG >/dev/null; \
-	fi; \
-	oc -n "$$NS" patch bc/sre-simulator-frontend --type=merge \
-		-p "{\"spec\":{\"output\":{\"to\":{\"kind\":\"ImageStreamTag\",\"name\":\"sre-simulator-frontend:$$TAG\"}}}}" >/dev/null; \
-	oc -n "$$NS" patch bc/sre-simulator-backend --type=merge \
-		-p "{\"spec\":{\"output\":{\"to\":{\"kind\":\"ImageStreamTag\",\"name\":\"sre-simulator-backend:$$TAG\"}}}}" >/dev/null; \
-	patch_bc_strategy "$$NS" sre-simulator-frontend frontend/Dockerfile; \
-	patch_bc_strategy "$$NS" sre-simulator-backend backend/Dockerfile; \
-	oc_build_timed "$$NS" sre-simulator-frontend; \
-	oc_build_timed "$$NS" sre-simulator-backend; \
+	create_or_update_aoai_secret "$$NS"; \
+	prepare_release_images "$$NS" "$$TAG"; \
 	helm_deploy_sre "$$NS" "$$TAG" "$$PROBE_TOKEN"; \
 	wait_for_rollout "$$NS"; \
-	probe_readiness "$$DEPLOY_HOST" "$$PROBE_TOKEN"; \
+	probe_readiness "$$DEPLOY_SCHEME" "$$DEPLOY_HOST" "$$PROBE_TOKEN"; \
 	$(MAKE) public-exposure-audit NS="$$NS"; \
 	$(MAKE) db-mode-check NS="$$NS"; \
 	$(MAKE) db-port-forward-check NS="$$NS"; \
 	mkdir -p "$$(dirname "$(PROD_METADATA_FILE)")"; \
-	printf 'NS=%s\nRELEASE=%s\nURL=%s\nTAG=%s\n' "$$NS" "$(E2E_RELEASE)" "https://$$DEPLOY_HOST" "$$TAG" > "$(PROD_METADATA_FILE)"; \
+	printf 'NS=%s\nRELEASE=%s\nURL=%s\nTAG=%s\nCLUSTER_FLAVOR=%s\nDEPLOYED_AKS_EXPOSURE_MODE=%s\n' "$$NS" "$(E2E_RELEASE)" "$$DEPLOY_SCHEME://$$DEPLOY_HOST" "$$TAG" "$(CLUSTER_FLAVOR)" "$(if $(filter aks,$(CLUSTER_FLAVOR)),$(AKS_EXPOSURE_MODE),)" > "$(PROD_METADATA_FILE)"; \
 	echo "Production deployment ready."; \
-	echo "URL: https://$$DEPLOY_HOST"; \
+	echo "URL: $$DEPLOY_SCHEME://$$DEPLOY_HOST"; \
 	echo "Probe status: 200"; \
 	echo "Metadata saved to $(PROD_METADATA_FILE)"
 
@@ -569,71 +585,144 @@ prod-down: ## Delete production namespace (REQUIRES CONFIRMATION – type namesp
 		echo "Confirmation failed. Expected '$$NS', got '$$CONFIRM'."; \
 		exit 1; \
 	fi; \
+	. scripts/select-deploy.sh; \
 	echo "Deleting production namespace $$NS"; \
-	oc delete namespace "$$NS" --wait=false >/dev/null; \
-	oc wait --for=delete "namespace/$$NS" --timeout=10m >/dev/null || true; \
+	"$$KUBE_CLI" delete namespace "$$NS" --wait=false >/dev/null; \
+	"$$KUBE_CLI" wait --for=delete "namespace/$$NS" --timeout=10m >/dev/null || true; \
 	if [ -f "$(PROD_METADATA_FILE)" ]; then rm -f "$(PROD_METADATA_FILE)"; fi; \
 	echo "Production namespace removed. Azure OpenAI resources remain intact."
 
-prod-status: ## Show production namespace status (pods, route URL)
+prod-status: ## Show production namespace status (pods plus active public edge)
 	@set -e; \
+	. scripts/select-deploy.sh; \
 	NS="$(PROD_NAMESPACE)"; \
-	if ! oc get namespace "$$NS" >/dev/null 2>&1; then \
+	EFFECTIVE_AKS_EXPOSURE_MODE="$(AKS_EXPOSURE_MODE)"; \
+	if [ "$(CLUSTER_FLAVOR)" = "aks" ] && [ -z "$(AKS_EXPOSURE_MODE_EXPLICIT)" ] && [ -f "$(PROD_METADATA_FILE)" ]; then \
+		DEPLOYED_AKS_EXPOSURE_MODE=""; \
+		. "$(PROD_METADATA_FILE)"; \
+		if [ -n "$$DEPLOYED_AKS_EXPOSURE_MODE" ]; then \
+			EFFECTIVE_AKS_EXPOSURE_MODE="$$DEPLOYED_AKS_EXPOSURE_MODE"; \
+		fi; \
+	fi; \
+	if ! "$$KUBE_CLI" get namespace "$$NS" >/dev/null 2>&1; then \
 		echo "Production namespace '$$NS' does not exist. Run 'make prod-up' to create it."; \
 		exit 0; \
 	fi; \
 	echo "Namespace: $$NS"; \
+	echo "Cluster flavor: $(CLUSTER_FLAVOR)"; \
 	echo ""; \
 	echo "Pods:"; \
-	oc -n "$$NS" get pods -o wide 2>/dev/null || echo "  (no pods)"; \
+	"$$KUBE_CLI" -n "$$NS" get pods -o wide 2>/dev/null || echo "  (no pods)"; \
 	echo ""; \
-	echo "Route:"; \
-	oc -n "$$NS" get route 2>/dev/null || echo "  (no routes)"; \
+	if [ "$(CLUSTER_FLAVOR)" = "aks" ] && [ "$$EFFECTIVE_AKS_EXPOSURE_MODE" = "gateway" ]; then \
+		echo "Gateway resources:"; \
+		"$$KUBE_CLI" -n "$$NS" get gateway,httproute,certificate 2>/dev/null || echo "  (no gateway resources)"; \
+	elif [ "$(CLUSTER_FLAVOR)" = "aks" ]; then \
+		echo "Frontend service:"; \
+		"$$KUBE_CLI" -n "$$NS" get "svc/$(E2E_RELEASE)-frontend" 2>/dev/null || echo "  (no frontend service)"; \
+	else \
+		echo "Route:"; \
+		"$$KUBE_CLI" -n "$$NS" get route 2>/dev/null || echo "  (no routes)"; \
+	fi; \
 	echo ""; \
 	echo "Deployments:"; \
-	oc -n "$$NS" get deployments 2>/dev/null || echo "  (no deployments)"
+	"$$KUBE_CLI" -n "$$NS" get deployments 2>/dev/null || echo "  (no deployments)"
 
-geneva-suppression-check: ## Require explicit confirmation that Geneva suppression rule is active
-	@if [ "$(GENEVA_SUPPRESSION_RULE_ACTIVE)" != "true" ]; then \
+geneva-suppression-check: ## Require explicit confirmation that Geneva suppression is active for ARO only
+	@if [ "$(CLUSTER_FLAVOR)" = "aro" ] && [ "$(GENEVA_SUPPRESSION_RULE_ACTIVE)" != "true" ]; then \
 		echo "Set GENEVA_SUPPRESSION_RULE_ACTIVE=true after verifying Geneva suppression is active for the target ARO cluster/resource group (ARO_CLUSTER, ARO_RG)."; \
 		exit 1; \
 	fi
 
-public-exposure-audit: ## Verify frontend route is public and backend remains private ClusterIP
+public-exposure-audit: ## Verify frontend edge exists and backend remains private ClusterIP
 	@set -e; \
+	. scripts/select-deploy.sh; \
 	NS="$${NS:-$(PROD_NAMESPACE)}"; \
 	RELEASE="$${RELEASE:-$(E2E_RELEASE)}"; \
-	FRONT_ROUTE="$$RELEASE"; \
-	BACK_ROUTE="$$RELEASE-backend"; \
+	FRONT_SVC="$$RELEASE-frontend"; \
 	BACK_SVC="$$RELEASE-backend"; \
-	echo "Auditing exposure in namespace $$NS (release $$RELEASE)"; \
-	oc -n "$$NS" get "route/$$FRONT_ROUTE" >/dev/null; \
-	if oc -n "$$NS" get "route/$$BACK_ROUTE" >/dev/null 2>&1; then \
-		echo "Unexpected backend route found: $$BACK_ROUTE"; \
-		exit 1; \
+	EFFECTIVE_AKS_EXPOSURE_MODE="$(AKS_EXPOSURE_MODE)"; \
+	if [ "$(CLUSTER_FLAVOR)" = "aks" ] && [ -z "$(AKS_EXPOSURE_MODE_EXPLICIT)" ] && [ -f "$(PROD_METADATA_FILE)" ]; then \
+		DEPLOYED_AKS_EXPOSURE_MODE=""; \
+		. "$(PROD_METADATA_FILE)"; \
+		if [ -n "$$DEPLOYED_AKS_EXPOSURE_MODE" ]; then \
+			EFFECTIVE_AKS_EXPOSURE_MODE="$$DEPLOYED_AKS_EXPOSURE_MODE"; \
+		fi; \
 	fi; \
-	SVC_TYPE=$$(oc -n "$$NS" get "svc/$$BACK_SVC" -o jsonpath='{.spec.type}'); \
+	echo "Auditing exposure in namespace $$NS (release $$RELEASE, flavor $(CLUSTER_FLAVOR))"; \
+	if [ "$(CLUSTER_FLAVOR)" = "aks" ]; then \
+		if "$$KUBE_CLI" -n "$$NS" get "ingress/$$RELEASE" >/dev/null 2>&1; then \
+			echo "Unexpected frontend ingress found: $$RELEASE"; \
+			exit 1; \
+		fi; \
+		if "$$KUBE_CLI" -n "$$NS" get "ingress/$$RELEASE-backend" >/dev/null 2>&1; then \
+			echo "Unexpected backend ingress found: $$RELEASE-backend"; \
+			exit 1; \
+		fi; \
+		if [ "$$EFFECTIVE_AKS_EXPOSURE_MODE" = "gateway" ]; then \
+			"$$KUBE_CLI" -n "$$NS" get "gateway/$$RELEASE" >/dev/null; \
+			"$$KUBE_CLI" -n "$$NS" get "httproute/$$RELEASE" >/dev/null; \
+			"$$KUBE_CLI" -n "$$NS" get "httproute/$$RELEASE-redirect" >/dev/null; \
+			CERT_LIST=$$("$$KUBE_CLI" -n "$$NS" get certificate -o jsonpath='{range .items[*]}{.metadata.name}{"|"}{.spec.secretName}{"\n"}{end}'); \
+			CERT_FOUND=0; \
+			for CERT_ENTRY in $$CERT_LIST; do \
+				CERT_SECRET=$${CERT_ENTRY#*|}; \
+				if [ "$$CERT_SECRET" = "$(AKS_GATEWAY_TLS_SECRET_NAME)" ]; then \
+					CERT_FOUND=1; \
+					break; \
+				fi; \
+			done; \
+			if [ "$$CERT_FOUND" -ne 1 ]; then \
+				echo "Gateway certificate must exist for TLS secret $(AKS_GATEWAY_TLS_SECRET_NAME) in namespace $$NS"; \
+				exit 1; \
+			fi; \
+			FRONT_TYPE=$$("$$KUBE_CLI" -n "$$NS" get "svc/$$FRONT_SVC" -o jsonpath='{.spec.type}'); \
+			if [ "$$FRONT_TYPE" != "ClusterIP" ]; then \
+				echo "Frontend service type must be ClusterIP in AKS gateway mode, found $$FRONT_TYPE"; \
+				exit 1; \
+			fi; \
+		else \
+			FRONT_TYPE=$$("$$KUBE_CLI" -n "$$NS" get "svc/$$FRONT_SVC" -o jsonpath='{.spec.type}'); \
+			if [ "$$FRONT_TYPE" != "LoadBalancer" ]; then \
+				echo "Frontend service type must be LoadBalancer on AKS publicService mode, found $$FRONT_TYPE"; \
+				exit 1; \
+			fi; \
+			FRONT_PORT=$$("$$KUBE_CLI" -n "$$NS" get "svc/$$FRONT_SVC" -o jsonpath='{.spec.ports[0].port}'); \
+			if [ "$$FRONT_PORT" != "80" ]; then \
+				echo "Frontend service port must be 80 on AKS publicService mode, found $$FRONT_PORT"; \
+				exit 1; \
+			fi; \
+		fi; \
+	else \
+		"$$KUBE_CLI" -n "$$NS" get "route/$$RELEASE" >/dev/null; \
+		if "$$KUBE_CLI" -n "$$NS" get "route/$$RELEASE-backend" >/dev/null 2>&1; then \
+			echo "Unexpected backend route found: $$RELEASE-backend"; \
+			exit 1; \
+		fi; \
+	fi; \
+	SVC_TYPE=$$("$$KUBE_CLI" -n "$$NS" get "svc/$$BACK_SVC" -o jsonpath='{.spec.type}'); \
 	if [ "$$SVC_TYPE" != "ClusterIP" ]; then \
 		echo "Backend service type must be ClusterIP, found $$SVC_TYPE"; \
 		exit 1; \
 	fi; \
-	echo "Exposure audit passed: frontend route exists, backend is internal-only."
+	echo "Exposure audit passed: frontend edge exists, backend is internal-only."
 
 db-mode-check: ## Verify deployed backend is wired for Azure SQL mode
 	@set -e; \
+	. scripts/select-deploy.sh; \
 	NS="$${NS:-$(PROD_NAMESPACE)}"; \
 	RELEASE="$${RELEASE:-$(E2E_RELEASE)}"; \
 	DEPLOY="$${DEPLOY:-$$RELEASE-backend}"; \
-	ERR_FILE="$$(mktemp /tmp/sre-db-mode-check-oc.err.XXXXXX)"; \
+	ERR_FILE="$$(mktemp /tmp/sre-db-mode-check-kube.err.XXXXXX)"; \
 	trap 'rm -f "$$ERR_FILE"' EXIT INT TERM; \
-	if ! oc -n "$$NS" get deployment "$$DEPLOY" >/dev/null 2>"$$ERR_FILE"; then \
+	if ! "$$KUBE_CLI" -n "$$NS" get deployment "$$DEPLOY" >/dev/null 2>"$$ERR_FILE"; then \
 		echo "Cannot access deployment $$NS/$$DEPLOY."; \
 		cat "$$ERR_FILE"; \
 		exit 1; \
 	fi; \
-	STORAGE_BACKEND=$$(oc -n "$$NS" get deployment "$$DEPLOY" -o jsonpath="{.spec.template.spec.containers[0].env[?(@.name=='STORAGE_BACKEND')].value}"); \
-	DB_SECRET_NAME=$$(oc -n "$$NS" get deployment "$$DEPLOY" -o jsonpath="{.spec.template.spec.containers[0].env[?(@.name=='DATABASE_URL')].valueFrom.secretKeyRef.name}"); \
-	DB_SECRET_KEY=$$(oc -n "$$NS" get deployment "$$DEPLOY" -o jsonpath="{.spec.template.spec.containers[0].env[?(@.name=='DATABASE_URL')].valueFrom.secretKeyRef.key}"); \
+	STORAGE_BACKEND=$$("$$KUBE_CLI" -n "$$NS" get deployment "$$DEPLOY" -o jsonpath="{.spec.template.spec.containers[0].env[?(@.name=='STORAGE_BACKEND')].value}"); \
+	DB_SECRET_NAME=$$("$$KUBE_CLI" -n "$$NS" get deployment "$$DEPLOY" -o jsonpath="{.spec.template.spec.containers[0].env[?(@.name=='DATABASE_URL')].valueFrom.secretKeyRef.name}"); \
+	DB_SECRET_KEY=$$("$$KUBE_CLI" -n "$$NS" get deployment "$$DEPLOY" -o jsonpath="{.spec.template.spec.containers[0].env[?(@.name=='DATABASE_URL')].valueFrom.secretKeyRef.key}"); \
 	if [ "$$STORAGE_BACKEND" != "mssql" ]; then \
 		echo "Expected STORAGE_BACKEND=mssql for $$NS/$$DEPLOY, found '$${STORAGE_BACKEND:-<unset>}'."; \
 		exit 1; \
@@ -643,7 +732,7 @@ db-mode-check: ## Verify deployed backend is wired for Azure SQL mode
 		echo "Make sure this release uses database.enabled=true."; \
 		exit 1; \
 	fi; \
-	if ! oc -n "$$NS" get secret "$$DB_SECRET_NAME" >/dev/null 2>"$$ERR_FILE"; then \
+	if ! "$$KUBE_CLI" -n "$$NS" get secret "$$DB_SECRET_NAME" >/dev/null 2>"$$ERR_FILE"; then \
 		echo "Cannot access secret $$NS/$$DB_SECRET_NAME."; \
 		cat "$$ERR_FILE"; \
 		exit 1; \
@@ -652,14 +741,15 @@ db-mode-check: ## Verify deployed backend is wired for Azure SQL mode
 
 db-port-forward-check: ## Verify backend-to-DB path through local oc port-forward fallback
 	@set -e; \
+	. scripts/select-deploy.sh; \
 	NS="$${NS:-$(PROD_NAMESPACE)}"; \
 	RELEASE="$${RELEASE:-$(E2E_RELEASE)}"; \
 	LOCAL_PORT="$${LOCAL_PORT:-18080}"; \
 	BACK_PORT="$${BACK_PORT:-8080}"; \
 	SVC="$$RELEASE-backend"; \
 	echo "Running DB check via port-forward: $$NS/$$SVC -> 127.0.0.1:$$LOCAL_PORT"; \
-	oc -n "$$NS" get "svc/$$SVC" >/dev/null; \
-	oc -n "$$NS" port-forward "svc/$$SVC" "$$LOCAL_PORT:$$BACK_PORT" >/tmp/sre-db-port-forward.log 2>&1 & \
+	"$$KUBE_CLI" -n "$$NS" get "svc/$$SVC" >/dev/null; \
+	"$$KUBE_CLI" -n "$$NS" port-forward "svc/$$SVC" "$$LOCAL_PORT:$$BACK_PORT" >/tmp/sre-db-port-forward.log 2>&1 & \
 	PID=$$!; \
 	trap 'kill $$PID >/dev/null 2>&1 || true' EXIT INT TERM; \
 	READY=0; \
@@ -682,31 +772,32 @@ db-port-forward-check: ## Verify backend-to-DB path through local oc port-forwar
 
 db-inspect: install-backend ## Inspect DB rows from deployed backend (set SQL='...' for custom query)
 	@set -e; \
+	. scripts/select-deploy.sh; \
 	NS="$${NS:-$(PROD_NAMESPACE)}"; \
 	RELEASE="$${RELEASE:-$(E2E_RELEASE)}"; \
 	DEPLOY="$${DEPLOY:-$$RELEASE-backend}"; \
 	LIMIT="$${LIMIT:-10}"; \
 	QUERY="$${SQL:-}"; \
-	ERR_FILE="$$(mktemp /tmp/sre-db-inspect-oc.err.XXXXXX)"; \
+	ERR_FILE="$$(mktemp /tmp/sre-db-inspect-kube.err.XXXXXX)"; \
 	trap 'rm -f "$$ERR_FILE"' EXIT INT TERM; \
-	if ! oc -n "$$NS" get deployment "$$DEPLOY" >/dev/null 2>"$$ERR_FILE"; then \
+	if ! "$$KUBE_CLI" -n "$$NS" get deployment "$$DEPLOY" >/dev/null 2>"$$ERR_FILE"; then \
 		echo "Cannot access deployment $$NS/$$DEPLOY."; \
 		cat "$$ERR_FILE"; \
 		exit 1; \
 	fi; \
-	DB_SECRET_NAME=$$(oc -n "$$NS" get deployment "$$DEPLOY" -o jsonpath="{.spec.template.spec.containers[0].env[?(@.name=='DATABASE_URL')].valueFrom.secretKeyRef.name}"); \
-	DB_SECRET_KEY=$$(oc -n "$$NS" get deployment "$$DEPLOY" -o jsonpath="{.spec.template.spec.containers[0].env[?(@.name=='DATABASE_URL')].valueFrom.secretKeyRef.key}"); \
+	DB_SECRET_NAME=$$("$$KUBE_CLI" -n "$$NS" get deployment "$$DEPLOY" -o jsonpath="{.spec.template.spec.containers[0].env[?(@.name=='DATABASE_URL')].valueFrom.secretKeyRef.name}"); \
+	DB_SECRET_KEY=$$("$$KUBE_CLI" -n "$$NS" get deployment "$$DEPLOY" -o jsonpath="{.spec.template.spec.containers[0].env[?(@.name=='DATABASE_URL')].valueFrom.secretKeyRef.key}"); \
 	if [ -z "$$DB_SECRET_NAME" ] || [ -z "$$DB_SECRET_KEY" ]; then \
 		echo "DATABASE_URL secret ref not found on deployment $$NS/$$DEPLOY."; \
 		echo "Make sure this release uses database.enabled=true."; \
 		exit 1; \
 	fi; \
-	if ! oc -n "$$NS" get secret "$$DB_SECRET_NAME" >/dev/null 2>"$$ERR_FILE"; then \
+	if ! "$$KUBE_CLI" -n "$$NS" get secret "$$DB_SECRET_NAME" >/dev/null 2>"$$ERR_FILE"; then \
 		echo "Cannot access secret $$NS/$$DB_SECRET_NAME."; \
 		cat "$$ERR_FILE"; \
 		exit 1; \
 	fi; \
-	ENCODED_DB_URL=$$(oc -n "$$NS" get secret "$$DB_SECRET_NAME" -o jsonpath="{.data['$$DB_SECRET_KEY']}"); \
+	ENCODED_DB_URL=$$("$$KUBE_CLI" -n "$$NS" get secret "$$DB_SECRET_NAME" -o jsonpath="{.data['$$DB_SECRET_KEY']}"); \
 	if [ -z "$$ENCODED_DB_URL" ]; then \
 		echo "Could not read key '$$DB_SECRET_KEY' from secret '$$DB_SECRET_NAME'."; \
 		exit 1; \
@@ -725,6 +816,7 @@ db-inspect: install-backend ## Inspect DB rows from deployed backend (set SQL='.
 
 db-inspect-live: ## Inspect DB rows from inside the deployed backend pod (bypasses local SQL firewall)
 	@set -e; \
+	. scripts/select-deploy.sh; \
 	NS="$${NS:-$(PROD_NAMESPACE)}"; \
 	RELEASE="$${RELEASE:-$(E2E_RELEASE)}"; \
 	DEPLOY="$${DEPLOY:-$$RELEASE-backend}"; \
@@ -732,27 +824,27 @@ db-inspect-live: ## Inspect DB rows from inside the deployed backend pod (bypass
 	QUERY="$${SQL:-}"; \
 	DB_SECRET_NAME=""; \
 	DB_SECRET_KEY=""; \
-	ERR_FILE="$$(mktemp /tmp/sre-db-inspect-live-oc.err.XXXXXX)"; \
+	ERR_FILE="$$(mktemp /tmp/sre-db-inspect-live-kube.err.XXXXXX)"; \
 	trap 'rm -f "$$ERR_FILE"' EXIT INT TERM; \
-	if ! oc -n "$$NS" get deployment "$$DEPLOY" >/dev/null 2>"$$ERR_FILE"; then \
+	if ! "$$KUBE_CLI" -n "$$NS" get deployment "$$DEPLOY" >/dev/null 2>"$$ERR_FILE"; then \
 		echo "Cannot access deployment $$NS/$$DEPLOY."; \
 		cat "$$ERR_FILE"; \
 		exit 1; \
 	fi; \
-	DB_SECRET_NAME=$$(oc -n "$$NS" get deployment "$$DEPLOY" -o jsonpath="{.spec.template.spec.containers[0].env[?(@.name=='DATABASE_URL')].valueFrom.secretKeyRef.name}"); \
-	DB_SECRET_KEY=$$(oc -n "$$NS" get deployment "$$DEPLOY" -o jsonpath="{.spec.template.spec.containers[0].env[?(@.name=='DATABASE_URL')].valueFrom.secretKeyRef.key}"); \
+	DB_SECRET_NAME=$$("$$KUBE_CLI" -n "$$NS" get deployment "$$DEPLOY" -o jsonpath="{.spec.template.spec.containers[0].env[?(@.name=='DATABASE_URL')].valueFrom.secretKeyRef.name}"); \
+	DB_SECRET_KEY=$$("$$KUBE_CLI" -n "$$NS" get deployment "$$DEPLOY" -o jsonpath="{.spec.template.spec.containers[0].env[?(@.name=='DATABASE_URL')].valueFrom.secretKeyRef.key}"); \
 	if [ -z "$$DB_SECRET_NAME" ] || [ -z "$$DB_SECRET_KEY" ]; then \
 		echo "DATABASE_URL secret ref not found on deployment $$NS/$$DEPLOY."; \
 		echo "Make sure this release uses database.enabled=true."; \
 		exit 1; \
 	fi; \
-	if ! oc -n "$$NS" get secret "$$DB_SECRET_NAME" >/dev/null 2>"$$ERR_FILE"; then \
+	if ! "$$KUBE_CLI" -n "$$NS" get secret "$$DB_SECRET_NAME" >/dev/null 2>"$$ERR_FILE"; then \
 		echo "Cannot access secret $$NS/$$DB_SECRET_NAME."; \
 		cat "$$ERR_FILE"; \
 		exit 1; \
 	fi; \
 	echo "Inspecting DB live for $$NS/$$DEPLOY via in-cluster node (secret: $$DB_SECRET_NAME, key: $$DB_SECRET_KEY)"; \
-	oc -n "$$NS" exec -i "deploy/$$DEPLOY" -- \
+	"$$KUBE_CLI" -n "$$NS" exec -i "deploy/$$DEPLOY" -- \
 		env LIMIT="$$LIMIT" SQL="$$QUERY" node - < scripts/db-inspect.cjs
 
 prod-up-final: geneva-suppression-check env-check ## Deploy final env then run exposure + DB fallback checks

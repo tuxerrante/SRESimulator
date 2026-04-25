@@ -1,0 +1,35 @@
+{{- if eq (include "sre-simulator.exposureMode" .) "gateway" }}
+{{- $publicHost := include "sre-simulator.publicHost" . -}}
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: {{ include "sre-simulator.fullname" . }}
+  labels:
+    {{- include "sre-simulator.labels" . | nindent 4 }}
+  {{- with .Values.gateway.certManager.clusterIssuer }}
+  annotations:
+    cert-manager.io/cluster-issuer: {{ . | quote }}
+  {{- end }}
+spec:
+  gatewayClassName: {{ .Values.gateway.className }}
+  infrastructure:
+    parametersRef:
+      group: gateway.envoyproxy.io
+      kind: EnvoyProxy
+      name: {{ .Values.gateway.envoyProxy.name }}
+  listeners:
+    - name: http
+      protocol: HTTP
+      port: 80
+      hostname: {{ $publicHost | quote }}
+    - name: https
+      protocol: HTTPS
+      port: 443
+      hostname: {{ $publicHost | quote }}
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - group: ""
+            kind: Secret
+            name: {{ .Values.gateway.tls.secretName }}
+{{- end }}

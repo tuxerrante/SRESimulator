@@ -18,7 +18,8 @@ mock_provider "azuread" {
 }
 
 variables {
-  owner_alias = "jdoe"
+  owner_alias    = "jdoe"
+  cluster_flavor = "aro"
 }
 
 # ---------------------------------------------------------------------------
@@ -58,17 +59,17 @@ run "vnet_has_required_tags" {
   command = plan
 
   assert {
-    condition     = azurerm_virtual_network.aro.tags["environment"] == "test"
+    condition     = azurerm_virtual_network.aro[0].tags["environment"] == "test"
     error_message = "VNet must have environment=test tag."
   }
 
   assert {
-    condition     = azurerm_virtual_network.aro.tags["owner"] == "jdoe"
+    condition     = azurerm_virtual_network.aro[0].tags["owner"] == "jdoe"
     error_message = "VNet must have owner tag matching owner_alias."
   }
 
   assert {
-    condition     = azurerm_virtual_network.aro.tags["persist"] == "true"
+    condition     = azurerm_virtual_network.aro[0].tags["persist"] == "true"
     error_message = "VNet must have persist=true tag."
   }
 }

@@ -6,15 +6,20 @@ metadata:
     {{- include "sre-simulator.labels" . | nindent 4 }}
     {{- include "sre-simulator.backend.selectorLabels" . | nindent 4 }}
 spec:
+  {{- if not (and .Values.backend.autoscaling.enabled .Values.database.enabled) }}
   replicas: {{ .Values.backend.replicas }}
+  {{- end }}
   selector:
     matchLabels:
       {{- include "sre-simulator.backend.selectorLabels" . | nindent 6 }}
   template:
     metadata:
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
       labels:
         {{- include "sre-simulator.backend.selectorLabels" . | nindent 8 }}
     spec:
+      {{- include "sre-simulator.imagePullSecrets" . | nindent 6 }}
       containers:
         - name: backend
           image: "{{ .Values.backend.image.repository }}:{{ .Values.backend.image.tag }}"
@@ -26,7 +31,7 @@ spec:
             - name: DATA_DIR
               value: /data
             - name: CORS_ORIGIN
-              value: "https://{{ .Values.route.host }}"
+              value: {{ include "sre-simulator.publicOrigin" . | quote }}
             {{- if .Values.ai.azureOpenai.endpointFromSecret.existingSecretName }}
             - name: AI_AZURE_OPENAI_ENDPOINT
               valueFrom:
@@ -67,11 +72,6 @@ spec:
               mountPath: {{ .Values.ai.vertex.credentials.mountPath }}
               readOnly: true
             {{- end }}
-            {{- if .Values.keyvault.name }}
-            - name: secrets
-              mountPath: /mnt/secrets
-              readOnly: true
-            {{- end }}
           resources:
             {{- toYaml .Values.backend.resources | nindent 12 }}
           livenessProbe:
@@ -100,12 +100,4 @@ spec:
         - name: gcp-credentials
           secret:
             secretName: {{ .Values.ai.vertex.credentials.existingSecretName }}
-        {{- end }}
-        {{- if .Values.keyvault.name }}
-        - name: secrets
-          csi:
-            driver: secrets-store.csi.k8s.io
-            readOnly: true
-            volumeAttributes:
-              secretProviderClass: {{ include "sre-simulator.fullname" . }}-secrets
         {{- end }}

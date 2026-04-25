@@ -1,33 +1,15 @@
 #!/usr/bin/env bash
-# Shared functions for ARO deployment Makefile targets.
-# Sourced (not executed) by Make recipes; expects these environment
-# variables exported from the Makefile:
-#   AZURE_SUBSCRIPTION_ID, ARO_RG, ARO_CLUSTER
-#   AOAI_RG, AOAI_ACCOUNT, AOAI_DEPLOYMENT
-#   E2E_RELEASE, NPM_VERSION
-#   PROD_NAMESPACE, DB_SECRET_NAME, DB_SECRET_SOURCE_NAMESPACE
+# ARO-specific deployment helpers. Sourced (not executed) by Make recipes.
 
-require_cli() {
-  local cli=$1
-  if ! command -v "$cli" >/dev/null 2>&1; then
-    echo "error: required CLI '$cli' is not installed or not in PATH" >&2
-    return 1
-  fi
-}
-
-ensure_azure_login() {
-  require_cli az
-  if az account show --query id -o tsv >/dev/null 2>&1; then
-    return 0
-  fi
-
-  echo "Azure CLI is not logged in. Starting interactive device-code login..."
-  az login --use-device-code
-}
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+KUBE_CLI=oc
+# shellcheck disable=SC1091
+source "${SCRIPT_DIR}/kube-deploy-common.sh"
 
 aro_login() {
   require_cli az
   require_cli oc
+  ensure_azure_login
   az account set -s "$AZURE_SUBSCRIPTION_ID" >/dev/null
   local api pass
   api=$(az aro show -g "$ARO_RG" -n "$ARO_CLUSTER" \
@@ -50,13 +32,12 @@ print_aro_login_summary() {
   echo "OpenShift server: $oc_server"
 }
 
-aoai_fetch_creds() {
-  AOAI_ENDPOINT=$(az cognitiveservices account show \
-    -g "$AOAI_RG" -n "$AOAI_ACCOUNT" \
-    --query properties.endpoint -o tsv | sed 's:/*$::')
-  AOAI_KEY=$(az cognitiveservices account keys list \
-    -g "$AOAI_RG" -n "$AOAI_ACCOUNT" \
-    --query key1 -o tsv)
+cluster_login() {
+  aro_login
+}
+
+print_cluster_login_summary() {
+  print_aro_login_summary
 }
 
 # Usage: patch_bc_strategy <namespace> <bc-name> <dockerfile-path>
@@ -82,9 +63,8 @@ oc_build_timed() {
   archive="$(mktemp "${TMPDIR:-/tmp}/oc-build-XXXXXX").tar.gz"
   local tar_extra_flags=()
   # BSD tar on macOS embeds PAX headers (xattrs, resource forks) that
-  # OpenShift builder pods cannot extract.  Probe whether the local tar
-  # accepts --no-mac-metadata by creating a throwaway archive (--help
-  # on newer bsdtar no longer lists the flag).
+  # OpenShift builder pods cannot extract. Probe whether the local tar accepts
+  # --no-mac-metadata by creating a throwaway archive.
   if tar cf /dev/null --no-mac-metadata /dev/null 2>/dev/null; then
     tar_extra_flags+=(--no-mac-metadata --no-xattrs --no-fflags)
   fi
@@ -129,95 +109,27 @@ oc_build_timed() {
   echo "  $name build completed in $(( t1 - t0 ))s (attempt $attempt/$max_retries)"
 }
 
-# Usage: copy_secret_across_namespaces <src_ns> <dst_ns> <secret_name>
-# Re-applies the Secret in dst_ns from a live object in src_ns. Strips
-# server-populated metadata with jq. Does not echo .data or stringData
-# (stdout from oc apply is discarded).
-copy_secret_across_namespaces() {
-  local src_ns=$1 dst_ns=$2 secret_name=$3
-  if [ "$src_ns" = "$dst_ns" ]; then
-    if ! oc -n "$src_ns" get "secret/$secret_name" >/dev/null 2>&1; then
-      echo "error: secret '$secret_name' not found in namespace '$src_ns'" >&2
-      return 1
-    fi
-    return 0
-  fi
-  if ! oc -n "$src_ns" get "secret/$secret_name" >/dev/null 2>&1; then
-    echo "error: secret '$secret_name' not found in namespace '$src_ns' (cannot copy into '$dst_ns')" >&2
-    return 1
-  fi
-  if ! command -v jq >/dev/null 2>&1; then
-    echo "error: jq is required to copy secret '$secret_name' from namespace '$src_ns' to '$dst_ns'" >&2
-    return 1
-  fi
-  oc -n "$src_ns" get "secret/$secret_name" -o json \
-    | jq '
-        .metadata |= (
-          del(
-            .namespace,
-            .uid,
-            .resourceVersion,
-            .creationTimestamp,
-            .managedFields,
-            .ownerReferences,
-            .generation
-          )
-          | if .annotations then
-              .annotations |= del(.["kubectl.kubernetes.io/last-applied-configuration"])
-            else
-              .
-            end
-        )
-        | del(.status)
-      ' \
-    | oc -n "$dst_ns" apply -f - >/dev/null
-}
+prepare_release_images() {
+  local ns=$1 tag=$2
+  ensure_namespace "$ns"
 
-# Usage: ensure_db_secret_for_e2e_namespace <dst_ns>
-# When DB_SECRET_NAME is set, copies that secret from DB_SECRET_SOURCE_NAMESPACE
-# if set, otherwise from PROD_NAMESPACE (default sre-simulator). No-op when
-# DB_SECRET_NAME is unset. Skips copy when source and destination namespaces match.
-ensure_db_secret_for_e2e_namespace() {
-  local dst_ns=$1
-  if [ -z "${DB_SECRET_NAME:-}" ]; then
-    return 0
+  if ! oc -n "$ns" get bc/sre-simulator-frontend >/dev/null 2>&1; then
+    oc -n "$ns" new-build --name=sre-simulator-frontend --binary=true --strategy=docker --to=sre-simulator-frontend:"$tag" >/dev/null
   fi
-  local src_ns="${DB_SECRET_SOURCE_NAMESPACE:-${PROD_NAMESPACE:-sre-simulator}}"
-  echo "Ensuring DB secret in '$dst_ns' (from namespace '$src_ns', secret '${DB_SECRET_NAME}'; payload not logged)."
-  copy_secret_across_namespaces "$src_ns" "$dst_ns" "$DB_SECRET_NAME"
-}
+  if ! oc -n "$ns" get bc/sre-simulator-backend >/dev/null 2>&1; then
+    oc -n "$ns" new-build --name=sre-simulator-backend --binary=true --strategy=docker --to=sre-simulator-backend:"$tag" >/dev/null
+  fi
 
-# Usage: require_prod_db_secret_name
-# Production releases must opt into Azure SQL explicitly; refuse silent
-# fallback to JSON/PVC mode when DB_SECRET_NAME is missing.
-require_prod_db_secret_name() {
-  if [ -n "${DB_SECRET_NAME:-}" ]; then
-    return 0
-  fi
-  echo "DB_SECRET_NAME is required for production deployment with STORAGE_BACKEND=mssql." >&2
-  return 1
-}
+  oc -n "$ns" patch bc/sre-simulator-frontend --type=merge \
+    -p "{\"spec\":{\"output\":{\"to\":{\"kind\":\"ImageStreamTag\",\"name\":\"sre-simulator-frontend:$tag\"}}}}" >/dev/null
+  patch_bc_strategy "$ns" sre-simulator-frontend frontend/Dockerfile
 
-# Usage: require_db_secret_exists_in_namespace <namespace>
-require_db_secret_exists_in_namespace() {
-  local ns=$1
-  require_cli oc
-  local err_file
-  err_file="$(mktemp "${TMPDIR:-/tmp}/sre-db-secret-check-XXXXXX")"
-  if oc -n "$ns" get "secret/${DB_SECRET_NAME}" >/dev/null 2>"$err_file"; then
-    rm -f "$err_file"
-    return 0
-  fi
-  if grep -Fq "secrets \"${DB_SECRET_NAME}\" not found" "$err_file" || \
-     grep -Fq "secret \"${DB_SECRET_NAME}\" not found" "$err_file"; then
-    echo "DB secret '${DB_SECRET_NAME}' was not found in namespace '${ns}'." >&2
-    echo "Create or copy it before running a production deployment." >&2
-  else
-    echo "Failed to verify DB secret '${DB_SECRET_NAME}' in namespace '${ns}'." >&2
-    cat "$err_file" >&2
-  fi
-  rm -f "$err_file"
-  return 1
+  oc -n "$ns" patch bc/sre-simulator-backend --type=merge \
+    -p "{\"spec\":{\"output\":{\"to\":{\"kind\":\"ImageStreamTag\",\"name\":\"sre-simulator-backend:$tag\"}}}}" >/dev/null
+  patch_bc_strategy "$ns" sre-simulator-backend backend/Dockerfile
+
+  oc_build_timed "$ns" sre-simulator-frontend
+  oc_build_timed "$ns" sre-simulator-backend
 }
 
 # Usage: helm_deploy_sre <namespace> <tag> <probe-token>
@@ -230,6 +142,7 @@ helm_deploy_sre() {
   local ns=$1 tag=$2 probe_token=$3
   DEPLOY_DOMAIN=$(oc get ingresses.config/cluster -o jsonpath='{.spec.domain}')
   DEPLOY_HOST="${ns}.${DEPLOY_DOMAIN}"
+  DEPLOY_SCHEME="https"
 
   local db_flags=()
   local aoai_route_flags=()
@@ -252,7 +165,8 @@ helm_deploy_sre() {
   fi
 
   helm upgrade --install "$E2E_RELEASE" ./helm/sre-simulator -n "$ns" \
-    --set route.host="$DEPLOY_HOST" \
+    --set-string exposure.mode=route \
+    --set-string "exposure.host=$DEPLOY_HOST" \
     --set frontend.image.repository="image-registry.openshift-image-registry.svc:5000/$ns/sre-simulator-frontend" \
     --set frontend.image.tag="$tag" \
     --set frontend.image.pullPolicy=Always \
@@ -273,33 +187,4 @@ helm_deploy_sre() {
     "${aoai_route_flags[@]}" \
     "${db_flags[@]}" \
     --wait --timeout 15m >/dev/null
-}
-
-# Usage: wait_for_rollout <namespace>
-wait_for_rollout() {
-  local ns=$1
-  oc -n "$ns" rollout status "deployment/${E2E_RELEASE}-frontend" --timeout=6m >/dev/null
-  oc -n "$ns" rollout status "deployment/${E2E_RELEASE}-backend" --timeout=6m >/dev/null
-}
-
-# Usage: probe_readiness <host> <probe-token>
-# Returns non-zero on failure.
-probe_readiness() {
-  local host=$1 probe_token=$2
-  local code="" i=0
-  while [ "$i" -lt 10 ]; do
-    code=$(curl -ksS -H "x-ai-probe-token: $probe_token" \
-      -o /dev/null -w '%{http_code}' \
-      "https://$host/api/ai/probe?live=true" || true)
-    if [ "$code" = "200" ]; then break; fi
-    i=$((i + 1))
-    sleep 2
-  done
-  if [ "$code" != "200" ]; then
-    echo "Probe failed with status $code"
-    curl -ksS -H "x-ai-probe-token: $probe_token" \
-      "https://$host/api/ai/probe?live=true" || true
-    echo
-    return 1
-  fi
 }

@@ -1,4 +1,4 @@
-{{- if .Values.route.enabled }}
+{{- if eq (include "sre-simulator.exposureMode" .) "route" }}
 apiVersion: route.openshift.io/v1
 kind: Route
 metadata:
@@ -6,7 +6,7 @@ metadata:
   labels:
     {{- include "sre-simulator.labels" . | nindent 4 }}
 spec:
-  host: {{ .Values.route.host }}
+  host: {{ include "sre-simulator.publicHost" . }}
   tls:
     termination: {{ .Values.route.tls.termination }}
   to:

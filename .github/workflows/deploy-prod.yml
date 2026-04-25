@@ -8,6 +8,22 @@ name: Deploy Production
         description: Semver tag to deploy (example v0.1.0)
         required: true
         type: string
+      prod_auto_deploy_enabled:
+        description: Override production auto-deploy toggle for this run
+        required: false
+        default: "true"
+        type: choice
+        options:
+          - "true"
+          - "false"
+      prod_cluster_flavor:
+        description: Override target cluster flavor for this run
+        required: false
+        default: aks
+        type: choice
+        options:
+          - aks
+          - aro
   workflow_run:
     workflows: ["Release"]
     types:
@@ -34,6 +50,7 @@ jobs:
       should_deploy: ${{ steps.resolve.outputs.should_deploy }}
       release_tag: ${{ steps.resolve.outputs.release_tag }}
       release_sha: ${{ steps.resolve.outputs.release_sha }}
+      prod_cluster_flavor: ${{ steps.resolve.outputs.prod_cluster_flavor }}
     steps:
       - name: Harden runner
         # v2.18.0
@@ -55,9 +72,55 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
           HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
           INPUT_RELEASE_TAG: ${{ github.event.inputs.release_tag }}
+          INPUT_PROD_AUTO_DEPLOY_ENABLED: >-
+            ${{ github.event.inputs.prod_auto_deploy_enabled }}
+          INPUT_PROD_CLUSTER_FLAVOR: >-
+            ${{ github.event.inputs.prod_cluster_flavor }}
+          VAR_PROD_AUTO_DEPLOY_ENABLED: ${{ vars.PROD_AUTO_DEPLOY_ENABLED }}
+          VAR_PROD_CLUSTER_FLAVOR: ${{ vars.PROD_CLUSTER_FLAVOR }}
         run: |
           set -euo pipefail
           git fetch --tags --force
+
+          prod_auto_deploy_enabled="${VAR_PROD_AUTO_DEPLOY_ENABLED:-}"
+          prod_cluster_flavor="${VAR_PROD_CLUSTER_FLAVOR:-}"
+          if [[ "${EVENT_NAME}" == "workflow_dispatch" ]]; then
+            if [[ -n "${INPUT_PROD_AUTO_DEPLOY_ENABLED:-}" ]]; then
+              prod_auto_deploy_enabled="${INPUT_PROD_AUTO_DEPLOY_ENABLED}"
+            fi
+            if [[ -n "${INPUT_PROD_CLUSTER_FLAVOR:-}" ]]; then
+              prod_cluster_flavor="${INPUT_PROD_CLUSTER_FLAVOR}"
+            fi
+          fi
+
+          prod_auto_deploy_enabled="${prod_auto_deploy_enabled:-true}"
+          prod_cluster_flavor="${prod_cluster_flavor:-aks}"
+
+          case "${prod_auto_deploy_enabled}" in
+            true|false) ;;
+            *)
+              echo "PROD_AUTO_DEPLOY_ENABLED must be true or false."
+              exit 1
+              ;;
+          esac
+
+          case "${prod_cluster_flavor}" in
+            aks|aro) ;;
+            *)
+              echo "PROD_CLUSTER_FLAVOR must be aks or aro."
+              exit 1
+              ;;
+          esac
+
+          echo "prod_cluster_flavor=${prod_cluster_flavor}" >> "$GITHUB_OUTPUT"
+
+          if [[ "${prod_auto_deploy_enabled}" != "true" ]]; then
+            echo "Production auto-deploy is disabled; skipping deploy."
+            echo "should_deploy=false" >> "$GITHUB_OUTPUT"
+            echo "release_tag=" >> "$GITHUB_OUTPUT"
+            echo "release_sha=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           if [[ "${EVENT_NAME}" == "workflow_dispatch" ]]; then
             if [[ ! "${INPUT_RELEASE_TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
               echo "Release tag must follow semver: ${INPUT_RELEASE_TAG}"
@@ -101,7 +164,13 @@ jobs:
     env:
       RELEASE_TAG: ${{ needs.resolve-release-tag.outputs.release_tag }}
       RELEASE_SHA: ${{ needs.resolve-release-tag.outputs.release_sha }}
+      PROD_CLUSTER_FLAVOR: >-
+        ${{ needs.resolve-release-tag.outputs.prod_cluster_flavor }}
       AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      AKS_RG: ${{ secrets.AKS_RG }}
+      AKS_CLUSTER: ${{ secrets.AKS_CLUSTER }}
+      AKS_FRONTEND_PUBLIC_IP_NAME: ${{ secrets.AKS_FRONTEND_PUBLIC_IP_NAME }}
+      AKS_CERT_MANAGER_ACME_EMAIL: ${{ vars.AKS_CERT_MANAGER_ACME_EMAIL }}
       ARO_RG: ${{ secrets.ARO_RG }}
       ARO_CLUSTER: ${{ secrets.ARO_CLUSTER }}
       AOAI_RG: ${{ secrets.AOAI_RG }}
@@ -169,13 +238,26 @@ jobs:
           set -euo pipefail
           missing=()
           for name in \
-            AZURE_SUBSCRIPTION_ID ARO_RG ARO_CLUSTER \
+            AZURE_SUBSCRIPTION_ID \
             AOAI_RG AOAI_ACCOUNT AOAI_DEPLOYMENT \
             DB_SECRET_NAME; do
             if [[ -z "${!name:-}" ]]; then
               missing+=("$name")
             fi
           done
+          if [[ "${PROD_CLUSTER_FLAVOR}" == "aks" ]]; then
+            for name in AKS_RG AKS_CLUSTER; do
+              if [[ -z "${!name:-}" ]]; then
+                missing+=("$name")
+              fi
+            done
+          else
+            for name in ARO_RG ARO_CLUSTER; do
+              if [[ -z "${!name:-}" ]]; then
+                missing+=("$name")
+              fi
+            done
+          fi
           if [[ "${#missing[@]}" -gt 0 ]]; then
             echo "Missing required secrets: ${missing[*]}"
             exit 1
@@ -202,31 +284,39 @@ jobs:
             exit 1
           fi
 
-      - name: Install OpenShift CLI
+      - name: Install cluster CLI
         run: |
           set -euo pipefail
-          oc_url="https://mirror.openshift.com/pub/openshift-v4/clients/ocp/"
-          oc_url+="latest/openshift-client-linux.tar.gz"
-          curl -fsSL "${oc_url}" \
-            -o /tmp/openshift-client-linux.tar.gz
-          tar -xzf /tmp/openshift-client-linux.tar.gz -C /tmp oc kubectl
-          sudo mv /tmp/oc /tmp/kubectl /usr/local/bin/
-          oc version --client
+          if [[ "${PROD_CLUSTER_FLAVOR}" == "aro" ]]; then
+            oc_url="https://mirror.openshift.com/pub/openshift-v4/clients/ocp/"
+            oc_url+="latest/openshift-client-linux.tar.gz"
+            curl -fsSL "${oc_url}" \
+              -o /tmp/openshift-client-linux.tar.gz
+            tar -xzf /tmp/openshift-client-linux.tar.gz -C /tmp oc kubectl
+            sudo mv /tmp/oc /tmp/kubectl /usr/local/bin/
+            oc version --client
+          else
+            az aks install-cli --install-location /usr/local/bin/kubectl
+            kubectl version --client
+          fi
 
-      - name: Install Helm
-        run: |
-          set -euo pipefail
-          HELM_VERSION="v3.14.4"
-          HELM_TARBALL_URL="https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz"
-          curl -fsSL "${HELM_TARBALL_URL}" -o /tmp/helm.tar.gz
-          tar -C /tmp -zxvf /tmp/helm.tar.gz
-          sudo mv /tmp/linux-amd64/helm /usr/local/bin/helm
-          helm version
+      - name: Setup Helm
+        # v5.0.0
+        uses: >-
+          azure/setup-helm@dda3372f752e03dde6b3237bc9431cdc2f7a02a2
 
       - name: Deploy tagged release to production
         run: |
           set -euo pipefail
-          make prod-up-tag TAG="${RELEASE_TAG}"
-          make public-exposure-audit NS="${PROD_NAMESPACE:-sre-simulator}"
-          make db-mode-check NS="${PROD_NAMESPACE:-sre-simulator}"
-          make db-port-forward-check NS="${PROD_NAMESPACE:-sre-simulator}"
+          make prod-up-tag \
+            CLUSTER_FLAVOR="${PROD_CLUSTER_FLAVOR}" \
+            TAG="${RELEASE_TAG}"
+          make public-exposure-audit \
+            CLUSTER_FLAVOR="${PROD_CLUSTER_FLAVOR}" \
+            NS="${PROD_NAMESPACE:-sre-simulator}"
+          make db-mode-check \
+            CLUSTER_FLAVOR="${PROD_CLUSTER_FLAVOR}" \
+            NS="${PROD_NAMESPACE:-sre-simulator}"
+          make db-port-forward-check \
+            CLUSTER_FLAVOR="${PROD_CLUSTER_FLAVOR}" \
+            NS="${PROD_NAMESPACE:-sre-simulator}"
