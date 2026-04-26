@@ -22,6 +22,11 @@ function isGatewayTimeout(status: number | null, message: string): boolean {
   return status === 504 || /\b504\b|gateway timeout/i.test(message);
 }
 
+function formatGenericChatError(message: string): string {
+  const normalized = message.trim().replace(/^Error:\s*/i, "").replace(/[.!?\s]+$/, "");
+  return `Error: ${normalized}. Please try again.`;
+}
+
 function toUserFacingChatError(error: unknown): ChatRequestError {
   if (error instanceof ChatRequestError) return error;
 
@@ -30,7 +35,7 @@ function toUserFacingChatError(error: unknown): ChatRequestError {
     return new ChatRequestError(TIMEOUT_ERROR_MESSAGE, true);
   }
 
-  return new ChatRequestError(`Error: ${message}. Please try again.`);
+  return new ChatRequestError(formatGenericChatError(message));
 }
 
 export function useChat() {
@@ -50,35 +55,55 @@ export function useChat() {
   } = useGameStore();
 
   const sendMessage = useCallback(
-    async (content: string) => {
+    async (content: string, options?: { retry?: boolean }) => {
       const trimmedContent = content.trim();
       if (isStreaming || !trimmedContent) return;
 
       setRetryMessage(null);
 
-      const userMessage: ChatMessage = {
-        id: crypto.randomUUID(),
-        role: "user",
-        content: trimmedContent,
-        timestamp: Date.now(),
-      };
-      addMessage(userMessage);
+      const shouldReuseFailedTurn =
+        options?.retry === true &&
+        messages.length >= 2 &&
+        messages[messages.length - 1]?.role === "assistant" &&
+        messages[messages.length - 2]?.role === "user" &&
+        messages[messages.length - 2]?.content === trimmedContent;
 
-      const assistantMessage: ChatMessage = {
-        id: crypto.randomUUID(),
-        role: "assistant",
-        content: "",
-        timestamp: Date.now(),
-      };
-      addMessage(assistantMessage);
+      let chatMessages: Array<{ role: "user" | "assistant"; content: string }>;
+
+      if (shouldReuseFailedTurn) {
+        updateLastAssistantMessage("");
+        chatMessages = messages
+          .slice(0, -1)
+          .map((message) => ({ role: message.role, content: message.content }));
+      } else {
+        const userMessage: ChatMessage = {
+          id: crypto.randomUUID(),
+          role: "user",
+          content: trimmedContent,
+          timestamp: Date.now(),
+        };
+        addMessage(userMessage);
+
+        const assistantMessage: ChatMessage = {
+          id: crypto.randomUUID(),
+          role: "assistant",
+          content: "",
+          timestamp: Date.now(),
+        };
+        addMessage(assistantMessage);
+
+        chatMessages = [
+          ...messages.map((message) => ({
+            role: message.role,
+            content: message.content,
+          })),
+          { role: userMessage.role, content: userMessage.content },
+        ];
+      }
+
       setStreaming(true);
 
       try {
-        const chatMessages = [
-          ...messages.map((m) => ({ role: m.role, content: m.content })),
-          { role: userMessage.role, content: userMessage.content },
-        ];
-
         const response = await fetch("/api/chat", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -101,7 +126,7 @@ export function useChat() {
           if (isGatewayTimeout(response.status, errorMessage)) {
             throw new ChatRequestError(TIMEOUT_ERROR_MESSAGE, true);
           }
-          throw new ChatRequestError(errorMessage);
+          throw new Error(errorMessage);
         }
 
         const reader = response.body?.getReader();
@@ -180,7 +205,7 @@ export function useChat() {
 
   const retryLastMessage = useCallback(() => {
     if (!retryMessage || isStreaming) return;
-    void sendMessage(retryMessage);
+    void sendMessage(retryMessage, { retry: true });
   }, [retryMessage, isStreaming, sendMessage]);
 
   return {
