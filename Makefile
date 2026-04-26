@@ -3,7 +3,7 @@
        lint lint-ts lint-backend lint-unused-exports lint-yaml lint-md \
        typecheck typecheck-backend validate \
        security audit lockfile-lint gitleaks grype \
-       test test-shell test-integration test-mssql dev-db smoke-backend-mssql smoke-local-vertex env-check aro-login aks-login e2e-azure-route e2e-azure-route-up e2e-azure-route-refresh e2e-azure-route-down \
+       test test-shell test-integration test-mssql dev-db smoke-backend-mssql smoke-local-vertex release-prepare verify-release-version env-check aro-login aks-login e2e-azure-route e2e-azure-route-up e2e-azure-route-refresh e2e-azure-route-down \
        prod-up prod-up-tag prod-down prod-status public-exposure-audit db-mode-check db-port-forward-check db-inspect db-inspect-live geneva-suppression-check prod-up-final \
        build dev start capture-readme-hero \
        docker-build-frontend docker-build-backend docker-build \
@@ -231,8 +231,25 @@ test-shell: ## Run shell regression tests
 	bash scripts/aks-deploy.test.sh
 	bash scripts/helm-platform.test.sh
 	bash scripts/prod-db-guard.test.sh
+	bash scripts/release-version-sync.test.sh
 	bash scripts/select-deploy.test.sh
 	bash infra/scripts/tf-preflight.test.sh
+
+release-prepare: ## Update semver surfaces for a release tag
+	@set -euo pipefail; \
+	if [ -z "$${TAG:-}" ]; then \
+		echo "TAG is required. Example: make release-prepare TAG=v0.1.3"; \
+		exit 1; \
+	fi; \
+	node scripts/release-version-sync.mjs prepare --tag "$$TAG"
+
+verify-release-version: ## Verify semver surfaces for a release tag
+	@set -euo pipefail; \
+	if [ -z "$${TAG:-}" ]; then \
+		echo "TAG is required. Example: make verify-release-version TAG=v0.1.3"; \
+		exit 1; \
+	fi; \
+	node scripts/release-version-sync.mjs verify --tag "$$TAG"
 
 test-integration: test-shell ## Run backend integration tests (full API game flow, mock mode)
 	cd $(BACKEND_DIR) && npm run test:integration
