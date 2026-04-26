@@ -33,6 +33,13 @@ jobs:
           ref: ${{ github.event.workflow_run.head_sha }}
           fetch-depth: 0
 
+      - name: Setup Node.js
+        # v6.3.0
+        uses: >-
+          actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f
+        with:
+          node-version: 24
+
       - name: Resolve semver tag for current SHA
         id: resolve
         env:
@@ -97,83 +104,7 @@ jobs:
       - name: Validate semver surfaces are aligned
         run: |
           set -euo pipefail
-          node <<'EOF'
-          const fs = require("fs");
-
-          const releaseTag = process.env.RELEASE_TAG;
-          if (!/^v\d+\.\d+\.\d+$/.test(releaseTag)) {
-            throw new Error(`Release tag is not semver: ${releaseTag}`);
-          }
-          const expectedVersion = releaseTag.slice(1);
-
-          const frontendPkg = JSON.parse(
-            fs.readFileSync("frontend/package.json", "utf8")
-          );
-          const backendPkg = JSON.parse(
-            fs.readFileSync("backend/package.json", "utf8")
-          );
-          const chart = fs.readFileSync(
-            "helm/sre-simulator/Chart.yaml",
-            "utf8"
-          );
-          const releaseMeta = fs.readFileSync(
-            "frontend/src/lib/release.ts",
-            "utf8"
-          );
-
-          const chartVersion = (
-            chart.match(/^version:\s*([0-9]+\.[0-9]+\.[0-9]+)\s*$/m) || []
-          )[1];
-          const chartAppVersion = (
-            chart.match(/^appVersion:\s*"([0-9]+\.[0-9]+\.[0-9]+)"\s*$/m) || []
-          )[1];
-          const appVersion = (
-            releaseMeta.match(/APP_VERSION\s*=\s*"([^"]+)"/) || []
-          )[1];
-
-          const checks = [
-            ["frontend/package.json", frontendPkg.version],
-            ["backend/package.json", backendPkg.version],
-            ["helm/sre-simulator/Chart.yaml version", chartVersion],
-            ["helm/sre-simulator/Chart.yaml appVersion", chartAppVersion],
-            ["frontend/src/lib/release.ts APP_VERSION", appVersion],
-          ];
-
-          for (const [source, value] of checks) {
-            if (!value) {
-              throw new Error(`Missing version value in ${source}`);
-            }
-          }
-
-          if (frontendPkg.version !== expectedVersion) {
-            throw new Error(
-              `frontend/package.json mismatch: ${frontendPkg.version}` +
-              ` != ${expectedVersion}`
-            );
-          }
-          if (backendPkg.version !== expectedVersion) {
-            throw new Error(
-              `backend/package.json mismatch: ${backendPkg.version}` +
-              ` != ${expectedVersion}`
-            );
-          }
-          if (chartVersion !== expectedVersion) {
-            throw new Error(
-              `Chart version mismatch: ${chartVersion} != ${expectedVersion}`
-            );
-          }
-          if (chartAppVersion !== expectedVersion) {
-            throw new Error(
-              `Chart appVersion mismatch: ${chartAppVersion}` +
-              ` != ${expectedVersion}`
-            );
-          }
-          if (appVersion !== releaseTag) {
-            throw new Error(
-              `APP_VERSION mismatch: ${appVersion} != ${releaseTag}`
-            );
-          }
-          EOF
+          node scripts/release-version-sync.mjs verify --tag "${RELEASE_TAG}"
 
       - name: Extract changelog section for release
         run: |
