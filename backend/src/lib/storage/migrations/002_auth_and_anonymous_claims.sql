@@ -66,6 +66,8 @@ IF NOT EXISTS (
   WHERE name = 'ux_leaderboard_entries_github_difficulty'
     AND object_id = OBJECT_ID('leaderboard_entries')
 )
-  CREATE UNIQUE INDEX ux_leaderboard_entries_github_difficulty
-  ON leaderboard_entries (github_user_id, difficulty)
-  WHERE github_user_id IS NOT NULL;
+  EXEC('
+    CREATE UNIQUE INDEX ux_leaderboard_entries_github_difficulty
+    ON leaderboard_entries (github_user_id, difficulty)
+    WHERE github_user_id IS NOT NULL;
+  ');
