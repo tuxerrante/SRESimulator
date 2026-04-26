@@ -1,6 +1,6 @@
 import { Router, type Request, type Response } from "express";
 import { loadKnowledgeBase } from "../lib/knowledge";
-import { getSessionStore } from "../lib/storage";
+import { getMetricsStore, getSessionStore } from "../lib/storage";
 import { getAiReadiness } from "../lib/ai-config";
 import { generateMockScenario } from "../lib/mock-ai";
 import { generateAiText, AiThrottledError } from "../lib/ai-runtime";
@@ -12,6 +12,30 @@ const VALID_DIFFICULTIES: Difficulty[] = ["easy", "medium", "hard"];
 
 interface ScenarioRequestBody {
   difficulty: Difficulty;
+}
+
+async function recordStartedTelemetry(
+  sessionToken: string,
+  difficulty: Difficulty,
+  scenarioTitle: string,
+): Promise<void> {
+  try {
+    await getMetricsStore().recordGameplay({
+      sessionToken,
+      difficulty,
+      scenarioTitle,
+      lifecycleState: "started",
+      completed: false,
+      metadata: { source: "scenario" },
+    });
+  } catch (error) {
+    console.warn("Failed to record scenario gameplay telemetry", {
+      sessionTokenPrefix: sessionToken.slice(0, 8),
+      difficulty,
+      scenarioTitle,
+      error,
+    });
+  }
 }
 
 scenarioRouter.post("/", async (req: Request, res: Response) => {
@@ -30,6 +54,7 @@ scenarioRouter.post("/", async (req: Request, res: Response) => {
     if (readiness.mockMode) {
       const scenario = generateMockScenario(difficulty);
       const sessionToken = await getSessionStore().create(difficulty, scenario.title);
+      await recordStartedTelemetry(sessionToken, difficulty, scenario.title);
       res.json({ scenario, sessionToken });
       return;
     }
@@ -132,6 +157,7 @@ ${scenarioContext}`,
     const scenario: Scenario = JSON.parse(text);
 
     const sessionToken = await getSessionStore().create(difficulty, scenario.title);
+    await recordStartedTelemetry(sessionToken, difficulty, scenario.title);
 
     res.json({ scenario, sessionToken });
   } catch (error) {

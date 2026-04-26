@@ -4,6 +4,7 @@ import { chatRouter } from "./routes/chat";
 import { commandRouter } from "./routes/command";
 import { scenarioRouter } from "./routes/scenario";
 import { scoresRouter } from "./routes/scores";
+import { gameplayRouter } from "./routes/gameplay";
 import { healthRouter } from "./routes/health";
 import { aiRouter } from "./routes/ai";
 import { guideRouter } from "./routes/guide";
@@ -35,6 +36,7 @@ async function main() {
   app.use("/api/command", aiRateLimit, commandRouter);
   app.use("/api/scenario", aiRateLimit, scenarioRouter);
   app.use("/api/scores", scoresRouter);
+  app.use("/api/gameplay", gameplayRouter);
   app.use("/api/ai", aiRouter);
   app.use("/api/guide", guideRouter);
   app.use("/", healthRouter);

@@ -69,6 +69,29 @@ describe("MssqlSessionStore", () => {
     });
   });
 
+  it("get() returns mapped session without consuming it", async () => {
+    const validUuid = "a1b2c3d4-e5f6-7890-abcd-ef1234567890";
+    const row = {
+      token: validUuid,
+      difficulty: "medium" as const,
+      scenario_title: "Bad Egress",
+      start_time: 1700000000500,
+      used: false,
+    };
+    const mock = createMockPool([row]);
+    store = new MssqlSessionStore(mock.pool);
+
+    const result = await store.get(validUuid);
+
+    expect(result).toEqual({
+      token: validUuid,
+      difficulty: "medium",
+      scenarioTitle: "Bad Egress",
+      startTime: 1700000000500,
+      used: false,
+    });
+  });
+
   it("validateAndConsume() returns null for non-UUID tokens", async () => {
     const result = await store.validateAndConsume("not-a-uuid");
     expect(result).toBeNull();
@@ -200,18 +223,26 @@ describe("MssqlMetricsStore", () => {
       nickname: "tester",
       difficulty: "hard",
       scenarioTitle: "Cosmos DB Flood",
+      lifecycleState: "completed",
+      commandCount: 1,
       commandsExecuted: ["oc get pods"],
       scoringEvents: [{ type: "safety", points: 5 }],
       chatMessageCount: 12,
       aiPromptTokens: 5000,
       aiCompletionTokens: 2000,
       durationMs: 300000,
+      scoreTotal: 88,
+      grade: "B",
       completed: true,
       metadata: { version: "1.0" },
     });
 
     expect(req.input).toHaveBeenCalledWith("sessionToken", "tok-1");
     expect(req.input).toHaveBeenCalledWith("nickname", "tester");
+    expect(req.input).toHaveBeenCalledWith("lifecycleState", "completed");
+    expect(req.input).toHaveBeenCalledWith("commandCount", 1);
+    expect(req.input).toHaveBeenCalledWith("scoreTotal", 88);
+    expect(req.input).toHaveBeenCalledWith("grade", "B");
     expect(req.input).toHaveBeenCalledWith(
       "commandsExecuted",
       JSON.stringify(["oc get pods"])
@@ -232,6 +263,8 @@ describe("MssqlMetricsStore", () => {
 
     expect(req.input).toHaveBeenCalledWith("sessionToken", null);
     expect(req.input).toHaveBeenCalledWith("nickname", null);
+    expect(req.input).toHaveBeenCalledWith("lifecycleState", "completed");
+    expect(req.input).toHaveBeenCalledWith("commandCount", 0);
     expect(req.input).toHaveBeenCalledWith("commandsExecuted", "[]");
     expect(req.input).toHaveBeenCalledWith("metadata", "{}");
   });
@@ -243,12 +276,16 @@ describe("MssqlMetricsStore", () => {
       nickname: "tester",
       difficulty: "easy",
       scenario_title: "Master Down",
+      lifecycle_state: "abandoned",
+      command_count: 2,
       commands_executed: '["oc get nodes"]',
       scoring_events: '[{"type":"accuracy","points":10}]',
       chat_message_count: 5,
       ai_prompt_tokens: 3000,
       ai_completion_tokens: 1500,
       duration_ms: 60000,
+      score_total: 70,
+      grade: "C",
       completed: true,
       metadata: '{"v":2}',
       created_at: new Date("2025-06-01T12:00:00Z"),
@@ -262,6 +299,10 @@ describe("MssqlMetricsStore", () => {
     expect(history[0].commandsExecuted).toEqual(["oc get nodes"]);
     expect(history[0].scoringEvents).toEqual([{ type: "accuracy", points: 10 }]);
     expect(history[0].metadata).toEqual({ v: 2 });
+    expect(history[0].lifecycleState).toBe("abandoned");
+    expect(history[0].commandCount).toBe(2);
     expect(history[0].durationMs).toBe(60000);
+    expect(history[0].scoreTotal).toBe(70);
+    expect(history[0].grade).toBe("C");
   });
 });
