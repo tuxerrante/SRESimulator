@@ -88,6 +88,13 @@ jobs:
           ref: ${{ github.event.workflow_run.head_sha }}
           fetch-depth: 0
 
+      - name: Setup Node.js
+        # v6.3.0
+        uses: >-
+          actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f
+        with:
+          node-version: 24
+
       - name: Verify release tag commit is on main
         env:
           HEAD_SHA: ${{ github.event.workflow_run.head_sha }}

@@ -17,6 +17,13 @@ function fail(message) {
   throw new Error(message);
 }
 
+function requireArgValue(flag, value) {
+  if (!value || value.startsWith("--")) {
+    fail(`Missing value for ${flag}`);
+  }
+  return value;
+}
+
 function parseArgs(argv) {
   const [mode, ...rest] = argv;
   if (!mode || !["verify", "prepare"].includes(mode)) {
@@ -29,12 +36,12 @@ function parseArgs(argv) {
   for (let index = 0; index < rest.length; index += 1) {
     const arg = rest[index];
     if (arg === "--tag") {
-      tag = rest[index + 1] ?? "";
+      tag = requireArgValue("--tag", rest[index + 1]);
       index += 1;
       continue;
     }
     if (arg === "--root") {
-      root = path.resolve(rest[index + 1] ?? "");
+      root = path.resolve(requireArgValue("--root", rest[index + 1]));
       index += 1;
       continue;
     }
@@ -73,23 +80,38 @@ function updateLockfileVersion(root, relativePath, version) {
   writeFile(root, relativePath, `${JSON.stringify(lockfile, null, 2)}\n`);
 }
 
+function replaceOrFail(content, pattern, replacement, errorMessage) {
+  if (!pattern.test(content)) {
+    fail(errorMessage);
+  }
+  return content.replace(pattern, replacement);
+}
+
 function updateChartVersion(root, version) {
   const chart = readFile(root, VERSION_FILES.chart);
-  const updated = chart
-    .replace(/^version:\s*[0-9]+\.[0-9]+\.[0-9]+\s*$/m, `version: ${version}`)
-    .replace(
-      /^appVersion:\s*"([0-9]+\.[0-9]+\.[0-9]+)"\s*$/m,
-      `appVersion: "${version}"`
-    );
+  const updatedVersion = replaceOrFail(
+    chart,
+    /^version:\s*[0-9]+\.[0-9]+\.[0-9]+\s*$/m,
+    `version: ${version}`,
+    `Failed to update ${VERSION_FILES.chart}: expected version line not found`
+  );
+  const updated = replaceOrFail(
+    updatedVersion,
+    /^appVersion:\s*"([0-9]+\.[0-9]+\.[0-9]+)"\s*$/m,
+    `appVersion: "${version}"`,
+    `Failed to update ${VERSION_FILES.chart}: expected appVersion line not found`
+  );
 
   writeFile(root, VERSION_FILES.chart, updated);
 }
 
 function updateReleaseMeta(root, tag) {
   const releaseMeta = readFile(root, VERSION_FILES.releaseMeta);
-  const updated = releaseMeta.replace(
+  const updated = replaceOrFail(
+    releaseMeta,
     /APP_VERSION\s*=\s*"[^"]+"/,
-    `APP_VERSION = "${tag}"`
+    `APP_VERSION = "${tag}"`,
+    `Failed to update ${VERSION_FILES.releaseMeta}: expected APP_VERSION assignment not found`
   );
   writeFile(root, VERSION_FILES.releaseMeta, updated);
 }

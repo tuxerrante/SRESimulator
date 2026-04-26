@@ -136,6 +136,23 @@ PY
     "$TMP_DIR/verify-missing-changelog.txt"
 }
 
+run_missing_arg_checks() {
+  if node "$ROOT_DIR/scripts/release-version-sync.mjs" verify \
+    --tag >"$TMP_DIR/missing-tag-value.txt" 2>&1; then
+    fail "verify should fail when --tag is provided without a value"
+  fi
+
+  assert_contains "Missing value for --tag" "$TMP_DIR/missing-tag-value.txt"
+
+  if node "$ROOT_DIR/scripts/release-version-sync.mjs" verify \
+    --tag v0.1.3 \
+    --root >"$TMP_DIR/missing-root-value.txt" 2>&1; then
+    fail "verify should fail when --root is provided without a value"
+  fi
+
+  assert_contains "Missing value for --root" "$TMP_DIR/missing-root-value.txt"
+}
+
 run_prepare_and_verify_check() {
   local repo_dir="$TMP_DIR/repo-prepare"
   write_fixture_repo "$repo_dir"
@@ -170,6 +187,26 @@ run_prepare_and_verify_check() {
   assert_not_contains "mismatch" "$TMP_DIR/verify-success.txt"
 }
 
+run_prepare_pattern_guard_check() {
+  local repo_dir="$TMP_DIR/repo-pattern-guard"
+  write_fixture_repo "$repo_dir"
+  python3 - "$repo_dir/helm/sre-simulator/Chart.yaml" <<'PY'
+from pathlib import Path
+import sys
+path = Path(sys.argv[1])
+path.write_text('apiVersion: v2\nname: sre-simulator\nappVersion: "0.1.2"\n')
+PY
+
+  if node "$ROOT_DIR/scripts/release-version-sync.mjs" prepare \
+    --root "$repo_dir" \
+    --tag v0.1.3 >"$TMP_DIR/prepare-pattern-guard.txt" 2>&1; then
+    fail "prepare should fail when Chart.yaml no longer has the expected version fields"
+  fi
+
+  assert_contains "Failed to update helm/sre-simulator/Chart.yaml: expected version line not found" \
+    "$TMP_DIR/prepare-pattern-guard.txt"
+}
+
 run_static_wiring_checks() {
   assert_file_contains "$ROOT_DIR/Makefile" 'release-prepare: ## Update semver surfaces for a release tag'
   assert_file_contains "$ROOT_DIR/Makefile" 'verify-release-version: ## Verify semver surfaces for a release tag'
@@ -178,6 +215,7 @@ run_static_wiring_checks() {
   assert_file_contains "$ROOT_DIR/Makefile" 'bash scripts/release-version-sync.test.sh'
   assert_file_contains "$ROOT_DIR/.github/workflows/ci.yml" 'RELEASE_TAG: ${{ github.ref_name }}'
   assert_file_contains "$ROOT_DIR/.github/workflows/ci.yml" 'node scripts/release-version-sync.mjs verify --tag "${RELEASE_TAG}"'
+  assert_file_contains "$ROOT_DIR/.github/workflows/release.yml" 'node-version: 24'
   assert_file_contains "$ROOT_DIR/.github/workflows/release.yml" 'node scripts/release-version-sync.mjs verify --tag "${RELEASE_TAG}"'
   assert_not_contains 'const fs = require("fs");' "$ROOT_DIR/.github/workflows/release.yml"
 }
@@ -185,7 +223,9 @@ run_static_wiring_checks() {
 main() {
   run_verify_mismatch_check
   run_verify_missing_changelog_check
+  run_missing_arg_checks
   run_prepare_and_verify_check
+  run_prepare_pattern_guard_check
   run_static_wiring_checks
   echo "release version sync tests passed."
 }
