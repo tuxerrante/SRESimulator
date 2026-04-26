@@ -5,7 +5,7 @@ interface EvaluateScenarioAccessInput {
   difficulty: Difficulty;
   viewer: GithubViewer | null;
   hasValidTurnstileToken: boolean;
-  fingerprintHash: string | null;
+  hasAnonymousProof: boolean;
   hasActiveAnonymousClaim: boolean;
 }
 
@@ -41,11 +41,11 @@ export function evaluateScenarioAccess(
     };
   }
 
-  if (!input.hasValidTurnstileToken || !input.fingerprintHash) {
+  if (!input.hasValidTurnstileToken || !input.hasAnonymousProof) {
     return {
       allowed: false,
       code: "anonymous_verification_required",
-      message: "Anonymous Easy mode requires a captcha check and browser fingerprint.",
+      message: "Anonymous Easy mode requires captcha-backed verification.",
     };
   }
 

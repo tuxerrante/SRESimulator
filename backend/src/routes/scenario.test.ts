@@ -3,7 +3,15 @@ import express from "express";
 import { mkdtemp, rm } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
-import { VIEWER_SESSION_COOKIE } from "../../../shared/auth/constants";
+import {
+  ANONYMOUS_PROOF_COOKIE,
+  VIEWER_SESSION_COOKIE,
+} from "../../../shared/auth/constants";
+import {
+  createAnonymousProofToken,
+  hashAnonymousProofUserAgent,
+} from "../../../shared/auth/anonymous-proof";
+import { createSignedClientIp } from "../../../shared/auth/client-ip";
 import { createViewerSessionToken } from "../../../shared/auth/session";
 
 function createApp(scenarioRouter: import("express").Router) {
@@ -67,6 +75,28 @@ describe("POST /api/scenario", () => {
   const originalEnv: Record<string, string | undefined> = {};
   let scenarioRouter: typeof import("./scenario").scenarioRouter;
   let tmpDir: string;
+  const anonymousUserAgent = "scenario-test-agent";
+
+  function createAnonymousProofCookie(fingerprintHash: string): string {
+    const issuedAt = Date.now();
+    const proofToken = createAnonymousProofToken(
+      {
+        fingerprintHash,
+        userAgentHash: hashAnonymousProofUserAgent(anonymousUserAgent),
+        issuedAt,
+        expiresAt: issuedAt + 60_000,
+      },
+      "test-hmac"
+    );
+    return `${ANONYMOUS_PROOF_COOKIE}=${proofToken}`;
+  }
+
+  function createSignedClientIpHeaders(ip: string): Record<string, string> {
+    return {
+      "x-sresim-client-ip": ip,
+      "x-sresim-client-ip-signature": createSignedClientIp(ip, "test-hmac"),
+    };
+  }
 
   beforeAll(async () => {
     tmpDir = await mkdtemp(join(tmpdir(), "scenario-test-"));
@@ -185,39 +215,64 @@ describe("POST /api/scenario", () => {
 
     expect(res.status).toBe(400);
     expect(res.body.error).toBe(
-      "Anonymous Easy mode requires a captcha check and browser fingerprint."
+      "Anonymous Easy mode requires captcha-backed verification."
     );
     expect(res.body.code).toBe("anonymous_verification_required");
   });
 
-  it("allows anonymous easy mode after captcha and fingerprint verification", async () => {
+  it("allows anonymous easy mode after captcha and signed browser verification", async () => {
     const app = createApp(scenarioRouter);
     const res = await postJson(app, "/api/scenario", {
       difficulty: "easy",
       turnstileToken: "pass",
-      fingerprintHash: "fp_hash",
+      fingerprintHash: "ignored-by-backend",
+    }, {
+      cookie: createAnonymousProofCookie("fp_hash"),
+      "user-agent": anonymousUserAgent,
+      ...createSignedClientIpHeaders("203.0.113.10"),
     });
 
     expect(res.status).toBe(200);
     expect(res.body.sessionToken).toBeDefined();
   });
 
-  it("blocks a second anonymous easy run within the daily window", async () => {
+  it("blocks a second anonymous easy run within the daily window even if the body fingerprint changes", async () => {
     const app = createApp(scenarioRouter);
+    const cookie = createAnonymousProofCookie("fp_hash_replay");
     const first = await postJson(app, "/api/scenario", {
       difficulty: "easy",
       turnstileToken: "pass",
       fingerprintHash: "fp_hash_replay",
+    }, {
+      cookie,
+      "user-agent": anonymousUserAgent,
+      ...createSignedClientIpHeaders("203.0.113.11"),
     });
     const second = await postJson(app, "/api/scenario", {
       difficulty: "easy",
       turnstileToken: "pass",
-      fingerprintHash: "fp_hash_replay",
+      fingerprintHash: "rotated-client-body-hash",
+    }, {
+      cookie,
+      "user-agent": anonymousUserAgent,
+      ...createSignedClientIpHeaders("203.0.113.11"),
     });
 
     expect(first.status).toBe(200);
     expect(second.status).toBe(429);
     expect(second.body.error).toBe("Anonymous Easy mode is limited to one run per day.");
     expect(second.body.code).toBe("anonymous_daily_limit_reached");
+  });
+
+  it("still returns github_required for anonymous medium requests when anti-abuse secret is missing", async () => {
+    delete process.env.ANTI_ABUSE_HMAC_SECRET;
+    const app = createApp(scenarioRouter);
+    const res = await postJson(app, "/api/scenario", {
+      difficulty: "medium",
+      turnstileToken: "pass",
+    });
+
+    expect(res.status).toBe(403);
+    expect(res.body.code).toBe("github_required");
   });
 });

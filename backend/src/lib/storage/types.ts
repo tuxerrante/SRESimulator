@@ -84,4 +84,6 @@ export interface IPlayerStore {
 export interface IAnonymousTrialStore {
   hasActiveClaim(claimKey: string, now?: number): Promise<boolean>;
   createOrRefreshClaim(claim: AnonymousTrialClaim): Promise<void>;
+  reserveClaimKeys(claimKeys: string[], claim: AnonymousTrialClaim): Promise<boolean>;
+  releaseClaimKeys(claimKeys: string[]): Promise<void>;
 }

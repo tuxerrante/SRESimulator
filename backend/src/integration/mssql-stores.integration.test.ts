@@ -7,6 +7,8 @@ const SKIP = process.env.STORAGE_BACKEND !== "mssql";
 
 const createdSessionTokens: string[] = [];
 const createdNicknames: string[] = [];
+const createdGithubUserIds: string[] = [];
+const createdClaimKeys: string[] = [];
 
 function shortId(prefix: string): string {
   const suffix = Date.now().toString(36).slice(-6);
@@ -16,6 +18,16 @@ function shortId(prefix: string): string {
 function trackNickname(nick: string): string {
   createdNicknames.push(nick);
   return nick;
+}
+
+function trackGithubUserId(githubUserId: string): string {
+  createdGithubUserIds.push(githubUserId);
+  return githubUserId;
+}
+
+function trackClaimKey(claimKey: string): string {
+  createdClaimKeys.push(claimKey);
+  return claimKey;
 }
 
 function githubIdentity(seed: string) {
@@ -56,6 +68,21 @@ afterAll(async () => {
     await pool.request()
       .input("token", token)
       .query("DELETE FROM sessions WHERE token = @token");
+  }
+
+  for (const githubUserId of createdGithubUserIds) {
+    await pool.request()
+      .input("githubUserId", githubUserId)
+      .query("DELETE FROM players WHERE github_user_id = @githubUserId");
+    await pool.request()
+      .input("githubUserId", githubUserId)
+      .query("DELETE FROM leaderboard_entries WHERE github_user_id = @githubUserId");
+  }
+
+  for (const claimKey of createdClaimKeys) {
+    await pool.request()
+      .input("claimKey", claimKey)
+      .query("DELETE FROM anonymous_trial_claims WHERE claim_key = @claimKey");
   }
 
   await pool.close();
@@ -237,6 +264,55 @@ describe.skipIf(SKIP)("MssqlLeaderboardStore (real SQL)", () => {
     expect(found!.compositeScore).toBe(160);
     expect(found!.scores.easy).toBe(80);
     expect(found!.scores.medium).toBe(80);
+  });
+});
+
+describe.skipIf(SKIP)("MssqlPlayerStore (real SQL)", () => {
+  it("upserts and reads back a GitHub player profile", async () => {
+    const { MssqlPlayerStore } = await import("../lib/storage/mssql-player-store");
+    const githubUserId = trackGithubUserId(`gh-player-${Date.now().toString(36)}`);
+    const store = new MssqlPlayerStore(pool);
+
+    const saved = await store.upsertGithubViewer({
+      kind: "github",
+      githubUserId,
+      githubLogin: `login-${githubUserId}`,
+      displayName: "The Octocat",
+      avatarUrl: null,
+    });
+
+    expect(saved.githubUserId).toBe(githubUserId);
+
+    const loaded = await store.getByGithubUserId(githubUserId);
+    expect(loaded).not.toBeNull();
+    expect(loaded!.githubLogin).toBe(`login-${githubUserId}`);
+    expect(loaded!.displayName).toBe("The Octocat");
+  });
+});
+
+describe.skipIf(SKIP)("MssqlAnonymousTrialStore (real SQL)", () => {
+  it("reserves claim keys atomically and rejects a second reservation", async () => {
+    const { MssqlAnonymousTrialStore } = await import(
+      "../lib/storage/mssql-anonymous-trial-store"
+    );
+    const store = new MssqlAnonymousTrialStore(pool);
+    const claimKeys = [
+      trackClaimKey(`claim-a-${Date.now().toString(36)}`),
+      trackClaimKey(`claim-b-${Date.now().toString(36)}`),
+    ];
+    const claim = {
+      claimKey: claimKeys[0],
+      createdAt: Date.now(),
+      expiresAt: Date.now() + 60_000,
+    };
+
+    const first = await store.reserveClaimKeys(claimKeys, claim);
+    const second = await store.reserveClaimKeys(claimKeys, claim);
+
+    expect(first).toBe(true);
+    expect(second).toBe(false);
+    expect(await store.hasActiveClaim(claimKeys[0], claim.createdAt)).toBe(true);
+    expect(await store.hasActiveClaim(claimKeys[1], claim.createdAt)).toBe(true);
   });
 });
 

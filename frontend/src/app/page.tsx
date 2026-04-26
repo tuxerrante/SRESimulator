@@ -27,7 +27,9 @@ export default function HomePage() {
   const [loading, setLoading] = useState<Difficulty | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showReleaseNotes, setShowReleaseNotes] = useState(false);
-  const [authConfigured, setAuthConfigured] = useState(true);
+  const [authConfigured, setAuthConfigured] = useState(false);
+  const [sessionReady, setSessionReady] = useState(false);
+  const [sessionLoadError, setSessionLoadError] = useState(false);
   const [fingerprintHash, setFingerprintHash] = useState<string | null>(null);
   const [turnstileToken, setTurnstileToken] = useState<string | null>(null);
   const hasCallsign = Boolean(nickname);
@@ -58,6 +60,7 @@ export default function HomePage() {
           authConfigured: boolean;
         };
 
+        setSessionLoadError(false);
         setAuthConfigured(data.authConfigured);
         if (data.viewer) {
           setViewer(data.viewer);
@@ -65,7 +68,11 @@ export default function HomePage() {
           clearViewer();
         }
       } catch {
+        setSessionLoadError(true);
+        setAuthConfigured(false);
         clearViewer();
+      } finally {
+        setSessionReady(true);
       }
     })();
 
@@ -78,6 +85,12 @@ export default function HomePage() {
   }, [clearViewer, hydrateNickname, setViewer]);
 
   useEffect(() => {
+    if (!sessionReady) {
+      setFingerprintHash(null);
+      setTurnstileToken(null);
+      return;
+    }
+
     if (viewer) {
       setFingerprintHash(null);
       setTurnstileToken(null);
@@ -100,9 +113,19 @@ export default function HomePage() {
     return () => {
       cancelled = true;
     };
-  }, [viewer]);
+  }, [sessionReady, viewer]);
 
   const handleSelect = async (difficulty: Difficulty) => {
+    if (!sessionReady) {
+      setError("Still loading access options. Please wait a moment.");
+      return;
+    }
+
+    if (sessionLoadError) {
+      setError("Unable to load access options. Refresh the page and try again.");
+      return;
+    }
+
     if (!viewer && difficulty === "easy" && (!fingerprintHash || !turnstileToken)) {
       setError("Complete the captcha check to start an anonymous Easy run.");
       return;
@@ -197,7 +220,13 @@ export default function HomePage() {
         )}
 
         <div className="mb-6 w-full max-w-3xl rounded-xl border border-zinc-800 bg-zinc-900/70 p-4">
-          {viewer ? (
+          {!sessionReady ? (
+            <div className="text-sm text-zinc-400">Loading access options...</div>
+          ) : sessionLoadError ? (
+            <div className="text-sm text-red-300">
+              Unable to load access options. Refresh the page to continue.
+            </div>
+          ) : viewer ? (
             <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
               <div>
                 <div className="text-sm font-semibold text-zinc-100">
@@ -226,24 +255,29 @@ export default function HomePage() {
                   Guests can play one Easy scenario per day. GitHub login unlocks Medium, Hard, and persistent best scores.
                 </div>
               </div>
-              <Link
-                href="/api/auth/github/login"
-                aria-disabled={!authConfigured}
-                className={cn(
-                  "inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
-                  authConfigured
-                    ? "bg-amber-600 text-white hover:bg-amber-500"
-                    : "cursor-not-allowed bg-zinc-800 text-zinc-500"
-                )}
-              >
-                <Github size={16} />
-                Sign in with GitHub
-              </Link>
+              {authConfigured ? (
+                <Link
+                  href="/api/auth/github/login"
+                  className="inline-flex items-center gap-2 rounded-lg bg-amber-600 px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-amber-500"
+                >
+                  <Github size={16} />
+                  Sign in with GitHub
+                </Link>
+              ) : (
+                <button
+                  type="button"
+                  disabled
+                  className="inline-flex cursor-not-allowed items-center gap-2 rounded-lg bg-zinc-800 px-3 py-2 text-sm font-medium text-zinc-500"
+                >
+                  <Github size={16} />
+                  Sign in with GitHub
+                </button>
+              )}
             </div>
           )}
         </div>
 
-        {!viewer && (
+        {sessionReady && !sessionLoadError && !viewer && (
           <div className="mb-6 w-full max-w-3xl rounded-xl border border-zinc-800 bg-zinc-900/70 p-4">
             <div className="mb-3 text-sm font-semibold text-zinc-100">
               Anonymous play
@@ -265,7 +299,7 @@ export default function HomePage() {
 
         <DifficultyGrid
           viewer={viewer}
-          hasCallsign={hasCallsign}
+          hasCallsign={hasCallsign && sessionReady && !sessionLoadError}
           loadingDifficulty={loading}
           onSelect={handleSelect}
         />

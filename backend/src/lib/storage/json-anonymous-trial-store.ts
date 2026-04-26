@@ -58,4 +58,30 @@ export class JsonAnonymousTrialStore implements IAnonymousTrialStore {
       await this.writeClaims(withoutCurrent);
     });
   }
+
+  async reserveClaimKeys(claimKeys: string[], claim: AnonymousTrialClaim): Promise<boolean> {
+    return this.withWriteLock(async () => {
+      const claims = this.removeExpired(await this.readClaims(), claim.createdAt);
+      if (claimKeys.some((claimKey) => claims.some((item) => item.claimKey === claimKey))) {
+        return false;
+      }
+
+      claims.push(
+        ...claimKeys.map((claimKey) => ({
+          claimKey,
+          createdAt: claim.createdAt,
+          expiresAt: claim.expiresAt,
+        }))
+      );
+      await this.writeClaims(claims);
+      return true;
+    });
+  }
+
+  async releaseClaimKeys(claimKeys: string[]): Promise<void> {
+    await this.withWriteLock(async () => {
+      const claims = await this.readClaims();
+      await this.writeClaims(claims.filter((claim) => !claimKeys.includes(claim.claimKey)));
+    });
+  }
 }

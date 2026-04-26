@@ -7,7 +7,7 @@ export async function verifyTurnstileToken(
     return false;
   }
 
-  if (secret === "test-secret") {
+  if (process.env.NODE_ENV === "test" && secret === "test-secret") {
     return token === "pass";
   }
 
@@ -26,6 +26,7 @@ export async function verifyTurnstileToken(
     },
     body: body.toString(),
     cache: "no-store",
+    signal: AbortSignal.timeout(5000),
   });
 
   if (!response.ok) {

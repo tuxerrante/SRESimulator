@@ -130,6 +130,19 @@ describe("MssqlLeaderboardStore", () => {
     expect(req.input).toHaveBeenCalledWith("difficulty", "medium");
     const sql = req.query.mock.calls[0][0] as string;
     expect(sql).toContain("WHERE difficulty = @difficulty");
+    expect(sql).toContain("identity_kind = 'github'");
+    expect(sql).toContain("github_user_id IS NOT NULL");
+  });
+
+  it("getLeaderboard() without difficulty still filters to GitHub-backed rows", async () => {
+    const { pool, req } = createMockPool([]);
+    const store = new MssqlLeaderboardStore(pool);
+
+    await store.getLeaderboard();
+
+    const sql = req.query.mock.calls[0][0] as string;
+    expect(sql).toContain("WHERE identity_kind = 'github'");
+    expect(sql).toContain("github_user_id IS NOT NULL");
   });
 
   it("getLeaderboard() maps rows to LeaderboardEntry", async () => {
@@ -271,6 +284,15 @@ describe("MssqlAnonymousTrialStore", () => {
 
     expect(req.input).toHaveBeenCalledWith("claimKey", "claim-1");
     expect((req.query.mock.calls[0][0] as string)).toContain("MERGE anonymous_trial_claims");
+  });
+
+  it("releaseClaimKeys() deletes all supplied claim keys", async () => {
+    const { pool, req } = createMockPool();
+    const store = new MssqlAnonymousTrialStore(pool);
+
+    await store.releaseClaimKeys(["claim-1", "claim-2"]);
+
+    expect((req.query.mock.calls[0][0] as string)).toContain("DELETE FROM anonymous_trial_claims");
   });
 });
 

@@ -29,6 +29,7 @@ describe("leaderboard", () => {
     total: number,
     durationMs = 60000
   ) {
+    const githubUserId = `gh-${nickname}`;
     return {
       id: crypto.randomUUID(),
       nickname,
@@ -44,6 +45,9 @@ describe("leaderboard", () => {
       commandCount: 5,
       durationMs,
       scenarioTitle: `${difficulty} scenario`,
+      identityKind: "github" as const,
+      githubUserId,
+      githubLogin: `login-${nickname}`,
       timestamp: Date.now(),
     };
   }

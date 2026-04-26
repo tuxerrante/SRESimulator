@@ -10,15 +10,25 @@ function hashSignal(value: string): string {
   return createHash("sha256").update(value).digest("hex");
 }
 
-export function buildAnonymousClaimKey(
+function buildClaimDigest(normalizedSignals: string, secret: string): string {
+  return createHmac("sha256", secret).update(normalizedSignals).digest("hex");
+}
+
+export function buildAnonymousClaimKeys(
   input: AnonymousClaimKeyInput,
   secret: string
-): string {
-  const normalizedSignals = [
+): string[] {
+  const userAgentHash = hashSignal(input.userAgent.trim());
+  const ipHash = hashSignal(input.ip.trim());
+  const fingerprintKey = [
     input.fingerprintHash.trim(),
-    hashSignal(input.ip.trim()),
-    hashSignal(input.userAgent.trim()),
+    ipHash,
+    userAgentHash,
   ].join(":");
+  const fallbackKey = ["ip-ua", ipHash, userAgentHash].join(":");
 
-  return createHmac("sha256", secret).update(normalizedSignals).digest("hex");
+  return [
+    buildClaimDigest(fingerprintKey, secret),
+    buildClaimDigest(fallbackKey, secret),
+  ];
 }

@@ -56,8 +56,13 @@ export class JsonLeaderboardStore implements ILeaderboardStore {
   async getLeaderboard(difficulty?: Difficulty): Promise<LeaderboardEntry[]> {
     const entries = await this.readEntries();
     const filtered = difficulty
-      ? entries.filter((e) => e.difficulty === difficulty)
-      : entries;
+      ? entries.filter(
+          (e) =>
+            e.difficulty === difficulty &&
+            e.identityKind === "github" &&
+            Boolean(e.githubUserId)
+        )
+      : entries.filter((e) => e.identityKind === "github" && Boolean(e.githubUserId));
     return sortEntries(filtered).slice(0, MAX_ENTRIES_PER_DIFFICULTY);
   }
 

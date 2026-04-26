@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { buildAnonymousClaimKey } from "./anonymous-claim";
+import { buildAnonymousClaimKeys } from "./anonymous-claim";
 
-describe("buildAnonymousClaimKey", () => {
+describe("buildAnonymousClaimKeys", () => {
   const secret = "anti-abuse-secret";
 
-  it("creates a stable claim key for the same browser and network signals", () => {
-    const first = buildAnonymousClaimKey(
+  it("creates stable claim keys for the same browser and network signals", () => {
+    const first = buildAnonymousClaimKeys(
       {
         fingerprintHash: "fingerprint-123",
         ip: "203.0.113.25",
@@ -14,7 +14,7 @@ describe("buildAnonymousClaimKey", () => {
       secret
     );
 
-    const second = buildAnonymousClaimKey(
+    const second = buildAnonymousClaimKeys(
       {
         fingerprintHash: "fingerprint-123",
         ip: "203.0.113.25",
@@ -23,13 +23,14 @@ describe("buildAnonymousClaimKey", () => {
       secret
     );
 
-    expect(first).toBe(second);
-    expect(first).not.toContain("fingerprint-123");
-    expect(first).not.toContain("203.0.113.25");
+    expect(first).toStrictEqual(second);
+    expect(first).toHaveLength(2);
+    expect(first[0]).not.toContain("fingerprint-123");
+    expect(first[0]).not.toContain("203.0.113.25");
   });
 
-  it("changes when the fingerprint changes", () => {
-    const first = buildAnonymousClaimKey(
+  it("keeps the fallback key stable when only the fingerprint changes", () => {
+    const first = buildAnonymousClaimKeys(
       {
         fingerprintHash: "fingerprint-123",
         ip: "203.0.113.25",
@@ -38,7 +39,7 @@ describe("buildAnonymousClaimKey", () => {
       secret
     );
 
-    const second = buildAnonymousClaimKey(
+    const second = buildAnonymousClaimKeys(
       {
         fingerprintHash: "fingerprint-456",
         ip: "203.0.113.25",
@@ -47,6 +48,7 @@ describe("buildAnonymousClaimKey", () => {
       secret
     );
 
-    expect(first).not.toBe(second);
+    expect(first[0]).not.toBe(second[0]);
+    expect(first[1]).toBe(second[1]);
   });
 });

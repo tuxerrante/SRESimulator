@@ -51,8 +51,13 @@ export async function getLeaderboard(
 ): Promise<LeaderboardEntry[]> {
   const entries = await readEntries();
   const filtered = difficulty
-    ? entries.filter((e) => e.difficulty === difficulty)
-    : entries;
+    ? entries.filter(
+        (e) =>
+          e.difficulty === difficulty &&
+          e.identityKind === "github" &&
+          Boolean(e.githubUserId)
+      )
+    : entries.filter((e) => e.identityKind === "github" && Boolean(e.githubUserId));
   return sortEntries(filtered).slice(0, MAX_ENTRIES_PER_DIFFICULTY);
 }
 
@@ -65,18 +70,20 @@ export async function getHallOfFame(): Promise<HallOfFameEntry[]> {
   >();
 
   for (const entry of entries) {
-    const existing = playerMap.get(entry.nickname) ?? {};
+    if (!entry.githubUserId) continue;
+    const existing = playerMap.get(entry.githubUserId) ?? {};
     const current = existing[entry.difficulty];
     if (current === undefined || entry.score.total > current) {
       existing[entry.difficulty] = entry.score.total;
     }
-    playerMap.set(entry.nickname, existing);
+    playerMap.set(entry.githubUserId, existing);
   }
 
   const hallOfFame: HallOfFameEntry[] = [];
-  for (const [nickname, scores] of playerMap) {
+  for (const [githubUserId, scores] of playerMap) {
     const compositeScore =
       (scores.easy ?? 0) + (scores.medium ?? 0) + (scores.hard ?? 0);
+    const nickname = entries.find((entry) => entry.githubUserId === githubUserId)?.nickname ?? githubUserId;
     hallOfFame.push({ nickname, compositeScore, scores });
   }
 
@@ -88,14 +95,24 @@ export function addEntry(
   entry: LeaderboardEntry
 ): Promise<LeaderboardEntry> {
   return withWriteLock(async () => {
+    if (!entry.githubUserId || entry.identityKind !== "github") {
+      throw new Error("Persistent leaderboard entries require a GitHub-backed identity");
+    }
+
     const entries = await readEntries();
 
     const existingIdx = entries.findIndex(
-      (e) => e.nickname === entry.nickname && e.difficulty === entry.difficulty
+      (e) => e.githubUserId === entry.githubUserId && e.difficulty === entry.difficulty
     );
 
     if (existingIdx !== -1) {
-      if (entry.score.total > entries[existingIdx].score.total) {
+      if (
+        entry.score.total > entries[existingIdx].score.total ||
+        (
+          entry.score.total === entries[existingIdx].score.total &&
+          entry.durationMs < entries[existingIdx].durationMs
+        )
+      ) {
         entries[existingIdx] = entry;
       }
     } else {

@@ -14,7 +14,7 @@ describe("evaluateScenarioAccess", () => {
           avatarUrl: null,
         },
         hasValidTurnstileToken: false,
-        fingerprintHash: null,
+        hasAnonymousProof: false,
         hasActiveAnonymousClaim: false,
       })
     ).toEqual({
@@ -29,7 +29,7 @@ describe("evaluateScenarioAccess", () => {
         difficulty: "medium",
         viewer: null,
         hasValidTurnstileToken: true,
-        fingerprintHash: "fp_hash",
+        hasAnonymousProof: true,
         hasActiveAnonymousClaim: false,
       })
     ).toEqual({
@@ -39,19 +39,19 @@ describe("evaluateScenarioAccess", () => {
     });
   });
 
-  it("requires both Turnstile and a browser fingerprint for anonymous easy mode", () => {
+  it("requires both Turnstile and anonymous verification proof for anonymous easy mode", () => {
     expect(
       evaluateScenarioAccess({
         difficulty: "easy",
         viewer: null,
         hasValidTurnstileToken: false,
-        fingerprintHash: null,
+        hasAnonymousProof: false,
         hasActiveAnonymousClaim: false,
       })
     ).toEqual({
       allowed: false,
       code: "anonymous_verification_required",
-      message: "Anonymous Easy mode requires a captcha check and browser fingerprint.",
+      message: "Anonymous Easy mode requires captcha-backed verification.",
     });
   });
 
@@ -61,7 +61,7 @@ describe("evaluateScenarioAccess", () => {
         difficulty: "easy",
         viewer: null,
         hasValidTurnstileToken: true,
-        fingerprintHash: "fp_hash",
+        hasAnonymousProof: true,
         hasActiveAnonymousClaim: true,
       })
     ).toEqual({
@@ -77,7 +77,7 @@ describe("evaluateScenarioAccess", () => {
         difficulty: "easy",
         viewer: null,
         hasValidTurnstileToken: true,
-        fingerprintHash: "fp_hash",
+        hasAnonymousProof: true,
         hasActiveAnonymousClaim: false,
       })
     ).toEqual({

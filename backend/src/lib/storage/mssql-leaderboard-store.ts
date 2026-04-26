@@ -61,11 +61,15 @@ export class MssqlLeaderboardStore implements ILeaderboardStore {
       query = `
         SELECT TOP (@limit) * FROM leaderboard_entries
         WHERE difficulty = @difficulty
+          AND identity_kind = 'github'
+          AND github_user_id IS NOT NULL
         ORDER BY score_total DESC, duration_ms ASC
       `;
     } else {
       query = `
         SELECT TOP (@limit) * FROM leaderboard_entries
+        WHERE identity_kind = 'github'
+          AND github_user_id IS NOT NULL
         ORDER BY score_total DESC, duration_ms ASC
       `;
     }

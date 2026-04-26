@@ -40,23 +40,28 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     return NextResponse.redirect(new URL("/?error=github_auth_state", request.url));
   }
 
+  const redirectUri = buildGithubAuthorizeUrl({
+    clientId,
+    baseUrl: request.nextUrl.origin,
+    state,
+  }).searchParams.get("redirect_uri");
+  if (!redirectUri) {
+    return NextResponse.redirect(new URL("/?error=github_auth_state", request.url));
+  }
+
   const tokenResponse = await fetch("https://github.com/login/oauth/access_token", {
     method: "POST",
     headers: {
       Accept: "application/json",
-      "Content-Type": "application/json",
+      "Content-Type": "application/x-www-form-urlencoded",
     },
-    body: JSON.stringify({
+    body: new URLSearchParams({
       client_id: clientId,
       client_secret: clientSecret,
       code,
-      redirect_uri: buildGithubAuthorizeUrl({
-        clientId,
-        baseUrl: request.nextUrl.origin,
-        state,
-      }).searchParams.get("redirect_uri"),
+      redirect_uri: redirectUri,
       state,
-    }),
+    }).toString(),
     cache: "no-store",
   });
 
