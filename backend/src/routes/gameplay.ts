@@ -10,6 +10,7 @@ const MAX_SCORING_EVENTS = 50;
 const MAX_SCORING_EVENTS_JSON_LENGTH = 2000;
 const MAX_METADATA_KEYS = 20;
 const MAX_METADATA_JSON_LENGTH = 2000;
+const DANGEROUS_METADATA_KEYS = new Set(["__proto__", "constructor", "prototype"]);
 
 const VALID_LIFECYCLE_STATES: GameplayLifecycleState[] = [
   "started",
@@ -77,15 +78,25 @@ function sanitizeScoringEvents(value: unknown): unknown[] {
 }
 
 function sanitizeMetadata(value: unknown): Record<string, unknown> {
+  const createMetadataObject = (): Record<string, unknown> =>
+    Object.create(null) as Record<string, unknown>;
+
   if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return {};
+    return createMetadataObject();
   }
 
   const entries = Object.entries(value as Record<string, unknown>).slice(0, MAX_METADATA_KEYS);
-  const sanitized = Object.fromEntries(entries);
+  const sanitized = createMetadataObject();
+
+  for (const [key, entryValue] of entries) {
+    if (DANGEROUS_METADATA_KEYS.has(key)) continue;
+    sanitized[key] = entryValue;
+  }
 
   if (JSON.stringify(sanitized).length > MAX_METADATA_JSON_LENGTH) {
-    return { truncated: true };
+    const truncated = createMetadataObject();
+    truncated.truncated = true;
+    return truncated;
   }
 
   return sanitized;

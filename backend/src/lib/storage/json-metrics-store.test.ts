@@ -72,4 +72,20 @@ describe("JsonMetricsStore", () => {
     expect(log).toHaveBeenCalled();
     expect(JSON.stringify(log.mock.calls)).not.toContain("12345678-1234-1234-1234-123456789abc");
   });
+
+  it("defaults completed to true when lifecycle state is omitted", async () => {
+    const store = new JsonMetricsStore();
+
+    await store.recordGameplay({
+      sessionToken: "default-state-session",
+      nickname: "default-state-player",
+    });
+
+    const history = await store.getPlayerHistory("default-state-player");
+    expect(history).toHaveLength(1);
+    expect(history[0]).toMatchObject({
+      lifecycleState: "completed",
+      completed: true,
+    });
+  });
 });

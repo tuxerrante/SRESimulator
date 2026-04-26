@@ -6,17 +6,19 @@ export class JsonMetricsStore implements IMetricsStore {
   private readonly records: GameplayRecord[] = [];
 
   async recordGameplay(data: GameplayRecord): Promise<void> {
+    const lifecycleState = data.lifecycleState ?? "completed";
+
     const record: GameplayRecord = {
       ...data,
       id: data.id ?? crypto.randomUUID(),
-      lifecycleState: data.lifecycleState ?? "completed",
+      lifecycleState,
       commandCount: data.commandCount ?? data.commandsExecuted?.length ?? 0,
       commandsExecuted: data.commandsExecuted ?? [],
       scoringEvents: data.scoringEvents ?? [],
       chatMessageCount: data.chatMessageCount ?? 0,
       aiPromptTokens: data.aiPromptTokens ?? 0,
       aiCompletionTokens: data.aiCompletionTokens ?? 0,
-      completed: data.completed ?? data.lifecycleState === "completed",
+      completed: data.completed ?? lifecycleState === "completed",
       metadata: data.metadata ?? {},
       createdAt: data.createdAt ?? new Date(),
     };

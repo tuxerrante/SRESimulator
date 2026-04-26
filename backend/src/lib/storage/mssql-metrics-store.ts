@@ -5,12 +5,14 @@ export class MssqlMetricsStore implements IMetricsStore {
   constructor(private pool: sql.ConnectionPool) {}
 
   async recordGameplay(data: GameplayRecord): Promise<void> {
+    const lifecycleState = data.lifecycleState ?? "completed";
+
     await this.pool.request()
       .input("sessionToken", data.sessionToken ?? null)
       .input("nickname", data.nickname ?? null)
       .input("difficulty", data.difficulty ?? null)
       .input("scenarioTitle", data.scenarioTitle ?? null)
-      .input("lifecycleState", data.lifecycleState ?? "completed")
+      .input("lifecycleState", lifecycleState)
       .input("commandCount", data.commandCount ?? data.commandsExecuted?.length ?? 0)
       .input("commandsExecuted", JSON.stringify(data.commandsExecuted ?? []))
       .input("scoringEvents", JSON.stringify(data.scoringEvents ?? []))
@@ -20,7 +22,7 @@ export class MssqlMetricsStore implements IMetricsStore {
       .input("durationMs", data.durationMs ?? null)
       .input("scoreTotal", data.scoreTotal ?? null)
       .input("grade", data.grade ?? null)
-      .input("completed", data.completed ?? false)
+      .input("completed", data.completed ?? lifecycleState === "completed")
       .input("metadata", JSON.stringify(data.metadata ?? {}))
       .query(`
         INSERT INTO gameplay_metrics

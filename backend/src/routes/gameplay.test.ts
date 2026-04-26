@@ -197,6 +197,31 @@ describe("gameplay routes", () => {
     expect(JSON.stringify(history[0].scoringEvents ?? []).length).toBeLessThanOrEqual(2000);
   });
 
+  it("POST /api/gameplay ignores dangerous metadata prototype keys", async () => {
+    const token = await getSessionStore().create("easy", "The Sleeping Cluster");
+    const app = createApp();
+
+    const response = await httpRequest(app, "POST", "/api/gameplay", {
+      sessionToken: token,
+      lifecycleState: "started",
+      nickname: "proto-safe",
+      metadata: {
+        safeKey: "kept",
+        __proto__: { polluted: true },
+        constructor: "drop-me",
+        prototype: "drop-me-too",
+      },
+    });
+
+    expect(response.status).toBe(202);
+
+    const history = await getMetricsStore().getPlayerHistory("proto-safe");
+    expect(history).toHaveLength(1);
+    expect(history[0].metadata).toEqual({ safeKey: "kept" });
+    expect(Object.prototype.hasOwnProperty.call(history[0].metadata ?? {}, "constructor")).toBe(false);
+    expect(Object.prototype.hasOwnProperty.call(history[0].metadata ?? {}, "prototype")).toBe(false);
+  });
+
   it("POST /api/gameplay rejects invalid session tokens", async () => {
     const app = createApp();
 

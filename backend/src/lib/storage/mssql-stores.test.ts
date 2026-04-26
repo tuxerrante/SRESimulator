@@ -265,6 +265,7 @@ describe("MssqlMetricsStore", () => {
     expect(req.input).toHaveBeenCalledWith("nickname", null);
     expect(req.input).toHaveBeenCalledWith("lifecycleState", "completed");
     expect(req.input).toHaveBeenCalledWith("commandCount", 0);
+    expect(req.input).toHaveBeenCalledWith("completed", true);
     expect(req.input).toHaveBeenCalledWith("commandsExecuted", "[]");
     expect(req.input).toHaveBeenCalledWith("metadata", "{}");
   });
