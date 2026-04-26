@@ -983,6 +983,12 @@ run_makefile_port_forward_e2e_targets_check() {
   assert_contains 'export AKS_SKIP_GATEWAY_BOOTSTRAP AKS_LOCAL_PORT_FORWARD_PORT' "$makefile"
   assert_contains 'DEPLOYED_AKS_EXPOSURE_MODE=%s\n' "$makefile"
   assert_contains 'PORT_FORWARD_PID=%s\nPORT_FORWARD_LOG=%s\n' "$makefile"
+  assert_contains 'cleanup_port_forward() {' "$makefile"
+  assert_contains 'stop_port_forward() {' "$makefile"
+  assert_contains "trap 'cleanup_port_forward' EXIT INT TERM" "$makefile"
+  assert_contains 'KEEP_PORT_FORWARD=true' "$makefile"
+  assert_contains 'ps -p "$$PORT_FORWARD_PID" -o args=' "$makefile"
+  assert_contains 'Skipping stale or unexpected port-forward PID $$PORT_FORWARD_PID' "$makefile"
   assert_contains 'port-forward "svc/$(E2E_RELEASE)-frontend" "$(AKS_LOCAL_PORT_FORWARD_PORT):$(FRONTEND_PORT)"' "$makefile"
   assert_contains 'Local frontend port-forward failed to start.' "$makefile"
 }

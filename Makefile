@@ -426,6 +426,36 @@ e2e-azure-route-up: env-check ## Deploy frontend/backend to the selected cluster
 	NS="$(E2E_NAMESPACE_PREFIX)-$$TS"; \
 	if [ "$(CLUSTER_FLAVOR)" = "aks" ]; then TAG="$${TAG:-latest}"; else TAG="e2e$$TS"; fi; \
 	PROBE_TOKEN="probe-$$TS"; \
+	KEEP_PORT_FORWARD=""; \
+	stop_port_forward() { \
+		if [ -z "$${PORT_FORWARD_PID:-}" ]; then \
+			return 0; \
+		fi; \
+		if ! printf '%s\n' "$$PORT_FORWARD_PID" | grep -Eq '^[0-9]+$$'; then \
+			echo "Skipping stale or unexpected port-forward PID $$PORT_FORWARD_PID"; \
+			return 0; \
+		fi; \
+		if ! ps -p "$$PORT_FORWARD_PID" >/dev/null 2>&1; then \
+			echo "Skipping stale or unexpected port-forward PID $$PORT_FORWARD_PID"; \
+			return 0; \
+		fi; \
+		PORT_FORWARD_CMD="$$(ps -p "$$PORT_FORWARD_PID" -o args= 2>/dev/null || true)"; \
+		if printf '%s\n' "$$PORT_FORWARD_CMD" | grep -Eq '(^|[[:space:]])(kubectl|oc)([[:space:]]|$$)' && \
+		   printf '%s\n' "$$PORT_FORWARD_CMD" | grep -Eq '(^|[[:space:]])port-forward([[:space:]]|$$)' && \
+		   printf '%s\n' "$$PORT_FORWARD_CMD" | grep -Fq -- "-n $$NS" && \
+		   printf '%s\n' "$$PORT_FORWARD_CMD" | grep -Fq -- "svc/$(E2E_RELEASE)-frontend"; then \
+			kill "$$PORT_FORWARD_PID" >/dev/null 2>&1 || true; \
+		else \
+			echo "Skipping stale or unexpected port-forward PID $$PORT_FORWARD_PID"; \
+		fi; \
+	}; \
+	cleanup_port_forward() { \
+		if [ "$$KEEP_PORT_FORWARD" = "true" ]; then \
+			return 0; \
+		fi; \
+		stop_port_forward; \
+	}; \
+	trap 'cleanup_port_forward' EXIT INT TERM; \
 	echo "Using namespace: $$NS"; \
 	cluster_login; \
 	aoai_fetch_creds; \
@@ -452,6 +482,7 @@ e2e-azure-route-up: env-check ## Deploy frontend/backend to the selected cluster
 	mkdir -p "$$(dirname "$(E2E_METADATA_FILE)")"; \
 	printf 'NS=%s\nRELEASE=%s\nURL=%s\nTAG=%s\nCLUSTER_FLAVOR=%s\nDEPLOYED_AKS_EXPOSURE_MODE=%s\nPORT_FORWARD_PID=%s\nPORT_FORWARD_LOG=%s\n' "$$NS" "$(E2E_RELEASE)" "$$DEPLOY_SCHEME://$$DEPLOY_HOST" "$$TAG" "$(CLUSTER_FLAVOR)" "$${AKS_EXPOSURE_MODE:-}" "$$PORT_FORWARD_PID" "$$PORT_FORWARD_LOG" > "$(E2E_METADATA_FILE)"; \
 	probe_readiness "$$DEPLOY_SCHEME" "$$DEPLOY_HOST" "$$PROBE_TOKEN"; \
+	KEEP_PORT_FORWARD=true; \
 	echo "Manual E2E environment is ready."; \
 	echo "URL: $$DEPLOY_SCHEME://$$DEPLOY_HOST"; \
 	echo "Probe status: 200"; \
@@ -479,10 +510,30 @@ e2e-azure-route-refresh: env-check ## Refresh the selected e2e namespace (NS=...
 	TS=$$(date +%Y%m%d-%H%M%S); \
 	if [ "$(CLUSTER_FLAVOR)" = "aks" ]; then TAG="$${TAG:-latest}"; else TAG="e2e$$TS"; fi; \
 	PROBE_TOKEN="probe-$$TS"; \
+	stop_port_forward() { \
+		if [ -z "$${PORT_FORWARD_PID:-}" ]; then \
+			return 0; \
+		fi; \
+		if ! printf '%s\n' "$$PORT_FORWARD_PID" | grep -Eq '^[0-9]+$$'; then \
+			echo "Skipping stale or unexpected port-forward PID $$PORT_FORWARD_PID"; \
+			return 0; \
+		fi; \
+		if ! ps -p "$$PORT_FORWARD_PID" >/dev/null 2>&1; then \
+			echo "Skipping stale or unexpected port-forward PID $$PORT_FORWARD_PID"; \
+			return 0; \
+		fi; \
+		PORT_FORWARD_CMD="$$(ps -p "$$PORT_FORWARD_PID" -o args= 2>/dev/null || true)"; \
+		if printf '%s\n' "$$PORT_FORWARD_CMD" | grep -Eq '(^|[[:space:]])(kubectl|oc)([[:space:]]|$$)' && \
+		   printf '%s\n' "$$PORT_FORWARD_CMD" | grep -Eq '(^|[[:space:]])port-forward([[:space:]]|$$)' && \
+		   printf '%s\n' "$$PORT_FORWARD_CMD" | grep -Fq -- "-n $$TARGET_NS" && \
+		   printf '%s\n' "$$PORT_FORWARD_CMD" | grep -Fq -- "svc/$(E2E_RELEASE)-frontend"; then \
+			kill "$$PORT_FORWARD_PID" >/dev/null 2>&1 || true; \
+		else \
+			echo "Skipping stale or unexpected port-forward PID $$PORT_FORWARD_PID"; \
+		fi; \
+	}; \
 	echo "Refreshing namespace: $$TARGET_NS (image tag $$TAG)"; \
-	if [ -n "$${PORT_FORWARD_PID:-}" ]; then \
-		kill "$$PORT_FORWARD_PID" >/dev/null 2>&1 || true; \
-	fi; \
+	stop_port_forward; \
 	cluster_login; \
 	if ! "$$KUBE_CLI" get "namespace/$$TARGET_NS" >/dev/null 2>&1; then \
 		echo "Namespace $$TARGET_NS does not exist. Run make e2e-azure-route-up first."; \
@@ -532,9 +583,29 @@ e2e-azure-route-down: ## Delete temporary Azure OpenAI e2e namespace (uses NS=..
 		echo "Use 'make prod-down' (with confirmation) to delete it."; \
 		exit 1; \
 	fi; \
-	if [ -n "$${PORT_FORWARD_PID:-}" ]; then \
-		kill "$$PORT_FORWARD_PID" >/dev/null 2>&1 || true; \
-	fi; \
+	stop_port_forward() { \
+		if [ -z "$${PORT_FORWARD_PID:-}" ]; then \
+			return 0; \
+		fi; \
+		if ! printf '%s\n' "$$PORT_FORWARD_PID" | grep -Eq '^[0-9]+$$'; then \
+			echo "Skipping stale or unexpected port-forward PID $$PORT_FORWARD_PID"; \
+			return 0; \
+		fi; \
+		if ! ps -p "$$PORT_FORWARD_PID" >/dev/null 2>&1; then \
+			echo "Skipping stale or unexpected port-forward PID $$PORT_FORWARD_PID"; \
+			return 0; \
+		fi; \
+		PORT_FORWARD_CMD="$$(ps -p "$$PORT_FORWARD_PID" -o args= 2>/dev/null || true)"; \
+		if printf '%s\n' "$$PORT_FORWARD_CMD" | grep -Eq '(^|[[:space:]])(kubectl|oc)([[:space:]]|$$)' && \
+		   printf '%s\n' "$$PORT_FORWARD_CMD" | grep -Eq '(^|[[:space:]])port-forward([[:space:]]|$$)' && \
+		   printf '%s\n' "$$PORT_FORWARD_CMD" | grep -Fq -- "-n $$TARGET_NS" && \
+		   printf '%s\n' "$$PORT_FORWARD_CMD" | grep -Fq -- "svc/$(E2E_RELEASE)-frontend"; then \
+			kill "$$PORT_FORWARD_PID" >/dev/null 2>&1 || true; \
+		else \
+			echo "Skipping stale or unexpected port-forward PID $$PORT_FORWARD_PID"; \
+		fi; \
+	}; \
+	stop_port_forward; \
 	. scripts/select-deploy.sh; \
 	echo "Deleting namespace $$TARGET_NS"; \
 	"$$KUBE_CLI" delete namespace "$$TARGET_NS" --wait=false >/dev/null; \
