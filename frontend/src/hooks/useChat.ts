@@ -34,7 +34,6 @@ function formatGenericChatError(message: string): string {
   const safeMessage = normalized || "Something went wrong";
   return `Error: ${safeMessage}. Please try again.`;
 }
-
 function toUserFacingChatError(error: unknown): ChatRequestError {
   if (error instanceof ChatRequestError) return error;
 
@@ -144,6 +143,7 @@ export function useChat() {
           },
           body: JSON.stringify({
             messages: chatMessages,
+            sessionToken,
             scenario,
             currentPhase,
           }),
@@ -161,7 +161,7 @@ export function useChat() {
           if (isGatewayTimeout(response.status, errorMessage)) {
             throw new ChatRequestError(TIMEOUT_ERROR_MESSAGE, true);
           }
-          throw new Error(errorMessage);
+          throw new ChatRequestError(errorMessage);
         }
 
         const reader = response.body?.getReader();

@@ -22,7 +22,6 @@ function createSseResponse(payloads: Array<Record<string, unknown>>): Response {
     headers: { "Content-Type": "text/event-stream" },
   });
 }
-
 describe("ChatPanel timeout handling", () => {
   const fetchMock = vi.fn<typeof fetch>();
 
