@@ -134,7 +134,6 @@ export function useChat() {
 
       try {
         telemetryHeaders = await buildTelemetryHeaders(sessionToken);
-
         const response = await fetch("/api/chat", {
           method: "POST",
           headers: {
