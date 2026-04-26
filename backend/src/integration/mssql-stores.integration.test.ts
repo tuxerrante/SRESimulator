@@ -18,6 +18,14 @@ function trackNickname(nick: string): string {
   return nick;
 }
 
+function githubIdentity(seed: string) {
+  return {
+    identityKind: "github" as const,
+    githubUserId: `gh-${seed}`,
+    githubLogin: `login-${seed}`,
+  };
+}
+
 beforeAll(async () => {
   if (SKIP) return;
 
@@ -73,6 +81,8 @@ describe.skipIf(SKIP)("MssqlSessionStore (real SQL)", () => {
     expect(session!.scenarioTitle).toBe("The Sleeping Cluster");
     expect(session!.used).toBe(true);
     expect(session!.startTime).toBeGreaterThan(0);
+    expect(session!.identityKind).toBe("anonymous");
+    expect(session!.persistentScoreEligible).toBe(false);
   });
 
   it("returns null when consuming an already-used token", async () => {
@@ -123,6 +133,7 @@ describe.skipIf(SKIP)("MssqlLeaderboardStore (real SQL)", () => {
       commandCount: 4,
       durationMs: 120_000,
       scenarioTitle: "The Sleeping Cluster",
+      ...githubIdentity("t1"),
       timestamp: Date.now(),
     };
 
@@ -160,6 +171,7 @@ describe.skipIf(SKIP)("MssqlLeaderboardStore (real SQL)", () => {
       commandCount: 12,
       durationMs: 300_000,
       scenarioTitle: "Etcd Quorum Loss",
+      ...githubIdentity(`${nick}-1`),
       timestamp: Date.now(),
     });
 
@@ -179,6 +191,7 @@ describe.skipIf(SKIP)("MssqlLeaderboardStore (real SQL)", () => {
       commandCount: 3,
       durationMs: 60_000,
       scenarioTitle: "Etcd Quorum Loss",
+      ...githubIdentity(`${nick}-1`),
       timestamp: Date.now(),
     });
 
@@ -195,6 +208,7 @@ describe.skipIf(SKIP)("MssqlLeaderboardStore (real SQL)", () => {
     );
     const store = new MssqlLeaderboardStore(pool);
     const nick = trackNickname(shortId("f"));
+    const identity = githubIdentity(`${nick}-hof`);
 
     for (const diff of ["easy", "medium"] as const) {
       await store.addEntry({
@@ -212,6 +226,7 @@ describe.skipIf(SKIP)("MssqlLeaderboardStore (real SQL)", () => {
         commandCount: 5,
         durationMs: 90_000,
         scenarioTitle: `Scenario ${diff}`,
+        ...identity,
         timestamp: Date.now(),
       });
     }

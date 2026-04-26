@@ -67,6 +67,22 @@ scoresRouter.post("/", async (req: Request, res: Response) => {
 
     const durationMs = Date.now() - session.startTime;
 
+    if (!session.persistentScoreEligible || session.identityKind !== "github" || !session.githubUserId) {
+      res.status(200).json({
+        saved: false,
+        mode: "ephemeral",
+        nickname: nickname.trim(),
+        difficulty: session.difficulty,
+        score,
+        grade,
+        commandCount,
+        durationMs,
+        scenarioTitle: session.scenarioTitle,
+        timestamp: Date.now(),
+      });
+      return;
+    }
+
     const entry: LeaderboardEntry = {
       id: crypto.randomUUID(),
       nickname: nickname.trim(),
@@ -76,11 +92,18 @@ scoresRouter.post("/", async (req: Request, res: Response) => {
       commandCount,
       durationMs,
       scenarioTitle: session.scenarioTitle,
+      identityKind: "github",
+      githubUserId: session.githubUserId,
+      githubLogin: session.githubLogin ?? undefined,
       timestamp: Date.now(),
     };
 
     const saved = await getLeaderboardStore().addEntry(entry);
-    res.status(201).json(saved);
+    res.status(201).json({
+      ...saved,
+      saved: true,
+      mode: "persistent",
+    });
   } catch (error) {
     const message =
       error instanceof Error ? error.message : "Failed to save score";

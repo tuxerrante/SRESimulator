@@ -1,5 +1,10 @@
-import { describe, expect, it, vi, beforeAll, beforeEach, afterEach } from "vitest";
+import { describe, expect, it, vi, beforeAll, beforeEach, afterAll } from "vitest";
 import express from "express";
+import { mkdtemp, rm } from "fs/promises";
+import { tmpdir } from "os";
+import { join } from "path";
+import { VIEWER_SESSION_COOKIE } from "../../../shared/auth/constants";
+import { createViewerSessionToken } from "../../../shared/auth/session";
 
 function createApp(scenarioRouter: import("express").Router) {
   const app = express();
@@ -11,7 +16,8 @@ function createApp(scenarioRouter: import("express").Router) {
 async function postJson(
   app: express.Express,
   path: string,
-  body: unknown
+  body: unknown,
+  headers: Record<string, string> = {}
 ): Promise<{ status: number; body: Record<string, unknown> }> {
   const { request } = await import("http");
   return new Promise((resolve, reject) => {
@@ -32,6 +38,7 @@ async function postJson(
           headers: {
             "Content-Type": "application/json",
             "Content-Length": Buffer.byteLength(payload),
+            ...headers,
           },
         },
         (res) => {
@@ -59,10 +66,20 @@ async function postJson(
 describe("POST /api/scenario", () => {
   const originalEnv: Record<string, string | undefined> = {};
   let scenarioRouter: typeof import("./scenario").scenarioRouter;
+  let tmpDir: string;
 
   beforeAll(async () => {
+    tmpDir = await mkdtemp(join(tmpdir(), "scenario-test-"));
     originalEnv.AI_MOCK_MODE = process.env.AI_MOCK_MODE;
+    originalEnv.DATA_DIR = process.env.DATA_DIR;
+    originalEnv.TURNSTILE_SECRET_KEY = process.env.TURNSTILE_SECRET_KEY;
+    originalEnv.AUTH_SESSION_SECRET = process.env.AUTH_SESSION_SECRET;
+    originalEnv.ANTI_ABUSE_HMAC_SECRET = process.env.ANTI_ABUSE_HMAC_SECRET;
     process.env.AI_MOCK_MODE = "true";
+    process.env.DATA_DIR = tmpDir;
+    process.env.TURNSTILE_SECRET_KEY = "test-secret";
+    process.env.AUTH_SESSION_SECRET = "test-secret";
+    process.env.ANTI_ABUSE_HMAC_SECRET = "test-hmac";
 
     vi.resetModules();
 
@@ -75,20 +92,58 @@ describe("POST /api/scenario", () => {
 
   beforeEach(() => {
     process.env.AI_MOCK_MODE = "true";
+    process.env.TURNSTILE_SECRET_KEY = "test-secret";
+    process.env.AUTH_SESSION_SECRET = "test-secret";
+    process.env.ANTI_ABUSE_HMAC_SECRET = "test-hmac";
   });
 
-  afterEach(() => {
+  afterAll(async () => {
     if (originalEnv.AI_MOCK_MODE === undefined) {
       delete process.env.AI_MOCK_MODE;
     } else {
       process.env.AI_MOCK_MODE = originalEnv.AI_MOCK_MODE;
     }
+    if (originalEnv.DATA_DIR === undefined) {
+      delete process.env.DATA_DIR;
+    } else {
+      process.env.DATA_DIR = originalEnv.DATA_DIR;
+    }
+    if (originalEnv.TURNSTILE_SECRET_KEY === undefined) {
+      delete process.env.TURNSTILE_SECRET_KEY;
+    } else {
+      process.env.TURNSTILE_SECRET_KEY = originalEnv.TURNSTILE_SECRET_KEY;
+    }
+    if (originalEnv.AUTH_SESSION_SECRET === undefined) {
+      delete process.env.AUTH_SESSION_SECRET;
+    } else {
+      process.env.AUTH_SESSION_SECRET = originalEnv.AUTH_SESSION_SECRET;
+    }
+    if (originalEnv.ANTI_ABUSE_HMAC_SECRET === undefined) {
+      delete process.env.ANTI_ABUSE_HMAC_SECRET;
+    } else {
+      process.env.ANTI_ABUSE_HMAC_SECRET = originalEnv.ANTI_ABUSE_HMAC_SECRET;
+    }
+    await rm(tmpDir, { recursive: true, force: true });
   });
 
-  it("returns a mock scenario and session token in mock mode", async () => {
+  it("returns a mock scenario and session token for a signed GitHub viewer", async () => {
+    const authToken = createViewerSessionToken(
+      {
+        kind: "github",
+        githubUserId: "12345",
+        githubLogin: "octocat",
+        displayName: "The Octocat",
+        avatarUrl: null,
+        issuedAt: Date.now(),
+        expiresAt: Date.now() + 60_000,
+      },
+      "test-secret"
+    );
     const app = createApp(scenarioRouter);
     const res = await postJson(app, "/api/scenario", {
       difficulty: "easy",
+    }, {
+      cookie: `${VIEWER_SESSION_COOKIE}=${authToken}`,
     });
 
     expect(res.status).toBe(200);
@@ -107,5 +162,62 @@ describe("POST /api/scenario", () => {
 
     expect(res.status).toBe(400);
     expect(res.body.error).toContain("Invalid difficulty");
+  });
+
+  it("rejects anonymous medium difficulty without GitHub login", async () => {
+    const app = createApp(scenarioRouter);
+    const res = await postJson(app, "/api/scenario", {
+      difficulty: "medium",
+      turnstileToken: "pass",
+      fingerprintHash: "fp_hash",
+    });
+
+    expect(res.status).toBe(403);
+    expect(res.body.error).toBe("GitHub login is required for medium and hard scenarios.");
+    expect(res.body.code).toBe("github_required");
+  });
+
+  it("rejects anonymous easy mode without captcha and fingerprint verification", async () => {
+    const app = createApp(scenarioRouter);
+    const res = await postJson(app, "/api/scenario", {
+      difficulty: "easy",
+    });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe(
+      "Anonymous Easy mode requires a captcha check and browser fingerprint."
+    );
+    expect(res.body.code).toBe("anonymous_verification_required");
+  });
+
+  it("allows anonymous easy mode after captcha and fingerprint verification", async () => {
+    const app = createApp(scenarioRouter);
+    const res = await postJson(app, "/api/scenario", {
+      difficulty: "easy",
+      turnstileToken: "pass",
+      fingerprintHash: "fp_hash",
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body.sessionToken).toBeDefined();
+  });
+
+  it("blocks a second anonymous easy run within the daily window", async () => {
+    const app = createApp(scenarioRouter);
+    const first = await postJson(app, "/api/scenario", {
+      difficulty: "easy",
+      turnstileToken: "pass",
+      fingerprintHash: "fp_hash_replay",
+    });
+    const second = await postJson(app, "/api/scenario", {
+      difficulty: "easy",
+      turnstileToken: "pass",
+      fingerprintHash: "fp_hash_replay",
+    });
+
+    expect(first.status).toBe(200);
+    expect(second.status).toBe(429);
+    expect(second.body.error).toBe("Anonymous Easy mode is limited to one run per day.");
+    expect(second.body.code).toBe("anonymous_daily_limit_reached");
   });
 });

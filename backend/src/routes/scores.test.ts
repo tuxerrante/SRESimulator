@@ -195,8 +195,16 @@ describe("scores routes", () => {
     expect(res.body.error).toContain("inappropriate");
   });
 
-  it("POST /api/scores saves a valid entry and returns 201", async () => {
-    const token = await getSessionStore().create("easy", "Test Scenario");
+  it("POST /api/scores saves a valid GitHub-backed entry and returns 201", async () => {
+    const token = await getSessionStore().create({
+      difficulty: "easy",
+      scenarioTitle: "Test Scenario",
+      identityKind: "github",
+      githubUserId: "12345",
+      githubLogin: "octocat",
+      anonymousClaimKey: null,
+      persistentScoreEligible: true,
+    });
 
     const app = createApp();
     const res = await httpRequest(app, "POST", "/api/scores", {
@@ -216,5 +224,45 @@ describe("scores routes", () => {
     expect(res.status).toBe(201);
     expect(res.body.nickname).toBe("testuser");
     expect(res.body.difficulty).toBe("easy");
+    expect(res.body.githubUserId).toBe("12345");
+  });
+
+  it("POST /api/scores keeps anonymous scores ephemeral", async () => {
+    const token = await getSessionStore().create({
+      difficulty: "easy",
+      scenarioTitle: "Anonymous Trial",
+      identityKind: "anonymous",
+      githubUserId: null,
+      githubLogin: null,
+      anonymousClaimKey: "claim-1",
+      persistentScoreEligible: false,
+    });
+
+    const app = createApp();
+    const res = await httpRequest(app, "POST", "/api/scores", {
+      sessionToken: token,
+      nickname: "anonplayer",
+      score: {
+        efficiency: 18,
+        safety: 19,
+        documentation: 20,
+        accuracy: 21,
+        total: 78,
+      },
+      grade: "B",
+      commandCount: 7,
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body.saved).toBe(false);
+    expect(res.body.mode).toBe("ephemeral");
+
+    const leaderboardRes = await httpRequest(app, "GET", "/api/scores?difficulty=easy");
+    expect(leaderboardRes.status).toBe(200);
+    expect(
+      (leaderboardRes.body.entries as Array<Record<string, unknown>>).some(
+        (entry) => entry.nickname === "anonplayer"
+      )
+    ).toBe(false);
   });
 });

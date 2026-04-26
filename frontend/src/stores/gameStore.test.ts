@@ -3,6 +3,7 @@ import { useGameStore } from "./gameStore";
 import type { Scenario } from "@shared/types/game";
 import type { ChatMessage } from "@shared/types/chat";
 import type { ScoringEvent } from "@shared/types/scoring";
+import type { GithubViewer } from "@shared/auth/viewer";
 
 const mockStorage = new Map<string, string>();
 const localStorageMock: Storage = {
@@ -338,6 +339,43 @@ describe("gameStore", () => {
 
       expect(useGameStore.getState().nickname).toBe("player1");
       expect(useGameStore.getState().status).toBe("playing");
+    });
+  });
+
+  describe("viewer auth state", () => {
+    const viewer: GithubViewer = {
+      kind: "github",
+      githubUserId: "12345",
+      githubLogin: "octocat",
+      displayName: "The Octocat",
+      avatarUrl: null,
+    };
+
+    it("starts with an anonymous access policy", () => {
+      const state = useGameStore.getState();
+
+      expect(state.viewer).toBeNull();
+      expect(state.accessPolicy.authKind).toBe("anonymous");
+      expect(state.accessPolicy.allowedDifficulties).toEqual(["easy"]);
+    });
+
+    it("stores a GitHub viewer and upgrades the access policy", () => {
+      useGameStore.getState().setViewer(viewer);
+      const state = useGameStore.getState();
+
+      expect(state.viewer).toEqual(viewer);
+      expect(state.accessPolicy.authKind).toBe("github");
+      expect(state.accessPolicy.allowedDifficulties).toEqual(["easy", "medium", "hard"]);
+    });
+
+    it("clears a GitHub viewer back to anonymous access", () => {
+      useGameStore.getState().setViewer(viewer);
+      useGameStore.getState().clearViewer();
+      const state = useGameStore.getState();
+
+      expect(state.viewer).toBeNull();
+      expect(state.accessPolicy.authKind).toBe("anonymous");
+      expect(state.accessPolicy.allowedDifficulties).toEqual(["easy"]);
     });
   });
 });

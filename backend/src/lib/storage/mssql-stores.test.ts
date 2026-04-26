@@ -3,6 +3,8 @@ import type sql from "mssql";
 import { MssqlSessionStore } from "./mssql-session-store";
 import { MssqlLeaderboardStore } from "./mssql-leaderboard-store";
 import { MssqlMetricsStore } from "./mssql-metrics-store";
+import { MssqlPlayerStore } from "./mssql-player-store";
+import { MssqlAnonymousTrialStore } from "./mssql-anonymous-trial-store";
 
 function createMockRequest(recordset: unknown[] = []) {
   const req = {
@@ -46,6 +48,23 @@ describe("MssqlSessionStore", () => {
     expect(sql).toContain("INSERT INTO sessions");
   });
 
+  it("create() stores identity columns for GitHub-backed sessions", async () => {
+    await store.create({
+      difficulty: "hard",
+      scenarioTitle: "Etcd Quorum Loss",
+      identityKind: "github",
+      githubUserId: "12345",
+      githubLogin: "octocat",
+      anonymousClaimKey: null,
+      persistentScoreEligible: true,
+    });
+
+    expect(req.input).toHaveBeenCalledWith("identityKind", "github");
+    expect(req.input).toHaveBeenCalledWith("githubUserId", "12345");
+    expect(req.input).toHaveBeenCalledWith("githubLogin", "octocat");
+    expect(req.input).toHaveBeenCalledWith("persistentScoreEligible", 1);
+  });
+
   it("validateAndConsume() returns mapped session on match", async () => {
     const validUuid = "a1b2c3d4-e5f6-7890-abcd-ef1234567890";
     const row = {
@@ -54,6 +73,11 @@ describe("MssqlSessionStore", () => {
       scenario_title: "Etcd Quorum Loss",
       start_time: 1700000000000,
       used: true,
+      identity_kind: "github" as const,
+      github_user_id: "12345",
+      github_login: "octocat",
+      anonymous_claim_key: null,
+      persistent_score_eligible: true,
     };
     const mock = createMockPool([row]);
     store = new MssqlSessionStore(mock.pool);
@@ -66,6 +90,11 @@ describe("MssqlSessionStore", () => {
       scenarioTitle: "Etcd Quorum Loss",
       startTime: 1700000000000,
       used: true,
+      identityKind: "github",
+      githubUserId: "12345",
+      githubLogin: "octocat",
+      anonymousClaimKey: null,
+      persistentScoreEligible: true,
     });
   });
 
@@ -117,6 +146,9 @@ describe("MssqlLeaderboardStore", () => {
       command_count: 4,
       duration_ms: 120000,
       scenario_title: "The Sleeping Cluster",
+      identity_kind: "github" as const,
+      github_user_id: "12345",
+      github_login: "octocat",
       created_at: new Date("2025-01-15T10:00:00Z"),
     };
     const { pool } = createMockPool([row]);
@@ -140,6 +172,9 @@ describe("MssqlLeaderboardStore", () => {
       commandCount: 4,
       durationMs: 120000,
       scenarioTitle: "The Sleeping Cluster",
+      identityKind: "github",
+      githubUserId: "12345",
+      githubLogin: "octocat",
       timestamp: new Date("2025-01-15T10:00:00Z").getTime(),
     });
   });
@@ -176,6 +211,9 @@ describe("MssqlLeaderboardStore", () => {
       commandCount: 6,
       durationMs: 90000,
       scenarioTitle: "Master Down",
+      identityKind: "github" as const,
+      githubUserId: "12345",
+      githubLogin: "octocat",
       timestamp: Date.now(),
     };
     const { pool, req } = createMockPool();
@@ -186,7 +224,53 @@ describe("MssqlLeaderboardStore", () => {
     expect(result).toBe(entry);
     const queries = req.query.mock.calls.map((c: unknown[]) => c[0] as string);
     expect(queries.some((q: string) => q.includes("MERGE"))).toBe(true);
+    expect(req.input).toHaveBeenCalledWith("githubUserId", "12345");
     expect(queries.some((q: string) => q.includes("DELETE FROM leaderboard_entries"))).toBe(true);
+  });
+});
+
+describe("MssqlPlayerStore", () => {
+  it("upsertGithubViewer() uses MERGE and returns the normalized player", async () => {
+    const { pool, req } = createMockPool();
+    const store = new MssqlPlayerStore(pool);
+
+    const result = await store.upsertGithubViewer({
+      kind: "github",
+      githubUserId: "12345",
+      githubLogin: "octocat",
+      displayName: "The Octocat",
+      avatarUrl: null,
+    });
+
+    expect(result.githubUserId).toBe("12345");
+    expect(req.input).toHaveBeenCalledWith("githubUserId", "12345");
+    expect((req.query.mock.calls[0][0] as string)).toContain("MERGE players");
+  });
+});
+
+describe("MssqlAnonymousTrialStore", () => {
+  it("hasActiveClaim() checks for an unexpired claim", async () => {
+    const { pool, req } = createMockPool([{ active_count: 1 }]);
+    const store = new MssqlAnonymousTrialStore(pool);
+
+    const result = await store.hasActiveClaim("claim-1", 1000);
+
+    expect(result).toBe(true);
+    expect(req.input).toHaveBeenCalledWith("claimKey", "claim-1");
+  });
+
+  it("createOrRefreshClaim() uses MERGE to upsert a claim", async () => {
+    const { pool, req } = createMockPool();
+    const store = new MssqlAnonymousTrialStore(pool);
+
+    await store.createOrRefreshClaim({
+      claimKey: "claim-1",
+      createdAt: 1000,
+      expiresAt: 2000,
+    });
+
+    expect(req.input).toHaveBeenCalledWith("claimKey", "claim-1");
+    expect((req.query.mock.calls[0][0] as string)).toContain("MERGE anonymous_trial_claims");
   });
 });
 

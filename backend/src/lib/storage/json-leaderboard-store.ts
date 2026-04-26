@@ -66,23 +66,29 @@ export class JsonLeaderboardStore implements ILeaderboardStore {
 
     const playerMap = new Map<
       string,
-      { easy?: number; medium?: number; hard?: number }
+      { nickname: string; scores: { easy?: number; medium?: number; hard?: number } }
     >();
 
     for (const entry of entries) {
-      const existing = playerMap.get(entry.nickname) ?? {};
-      const current = existing[entry.difficulty];
+      if (!entry.githubUserId) continue;
+      const existing = playerMap.get(entry.githubUserId) ?? {
+        nickname: entry.nickname,
+        scores: {},
+      };
+      const current = existing.scores[entry.difficulty];
       if (current === undefined || entry.score.total > current) {
-        existing[entry.difficulty] = entry.score.total;
+        existing.scores[entry.difficulty] = entry.score.total;
       }
-      playerMap.set(entry.nickname, existing);
+      existing.nickname = entry.nickname;
+      playerMap.set(entry.githubUserId, existing);
     }
 
     const hallOfFame: HallOfFameEntry[] = [];
-    for (const [nickname, scores] of playerMap) {
+    for (const [, player] of playerMap) {
+      const scores = player.scores;
       const compositeScore =
         (scores.easy ?? 0) + (scores.medium ?? 0) + (scores.hard ?? 0);
-      hallOfFame.push({ nickname, compositeScore, scores });
+      hallOfFame.push({ nickname: player.nickname, compositeScore, scores });
     }
 
     hallOfFame.sort((a, b) => b.compositeScore - a.compositeScore);
@@ -91,10 +97,14 @@ export class JsonLeaderboardStore implements ILeaderboardStore {
 
   addEntry(entry: LeaderboardEntry): Promise<LeaderboardEntry> {
     return this.withWriteLock(async () => {
+      if (!entry.githubUserId || entry.identityKind !== "github") {
+        throw new Error("Persistent leaderboard entries require a GitHub-backed identity");
+      }
+
       const entries = await this.readEntries();
 
       const existingIdx = entries.findIndex(
-        (e) => e.nickname === entry.nickname && e.difficulty === entry.difficulty
+        (e) => e.githubUserId === entry.githubUserId && e.difficulty === entry.difficulty
       );
 
       if (existingIdx !== -1) {

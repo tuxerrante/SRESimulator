@@ -1,23 +1,50 @@
 import { Router, type Request, type Response } from "express";
 import { loadKnowledgeBase } from "../lib/knowledge";
-import { getSessionStore } from "../lib/storage";
+import { getAnonymousTrialStore, getPlayerStore, getSessionStore } from "../lib/storage";
 import { getAiReadiness } from "../lib/ai-config";
 import { generateMockScenario } from "../lib/mock-ai";
 import { generateAiText, AiThrottledError } from "../lib/ai-runtime";
 import { utcNow } from "../lib/sim-clock";
+import { verifyTurnstileToken } from "../lib/turnstile";
+import { readViewerFromCookieHeader } from "../lib/viewer-auth";
+import { buildAnonymousClaimKey } from "../lib/anonymous-claim";
+import { evaluateScenarioAccess } from "../lib/scenario-access";
 import type { Difficulty, Scenario } from "../../../shared/types/game";
 
 export const scenarioRouter = Router();
 const VALID_DIFFICULTIES: Difficulty[] = ["easy", "medium", "hard"];
+const ANONYMOUS_TRIAL_TTL_MS = 24 * 60 * 60 * 1000;
 
 interface ScenarioRequestBody {
   difficulty: Difficulty;
+  turnstileToken?: string;
+  fingerprintHash?: string;
+}
+
+function getClientIp(req: Request): string | undefined {
+  return (
+    req.ip ??
+    req.headers["x-forwarded-for"]?.toString().split(",")[0]?.trim() ??
+    undefined
+  );
+}
+
+function getDecisionStatus(
+  code: "github_required" | "anonymous_verification_required" | "anonymous_daily_limit_reached"
+): number {
+  if (code === "anonymous_daily_limit_reached") {
+    return 429;
+  }
+  if (code === "anonymous_verification_required") {
+    return 400;
+  }
+  return 403;
 }
 
 scenarioRouter.post("/", async (req: Request, res: Response) => {
   try {
     const body: ScenarioRequestBody = req.body;
-    const { difficulty } = body;
+    const { difficulty, turnstileToken, fingerprintHash } = body;
 
     if (!VALID_DIFFICULTIES.includes(difficulty)) {
       res.status(400).json({
@@ -26,11 +53,78 @@ scenarioRouter.post("/", async (req: Request, res: Response) => {
       return;
     }
 
+    const authSecret = process.env.AUTH_SESSION_SECRET;
+    const viewer = authSecret
+      ? readViewerFromCookieHeader(req.headers.cookie, authSecret)
+      : null;
+    const clientIp = getClientIp(req);
+    const antiAbuseSecret = process.env.ANTI_ABUSE_HMAC_SECRET;
+
+    if (!viewer && !antiAbuseSecret) {
+      res.status(503).json({ error: "Anonymous anti-abuse policy is not configured" });
+      return;
+    }
+
+    let anonymousClaimKey: string | null = null;
+    if (!viewer && fingerprintHash && antiAbuseSecret) {
+      anonymousClaimKey = buildAnonymousClaimKey(
+        {
+          fingerprintHash,
+          ip: clientIp ?? "unknown",
+          userAgent: req.get("user-agent") ?? "unknown",
+        },
+        antiAbuseSecret
+      );
+    }
+
+    const hasActiveAnonymousClaim = anonymousClaimKey
+      ? await getAnonymousTrialStore().hasActiveClaim(anonymousClaimKey)
+      : false;
+    const hasValidTurnstileToken = viewer
+      ? true
+      : await verifyTurnstileToken(turnstileToken, clientIp);
+
+    const accessDecision = evaluateScenarioAccess({
+      difficulty,
+      viewer,
+      hasValidTurnstileToken,
+      fingerprintHash: fingerprintHash ?? null,
+      hasActiveAnonymousClaim,
+    });
+
+    if (!accessDecision.allowed) {
+      res.status(getDecisionStatus(accessDecision.code)).json({
+        error: accessDecision.message,
+        code: accessDecision.code,
+      });
+      return;
+    }
+
+    if (viewer) {
+      await getPlayerStore().upsertGithubViewer(viewer);
+    }
+
     const readiness = getAiReadiness();
     if (readiness.mockMode) {
       const scenario = generateMockScenario(difficulty);
-      const sessionToken = await getSessionStore().create(difficulty, scenario.title);
-      res.json({ scenario, sessionToken });
+      if (accessDecision.sessionIdentityKind === "anonymous" && anonymousClaimKey) {
+        const now = Date.now();
+        await getAnonymousTrialStore().createOrRefreshClaim({
+          claimKey: anonymousClaimKey,
+          createdAt: now,
+          expiresAt: now + ANONYMOUS_TRIAL_TTL_MS,
+        });
+      }
+      const sessionToken = await getSessionStore().create({
+        difficulty,
+        scenarioTitle: scenario.title,
+        identityKind: accessDecision.sessionIdentityKind,
+        githubUserId: viewer?.githubUserId ?? null,
+        githubLogin: viewer?.githubLogin ?? null,
+        anonymousClaimKey,
+        persistentScoreEligible: accessDecision.sessionIdentityKind === "github",
+      });
+      res.json({ scenario, sessionToken, identityKind: accessDecision.sessionIdentityKind });
       return;
     }
     if (!readiness.ready) {
@@ -131,9 +225,26 @@ ${scenarioContext}`,
 
     const scenario: Scenario = JSON.parse(text);
 
-    const sessionToken = await getSessionStore().create(difficulty, scenario.title);
+    if (accessDecision.sessionIdentityKind === "anonymous" && anonymousClaimKey) {
+      const now = Date.now();
+      await getAnonymousTrialStore().createOrRefreshClaim({
+        claimKey: anonymousClaimKey,
+        createdAt: now,
+        expiresAt: now + ANONYMOUS_TRIAL_TTL_MS,
+      });
+    }
 
-    res.json({ scenario, sessionToken });
+    const sessionToken = await getSessionStore().create({
+      difficulty,
+      scenarioTitle: scenario.title,
+      identityKind: accessDecision.sessionIdentityKind,
+      githubUserId: viewer?.githubUserId ?? null,
+      githubLogin: viewer?.githubLogin ?? null,
+      anonymousClaimKey,
+      persistentScoreEligible: accessDecision.sessionIdentityKind === "github",
+    });
+
+    res.json({ scenario, sessionToken, identityKind: accessDecision.sessionIdentityKind });
   } catch (error) {
     if (error instanceof AiThrottledError) {
       res.status(429).json({ error: error.message });

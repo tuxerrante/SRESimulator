@@ -4,48 +4,16 @@ import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useGameStore } from "@/stores/gameStore";
 import type { Difficulty, Scenario } from "@shared/types/game";
-import { Shield, AlertTriangle, Zap, Flame, Loader2, Trophy, Heart, User } from "lucide-react";
+import { Shield, Loader2, Trophy, Heart, User, LogOut } from "lucide-react";
 import { Github } from "@/components/icons/Github";
+import { DifficultyGrid } from "@/components/home/DifficultyGrid";
+import { TurnstileWidget } from "@/components/home/TurnstileWidget";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
 import { APP_VERSION, HOME_FEATURE_HIGHLIGHTS } from "@/lib/release";
-
-const DIFFICULTIES: {
-  level: Difficulty;
-  title: string;
-  subtitle: string;
-  description: string;
-  icon: React.ReactNode;
-  color: string;
-}[] = [
-  {
-    level: "easy",
-    title: "The Junior SRE",
-    subtitle: "Easy",
-    description:
-      "Single-component failures with obvious symptoms. Perfect for learning the investigation methodology.",
-    icon: <AlertTriangle size={24} />,
-    color: "emerald",
-  },
-  {
-    level: "medium",
-    title: "The Shift Lead",
-    subtitle: "Medium",
-    description:
-      "Networking, permissions, and configuration drift. Requires deeper investigation across multiple components.",
-    icon: <Zap size={24} />,
-    color: "amber",
-  },
-  {
-    level: "hard",
-    title: "The Principal Engineer",
-    subtitle: "Hard",
-    description:
-      "Deep obscure bugs, race conditions, and distributed system failures. Only for the experienced.",
-    icon: <Flame size={24} />,
-    color: "red",
-  },
-];
+import { getAnonymousVerificationMessage } from "@/lib/auth/anonymous-verification";
+import { collectBrowserFingerprintHash } from "@/lib/auth/fingerprint";
+import { buildScenarioRequestBody } from "@/lib/auth/scenario-request";
 
 export default function HomePage() {
   const router = useRouter();
@@ -53,14 +21,93 @@ export default function HomePage() {
   const nickname = useGameStore((s) => s.nickname);
   const setNickname = useGameStore((s) => s.setNickname);
   const hydrateNickname = useGameStore((s) => s.hydrateNickname);
+  const viewer = useGameStore((s) => s.viewer);
+  const setViewer = useGameStore((s) => s.setViewer);
+  const clearViewer = useGameStore((s) => s.clearViewer);
   const [loading, setLoading] = useState<Difficulty | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showReleaseNotes, setShowReleaseNotes] = useState(false);
+  const [authConfigured, setAuthConfigured] = useState(true);
+  const [fingerprintHash, setFingerprintHash] = useState<string | null>(null);
+  const [turnstileToken, setTurnstileToken] = useState<string | null>(null);
   const hasCallsign = Boolean(nickname);
+  const turnstileSiteKey = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY;
+  const anonymousVerificationMessage = getAnonymousVerificationMessage({
+    turnstileConfigured: Boolean(turnstileSiteKey),
+    turnstileVerified: Boolean(turnstileToken),
+  });
 
-  useEffect(() => { hydrateNickname(); }, [hydrateNickname]);
+  useEffect(() => {
+    hydrateNickname();
+
+    void (async () => {
+      try {
+        const response = await fetch("/api/auth/session", { cache: "no-store" });
+        if (!response.ok) {
+          throw new Error("Failed to load player session");
+        }
+
+        const data = (await response.json()) as {
+          viewer: {
+            kind: "github";
+            githubUserId: string;
+            githubLogin: string;
+            displayName: string;
+            avatarUrl: string | null;
+          } | null;
+          authConfigured: boolean;
+        };
+
+        setAuthConfigured(data.authConfigured);
+        if (data.viewer) {
+          setViewer(data.viewer);
+        } else {
+          clearViewer();
+        }
+      } catch {
+        clearViewer();
+      }
+    })();
+
+    const params = new URLSearchParams(window.location.search);
+    const authError = params.get("error");
+    if (authError) {
+      setError("GitHub sign-in failed. Please try again.");
+      window.history.replaceState({}, "", "/");
+    }
+  }, [clearViewer, hydrateNickname, setViewer]);
+
+  useEffect(() => {
+    if (viewer) {
+      setFingerprintHash(null);
+      setTurnstileToken(null);
+      return;
+    }
+
+    let cancelled = false;
+    void collectBrowserFingerprintHash()
+      .then((hash) => {
+        if (!cancelled) {
+          setFingerprintHash(hash);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setError("Unable to prepare anonymous browser verification.");
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [viewer]);
 
   const handleSelect = async (difficulty: Difficulty) => {
+    if (!viewer && difficulty === "easy" && (!fingerprintHash || !turnstileToken)) {
+      setError("Complete the captcha check to start an anonymous Easy run.");
+      return;
+    }
+
     setLoading(difficulty);
     setError(null);
 
@@ -68,7 +115,14 @@ export default function HomePage() {
       const response = await fetch("/api/scenario", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ difficulty }),
+        body: JSON.stringify(
+          buildScenarioRequestBody({
+            difficulty,
+            viewer,
+            fingerprintHash,
+            turnstileToken,
+          })
+        ),
       });
 
       const raw = await response.text();
@@ -90,6 +144,18 @@ export default function HomePage() {
       setError(err instanceof Error ? err.message : "Something went wrong");
     } finally {
       setLoading(null);
+    }
+  };
+
+  const handleLogout = async () => {
+    try {
+      const response = await fetch("/api/auth/logout", { method: "POST" });
+      if (!response.ok) {
+        throw new Error("Failed to sign out");
+      }
+      clearViewer();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to sign out");
     }
   };
 
@@ -130,57 +196,79 @@ export default function HomePage() {
           </p>
         )}
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 w-full max-w-3xl">
-          {DIFFICULTIES.map((d) => (
-            <button
-              key={d.level}
-              onClick={() => handleSelect(d.level)}
-              disabled={loading !== null || !hasCallsign}
-              className={cn(
-                "flex flex-col items-start p-5 rounded-xl border transition-all text-left",
-                "hover:scale-[1.02] active:scale-[0.98]",
-                "disabled:opacity-60 disabled:cursor-not-allowed disabled:hover:scale-100",
-                d.color === "emerald" &&
-                  "border-emerald-800/50 bg-emerald-950/30 hover:border-emerald-600/50 hover:bg-emerald-950/50",
-                d.color === "amber" &&
-                  "border-amber-800/50 bg-amber-950/30 hover:border-amber-600/50 hover:bg-amber-950/50",
-                d.color === "red" &&
-                  "border-red-800/50 bg-red-950/30 hover:border-red-600/50 hover:bg-red-950/50"
-              )}
-            >
-              <div
+        <div className="mb-6 w-full max-w-3xl rounded-xl border border-zinc-800 bg-zinc-900/70 p-4">
+          {viewer ? (
+            <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+              <div>
+                <div className="text-sm font-semibold text-zinc-100">
+                  Signed in with GitHub as {viewer.displayName}
+                </div>
+                <div className="text-xs text-zinc-400">
+                  @{viewer.githubLogin} can access all difficulties and keep persistent best scores.
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={handleLogout}
+                className="inline-flex items-center gap-2 rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-200 hover:bg-zinc-700 transition-colors"
+              >
+                <LogOut size={14} />
+                Sign out
+              </button>
+            </div>
+          ) : (
+            <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+              <div>
+                <div className="text-sm font-semibold text-zinc-100">
+                  Anonymous trial mode
+                </div>
+                <div className="text-xs text-zinc-400">
+                  Guests can play one Easy scenario per day. GitHub login unlocks Medium, Hard, and persistent best scores.
+                </div>
+              </div>
+              <Link
+                href="/api/auth/github/login"
+                aria-disabled={!authConfigured}
                 className={cn(
-                  "mb-3",
-                  d.color === "emerald" && "text-emerald-400",
-                  d.color === "amber" && "text-amber-400",
-                  d.color === "red" && "text-red-400"
+                  "inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
+                  authConfigured
+                    ? "bg-amber-600 text-white hover:bg-amber-500"
+                    : "cursor-not-allowed bg-zinc-800 text-zinc-500"
                 )}
               >
-                {loading === d.level ? (
-                  <Loader2 size={24} className="animate-spin" />
-                ) : (
-                  d.icon
-                )}
-              </div>
-              <div className="text-sm font-bold text-zinc-200 mb-0.5">
-                {d.title}
-              </div>
-              <div
-                className={cn(
-                  "text-xs font-semibold mb-2",
-                  d.color === "emerald" && "text-emerald-400",
-                  d.color === "amber" && "text-amber-400",
-                  d.color === "red" && "text-red-400"
-                )}
-              >
-                {d.subtitle}
-              </div>
-              <div className="text-xs text-zinc-500 leading-relaxed">
-                {d.description}
-              </div>
-            </button>
-          ))}
+                <Github size={16} />
+                Sign in with GitHub
+              </Link>
+            </div>
+          )}
         </div>
+
+        {!viewer && (
+          <div className="mb-6 w-full max-w-3xl rounded-xl border border-zinc-800 bg-zinc-900/70 p-4">
+            <div className="mb-3 text-sm font-semibold text-zinc-100">
+              Anonymous play
+            </div>
+            {turnstileSiteKey ? (
+              <TurnstileWidget siteKey={turnstileSiteKey} onTokenChange={setTurnstileToken} />
+            ) : (
+              <div className="rounded-lg border border-zinc-800 bg-zinc-950/60 px-3 py-2 text-xs text-zinc-500">
+                Anonymous guest mode is unavailable until Turnstile is configured.
+              </div>
+            )}
+            {anonymousVerificationMessage && (
+              <div className="mt-3 text-xs text-zinc-400">
+                {anonymousVerificationMessage}
+              </div>
+            )}
+          </div>
+        )}
+
+        <DifficultyGrid
+          viewer={viewer}
+          hasCallsign={hasCallsign}
+          loadingDifficulty={loading}
+          onSelect={handleSelect}
+        />
 
         <Link
           href="/leaderboard"

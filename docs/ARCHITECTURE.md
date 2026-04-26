@@ -300,9 +300,35 @@ Key design highlights:
 In cluster deployments, browser requests hit the frontend at `/api/*`; the
 frontend BFF proxy forwards them internally to this backend service.
 
+### Frontend auth routes
+
+GitHub sign-in is terminated in the Next.js app, not directly in Express. The
+frontend owns:
+
+- `GET /api/auth/github/login` — starts the GitHub OAuth redirect flow
+- `GET /api/auth/github/callback` — exchanges the code, fetches the GitHub
+  profile, and sets a signed HTTP-only viewer session cookie
+- `GET /api/auth/session` — returns the current viewer plus access policy for
+  the landing page
+- `POST /api/auth/logout` — clears the viewer session cookie
+
+Express reads the signed viewer session cookie on proxied requests and treats it
+as the source of truth for GitHub-authenticated access.
+
 ### `POST /api/scenario`
 
-Generates a scenario for the given difficulty. Calls the configured AI provider with knowledge-base context to produce a realistic incident ticket and cluster context. In `AI_MOCK_MODE=true`, returns a deterministic mock scenario.
+Generates a scenario for the given difficulty. Access is now gated by player
+identity:
+
+- **GitHub-authenticated players** can request `easy`, `medium`, and `hard`
+- **Anonymous players** can request `easy` only, and only after passing
+  Cloudflare Turnstile plus the browser fingerprint/IP anti-abuse check
+- Anonymous Easy mode is limited to one run per 24 hours via a salted server-side
+  claim key derived from browser fingerprint, IP, and user-agent signals
+
+After access is approved, the route calls the configured AI provider with
+knowledge-base context to produce a realistic incident ticket and cluster
+context. In `AI_MOCK_MODE=true`, it returns a deterministic mock scenario.
 
 ### `POST /api/chat`
 
@@ -335,9 +361,16 @@ environment variable (`json` or `mssql`).
 
 Best for local development and single-replica deployments.
 
-- **Sessions**: In-memory `Map` with 24h TTL. Lost on pod restart.
+- **Sessions**: In-memory `Map` with 24h TTL, now tagged with identity kind
+  (`github` vs `anonymous`) plus score persistence eligibility. Lost on pod
+  restart.
+- **Players**: JSON file (`data/players.json`) storing GitHub player metadata
+  used to normalize persistent identities locally.
+- **Anonymous trials**: JSON file (`data/anonymous-trial-claims.json`) storing
+  salted daily claim keys and expiry timestamps for guest-rate limiting.
 - **Leaderboard**: JSON file on PVC (`data/leaderboard.json`). Writes are
-  serialized through an in-process async mutex.
+  serialized through an in-process async mutex and keyed by GitHub user id per
+  difficulty.
 - **Metrics**: Log-only (no persistent storage).
 
 Constraints:
@@ -351,9 +384,16 @@ Required for multi-replica deployments and production use.  Uses Azure SQL
 Database free tier (100K vCore-seconds/month, 32 GB storage, $0/month).
 
 - **Sessions**: Stored in `sessions` table. Shared across replicas.
-  Stale entries (>24h) are cleaned up opportunistically.
+  Stale entries (>24h) are cleaned up opportunistically. Session rows now record
+  identity kind, GitHub identity, anonymous claim key, and whether the run is
+  eligible for persistent score submission.
+- **Players**: Stored in `players` and upserted by GitHub user id so nickname
+  changes do not create duplicate persistent identities.
+- **Anonymous trials**: Stored in `anonymous_trial_claims`, keyed by salted
+  claim digest with 24h expiry for free-trial enforcement.
 - **Leaderboard**: Stored in `leaderboard_entries` table. Uses `MERGE`
-  to atomically keep the best score per (nickname, difficulty).
+  to atomically keep the best score per (GitHub user id, difficulty), while
+  still storing the latest callsign/nickname for display.
   Per-difficulty trim to 10 entries happens after each insert.
 - **Metrics**: Stored in `gameplay_metrics` table. Captures per-session
   analytics (commands executed, scoring events, AI token consumption) with

@@ -10,6 +10,9 @@ export interface LeaderboardEntry {
   commandCount: number;
   durationMs: number;
   scenarioTitle: string;
+  identityKind?: "github";
+  githubUserId?: string;
+  githubLogin?: string;
   timestamp: number;
 }
 
