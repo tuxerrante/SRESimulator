@@ -1,10 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import express from "express";
+import { VIEWER_SESSION_COOKIE } from "../../../shared/auth/constants";
+import { createViewerSessionToken } from "../../../shared/auth/session";
 
 async function postJson(
   app: express.Express,
   path: string,
   body: unknown,
+  extraHeaders: Record<string, string> = {},
 ): Promise<{ status: number; body: Record<string, unknown> }> {
   const { request } = await import("http");
   return new Promise((resolve, reject) => {
@@ -26,6 +29,7 @@ async function postJson(
           headers: {
             "Content-Type": "application/json",
             "Content-Length": Buffer.byteLength(payload),
+            ...extraHeaders,
           },
         },
         (res) => {
@@ -54,9 +58,23 @@ async function postJson(
 
 describe("scenario telemetry", () => {
   const originalMockMode = process.env.AI_MOCK_MODE;
+  const originalAuthSessionSecret = process.env.AUTH_SESSION_SECRET;
+  const githubAuthCookie = `${VIEWER_SESSION_COOKIE}=${createViewerSessionToken(
+    {
+      kind: "github",
+      githubUserId: "12345",
+      githubLogin: "octocat",
+      displayName: "The Octocat",
+      avatarUrl: null,
+      issuedAt: Date.now(),
+      expiresAt: Date.now() + 60_000,
+    },
+    "test-secret"
+  )}`;
 
   beforeEach(() => {
     process.env.AI_MOCK_MODE = "true";
+    process.env.AUTH_SESSION_SECRET = "test-secret";
     vi.resetModules();
   });
 
@@ -69,10 +87,17 @@ describe("scenario telemetry", () => {
     } else {
       process.env.AI_MOCK_MODE = originalMockMode;
     }
+
+    if (originalAuthSessionSecret === undefined) {
+      delete process.env.AUTH_SESSION_SECRET;
+    } else {
+      process.env.AUTH_SESSION_SECRET = originalAuthSessionSecret;
+    }
   });
 
   it("records a started telemetry event when scenario creation succeeds", async () => {
     const create = vi.fn().mockResolvedValue("session-123");
+    const upsertGithubViewer = vi.fn().mockResolvedValue(undefined);
     const recordGameplay = vi.fn().mockResolvedValue(undefined);
 
     vi.doMock("../lib/storage", async () => {
@@ -80,6 +105,7 @@ describe("scenario telemetry", () => {
       return {
         ...actual,
         getSessionStore: () => ({ create }),
+        getPlayerStore: () => ({ upsertGithubViewer }),
         getMetricsStore: () => ({ recordGameplay }),
       };
     });
@@ -89,9 +115,15 @@ describe("scenario telemetry", () => {
     app.use(express.json());
     app.use("/api/scenario", scenarioRouter);
 
-    const response = await postJson(app, "/api/scenario", { difficulty: "easy" });
+    const response = await postJson(
+      app,
+      "/api/scenario",
+      { difficulty: "easy" },
+      { cookie: githubAuthCookie }
+    );
 
     expect(response.status).toBe(200);
+    expect(upsertGithubViewer).toHaveBeenCalled();
     expect(recordGameplay).toHaveBeenCalledWith(expect.objectContaining({
       sessionToken: "session-123",
       difficulty: "easy",
@@ -103,6 +135,7 @@ describe("scenario telemetry", () => {
 
   it("still returns the scenario when started telemetry recording fails", async () => {
     const create = vi.fn().mockResolvedValue("session-123");
+    const upsertGithubViewer = vi.fn().mockResolvedValue(undefined);
     const recordGameplay = vi.fn().mockRejectedValue(new Error("db unavailable"));
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
 
@@ -111,6 +144,7 @@ describe("scenario telemetry", () => {
       return {
         ...actual,
         getSessionStore: () => ({ create }),
+        getPlayerStore: () => ({ upsertGithubViewer }),
         getMetricsStore: () => ({ recordGameplay }),
       };
     });
@@ -120,10 +154,16 @@ describe("scenario telemetry", () => {
     app.use(express.json());
     app.use("/api/scenario", scenarioRouter);
 
-    const response = await postJson(app, "/api/scenario", { difficulty: "medium" });
+    const response = await postJson(
+      app,
+      "/api/scenario",
+      { difficulty: "medium" },
+      { cookie: githubAuthCookie }
+    );
 
     expect(response.status).toBe(200);
     expect(response.body.sessionToken).toBe("session-123");
+    expect(upsertGithubViewer).toHaveBeenCalled();
     expect(warn).toHaveBeenCalled();
     expect(JSON.stringify(warn.mock.calls)).not.toContain("session-123");
   });

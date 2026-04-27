@@ -169,7 +169,11 @@ jobs:
       AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
       AKS_RG: ${{ secrets.AKS_RG }}
       AKS_CLUSTER: ${{ secrets.AKS_CLUSTER }}
-      AKS_FRONTEND_PUBLIC_IP_NAME: ${{ secrets.AKS_FRONTEND_PUBLIC_IP_NAME }}
+      AKS_FRONTEND_PUBLIC_IP_NAME: >-
+        ${{
+          vars.AKS_FRONTEND_PUBLIC_IP_NAME ||
+          format('{0}-aks-frontend-pip', secrets.AKS_CLUSTER)
+        }}
       AKS_CERT_MANAGER_ACME_EMAIL: ${{ vars.AKS_CERT_MANAGER_ACME_EMAIL }}
       ARO_RG: ${{ secrets.ARO_RG }}
       ARO_CLUSTER: ${{ secrets.ARO_CLUSTER }}
