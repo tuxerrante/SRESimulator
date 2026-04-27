@@ -20,7 +20,7 @@ jobs:
       - name: Harden runner
         # v2.18.0
         uses: >-
-          step-security/harden-runner@6c3c2f2c1c457b00c10c4848d6f5491db3b629df
+          step-security/harden-runner@8d3c67de8e2fe68ef647c8db1e6a09f647780f40
         with:
           egress-policy: audit
 
@@ -38,7 +38,7 @@ jobs:
       - name: Harden runner
         # v2.18.0
         uses: >-
-          step-security/harden-runner@6c3c2f2c1c457b00c10c4848d6f5491db3b629df
+          step-security/harden-runner@8d3c67de8e2fe68ef647c8db1e6a09f647780f40
         with:
           egress-policy: audit
 
@@ -98,7 +98,7 @@ jobs:
       - name: Harden runner
         # v2.18.0
         uses: >-
-          step-security/harden-runner@6c3c2f2c1c457b00c10c4848d6f5491db3b629df
+          step-security/harden-runner@8d3c67de8e2fe68ef647c8db1e6a09f647780f40
         with:
           egress-policy: audit
 
@@ -186,7 +186,7 @@ jobs:
       - name: Harden runner
         # v2.18.0
         uses: >-
-          step-security/harden-runner@6c3c2f2c1c457b00c10c4848d6f5491db3b629df
+          step-security/harden-runner@8d3c67de8e2fe68ef647c8db1e6a09f647780f40
         with:
           egress-policy: audit
 
@@ -233,7 +233,7 @@ jobs:
       - name: Harden runner
         # v2.18.0
         uses: >-
-          step-security/harden-runner@6c3c2f2c1c457b00c10c4848d6f5491db3b629df
+          step-security/harden-runner@8d3c67de8e2fe68ef647c8db1e6a09f647780f40
         with:
           egress-policy: audit
 
@@ -304,7 +304,7 @@ jobs:
       - name: Harden runner
         # v2.18.0
         uses: >-
-          step-security/harden-runner@6c3c2f2c1c457b00c10c4848d6f5491db3b629df
+          step-security/harden-runner@8d3c67de8e2fe68ef647c8db1e6a09f647780f40
         with:
           egress-policy: audit
 
@@ -367,7 +367,7 @@ jobs:
       - name: Harden runner
         # v2.18.0
         uses: >-
-          step-security/harden-runner@6c3c2f2c1c457b00c10c4848d6f5491db3b629df
+          step-security/harden-runner@8d3c67de8e2fe68ef647c8db1e6a09f647780f40
         with:
           egress-policy: audit
 
@@ -449,7 +449,7 @@ jobs:
       - name: Harden runner
         # v2.18.0
         uses: >-
-          step-security/harden-runner@6c3c2f2c1c457b00c10c4848d6f5491db3b629df
+          step-security/harden-runner@8d3c67de8e2fe68ef647c8db1e6a09f647780f40
         with:
           egress-policy: audit
 
@@ -506,7 +506,7 @@ jobs:
       - name: Harden runner
         # v2.18.0
         uses: >-
-          step-security/harden-runner@6c3c2f2c1c457b00c10c4848d6f5491db3b629df
+          step-security/harden-runner@8d3c67de8e2fe68ef647c8db1e6a09f647780f40
         with:
           egress-policy: audit
 
@@ -574,7 +574,7 @@ jobs:
       - name: Harden runner
         # v2.18.0
         uses: >-
-          step-security/harden-runner@6c3c2f2c1c457b00c10c4848d6f5491db3b629df
+          step-security/harden-runner@8d3c67de8e2fe68ef647c8db1e6a09f647780f40
         with:
           egress-policy: audit
 
@@ -699,7 +699,7 @@ jobs:
       - name: Harden runner
         # v2.18.0
         uses: >-
-          step-security/harden-runner@6c3c2f2c1c457b00c10c4848d6f5491db3b629df
+          step-security/harden-runner@8d3c67de8e2fe68ef647c8db1e6a09f647780f40
         with:
           egress-policy: audit
 
