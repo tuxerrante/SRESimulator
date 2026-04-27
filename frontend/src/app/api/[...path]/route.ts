@@ -10,6 +10,7 @@ import {
   readAnonymousProofToken,
 } from "@shared/auth/anonymous-proof";
 import { createSignedClientIp } from "@shared/auth/client-ip";
+import { isSecureRequest, shouldTrustProxyHeaders } from "@/lib/auth/request-context";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -20,6 +21,10 @@ function getBackendBaseUrl(): string {
 }
 
 function getTrustedClientIp(request: NextRequest): string | null {
+  if (!shouldTrustProxyHeaders()) {
+    return null;
+  }
+
   const forwardedFor = request.headers.get("x-forwarded-for");
   if (forwardedFor) {
     return forwardedFor.split(",")[0]?.trim() || null;
@@ -140,7 +145,7 @@ async function proxyRequest(request: NextRequest): Promise<NextResponse> {
         value: anonymousProofToSet,
         httpOnly: true,
         sameSite: "lax",
-        secure: request.nextUrl.protocol === "https:",
+        secure: isSecureRequest(request),
         path: "/",
         maxAge: Math.floor(ANONYMOUS_PROOF_TTL_MS / 1000),
       });

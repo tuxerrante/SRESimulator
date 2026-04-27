@@ -214,6 +214,17 @@ describe("MssqlLeaderboardStore", () => {
     ]);
   });
 
+  it("getHallOfFame() picks the nickname from the latest row instead of MAX(nickname)", async () => {
+    const { pool, req } = createMockPool([]);
+    const store = new MssqlLeaderboardStore(pool);
+
+    await store.getHallOfFame();
+
+    const sql = req.query.mock.calls[0][0] as string;
+    expect(sql).toContain("ROW_NUMBER()");
+    expect(sql).not.toContain("MAX(nickname)");
+  });
+
   it("addEntry() uses MERGE for upsert and trims", async () => {
     const entry = {
       id: "e1",

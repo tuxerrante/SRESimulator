@@ -2,7 +2,7 @@ import { createHash, createHmac } from "node:crypto";
 
 interface AnonymousClaimKeyInput {
   fingerprintHash: string;
-  ip: string;
+  ip?: string | null;
   userAgent: string;
 }
 
@@ -19,16 +19,20 @@ export function buildAnonymousClaimKeys(
   secret: string
 ): string[] {
   const userAgentHash = hashSignal(input.userAgent.trim());
-  const ipHash = hashSignal(input.ip.trim());
-  const fingerprintKey = [
-    input.fingerprintHash.trim(),
-    ipHash,
-    userAgentHash,
-  ].join(":");
-  const fallbackKey = ["ip-ua", ipHash, userAgentHash].join(":");
+  const fingerprintSignals = [input.fingerprintHash.trim(), userAgentHash];
+  const ip = input.ip?.trim();
+  if (ip) {
+    const ipHash = hashSignal(ip);
+    fingerprintSignals.push(ipHash);
+  }
 
-  return [
-    buildClaimDigest(fingerprintKey, secret),
-    buildClaimDigest(fallbackKey, secret),
-  ];
+  const fingerprintKey = fingerprintSignals.join(":");
+
+  const claimKeys = [buildClaimDigest(fingerprintKey, secret)];
+  if (ip) {
+    const ipHash = hashSignal(ip);
+    claimKeys.push(buildClaimDigest(["ip-ua", ipHash, userAgentHash].join(":"), secret));
+  }
+
+  return claimKeys;
 }

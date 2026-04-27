@@ -6,6 +6,7 @@ import {
 } from "@shared/auth/constants";
 import { createViewerSessionToken } from "@shared/auth/session";
 import { buildGithubAuthorizeUrl, toGithubViewer } from "@/lib/auth/github";
+import { getAppOrigin, isSecureRequest } from "@/lib/auth/request-context";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -24,6 +25,7 @@ interface GithubProfileResponse {
 }
 
 export async function GET(request: NextRequest): Promise<NextResponse> {
+  const appOrigin = getAppOrigin(request);
   const clientId = process.env.GITHUB_CLIENT_ID;
   const clientSecret = process.env.GITHUB_CLIENT_SECRET;
   const authSecret = process.env.AUTH_SESSION_SECRET;
@@ -37,16 +39,16 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   const expectedState = request.cookies.get(GITHUB_OAUTH_STATE_COOKIE)?.value;
 
   if (!code || !state || !expectedState || state !== expectedState) {
-    return NextResponse.redirect(new URL("/?error=github_auth_state", request.url));
+    return NextResponse.redirect(new URL("/?error=github_auth_state", `${appOrigin}/`));
   }
 
   const redirectUri = buildGithubAuthorizeUrl({
     clientId,
-    baseUrl: request.nextUrl.origin,
+    baseUrl: appOrigin,
     state,
   }).searchParams.get("redirect_uri");
   if (!redirectUri) {
-    return NextResponse.redirect(new URL("/?error=github_auth_state", request.url));
+    return NextResponse.redirect(new URL("/?error=github_auth_state", `${appOrigin}/`));
   }
 
   const tokenResponse = await fetch("https://github.com/login/oauth/access_token", {
@@ -67,7 +69,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 
   const tokenJson = (await tokenResponse.json()) as GithubTokenResponse;
   if (!tokenResponse.ok || !tokenJson.access_token) {
-    return NextResponse.redirect(new URL("/?error=github_auth_exchange", request.url));
+    return NextResponse.redirect(new URL("/?error=github_auth_exchange", `${appOrigin}/`));
   }
 
   const profileResponse = await fetch("https://api.github.com/user", {
@@ -80,7 +82,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   });
 
   if (!profileResponse.ok) {
-    return NextResponse.redirect(new URL("/?error=github_auth_profile", request.url));
+    return NextResponse.redirect(new URL("/?error=github_auth_profile", `${appOrigin}/`));
   }
 
   const profile = (await profileResponse.json()) as GithubProfileResponse;
@@ -95,14 +97,14 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     authSecret
   );
 
-  const response = NextResponse.redirect(new URL("/", request.url));
+  const response = NextResponse.redirect(new URL("/", `${appOrigin}/`));
   response.cookies.delete(GITHUB_OAUTH_STATE_COOKIE);
   response.cookies.set({
     name: VIEWER_SESSION_COOKIE,
     value: sessionToken,
     httpOnly: true,
     sameSite: "lax",
-    secure: request.nextUrl.protocol === "https:",
+    secure: isSecureRequest(request),
     path: "/",
     maxAge: Math.floor(VIEWER_SESSION_TTL_MS / 1000),
   });

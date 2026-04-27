@@ -88,17 +88,40 @@ export class MssqlLeaderboardStore implements ILeaderboardStore {
         hard: number | null;
         composite: number;
       }>(`
+        WITH github_entries AS (
+          SELECT
+            github_user_id,
+            nickname,
+            difficulty,
+            score_total,
+            ROW_NUMBER() OVER (
+              PARTITION BY github_user_id
+              ORDER BY timestamp_ts DESC, id DESC
+            ) AS nickname_rank
+          FROM leaderboard_entries
+          WHERE identity_kind = 'github' AND github_user_id IS NOT NULL
+        ),
+        aggregated_scores AS (
+          SELECT
+            github_user_id,
+            MAX(CASE WHEN difficulty = 'easy'   THEN score_total END) AS easy,
+            MAX(CASE WHEN difficulty = 'medium' THEN score_total END) AS medium,
+            MAX(CASE WHEN difficulty = 'hard'   THEN score_total END) AS hard
+          FROM github_entries
+          GROUP BY github_user_id
+        )
         SELECT TOP (@limit)
-          MAX(nickname) AS nickname,
-          MAX(CASE WHEN difficulty = 'easy'   THEN score_total END) AS easy,
-          MAX(CASE WHEN difficulty = 'medium' THEN score_total END) AS medium,
-          MAX(CASE WHEN difficulty = 'hard'   THEN score_total END) AS hard,
-          ISNULL(MAX(CASE WHEN difficulty = 'easy'   THEN score_total END), 0) +
-          ISNULL(MAX(CASE WHEN difficulty = 'medium' THEN score_total END), 0) +
-          ISNULL(MAX(CASE WHEN difficulty = 'hard'   THEN score_total END), 0) AS composite
-        FROM leaderboard_entries
-        WHERE identity_kind = 'github' AND github_user_id IS NOT NULL
-        GROUP BY github_user_id
+          latest.nickname,
+          aggregated_scores.easy,
+          aggregated_scores.medium,
+          aggregated_scores.hard,
+          ISNULL(aggregated_scores.easy, 0) +
+          ISNULL(aggregated_scores.medium, 0) +
+          ISNULL(aggregated_scores.hard, 0) AS composite
+        FROM aggregated_scores
+        INNER JOIN github_entries AS latest
+          ON latest.github_user_id = aggregated_scores.github_user_id
+         AND latest.nickname_rank = 1
         ORDER BY composite DESC
       `);
 

@@ -37,7 +37,7 @@ function getClientIp(req: Request, secret: string | undefined): string | undefin
     return forwardedIp;
   }
 
-  return req.ip || undefined;
+  return undefined;
 }
 
 function getDecisionStatus(
@@ -80,7 +80,7 @@ scenarioRouter.post("/", async (req: Request, res: Response) => {
         ? buildAnonymousClaimKeys(
             {
               fingerprintHash: anonymousProof.fingerprintHash,
-              ip: clientIp ?? "unknown",
+              ip: clientIp,
               userAgent,
             },
             antiAbuseSecret

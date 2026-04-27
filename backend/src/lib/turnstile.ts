@@ -3,6 +3,7 @@ export async function verifyTurnstileToken(
   remoteIp: string | undefined
 ): Promise<boolean> {
   const secret = process.env.TURNSTILE_SECRET_KEY;
+  const expectedHostname = process.env.TURNSTILE_EXPECTED_HOSTNAME?.trim();
   if (!secret || !token) {
     return false;
   }
@@ -33,6 +34,14 @@ export async function verifyTurnstileToken(
     return false;
   }
 
-  const payload = (await response.json()) as { success?: boolean };
-  return payload.success === true;
+  const payload = (await response.json()) as { success?: boolean; hostname?: string };
+  if (payload.success !== true) {
+    return false;
+  }
+
+  if (expectedHostname && payload.hostname !== expectedHostname) {
+    return false;
+  }
+
+  return true;
 }
