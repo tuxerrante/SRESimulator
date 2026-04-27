@@ -96,7 +96,7 @@ export class MssqlLeaderboardStore implements ILeaderboardStore {
             score_total,
             ROW_NUMBER() OVER (
               PARTITION BY github_user_id
-              ORDER BY timestamp_ts DESC, id DESC
+              ORDER BY created_at DESC, id DESC
             ) AS nickname_rank
           FROM leaderboard_entries
           WHERE identity_kind = 'github' AND github_user_id IS NOT NULL

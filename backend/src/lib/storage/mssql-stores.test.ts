@@ -223,6 +223,8 @@ describe("MssqlLeaderboardStore", () => {
     const sql = req.query.mock.calls[0][0] as string;
     expect(sql).toContain("ROW_NUMBER()");
     expect(sql).not.toContain("MAX(nickname)");
+    expect(sql).toContain("ORDER BY created_at DESC, id DESC");
+    expect(sql).not.toContain("timestamp_ts");
   });
 
   it("addEntry() uses MERGE for upsert and trims", async () => {
