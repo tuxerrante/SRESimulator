@@ -1,6 +1,11 @@
 import { Router, type Request, type Response } from "express";
 import { loadKnowledgeBase } from "../lib/knowledge";
-import { getAnonymousTrialStore, getPlayerStore, getSessionStore } from "../lib/storage";
+import {
+  getAnonymousTrialStore,
+  getMetricsStore,
+  getPlayerStore,
+  getSessionStore,
+} from "../lib/storage";
 import { getAiReadiness } from "../lib/ai-config";
 import { generateMockScenario } from "../lib/mock-ai";
 import { generateAiText, AiThrottledError } from "../lib/ai-runtime";
@@ -50,6 +55,30 @@ function getDecisionStatus(
     return 400;
   }
   return 403;
+}
+
+async function recordStartedTelemetry(
+  sessionToken: string,
+  difficulty: Difficulty,
+  scenarioTitle: string,
+): Promise<void> {
+  try {
+    await getMetricsStore().recordGameplay({
+      sessionToken,
+      difficulty,
+      scenarioTitle,
+      lifecycleState: "started",
+      completed: false,
+      metadata: { source: "scenario" },
+    });
+  } catch (error) {
+    console.warn("Failed to record scenario gameplay telemetry", {
+      sessionTokenPrefix: sessionToken.slice(0, 8),
+      difficulty,
+      scenarioTitle,
+      error,
+    });
+  }
 }
 
 scenarioRouter.post("/", async (req: Request, res: Response) => {
@@ -162,6 +191,7 @@ scenarioRouter.post("/", async (req: Request, res: Response) => {
         anonymousClaimKey: reservedClaimKeys[0] ?? null,
         persistentScoreEligible: accessDecision.sessionIdentityKind === "github",
       });
+      await recordStartedTelemetry(sessionToken, difficulty, scenarioTitle);
       claimReservationCommitted = true;
 
       return {

@@ -315,6 +315,70 @@ run_gateway_deploy_skip_bootstrap_check() {
   assert_contains 'mode: "gateway"' "$TMP_DIR/captured-values.yaml"
 }
 
+run_none_values_check() {
+  local values_file
+
+  # shellcheck disable=SC1091
+  source "$ROOT_DIR/scripts/aks-deploy.sh"
+
+  unset AOAI_MODEL || true
+  E2E_RELEASE="sre-simulator"
+  AKS_RG="aaffinit-test-rg"
+  AKS_CLUSTER="aaffinit-test"
+  AKS_EXPOSURE_MODE="none"
+  AKS_LOCAL_PORT_FORWARD_PORT="38080"
+  DEPLOY_HOST="127.0.0.1:38080"
+  DEPLOY_SCHEME="http"
+
+  if ! values_file="$(write_aks_exposure_values 2>"$TMP_DIR/none.txt")"; then
+    cat "$TMP_DIR/none.txt" >&2 || true
+    fail "write_aks_exposure_values should support AKS none mode"
+  fi
+
+  assert_contains 'mode: "none"' "$values_file"
+  assert_contains 'host: "127.0.0.1:38080"' "$values_file"
+  assert_contains 'scheme: "http"' "$values_file"
+  assert_not_contains 'loadBalancerIP:' "$values_file"
+  assert_not_contains 'azure-pip-name' "$values_file"
+  rm -f "$values_file"
+}
+
+run_none_deploy_path_check() {
+  # shellcheck disable=SC1091
+  source "$ROOT_DIR/scripts/aks-deploy.sh"
+  stub_cluster_helpers
+  capture_helm_invocation
+
+  resolve_aks_public_endpoint() {
+    fail "helm_deploy_sre should not resolve the public endpoint in AKS none mode"
+  }
+
+  ensure_aks_gateway_stack() {
+    fail "helm_deploy_sre should not bootstrap the gateway stack in AKS none mode"
+  }
+
+  unset DEPLOY_HOST DEPLOY_SCHEME || true
+  E2E_RELEASE="sre-simulator"
+  AKS_RG="example-aks-rg"
+  AKS_CLUSTER="example-aks"
+  AKS_EXPOSURE_MODE="none"
+  AKS_LOCAL_PORT_FORWARD_PORT="38080"
+  AOAI_DEPLOYMENT="gpt-4o-mini"
+  unset AOAI_MODEL || true
+
+  if ! helm_deploy_sre "sre-simulator" "latest" "probe-token" >"$TMP_DIR/none-deploy.txt" 2>&1; then
+    cat "$TMP_DIR/none-deploy.txt" >&2 || true
+    fail "helm_deploy_sre should support the AKS none deploy path"
+  fi
+
+  assert_equals "127.0.0.1:38080" "$DEPLOY_HOST" "none deploy path should use the local port-forward host"
+  assert_equals "http" "$DEPLOY_SCHEME" "none deploy path should use http"
+  assert_contains 'mode: "none"' "$TMP_DIR/captured-values.yaml"
+  assert_contains 'host: "127.0.0.1:38080"' "$TMP_DIR/captured-values.yaml"
+  assert_contains 'scheme: "http"' "$TMP_DIR/captured-values.yaml"
+  assert_not_contains 'loadBalancerIP:' "$TMP_DIR/captured-values.yaml"
+}
+
 run_immutable_tag_check() {
   # shellcheck disable=SC1091
   source "$ROOT_DIR/scripts/aks-deploy.sh"
@@ -912,6 +976,23 @@ run_makefile_gateway_audit_targets_check() {
   assert_contains 'Frontend service type must be LoadBalancer on AKS publicService mode' "$makefile"
 }
 
+run_makefile_port_forward_e2e_targets_check() {
+  local makefile="$ROOT_DIR/Makefile"
+
+  assert_contains 'AKS_LOCAL_PORT_FORWARD_PORT ?= 38080' "$makefile"
+  assert_contains 'export AKS_SKIP_GATEWAY_BOOTSTRAP AKS_LOCAL_PORT_FORWARD_PORT' "$makefile"
+  assert_contains 'DEPLOYED_AKS_EXPOSURE_MODE=%s\n' "$makefile"
+  assert_contains 'PORT_FORWARD_PID=%s\nPORT_FORWARD_LOG=%s\n' "$makefile"
+  assert_contains 'cleanup_port_forward() {' "$makefile"
+  assert_contains 'stop_port_forward() {' "$makefile"
+  assert_contains "trap 'cleanup_port_forward' EXIT INT TERM" "$makefile"
+  assert_contains 'KEEP_PORT_FORWARD=true' "$makefile"
+  assert_contains 'ps -p "$$PORT_FORWARD_PID" -o args=' "$makefile"
+  assert_contains 'Skipping stale or unexpected port-forward PID $$PORT_FORWARD_PID' "$makefile"
+  assert_contains 'port-forward "svc/$(E2E_RELEASE)-frontend" "$(AKS_LOCAL_PORT_FORWARD_PORT):$(FRONTEND_PORT)"' "$makefile"
+  assert_contains 'Local frontend port-forward failed to start.' "$makefile"
+}
+
 run_geneva_suppression_gate_scope_check() {
   local aks_output aro_output aro_enabled_output
 
@@ -947,6 +1028,8 @@ main() {
   run_gateway_values_check
   run_gateway_deploy_path_check
   run_gateway_deploy_skip_bootstrap_check
+  run_none_values_check
+  run_none_deploy_path_check
   run_immutable_tag_check
   run_clusterissuer_manifest_check
   run_clusterissuer_manifest_requires_email_check
@@ -966,6 +1049,7 @@ main() {
   run_public_exposure_audit_gateway_backend_ingress_rejection_check
   run_makefile_gateway_defaults_check
   run_makefile_gateway_audit_targets_check
+  run_makefile_port_forward_e2e_targets_check
   run_geneva_suppression_gate_scope_check
   echo "AKS deploy helper tests passed."
 }

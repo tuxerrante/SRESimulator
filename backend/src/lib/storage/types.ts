@@ -1,5 +1,6 @@
 import type { Difficulty } from "../../../../shared/types/game";
 import type { LeaderboardEntry, HallOfFameEntry } from "../../../../shared/types/leaderboard";
+import type { GameplayLifecycleState } from "../../../../shared/types/gameplay";
 import type { GithubViewer } from "../../../../shared/auth/viewer";
 
 export type SessionIdentityKind = "github" | "anonymous";
@@ -48,12 +49,16 @@ export interface GameplayRecord {
   nickname?: string;
   difficulty?: Difficulty;
   scenarioTitle?: string;
+  lifecycleState?: GameplayLifecycleState;
+  commandCount?: number;
   commandsExecuted?: string[];
   scoringEvents?: unknown[];
   chatMessageCount?: number;
   aiPromptTokens?: number;
   aiCompletionTokens?: number;
   durationMs?: number;
+  scoreTotal?: number;
+  grade?: string;
   completed?: boolean;
   metadata?: Record<string, unknown>;
   createdAt?: Date;
@@ -62,6 +67,7 @@ export interface GameplayRecord {
 export interface ISessionStore {
   create(input: CreateGameSessionInput): Promise<string>;
   create(difficulty: Difficulty, scenarioTitle: string): Promise<string>;
+  get(token: string): Promise<GameSession | null>;
   validateAndConsume(token: string): Promise<GameSession | null>;
 }
 
@@ -73,6 +79,10 @@ export interface ILeaderboardStore {
 
 export interface IMetricsStore {
   recordGameplay(data: GameplayRecord): Promise<void>;
+  hasLifecycleEvent(
+    sessionToken: string,
+    lifecycleState: GameplayLifecycleState,
+  ): Promise<boolean>;
   getPlayerHistory(nickname: string): Promise<GameplayRecord[]>;
 }
 

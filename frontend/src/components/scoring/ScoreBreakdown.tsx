@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useGameStore } from "@/stores/gameStore";
 import { useRouter } from "next/navigation";
 import { cn } from "@/lib/utils";
+import { scoreToGrade } from "@/lib/gameplayTelemetry";
 import { Trophy, Target, Shield, FileText, Crosshair, X, Check, Loader2 } from "lucide-react";
 
 const DIMENSIONS = [
@@ -34,11 +35,7 @@ export function ScoreBreakdown() {
     router.push("/");
   };
 
-  const grade =
-    score.total >= 90 ? "A" :
-    score.total >= 80 ? "B" :
-    score.total >= 70 ? "C" :
-    score.total >= 60 ? "D" : "F";
+  const grade = scoreToGrade(score.total);
 
   const handleSubmit = async () => {
     if (!nickname.trim() || submitState !== "idle") return;

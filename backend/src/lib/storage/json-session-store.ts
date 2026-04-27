@@ -49,6 +49,11 @@ export class JsonSessionStore implements ISessionStore {
     return token;
   }
 
+  async get(token: string): Promise<GameSession | null> {
+    cleanup();
+    return sessions.get(token) ?? null;
+  }
+
   async validateAndConsume(token: string): Promise<GameSession | null> {
     cleanup();
     const session = sessions.get(token);
