@@ -50,6 +50,16 @@ make dev
 
 Open `http://localhost:3000` in your browser.
 
+## Support this project
+
+If SRE Simulator has helped you learn, demo, or teach incident response, and
+you would like to support my work on it, you can do that here:
+
+- GitHub Sponsors: [@tuxerrante](https://github.com/sponsors/tuxerrante)
+- Ko-fi: [alessandroaffinito](https://ko-fi.com/alessandroaffinito)
+- Buy Me a Coffee: [tuxerrante](https://buymeacoffee.com/tuxerrante)
+- Amazon wishlist: [gift cards and project gear](https://www.amazon.it/hz/wishlist/ls/7FXUYV40OB6H?ref_=wl_share)
+
 ## Maintenance
 
 - Preview cleanup of generated artifacts in worktrees older than 14 days:

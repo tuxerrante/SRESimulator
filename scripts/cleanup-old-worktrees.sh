@@ -26,12 +26,28 @@ fail() {
   exit 1
 }
 
+normalize_dir() {
+  local path=$1
+  [[ -d "$path" ]] || fail "directory '$path' does not exist"
+  (cd "$path" && pwd)
+}
+
 dir_mtime() {
   local path=$1
-  if stat -f %m "$path" >/dev/null 2>&1; then
-    stat -f %m "$path"
+  local mtime
+
+  if mtime="$(stat -c %Y "$path" 2>/dev/null)"; then
+    :
+  elif mtime="$(stat -f %m "$path" 2>/dev/null)"; then
+    :
   else
-    stat -c %Y "$path"
+    fail "unable to determine modification time for $path"
+  fi
+
+  if [[ $mtime =~ ^[0-9]+$ ]]; then
+    printf '%s\n' "$mtime"
+  else
+    fail "invalid modification time returned for $path: $mtime"
   fi
 }
 
@@ -84,10 +100,13 @@ while (($#)); do
 done
 
 [[ $DAYS =~ ^[0-9]+$ ]] || fail "--days must be an integer"
-[[ -d "$ROOT_DIR" ]] || fail "root directory '$ROOT_DIR' does not exist"
+ROOT_DIR="$(normalize_dir "$ROOT_DIR")"
 
 WORKTREES_DIR="$ROOT_DIR/.worktrees"
-[[ -d "$WORKTREES_DIR" ]] || fail "worktrees directory '$WORKTREES_DIR' does not exist"
+if [[ ! -d "$WORKTREES_DIR" ]]; then
+  echo "No worktrees directory found at '$WORKTREES_DIR'; nothing to clean."
+  exit 0
+fi
 
 now_epoch=$(date +%s)
 cutoff_seconds=$((DAYS * 24 * 60 * 60))

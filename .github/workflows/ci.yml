@@ -49,6 +49,14 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Setup Node.js
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+        # v6.3.0
+        uses: >-
+          actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f
+        with:
+          node-version: 24
+
       - name: Verify semver tag ancestry
         env:
           EVENT_NAME: ${{ github.event_name }}
@@ -72,6 +80,14 @@ jobs:
             exit 1
           fi
           echo "Tag commit is on main history."
+
+      - name: Verify semver surfaces for tag
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          node scripts/release-version-sync.mjs verify --tag "${RELEASE_TAG}"
 
   changes:
     runs-on: ubuntu-latest

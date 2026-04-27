@@ -97,9 +97,23 @@ run_delete_checks() {
   assert_exists "$repo_root/.worktrees/recent-branch/frontend/node_modules/pkg/index.js"
 }
 
+run_missing_worktrees_checks() {
+  local repo_root="$TMP_DIR/repo-no-worktrees"
+  mkdir -p "$repo_root"
+
+  if ! bash "$ROOT_DIR/scripts/cleanup-old-worktrees.sh" \
+    --root "$repo_root" --days 14 >"$TMP_DIR/no-worktrees.txt" 2>&1; then
+    cat "$TMP_DIR/no-worktrees.txt" >&2 || true
+    fail "cleanup without .worktrees should be a no-op"
+  fi
+
+  assert_contains "No worktrees directory found" "$TMP_DIR/no-worktrees.txt"
+}
+
 main() {
   run_dry_run_checks
   run_delete_checks
+  run_missing_worktrees_checks
   echo "cleanup-old-worktrees tests passed."
 }
 

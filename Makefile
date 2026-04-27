@@ -3,7 +3,7 @@
        lint lint-ts lint-backend lint-unused-exports lint-yaml lint-md \
        typecheck typecheck-backend validate \
        security audit lockfile-lint gitleaks grype \
-       test test-shell test-integration test-mssql dev-db smoke-backend-mssql smoke-local-vertex env-check aro-login aks-login e2e-azure-route e2e-azure-route-up e2e-azure-route-refresh e2e-azure-route-down \
+       test test-shell test-integration test-mssql dev-db smoke-backend-mssql smoke-local-vertex release-prepare verify-release-version env-check aro-login aks-login e2e-azure-route e2e-azure-route-up e2e-azure-route-refresh e2e-azure-route-down \
        prod-up prod-up-tag prod-down prod-status public-exposure-audit db-mode-check db-port-forward-check db-inspect db-inspect-live geneva-suppression-check prod-up-final \
        build dev start capture-readme-hero \
        docker-build-frontend docker-build-backend docker-build \
@@ -22,7 +22,7 @@ GRYPE_IMAGE ?= anchore/grype:$(GRYPE_VERSION)@sha256:af65fbc0c664691067788fe95ff
 GITLEAKS_VERSION ?= v8.30.0
 GITLEAKS_IMAGE ?= ghcr.io/gitleaks/gitleaks:$(GITLEAKS_VERSION)@sha256:691af3c7c5a48b16f187ce3446d5f194838f91238f27270ed36eef6359a574d9
 NPM_VERSION ?= $(shell tr -d '\n' < .npm-version)
-WORKTREE_CLEANUP_ROOT ?= $(shell dirname "$$(git rev-parse --git-common-dir)")
+WORKTREE_CLEANUP_ROOT ?= $(shell dirname "$$(git rev-parse --path-format=absolute --git-common-dir)")
 WORKTREE_CLEANUP_DAYS ?= 14
 WORKTREE_CLEANUP_LABEL ?= com.tuxerrante.sresimulator.worktree-cleanup
 WORKTREE_CLEANUP_PLIST ?= $(HOME)/Library/LaunchAgents/$(WORKTREE_CLEANUP_LABEL).plist
@@ -142,12 +142,26 @@ cleanup-worktrees: ## Remove generated artifacts from old worktrees
 	bash scripts/cleanup-old-worktrees.sh --root "$(WORKTREE_CLEANUP_ROOT)" --days "$(WORKTREE_CLEANUP_DAYS)"
 
 install-weekly-worktree-cleanup: ## Install and load a weekly launchd cleanup job
-	bash scripts/install-worktree-cleanup-launchd.sh --repo-root "$(WORKTREE_CLEANUP_ROOT)" --output "$(WORKTREE_CLEANUP_PLIST)" --log-dir "$(WORKTREE_CLEANUP_LOG_DIR)"
+	@if [ "$$(uname -s)" != "Darwin" ]; then \
+		echo "install-weekly-worktree-cleanup is only supported on macOS; skipping."; \
+		exit 0; \
+	elif ! command -v launchctl >/dev/null 2>&1; then \
+		echo "launchctl not found; install-weekly-worktree-cleanup requires macOS launchd. Skipping."; \
+		exit 0; \
+	fi
+	bash scripts/install-worktree-cleanup-launchd.sh --repo-root "$(WORKTREE_CLEANUP_ROOT)" --output "$(WORKTREE_CLEANUP_PLIST)" --log-dir "$(WORKTREE_CLEANUP_LOG_DIR)" --label "$(WORKTREE_CLEANUP_LABEL)"
 	@launchctl bootout "gui/$$(id -u)" "$(WORKTREE_CLEANUP_PLIST)" >/dev/null 2>&1 || true
 	launchctl bootstrap "gui/$$(id -u)" "$(WORKTREE_CLEANUP_PLIST)"
 	@echo "Installed weekly worktree cleanup at $(WORKTREE_CLEANUP_PLIST)"
 
 uninstall-weekly-worktree-cleanup: ## Unload and remove the weekly launchd cleanup job
+	@if [ "$$(uname -s)" != "Darwin" ]; then \
+		echo "uninstall-weekly-worktree-cleanup is only supported on macOS; skipping."; \
+		exit 0; \
+	elif ! command -v launchctl >/dev/null 2>&1; then \
+		echo "launchctl not found; uninstall-weekly-worktree-cleanup requires macOS launchd. Skipping."; \
+		exit 0; \
+	fi
 	@launchctl bootout "gui/$$(id -u)" "$(WORKTREE_CLEANUP_PLIST)" >/dev/null 2>&1 || true
 	rm -f "$(WORKTREE_CLEANUP_PLIST)"
 	@echo "Removed weekly worktree cleanup from $(WORKTREE_CLEANUP_PLIST)"
@@ -255,8 +269,25 @@ test-shell: ## Run shell regression tests
 	bash scripts/helm-platform.test.sh
 	bash scripts/install-worktree-cleanup-launchd.test.sh
 	bash scripts/prod-db-guard.test.sh
+	bash scripts/release-version-sync.test.sh
 	bash scripts/select-deploy.test.sh
 	bash infra/scripts/tf-preflight.test.sh
+
+release-prepare: ## Update semver surfaces for a release tag
+	@set -euo pipefail; \
+	if [ -z "$${TAG:-}" ]; then \
+		echo "TAG is required. Example: make release-prepare TAG=v0.1.3"; \
+		exit 1; \
+	fi; \
+	node scripts/release-version-sync.mjs prepare --tag "$$TAG"
+
+verify-release-version: ## Verify semver surfaces for a release tag
+	@set -euo pipefail; \
+	if [ -z "$${TAG:-}" ]; then \
+		echo "TAG is required. Example: make verify-release-version TAG=v0.1.3"; \
+		exit 1; \
+	fi; \
+	node scripts/release-version-sync.mjs verify --tag "$$TAG"
 
 test-integration: test-shell ## Run backend integration tests (full API game flow, mock mode)
 	cd $(BACKEND_DIR) && npm run test:integration

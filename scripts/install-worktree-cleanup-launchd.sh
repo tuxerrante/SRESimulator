@@ -11,7 +11,7 @@ LABEL="com.tuxerrante.sresimulator.worktree-cleanup"
 REPO_ROOT="$DEFAULT_REPO_ROOT"
 OUTPUT_PATH="${HOME}/Library/LaunchAgents/${LABEL}.plist"
 LOG_DIR="${HOME}/Library/Logs/sresimulator"
-MAKE_BIN="$(command -v make)"
+MAKE_BIN="${MAKE_BIN:-}"
 
 usage() {
   cat <<'EOF'
@@ -24,6 +24,20 @@ EOF
 fail() {
   echo "error: $*" >&2
   exit 1
+}
+
+normalize_dir() {
+  local path=$1
+  [[ -d "$path" ]] || fail "directory '$path' does not exist"
+  (cd "$path" && pwd)
+}
+
+normalize_path() {
+  local path=$1
+  local dir
+  dir="$(dirname "$path")"
+  mkdir -p "$dir"
+  printf '%s/%s\n' "$(cd "$dir" && pwd)" "$(basename "$path")"
 }
 
 xml_escape() {
@@ -52,6 +66,11 @@ while (($#)); do
       LOG_DIR=$2
       shift 2
       ;;
+    --label)
+      [[ $# -ge 2 ]] || fail "--label requires a value"
+      LABEL=$2
+      shift 2
+      ;;
     -h|--help)
       usage
       exit 0
@@ -62,8 +81,15 @@ while (($#)); do
   esac
 done
 
-[[ -d "$REPO_ROOT" ]] || fail "repo root '$REPO_ROOT' does not exist"
-mkdir -p "$(dirname "$OUTPUT_PATH")" "$LOG_DIR"
+if [[ -z "$MAKE_BIN" ]]; then
+  MAKE_BIN="$(command -v make || true)"
+fi
+[[ -n "$MAKE_BIN" ]] || fail "make not found"
+
+REPO_ROOT="$(normalize_dir "$REPO_ROOT")"
+OUTPUT_PATH="$(normalize_path "$OUTPUT_PATH")"
+mkdir -p "$LOG_DIR"
+LOG_DIR="$(normalize_dir "$LOG_DIR")"
 
 escaped_repo_root=$(xml_escape "$REPO_ROOT")
 escaped_make_bin=$(xml_escape "$MAKE_BIN")
