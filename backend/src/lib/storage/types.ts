@@ -45,5 +45,9 @@ export interface ILeaderboardStore {
 
 export interface IMetricsStore {
   recordGameplay(data: GameplayRecord): Promise<void>;
+  hasLifecycleEvent(
+    sessionToken: string,
+    lifecycleState: GameplayLifecycleState,
+  ): Promise<boolean>;
   getPlayerHistory(nickname: string): Promise<GameplayRecord[]>;
 }

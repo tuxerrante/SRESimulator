@@ -39,4 +39,10 @@ export class JsonMetricsStore implements IMetricsStore {
       .filter((record) => record.nickname === nickname)
       .sort((a, b) => (b.createdAt?.getTime() ?? 0) - (a.createdAt?.getTime() ?? 0));
   }
+
+  async hasLifecycleEvent(sessionToken: string, lifecycleState: GameplayRecord["lifecycleState"]): Promise<boolean> {
+    return this.records.some((record) =>
+      record.sessionToken === sessionToken && record.lifecycleState === lifecycleState
+    );
+  }
 }

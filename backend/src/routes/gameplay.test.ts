@@ -63,6 +63,7 @@ describe("gameplay routes", () => {
   let tmpDir: string;
   let origDataDir: string | undefined;
   let origMockMode: string | undefined;
+  let origGameplayRateLimitMax: string | undefined;
 
   let gameplayRouter: typeof import("./gameplay").gameplayRouter;
   let getSessionStore: typeof import("../lib/storage").getSessionStore;
@@ -72,8 +73,10 @@ describe("gameplay routes", () => {
     tmpDir = await mkdtemp(join(tmpdir(), "gameplay-routes-test-"));
     origDataDir = process.env.DATA_DIR;
     origMockMode = process.env.AI_MOCK_MODE;
+    origGameplayRateLimitMax = process.env.GAMEPLAY_TELEMETRY_RATE_LIMIT_MAX;
     process.env.DATA_DIR = tmpDir;
     process.env.AI_MOCK_MODE = "true";
+    delete process.env.GAMEPLAY_TELEMETRY_RATE_LIMIT_MAX;
     delete process.env.STORAGE_BACKEND;
 
     vi.resetModules();
@@ -98,6 +101,12 @@ describe("gameplay routes", () => {
       delete process.env.AI_MOCK_MODE;
     } else {
       process.env.AI_MOCK_MODE = origMockMode;
+    }
+
+    if (origGameplayRateLimitMax === undefined) {
+      delete process.env.GAMEPLAY_TELEMETRY_RATE_LIMIT_MAX;
+    } else {
+      process.env.GAMEPLAY_TELEMETRY_RATE_LIMIT_MAX = origGameplayRateLimitMax;
     }
 
     await rm(tmpDir, { recursive: true, force: true });
@@ -220,6 +229,54 @@ describe("gameplay routes", () => {
     expect(history[0].metadata).toEqual({ safeKey: "kept" });
     expect(Object.prototype.hasOwnProperty.call(history[0].metadata ?? {}, "constructor")).toBe(false);
     expect(Object.prototype.hasOwnProperty.call(history[0].metadata ?? {}, "prototype")).toBe(false);
+  });
+
+  it("POST /api/gameplay ignores duplicate lifecycle submissions for the same session", async () => {
+    const token = await getSessionStore().create("easy", "The Sleeping Cluster");
+    const app = createApp();
+
+    const first = await httpRequest(app, "POST", "/api/gameplay", {
+      sessionToken: token,
+      lifecycleState: "completed",
+      nickname: "dedupe-player",
+    });
+    const duplicate = await httpRequest(app, "POST", "/api/gameplay", {
+      sessionToken: token,
+      lifecycleState: "completed",
+      nickname: "dedupe-player",
+    });
+
+    expect(first.status).toBe(202);
+    expect(duplicate.status).toBe(202);
+    expect(duplicate.body.deduped).toBe(true);
+
+    const history = await getMetricsStore().getPlayerHistory("dedupe-player");
+    expect(history).toHaveLength(1);
+    expect(history[0].lifecycleState).toBe("completed");
+  });
+
+  it("POST /api/gameplay applies the gameplay telemetry rate limit", async () => {
+    process.env.GAMEPLAY_TELEMETRY_RATE_LIMIT_MAX = "2";
+    const token = await getSessionStore().create("easy", "The Sleeping Cluster");
+    const app = createApp();
+
+    expect((await httpRequest(app, "POST", "/api/gameplay", {
+      sessionToken: token,
+      lifecycleState: "started",
+    })).status).toBe(202);
+
+    expect((await httpRequest(app, "POST", "/api/gameplay", {
+      sessionToken: token,
+      lifecycleState: "abandoned",
+    })).status).toBe(202);
+
+    const limited = await httpRequest(app, "POST", "/api/gameplay", {
+      sessionToken: token,
+      lifecycleState: "completed",
+    });
+
+    expect(limited.status).toBe(429);
+    expect(limited.body.error).toContain("Too many gameplay telemetry events");
   });
 
   it("POST /api/gameplay rejects invalid session tokens", async () => {

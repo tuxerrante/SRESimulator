@@ -1,8 +1,10 @@
 import { Router, type Request, type Response } from "express";
 import { getMetricsStore, getSessionStore } from "../lib/storage";
+import { gameplayTelemetryRateLimit } from "../lib/rate-limit";
 import type { GameplayLifecycleState } from "../../../shared/types/gameplay";
 
 export const gameplayRouter = Router();
+gameplayRouter.use(gameplayTelemetryRateLimit);
 
 const MAX_COMMANDS = 50;
 const MAX_COMMAND_LENGTH = 200;
@@ -124,6 +126,11 @@ gameplayRouter.post("/", async (req: Request, res: Response) => {
     const session = await getSessionStore().get(body.sessionToken);
     if (!session) {
       res.status(403).json({ error: "Invalid session token" });
+      return;
+    }
+
+    if (await getMetricsStore().hasLifecycleEvent(body.sessionToken, body.lifecycleState)) {
+      res.status(202).json({ ok: true, deduped: true });
       return;
     }
 

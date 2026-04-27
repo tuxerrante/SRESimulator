@@ -87,4 +87,18 @@ export class MssqlMetricsStore implements IMetricsStore {
       createdAt: r.created_at,
     }));
   }
+
+  async hasLifecycleEvent(sessionToken: string, lifecycleState: GameplayRecord["lifecycleState"]): Promise<boolean> {
+    const result = await this.pool.request()
+      .input("sessionToken", sessionToken)
+      .input("lifecycleState", lifecycleState)
+      .query<{ matched: number }>(`
+        SELECT TOP 1 1 AS matched
+        FROM gameplay_metrics
+        WHERE session_token = @sessionToken
+          AND lifecycle_state = @lifecycleState
+      `);
+
+    return result.recordset.length > 0;
+  }
 }

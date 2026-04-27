@@ -88,4 +88,17 @@ describe("JsonMetricsStore", () => {
       completed: true,
     });
   });
+
+  it("detects an existing lifecycle event for a session token", async () => {
+    const store = new JsonMetricsStore();
+
+    await store.recordGameplay({
+      sessionToken: "session-1",
+      lifecycleState: "completed",
+    });
+
+    await expect(store.hasLifecycleEvent("session-1", "completed")).resolves.toBe(true);
+    await expect(store.hasLifecycleEvent("session-1", "started")).resolves.toBe(false);
+    await expect(store.hasLifecycleEvent("session-2", "completed")).resolves.toBe(false);
+  });
 });

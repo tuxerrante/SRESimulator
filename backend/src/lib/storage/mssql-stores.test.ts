@@ -306,4 +306,17 @@ describe("MssqlMetricsStore", () => {
     expect(history[0].scoreTotal).toBe(70);
     expect(history[0].grade).toBe("C");
   });
+
+  it("hasLifecycleEvent() checks for a matching session token and lifecycle state", async () => {
+    const { pool, req } = createMockPool([{ matched: 1 }]);
+    const store = new MssqlMetricsStore(pool);
+
+    await expect(store.hasLifecycleEvent("tok-1", "completed")).resolves.toBe(true);
+
+    expect(req.input).toHaveBeenCalledWith("sessionToken", "tok-1");
+    expect(req.input).toHaveBeenCalledWith("lifecycleState", "completed");
+    const sql = req.query.mock.calls[0][0] as string;
+    expect(sql).toContain("WHERE session_token = @sessionToken");
+    expect(sql).toContain("AND lifecycle_state = @lifecycleState");
+  });
 });
