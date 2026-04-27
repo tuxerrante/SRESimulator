@@ -389,12 +389,17 @@ describe.skipIf(SKIP)("MssqlMetricsStore (real SQL)", () => {
   });
 
   it("dedupes duplicate lifecycle inserts for the same session token", async () => {
+    const { MssqlSessionStore } = await import(
+      "../lib/storage/mssql-session-store"
+    );
     const { MssqlMetricsStore } = await import(
       "../lib/storage/mssql-metrics-store"
     );
+    const sessionStore = new MssqlSessionStore(pool);
     const store = new MssqlMetricsStore(pool);
     const nick = trackNickname(shortId("d"));
-    const sessionToken = crypto.randomUUID();
+    const sessionToken = await sessionStore.create("medium", "Bad Egress");
+    createdSessionTokens.push(sessionToken);
 
     await store.recordGameplay({
       sessionToken,
