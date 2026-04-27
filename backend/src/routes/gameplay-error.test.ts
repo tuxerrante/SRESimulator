@@ -70,6 +70,7 @@ describe("gameplay route errors", () => {
       startTime: Date.now(),
       used: false,
     });
+    const hasLifecycleEvent = vi.fn().mockResolvedValue(false);
     const recordGameplay = vi.fn().mockRejectedValue(new Error("driver blew up"));
 
     vi.doMock("../lib/storage", async () => {
@@ -77,7 +78,7 @@ describe("gameplay route errors", () => {
       return {
         ...actual,
         getSessionStore: () => ({ get }),
-        getMetricsStore: () => ({ recordGameplay }),
+        getMetricsStore: () => ({ hasLifecycleEvent, recordGameplay }),
       };
     });
 
@@ -94,5 +95,7 @@ describe("gameplay route errors", () => {
     expect(response.status).toBe(500);
     expect(response.body.error).toBe("Failed to record gameplay event");
     expect(JSON.stringify(response.body)).not.toContain("driver blew up");
+    expect(hasLifecycleEvent).toHaveBeenCalledWith("session-123", "completed");
+    expect(recordGameplay).toHaveBeenCalled();
   });
 });

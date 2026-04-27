@@ -1,41 +1,57 @@
 import type sql from "mssql";
 import type { IMetricsStore, GameplayRecord } from "./types";
 
+function isDuplicateLifecycleEventError(error: unknown): boolean {
+  if (!error || typeof error !== "object") {
+    return false;
+  }
+
+  const number = (error as { number?: unknown }).number;
+  return number === 2601 || number === 2627;
+}
+
 export class MssqlMetricsStore implements IMetricsStore {
   constructor(private pool: sql.ConnectionPool) {}
 
   async recordGameplay(data: GameplayRecord): Promise<void> {
     const lifecycleState = data.lifecycleState ?? "completed";
 
-    await this.pool.request()
-      .input("sessionToken", data.sessionToken ?? null)
-      .input("nickname", data.nickname ?? null)
-      .input("difficulty", data.difficulty ?? null)
-      .input("scenarioTitle", data.scenarioTitle ?? null)
-      .input("lifecycleState", lifecycleState)
-      .input("commandCount", data.commandCount ?? data.commandsExecuted?.length ?? 0)
-      .input("commandsExecuted", JSON.stringify(data.commandsExecuted ?? []))
-      .input("scoringEvents", JSON.stringify(data.scoringEvents ?? []))
-      .input("chatMessageCount", data.chatMessageCount ?? 0)
-      .input("aiPromptTokens", data.aiPromptTokens ?? 0)
-      .input("aiCompletionTokens", data.aiCompletionTokens ?? 0)
-      .input("durationMs", data.durationMs ?? null)
-      .input("scoreTotal", data.scoreTotal ?? null)
-      .input("grade", data.grade ?? null)
-      .input("completed", data.completed ?? lifecycleState === "completed")
-      .input("metadata", JSON.stringify(data.metadata ?? {}))
-      .query(`
-        INSERT INTO gameplay_metrics
-          (session_token, nickname, difficulty, scenario_title, lifecycle_state,
-           command_count,
-           commands_executed, scoring_events, chat_message_count,
-           ai_prompt_tokens, ai_completion_tokens, duration_ms, score_total, grade,
-           completed, metadata)
-        VALUES (@sessionToken, @nickname, @difficulty, @scenarioTitle, @lifecycleState,
-                @commandCount, @commandsExecuted, @scoringEvents, @chatMessageCount,
-                @aiPromptTokens, @aiCompletionTokens, @durationMs,
-                @scoreTotal, @grade, @completed, @metadata)
-      `);
+    try {
+      await this.pool.request()
+        .input("sessionToken", data.sessionToken ?? null)
+        .input("nickname", data.nickname ?? null)
+        .input("difficulty", data.difficulty ?? null)
+        .input("scenarioTitle", data.scenarioTitle ?? null)
+        .input("lifecycleState", lifecycleState)
+        .input("commandCount", data.commandCount ?? data.commandsExecuted?.length ?? 0)
+        .input("commandsExecuted", JSON.stringify(data.commandsExecuted ?? []))
+        .input("scoringEvents", JSON.stringify(data.scoringEvents ?? []))
+        .input("chatMessageCount", data.chatMessageCount ?? 0)
+        .input("aiPromptTokens", data.aiPromptTokens ?? 0)
+        .input("aiCompletionTokens", data.aiCompletionTokens ?? 0)
+        .input("durationMs", data.durationMs ?? null)
+        .input("scoreTotal", data.scoreTotal ?? null)
+        .input("grade", data.grade ?? null)
+        .input("completed", data.completed ?? lifecycleState === "completed")
+        .input("metadata", JSON.stringify(data.metadata ?? {}))
+        .query(`
+          INSERT INTO gameplay_metrics
+            (session_token, nickname, difficulty, scenario_title, lifecycle_state,
+             command_count,
+             commands_executed, scoring_events, chat_message_count,
+             ai_prompt_tokens, ai_completion_tokens, duration_ms, score_total, grade,
+             completed, metadata)
+          VALUES (@sessionToken, @nickname, @difficulty, @scenarioTitle, @lifecycleState,
+                  @commandCount, @commandsExecuted, @scoringEvents, @chatMessageCount,
+                  @aiPromptTokens, @aiCompletionTokens, @durationMs,
+                  @scoreTotal, @grade, @completed, @metadata)
+        `);
+    } catch (error) {
+      if (isDuplicateLifecycleEventError(error)) {
+        return;
+      }
+      throw error;
+    }
   }
 
   async getPlayerHistory(nickname: string): Promise<GameplayRecord[]> {

@@ -270,6 +270,23 @@ describe("MssqlMetricsStore", () => {
     expect(req.input).toHaveBeenCalledWith("metadata", "{}");
   });
 
+  it("recordGameplay() treats duplicate lifecycle inserts as idempotent", async () => {
+    const duplicateError = Object.assign(new Error("duplicate key"), { number: 2601 });
+    const req = {
+      input: vi.fn().mockReturnThis(),
+      query: vi.fn().mockRejectedValue(duplicateError),
+    };
+    const pool = {
+      request: vi.fn().mockReturnValue(req),
+    } as unknown as sql.ConnectionPool;
+    const store = new MssqlMetricsStore(pool);
+
+    await expect(store.recordGameplay({
+      sessionToken: "tok-1",
+      lifecycleState: "completed",
+    })).resolves.toBeUndefined();
+  });
+
   it("getPlayerHistory() maps JSON string columns back to objects", async () => {
     const row = {
       id: "m1",

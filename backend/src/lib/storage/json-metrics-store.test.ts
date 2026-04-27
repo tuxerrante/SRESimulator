@@ -101,4 +101,22 @@ describe("JsonMetricsStore", () => {
     await expect(store.hasLifecycleEvent("session-1", "started")).resolves.toBe(false);
     await expect(store.hasLifecycleEvent("session-2", "completed")).resolves.toBe(false);
   });
+
+  it("ignores duplicate session and lifecycle pairs when recording gameplay", async () => {
+    const store = new JsonMetricsStore();
+
+    await store.recordGameplay({
+      sessionToken: "session-dedupe",
+      nickname: "dedupe-player",
+      lifecycleState: "completed",
+    });
+    await store.recordGameplay({
+      sessionToken: "session-dedupe",
+      nickname: "dedupe-player",
+      lifecycleState: "completed",
+    });
+
+    const history = await store.getPlayerHistory("dedupe-player");
+    expect(history).toHaveLength(1);
+  });
 });

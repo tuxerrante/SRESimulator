@@ -8,6 +8,15 @@ export class JsonMetricsStore implements IMetricsStore {
   async recordGameplay(data: GameplayRecord): Promise<void> {
     const lifecycleState = data.lifecycleState ?? "completed";
 
+    if (
+      data.sessionToken &&
+      this.records.some((record) =>
+        record.sessionToken === data.sessionToken && record.lifecycleState === lifecycleState
+      )
+    ) {
+      return;
+    }
+
     const record: GameplayRecord = {
       ...data,
       id: data.id ?? crypto.randomUUID(),

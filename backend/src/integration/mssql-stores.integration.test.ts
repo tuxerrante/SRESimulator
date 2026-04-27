@@ -296,6 +296,40 @@ describe.skipIf(SKIP)("MssqlMetricsStore (real SQL)", () => {
     const history = await store.getPlayerHistory("");
     expect(history.length).toBeGreaterThanOrEqual(0);
   });
+
+  it("dedupes duplicate lifecycle inserts for the same session token", async () => {
+    const { MssqlMetricsStore } = await import(
+      "../lib/storage/mssql-metrics-store"
+    );
+    const store = new MssqlMetricsStore(pool);
+    const nick = trackNickname(shortId("d"));
+    const sessionToken = crypto.randomUUID();
+
+    await store.recordGameplay({
+      sessionToken,
+      nickname: nick,
+      difficulty: "medium",
+      scenarioTitle: "Bad Egress",
+      lifecycleState: "completed",
+      completed: true,
+    });
+    await expect(store.recordGameplay({
+      sessionToken,
+      nickname: nick,
+      difficulty: "medium",
+      scenarioTitle: "Bad Egress",
+      lifecycleState: "completed",
+      completed: true,
+    })).resolves.not.toThrow();
+
+    const history = await store.getPlayerHistory(nick);
+    expect(
+      history.filter((record) =>
+        record.sessionToken?.toLowerCase() === sessionToken.toLowerCase() &&
+        record.lifecycleState === "completed"
+      )
+    ).toHaveLength(1);
+  });
 });
 
 describe.skipIf(SKIP)("Migration idempotency (real SQL)", () => {
