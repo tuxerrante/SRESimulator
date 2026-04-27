@@ -24,6 +24,26 @@ function decodePayload(token: string): ViewerSession | null {
   }
 }
 
+function isViewerSession(value: unknown): value is ViewerSession {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+
+  const session = value as Record<string, unknown>;
+  return (
+    session.kind === "github" &&
+    typeof session.githubUserId === "string" &&
+    session.githubUserId.trim().length > 0 &&
+    typeof session.githubLogin === "string" &&
+    session.githubLogin.trim().length > 0 &&
+    typeof session.displayName === "string" &&
+    session.displayName.trim().length > 0 &&
+    (typeof session.avatarUrl === "string" || session.avatarUrl === null) &&
+    Number.isFinite(session.issuedAt) &&
+    Number.isFinite(session.expiresAt)
+  );
+}
+
 function signPayload(payload: string, secret: string): Buffer {
   return createHmac("sha256", secret).update(payload).digest();
 }
@@ -39,7 +59,11 @@ export function readViewerSessionToken(
   secret: string,
   options: ReadViewerSessionOptions = {}
 ): ViewerSession | null {
-  const [payload, signature] = token.split(".");
+  const parts = token.split(".");
+  if (parts.length !== 2) {
+    return null;
+  }
+  const [payload, signature] = parts;
   if (!payload || !signature) {
     return null;
   }
@@ -55,7 +79,7 @@ export function readViewerSessionToken(
   }
 
   const session = decodePayload(payload);
-  if (!session) {
+  if (!isViewerSession(session)) {
     return null;
   }
 

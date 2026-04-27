@@ -24,6 +24,22 @@ function decodePayload(token: string): AnonymousProofSession | null {
   }
 }
 
+function isAnonymousProofSession(value: unknown): value is AnonymousProofSession {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+
+  const session = value as Record<string, unknown>;
+  return (
+    typeof session.fingerprintHash === "string" &&
+    session.fingerprintHash.trim().length > 0 &&
+    typeof session.userAgentHash === "string" &&
+    session.userAgentHash.trim().length > 0 &&
+    Number.isFinite(session.issuedAt) &&
+    Number.isFinite(session.expiresAt)
+  );
+}
+
 function signPayload(payload: string, secret: string): Buffer {
   return createHmac("sha256", secret).update(payload).digest();
 }
@@ -46,7 +62,11 @@ export function readAnonymousProofToken(
   secret: string,
   options: ReadAnonymousProofOptions = {}
 ): AnonymousProofSession | null {
-  const [payload, signature] = token.split(".");
+  const parts = token.split(".");
+  if (parts.length !== 2) {
+    return null;
+  }
+  const [payload, signature] = parts;
   if (!payload || !signature) {
     return null;
   }
@@ -62,7 +82,7 @@ export function readAnonymousProofToken(
   }
 
   const session = decodePayload(payload);
-  if (!session) {
+  if (!isAnonymousProofSession(session)) {
     return null;
   }
 

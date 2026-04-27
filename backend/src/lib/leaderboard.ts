@@ -66,15 +66,28 @@ export async function getHallOfFame(): Promise<HallOfFameEntry[]> {
 
   const playerMap = new Map<
     string,
-    { easy?: number; medium?: number; hard?: number }
+    {
+      easy?: number;
+      medium?: number;
+      hard?: number;
+      latestNickname: string;
+      latestTimestamp: number;
+    }
   >();
 
   for (const entry of entries) {
     if (!entry.githubUserId) continue;
-    const existing = playerMap.get(entry.githubUserId) ?? {};
+    const existing = playerMap.get(entry.githubUserId) ?? {
+      latestNickname: entry.nickname,
+      latestTimestamp: entry.timestamp,
+    };
     const current = existing[entry.difficulty];
     if (current === undefined || entry.score.total > current) {
       existing[entry.difficulty] = entry.score.total;
+    }
+    if (entry.timestamp >= existing.latestTimestamp) {
+      existing.latestNickname = entry.nickname;
+      existing.latestTimestamp = entry.timestamp;
     }
     playerMap.set(entry.githubUserId, existing);
   }
@@ -83,8 +96,15 @@ export async function getHallOfFame(): Promise<HallOfFameEntry[]> {
   for (const [githubUserId, scores] of playerMap) {
     const compositeScore =
       (scores.easy ?? 0) + (scores.medium ?? 0) + (scores.hard ?? 0);
-    const nickname = entries.find((entry) => entry.githubUserId === githubUserId)?.nickname ?? githubUserId;
-    hallOfFame.push({ nickname, compositeScore, scores });
+    hallOfFame.push({
+      nickname: scores.latestNickname || githubUserId,
+      compositeScore,
+      scores: {
+        ...(scores.easy !== undefined ? { easy: scores.easy } : {}),
+        ...(scores.medium !== undefined ? { medium: scores.medium } : {}),
+        ...(scores.hard !== undefined ? { hard: scores.hard } : {}),
+      },
+    });
   }
 
   hallOfFame.sort((a, b) => b.compositeScore - a.compositeScore);

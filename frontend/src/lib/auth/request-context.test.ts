@@ -44,6 +44,21 @@ describe("request auth context helpers", () => {
 
   it("falls back to forwarded proto and host when public origin is unset", () => {
     delete process.env.PUBLIC_APP_ORIGIN;
+    delete process.env.TRUST_PROXY_HEADERS;
+
+    expect(
+      getAppOrigin(
+        makeRequestLike("http://internal:3000/api/auth/github/login", {
+          "x-forwarded-proto": "https",
+          "x-forwarded-host": "play.sresimulator.osadev.cloud",
+        })
+      )
+    ).toBe("http://internal:3000");
+  });
+
+  it("uses forwarded proto and host only when proxy header trust is enabled", () => {
+    delete process.env.PUBLIC_APP_ORIGIN;
+    process.env.TRUST_PROXY_HEADERS = "true";
 
     expect(
       getAppOrigin(
@@ -53,5 +68,7 @@ describe("request auth context helpers", () => {
         })
       )
     ).toBe("https://play.sresimulator.osadev.cloud");
+
+    delete process.env.TRUST_PROXY_HEADERS;
   });
 });

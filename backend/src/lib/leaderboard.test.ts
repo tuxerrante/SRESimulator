@@ -139,4 +139,21 @@ describe("leaderboard", () => {
     const hall = await getHallOfFame();
     expect(hall[0].scores.easy).toBe(90);
   });
+
+  it("uses the latest nickname seen for a GitHub player in hall of fame", async () => {
+    const { addEntry, getHallOfFame } = await import("./leaderboard");
+    const first = makeEntry("alice", "easy", 80);
+    const renamed = {
+      ...makeEntry("alice-renamed", "medium", 70),
+      githubUserId: first.githubUserId,
+      githubLogin: first.githubLogin,
+      timestamp: first.timestamp + 1_000,
+    };
+
+    await addEntry(first);
+    await addEntry(renamed);
+
+    const hall = await getHallOfFame();
+    expect(hall[0].nickname).toBe("alice-renamed");
+  });
 });

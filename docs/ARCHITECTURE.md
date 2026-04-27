@@ -392,8 +392,9 @@ Database free tier (100K vCore-seconds/month, 32 GB storage, $0/month).
 - **Anonymous trials**: Stored in `anonymous_trial_claims`, keyed by salted
   claim digest with 24h expiry for free-trial enforcement.
 - **Leaderboard**: Stored in `leaderboard_entries` table. Uses `MERGE`
-  to atomically keep the best score per (GitHub user id, difficulty), while
-  still storing the latest callsign/nickname for display.
+  to atomically keep the best score per (GitHub user id, difficulty). The
+  stored callsign/nickname corresponds to the best recorded run for that
+  entry, not necessarily the player's latest callsign change.
   Per-difficulty trim to 10 entries happens after each insert.
 - **Metrics**: Stored in `gameplay_metrics` table. Captures per-session
   analytics (commands executed, scoring events, AI token consumption) with

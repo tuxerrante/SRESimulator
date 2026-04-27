@@ -53,6 +53,8 @@ function getDecisionStatus(
 }
 
 scenarioRouter.post("/", async (req: Request, res: Response) => {
+  let reservedClaimKeys: string[] = [];
+  let claimReservationCommitted = false;
   try {
     const body: ScenarioRequestBody = req.body;
     const { difficulty, turnstileToken } = body;
@@ -125,53 +127,52 @@ scenarioRouter.post("/", async (req: Request, res: Response) => {
       await getPlayerStore().upsertGithubViewer(viewer);
     }
 
+    const reserveAnonymousClaimKeys = async (): Promise<string[]> => {
+      if (accessDecision.sessionIdentityKind !== "anonymous") {
+        return [];
+      }
+
+      const now = Date.now();
+      const reserved = await getAnonymousTrialStore().reserveClaimKeys(anonymousClaimKeys, {
+        claimKey: anonymousClaimKeys[0] ?? "anonymous",
+        createdAt: now,
+        expiresAt: now + ANONYMOUS_TRIAL_TTL_MS,
+      });
+      if (!reserved) {
+        res.status(429).json({
+          error: "Anonymous Easy mode is limited to one run per day.",
+          code: "anonymous_daily_limit_reached",
+        });
+        throw new Error("anonymous_claim_conflict");
+      }
+
+      return anonymousClaimKeys;
+    };
+
     const createSessionForScenario = async (scenarioTitle: string): Promise<{
       sessionToken: string;
       identityKind: "github" | "anonymous";
     }> => {
-      let reservedClaimKeys: string[] = [];
-      if (accessDecision.sessionIdentityKind === "anonymous") {
-        const now = Date.now();
-        const reserved = await getAnonymousTrialStore().reserveClaimKeys(anonymousClaimKeys, {
-          claimKey: anonymousClaimKeys[0] ?? "anonymous",
-          createdAt: now,
-          expiresAt: now + ANONYMOUS_TRIAL_TTL_MS,
-        });
-        if (!reserved) {
-          res.status(429).json({
-            error: "Anonymous Easy mode is limited to one run per day.",
-            code: "anonymous_daily_limit_reached",
-          });
-          throw new Error("anonymous_claim_conflict");
-        }
-        reservedClaimKeys = anonymousClaimKeys;
-      }
+      const sessionToken = await getSessionStore().create({
+        difficulty,
+        scenarioTitle,
+        identityKind: accessDecision.sessionIdentityKind,
+        githubUserId: viewer?.githubUserId ?? null,
+        githubLogin: viewer?.githubLogin ?? null,
+        anonymousClaimKey: reservedClaimKeys[0] ?? null,
+        persistentScoreEligible: accessDecision.sessionIdentityKind === "github",
+      });
+      claimReservationCommitted = true;
 
-      try {
-        const sessionToken = await getSessionStore().create({
-          difficulty,
-          scenarioTitle,
-          identityKind: accessDecision.sessionIdentityKind,
-          githubUserId: viewer?.githubUserId ?? null,
-          githubLogin: viewer?.githubLogin ?? null,
-          anonymousClaimKey: reservedClaimKeys[0] ?? null,
-          persistentScoreEligible: accessDecision.sessionIdentityKind === "github",
-        });
-
-        return {
-          sessionToken,
-          identityKind: accessDecision.sessionIdentityKind,
-        };
-      } catch (error) {
-        if (reservedClaimKeys.length > 0) {
-          await getAnonymousTrialStore().releaseClaimKeys(reservedClaimKeys);
-        }
-        throw error;
-      }
+      return {
+        sessionToken,
+        identityKind: accessDecision.sessionIdentityKind,
+      };
     };
 
     const readiness = getAiReadiness();
     if (readiness.mockMode) {
+      reservedClaimKeys = await reserveAnonymousClaimKeys();
       const scenario = generateMockScenario(difficulty);
       const session = await createSessionForScenario(scenario.title);
       res.json({ scenario, sessionToken: session.sessionToken, identityKind: session.identityKind });
@@ -185,6 +186,7 @@ scenarioRouter.post("/", async (req: Request, res: Response) => {
       return;
     }
 
+    reservedClaimKeys = await reserveAnonymousClaimKeys();
     const knowledgeBase = await loadKnowledgeBase();
 
     // Extract only scenario-relevant context from the knowledge base
@@ -279,6 +281,9 @@ ${scenarioContext}`,
 
     res.json({ scenario, sessionToken: session.sessionToken, identityKind: session.identityKind });
   } catch (error) {
+    if (reservedClaimKeys.length > 0 && !claimReservationCommitted) {
+      await getAnonymousTrialStore().releaseClaimKeys(reservedClaimKeys);
+    }
     if (error instanceof Error && error.message === "anonymous_claim_conflict") {
       return;
     }

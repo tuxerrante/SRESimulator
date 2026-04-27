@@ -44,46 +44,49 @@ export class MssqlAnonymousTrialStore implements IAnonymousTrialStore {
     }
 
     const transaction = new sql.Transaction(this.pool);
-    await transaction.begin();
+    await transaction.begin(sql.ISOLATION_LEVEL.SERIALIZABLE);
 
     try {
       const placeholders = claimKeys.map((_, index) => `@claimKey${index}`).join(", ");
-      const checkRequest = new sql.Request(transaction).input("nowTs", claim.createdAt);
+      const lockRequest = new sql.Request(transaction).input("nowTs", claim.createdAt);
       for (const [index, claimKey] of claimKeys.entries()) {
-        checkRequest.input(`claimKey${index}`, claimKey);
+        lockRequest.input(`claimKey${index}`, claimKey);
       }
 
-      const checkResult = await checkRequest.query<{ active_count: number }>(`
-        SELECT COUNT(*) AS active_count
+      const existingClaims = await lockRequest.query<{ claim_key: string; expires_at_ts: number }>(`
+        SELECT claim_key, expires_at_ts
         FROM anonymous_trial_claims
+        WITH (UPDLOCK, HOLDLOCK)
         WHERE claim_key IN (${placeholders})
-          AND expires_at_ts > @nowTs
       `);
 
-      if (Number(checkResult.recordset[0]?.active_count ?? 0) > 0) {
+      if (
+        existingClaims.recordset.some((existingClaim) => existingClaim.expires_at_ts > claim.createdAt)
+      ) {
         await transaction.rollback();
         return false;
       }
 
-      for (const claimKey of claimKeys) {
-        await new sql.Request(transaction)
-          .input("claimKey", claimKey)
-          .input("createdAtTs", claim.createdAt)
-          .input("expiresAtTs", claim.expiresAt)
-          .query(`
-            MERGE anonymous_trial_claims AS target
-            USING (SELECT @claimKey AS claim_key) AS source
-            ON target.claim_key = source.claim_key
-            WHEN MATCHED THEN
-              UPDATE SET
-                created_at_ts = @createdAtTs,
-                expires_at_ts = @expiresAtTs,
-                updated_at = SYSDATETIMEOFFSET()
-            WHEN NOT MATCHED THEN
-              INSERT (claim_key, created_at_ts, expires_at_ts)
-              VALUES (@claimKey, @createdAtTs, @expiresAtTs);
-          `);
+      const deleteRequest = new sql.Request(transaction);
+      for (const [index, claimKey] of claimKeys.entries()) {
+        deleteRequest.input(`claimKey${index}`, claimKey);
       }
+      await deleteRequest.query(`
+        DELETE FROM anonymous_trial_claims
+        WHERE claim_key IN (${placeholders})
+      `);
+
+      const insertRequest = new sql.Request(transaction)
+        .input("createdAtTs", claim.createdAt)
+        .input("expiresAtTs", claim.expiresAt);
+      const values = claimKeys.map((_, index) => `(@claimKey${index}, @createdAtTs, @expiresAtTs)`).join(", ");
+      for (const [index, claimKey] of claimKeys.entries()) {
+        insertRequest.input(`claimKey${index}`, claimKey);
+      }
+      await insertRequest.query(`
+        INSERT INTO anonymous_trial_claims (claim_key, created_at_ts, expires_at_ts)
+        VALUES ${values}
+      `);
 
       await transaction.commit();
       return true;

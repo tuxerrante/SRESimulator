@@ -1,3 +1,4 @@
+import { createHmac } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import {
   createViewerSessionToken,
@@ -46,5 +47,29 @@ describe("viewer session token", () => {
     );
 
     expect(readViewerSessionToken(token, secret, { now: 201 })).toBeNull();
+  });
+
+  it("rejects tokens with extra dot-separated segments", () => {
+    const token = createViewerSessionToken(githubViewer, secret);
+
+    expect(readViewerSessionToken(`${token}.extra`, secret)).toBeNull();
+  });
+
+  it("rejects tokens with an invalid decoded payload shape", () => {
+    const badPayload = Buffer.from(
+      JSON.stringify({
+        kind: "github",
+        githubUserId: "12345",
+        githubLogin: "octocat",
+        displayName: "The Octocat",
+        avatarUrl: null,
+        issuedAt: Date.now(),
+        expiresAt: "not-a-number",
+      }),
+      "utf8"
+    ).toString("base64url");
+    const signature = createHmac("sha256", secret).update(badPayload).digest("base64url");
+
+    expect(readViewerSessionToken(`${badPayload}.${signature}`, secret)).toBeNull();
   });
 });

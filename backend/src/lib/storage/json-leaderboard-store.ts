@@ -71,20 +71,28 @@ export class JsonLeaderboardStore implements ILeaderboardStore {
 
     const playerMap = new Map<
       string,
-      { nickname: string; scores: { easy?: number; medium?: number; hard?: number } }
+      {
+        nickname: string;
+        latestTimestamp: number;
+        scores: { easy?: number; medium?: number; hard?: number };
+      }
     >();
 
     for (const entry of entries) {
       if (!entry.githubUserId) continue;
       const existing = playerMap.get(entry.githubUserId) ?? {
         nickname: entry.nickname,
+        latestTimestamp: entry.timestamp,
         scores: {},
       };
       const current = existing.scores[entry.difficulty];
       if (current === undefined || entry.score.total > current) {
         existing.scores[entry.difficulty] = entry.score.total;
       }
-      existing.nickname = entry.nickname;
+      if (entry.timestamp >= existing.latestTimestamp) {
+        existing.nickname = entry.nickname;
+        existing.latestTimestamp = entry.timestamp;
+      }
       playerMap.set(entry.githubUserId, existing);
     }
 
