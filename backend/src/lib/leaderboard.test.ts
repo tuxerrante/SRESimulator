@@ -29,6 +29,7 @@ describe("leaderboard", () => {
     total: number,
     durationMs = 60000
   ) {
+    const githubUserId = `gh-${nickname}`;
     return {
       id: crypto.randomUUID(),
       nickname,
@@ -44,6 +45,9 @@ describe("leaderboard", () => {
       commandCount: 5,
       durationMs,
       scenarioTitle: `${difficulty} scenario`,
+      identityKind: "github" as const,
+      githubUserId,
+      githubLogin: `login-${nickname}`,
       timestamp: Date.now(),
     };
   }
@@ -134,5 +138,22 @@ describe("leaderboard", () => {
 
     const hall = await getHallOfFame();
     expect(hall[0].scores.easy).toBe(90);
+  });
+
+  it("uses the latest nickname seen for a GitHub player in hall of fame", async () => {
+    const { addEntry, getHallOfFame } = await import("./leaderboard");
+    const first = makeEntry("alice", "easy", 80);
+    const renamed = {
+      ...makeEntry("alice-renamed", "medium", 70),
+      githubUserId: first.githubUserId,
+      githubLogin: first.githubLogin,
+      timestamp: first.timestamp + 1_000,
+    };
+
+    await addEntry(first);
+    await addEntry(renamed);
+
+    const hall = await getHallOfFame();
+    expect(hall[0].nickname).toBe("alice-renamed");
   });
 });

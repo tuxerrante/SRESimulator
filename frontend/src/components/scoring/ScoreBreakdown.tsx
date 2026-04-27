@@ -23,9 +23,11 @@ export function ScoreBreakdown() {
   const resetGame = useGameStore((s) => s.resetGame);
   const storedNickname = useGameStore((s) => s.nickname);
   const updateNickname = useGameStore((s) => s.setNickname);
+  const viewer = useGameStore((s) => s.viewer);
 
   const [nickname, setNickname] = useState(storedNickname ?? "");
   const [submitState, setSubmitState] = useState<"idle" | "submitting" | "submitted">("idle");
+  const [submitMessage, setSubmitMessage] = useState("Submitted!");
 
   const handleClose = () => {
     resetGame();
@@ -54,7 +56,13 @@ export function ScoreBreakdown() {
         }),
       });
       if (!response.ok) throw new Error("Submission failed");
+      const payload = (await response.json()) as { mode?: "ephemeral" | "persistent" };
       updateNickname(nickname);
+      setSubmitMessage(
+        payload.mode === "ephemeral"
+          ? "Trial run saved locally only"
+          : "Persistent best score saved"
+      );
       setSubmitState("submitted");
     } catch {
       setSubmitState("idle");
@@ -191,13 +199,13 @@ export function ScoreBreakdown() {
                 {submitState === "submitting" ? (
                   <Loader2 size={14} className="animate-spin" />
                 ) : null}
-                Submit to Leaderboard
+                {viewer ? "Save Best Score" : "Finish Trial Run"}
               </button>
             </div>
           ) : (
             <div className="flex items-center gap-2 text-emerald-400 text-sm justify-center py-2">
               <Check size={16} />
-              Submitted!
+              {submitMessage}
             </div>
           )}
           <button

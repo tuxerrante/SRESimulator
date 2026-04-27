@@ -3,6 +3,8 @@ import type { Server } from "http";
 import type { Express } from "express";
 import type { Scenario } from "../../../shared/types/game";
 import type { LeaderboardEntry } from "../../../shared/types/leaderboard";
+import { VIEWER_SESSION_COOKIE } from "../../../shared/auth/constants";
+import { createViewerSessionToken } from "../../../shared/auth/session";
 import {
   getBackendUrl,
   isExternalTarget,
@@ -32,10 +34,31 @@ interface ErrorResponse {
 let baseUrl: string;
 let localServer: Server | null = null;
 let savedMockMode: string | undefined;
+let savedTurnstileSecret: string | undefined;
+let savedAuthSecret: string | undefined;
+let savedAntiAbuseSecret: string | undefined;
+const githubAuthCookie = `${VIEWER_SESSION_COOKIE}=${createViewerSessionToken(
+  {
+    kind: "github",
+    githubUserId: "12345",
+    githubLogin: "octocat",
+    displayName: "The Octocat",
+    avatarUrl: null,
+    issuedAt: Date.now(),
+    expiresAt: Date.now() + 60_000,
+  },
+  "test-secret"
+)}`;
 
 async function createFullApp(): Promise<Express> {
   savedMockMode = process.env.AI_MOCK_MODE;
+  savedTurnstileSecret = process.env.TURNSTILE_SECRET_KEY;
+  savedAuthSecret = process.env.AUTH_SESSION_SECRET;
+  savedAntiAbuseSecret = process.env.ANTI_ABUSE_HMAC_SECRET;
   process.env.AI_MOCK_MODE = "true";
+  process.env.TURNSTILE_SECRET_KEY = "test-secret";
+  process.env.AUTH_SESSION_SECRET = "test-secret";
+  process.env.ANTI_ABUSE_HMAC_SECRET = "test-hmac";
   const { initStorage } = await import("../lib/storage");
   await initStorage();
   const { default: express } = await import("express");
@@ -80,6 +103,21 @@ afterAll(() => {
   } else {
     process.env.AI_MOCK_MODE = savedMockMode;
   }
+  if (savedTurnstileSecret === undefined) {
+    delete process.env.TURNSTILE_SECRET_KEY;
+  } else {
+    process.env.TURNSTILE_SECRET_KEY = savedTurnstileSecret;
+  }
+  if (savedAuthSecret === undefined) {
+    delete process.env.AUTH_SESSION_SECRET;
+  } else {
+    process.env.AUTH_SESSION_SECRET = savedAuthSecret;
+  }
+  if (savedAntiAbuseSecret === undefined) {
+    delete process.env.ANTI_ABUSE_HMAC_SECRET;
+  } else {
+    process.env.ANTI_ABUSE_HMAC_SECRET = savedAntiAbuseSecret;
+  }
 });
 
 describe("health endpoints", () => {
@@ -105,7 +143,10 @@ describe("full game flow: scenario -> chat -> command -> scores", () => {
   it("POST /api/scenario creates a scenario and session token", async () => {
     const res = await fetch(`${baseUrl}/api/scenario`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        cookie: githubAuthCookie,
+      },
       body: JSON.stringify({ difficulty: "easy" }),
     });
     expect(res.status).toBe(200);
@@ -278,7 +319,10 @@ describe("scenario validation", () => {
     it(`generates ${difficulty} scenario`, async () => {
       const res = await fetch(`${baseUrl}/api/scenario`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          cookie: githubAuthCookie,
+        },
         body: JSON.stringify({ difficulty }),
       });
       expect(res.status).toBe(200);
