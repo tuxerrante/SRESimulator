@@ -60,6 +60,18 @@ you would like to support my work on it, you can do that here:
 - Buy Me a Coffee: [tuxerrante](https://buymeacoffee.com/tuxerrante)
 - Amazon wishlist: [gift cards and project gear](https://www.amazon.it/hz/wishlist/ls/7FXUYV40OB6H?ref_=wl_share)
 
+## Maintenance
+
+- Preview cleanup of generated artifacts in worktrees older than 14 days:
+  `make cleanup-worktrees-dry-run`
+- Remove cached modules, coverage, and build output from old worktrees:
+  `make cleanup-worktrees`
+- Install a weekly macOS `launchd` job (Sunday at 04:00 local time) that runs
+  the same cleanup automatically:
+  `make install-weekly-worktree-cleanup`
+- Remove the weekly cleanup job:
+  `make uninstall-weekly-worktree-cleanup`
+
 ## Deployment targets
 
 Production-style semver deployments now target **AKS by default**. That path

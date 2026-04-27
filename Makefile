@@ -1,4 +1,4 @@
-.PHONY: help install install-backend clean \
+.PHONY: help install install-backend clean cleanup-worktrees-dry-run cleanup-worktrees install-weekly-worktree-cleanup uninstall-weekly-worktree-cleanup \
        fmt fmt-check \
        lint lint-ts lint-backend lint-unused-exports lint-yaml lint-md \
        typecheck typecheck-backend validate \
@@ -22,6 +22,11 @@ GRYPE_IMAGE ?= anchore/grype:$(GRYPE_VERSION)@sha256:af65fbc0c664691067788fe95ff
 GITLEAKS_VERSION ?= v8.30.0
 GITLEAKS_IMAGE ?= ghcr.io/gitleaks/gitleaks:$(GITLEAKS_VERSION)@sha256:691af3c7c5a48b16f187ce3446d5f194838f91238f27270ed36eef6359a574d9
 NPM_VERSION ?= $(shell tr -d '\n' < .npm-version)
+WORKTREE_CLEANUP_ROOT ?= $(shell dirname "$$(git rev-parse --path-format=absolute --git-common-dir)")
+WORKTREE_CLEANUP_DAYS ?= 14
+WORKTREE_CLEANUP_LABEL ?= com.tuxerrante.sresimulator.worktree-cleanup
+WORKTREE_CLEANUP_PLIST ?= $(HOME)/Library/LaunchAgents/$(WORKTREE_CLEANUP_LABEL).plist
+WORKTREE_CLEANUP_LOG_DIR ?= $(HOME)/Library/Logs/sresimulator
 AZURE_SUBSCRIPTION_ID ?=
 CLUSTER_FLAVOR ?= aks
 ARO_RG ?=
@@ -130,6 +135,37 @@ clean: ## Remove build artifacts and node_modules
 	rm -rf $(FRONTEND_DIR)/.next $(FRONTEND_DIR)/node_modules
 	rm -rf $(BACKEND_DIR)/dist $(BACKEND_DIR)/node_modules
 
+cleanup-worktrees-dry-run: ## Preview removable generated artifacts in old worktrees
+	bash scripts/cleanup-old-worktrees.sh --root "$(WORKTREE_CLEANUP_ROOT)" --days "$(WORKTREE_CLEANUP_DAYS)" --dry-run
+
+cleanup-worktrees: ## Remove generated artifacts from old worktrees
+	bash scripts/cleanup-old-worktrees.sh --root "$(WORKTREE_CLEANUP_ROOT)" --days "$(WORKTREE_CLEANUP_DAYS)"
+
+install-weekly-worktree-cleanup: ## Install and load a weekly launchd cleanup job
+	@if [ "$$(uname -s)" != "Darwin" ]; then \
+		echo "install-weekly-worktree-cleanup is only supported on macOS; skipping."; \
+		exit 0; \
+	elif ! command -v launchctl >/dev/null 2>&1; then \
+		echo "launchctl not found; install-weekly-worktree-cleanup requires macOS launchd. Skipping."; \
+		exit 0; \
+	fi
+	bash scripts/install-worktree-cleanup-launchd.sh --repo-root "$(WORKTREE_CLEANUP_ROOT)" --output "$(WORKTREE_CLEANUP_PLIST)" --log-dir "$(WORKTREE_CLEANUP_LOG_DIR)" --label "$(WORKTREE_CLEANUP_LABEL)"
+	@launchctl bootout "gui/$$(id -u)" "$(WORKTREE_CLEANUP_PLIST)" >/dev/null 2>&1 || true
+	launchctl bootstrap "gui/$$(id -u)" "$(WORKTREE_CLEANUP_PLIST)"
+	@echo "Installed weekly worktree cleanup at $(WORKTREE_CLEANUP_PLIST)"
+
+uninstall-weekly-worktree-cleanup: ## Unload and remove the weekly launchd cleanup job
+	@if [ "$$(uname -s)" != "Darwin" ]; then \
+		echo "uninstall-weekly-worktree-cleanup is only supported on macOS; skipping."; \
+		exit 0; \
+	elif ! command -v launchctl >/dev/null 2>&1; then \
+		echo "launchctl not found; uninstall-weekly-worktree-cleanup requires macOS launchd. Skipping."; \
+		exit 0; \
+	fi
+	@launchctl bootout "gui/$$(id -u)" "$(WORKTREE_CLEANUP_PLIST)" >/dev/null 2>&1 || true
+	rm -f "$(WORKTREE_CLEANUP_PLIST)"
+	@echo "Removed weekly worktree cleanup from $(WORKTREE_CLEANUP_PLIST)"
+
 # ──────────────────────────────────────────────
 # Formatting
 # ──────────────────────────────────────────────
@@ -229,7 +265,9 @@ test: ## Run backend and frontend unit tests with coverage
 test-shell: ## Run shell regression tests
 	bash scripts/aro-login.test.sh
 	bash scripts/aks-deploy.test.sh
+	bash scripts/cleanup-old-worktrees.test.sh
 	bash scripts/helm-platform.test.sh
+	bash scripts/install-worktree-cleanup-launchd.test.sh
 	bash scripts/prod-db-guard.test.sh
 	bash scripts/release-version-sync.test.sh
 	bash scripts/select-deploy.test.sh
