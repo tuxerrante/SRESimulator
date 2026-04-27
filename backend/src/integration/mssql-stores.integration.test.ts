@@ -237,12 +237,16 @@ describe.skipIf(SKIP)("MssqlMetricsStore (real SQL)", () => {
       nickname: nick,
       difficulty: "easy",
       scenarioTitle: "Master Down",
+      lifecycleState: "completed",
+      commandCount: 2,
       commandsExecuted: ["oc get nodes", "oc get pods -A"],
       scoringEvents: [{ type: "safety", points: 5 }],
       chatMessageCount: 8,
       aiPromptTokens: 3000,
       aiCompletionTokens: 1500,
       durationMs: 120_000,
+      scoreTotal: 88,
+      grade: "B",
       completed: true,
       metadata: { version: "test" },
     });
@@ -253,10 +257,14 @@ describe.skipIf(SKIP)("MssqlMetricsStore (real SQL)", () => {
     const record = history[0];
     expect(record.nickname).toBe(nick);
     expect(record.difficulty).toBe("easy");
+    expect(record.lifecycleState).toBe("completed");
+    expect(record.commandCount).toBe(2);
     expect(record.commandsExecuted).toEqual(["oc get nodes", "oc get pods -A"]);
     expect(record.scoringEvents).toEqual([{ type: "safety", points: 5 }]);
     expect(record.chatMessageCount).toBe(8);
     expect(record.durationMs).toBe(120_000);
+    expect(record.scoreTotal).toBe(88);
+    expect(record.grade).toBe("B");
     expect(record.completed).toBe(true);
     expect(record.metadata).toEqual({ version: "test" });
   });
@@ -271,6 +279,78 @@ describe.skipIf(SKIP)("MssqlMetricsStore (real SQL)", () => {
 
     const history = await store.getPlayerHistory("");
     expect(history.length).toBeGreaterThanOrEqual(0);
+  });
+
+  it("aggregates latest-session analytics by lifecycle state", async () => {
+    const { MssqlMetricsStore } = await import(
+      "../lib/storage/mssql-metrics-store"
+    );
+    const { MssqlSessionStore } = await import(
+      "../lib/storage/mssql-session-store"
+    );
+    const store = new MssqlMetricsStore(pool);
+    const sessionStore = new MssqlSessionStore(pool);
+
+    const completedNick = trackNickname(shortId("ga"));
+    const abandonedNick = trackNickname(shortId("gb"));
+    const completedSession = await sessionStore.create("easy", "The Sleeping Cluster");
+    const abandonedSession = await sessionStore.create("hard", "Etcd Quorum Loss");
+    createdSessionTokens.push(completedSession, abandonedSession);
+
+    await store.recordGameplay({
+      sessionToken: completedSession,
+      nickname: completedNick,
+      difficulty: "easy",
+      scenarioTitle: "The Sleeping Cluster",
+      lifecycleState: "started",
+    });
+    await store.recordGameplay({
+      sessionToken: completedSession,
+      nickname: completedNick,
+      difficulty: "easy",
+      scenarioTitle: "The Sleeping Cluster",
+      lifecycleState: "completed",
+      commandCount: 4,
+      chatMessageCount: 6,
+      durationMs: 80_000,
+      scoreTotal: 85,
+      grade: "B",
+      completed: true,
+    });
+
+    await store.recordGameplay({
+      sessionToken: abandonedSession,
+      nickname: abandonedNick,
+      difficulty: "hard",
+      scenarioTitle: "Etcd Quorum Loss",
+      lifecycleState: "started",
+    });
+    await store.recordGameplay({
+      sessionToken: abandonedSession,
+      nickname: abandonedNick,
+      difficulty: "hard",
+      scenarioTitle: "Etcd Quorum Loss",
+      lifecycleState: "abandoned",
+      commandCount: 2,
+      chatMessageCount: 3,
+      durationMs: 45_000,
+      completed: false,
+    });
+
+    const analytics = await store.getGameplayAnalytics();
+    expect(analytics.summary.totalSessions).toBeGreaterThanOrEqual(2);
+    expect(analytics.summary.completedSessions).toBeGreaterThanOrEqual(1);
+    expect(analytics.summary.abandonedSessions).toBeGreaterThanOrEqual(1);
+
+    const easy = analytics.byDifficulty.find((bucket) => bucket.difficulty === "easy");
+    expect(easy).toBeDefined();
+    expect(easy!.completedSessions).toBeGreaterThanOrEqual(1);
+
+    const recent = analytics.recentSessions.find(
+      (session) => session.sessionToken?.toLowerCase() === completedSession.toLowerCase(),
+    );
+    expect(recent?.lifecycleState).toBe("completed");
+    expect(recent?.scoreTotal).toBe(85);
   });
 });
 

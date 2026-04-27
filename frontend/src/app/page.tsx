@@ -239,6 +239,10 @@ export default function HomePage() {
             {APP_VERSION}
           </button>
           <span className="mx-2">&middot;</span>
+          <Link href="/admin" className="hover:text-zinc-200 transition-colors">
+            Admin Analytics
+          </Link>
+          <span className="mx-2">&middot;</span>
           <Link href="/about" className="hover:text-zinc-200 transition-colors">
             About
           </Link>

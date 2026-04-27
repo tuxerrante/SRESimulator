@@ -200,18 +200,26 @@ describe("MssqlMetricsStore", () => {
       nickname: "tester",
       difficulty: "hard",
       scenarioTitle: "Cosmos DB Flood",
+      lifecycleState: "completed",
+      commandCount: 1,
       commandsExecuted: ["oc get pods"],
       scoringEvents: [{ type: "safety", points: 5 }],
       chatMessageCount: 12,
       aiPromptTokens: 5000,
       aiCompletionTokens: 2000,
       durationMs: 300000,
+      scoreTotal: 88,
+      grade: "B",
       completed: true,
       metadata: { version: "1.0" },
     });
 
     expect(req.input).toHaveBeenCalledWith("sessionToken", "tok-1");
     expect(req.input).toHaveBeenCalledWith("nickname", "tester");
+    expect(req.input).toHaveBeenCalledWith("lifecycleState", "completed");
+    expect(req.input).toHaveBeenCalledWith("commandCount", 1);
+    expect(req.input).toHaveBeenCalledWith("scoreTotal", 88);
+    expect(req.input).toHaveBeenCalledWith("grade", "B");
     expect(req.input).toHaveBeenCalledWith(
       "commandsExecuted",
       JSON.stringify(["oc get pods"])
@@ -232,6 +240,8 @@ describe("MssqlMetricsStore", () => {
 
     expect(req.input).toHaveBeenCalledWith("sessionToken", null);
     expect(req.input).toHaveBeenCalledWith("nickname", null);
+    expect(req.input).toHaveBeenCalledWith("lifecycleState", "completed");
+    expect(req.input).toHaveBeenCalledWith("commandCount", 0);
     expect(req.input).toHaveBeenCalledWith("commandsExecuted", "[]");
     expect(req.input).toHaveBeenCalledWith("metadata", "{}");
   });
@@ -243,12 +253,16 @@ describe("MssqlMetricsStore", () => {
       nickname: "tester",
       difficulty: "easy",
       scenario_title: "Master Down",
+      lifecycle_state: "abandoned",
+      command_count: 2,
       commands_executed: '["oc get nodes"]',
       scoring_events: '[{"type":"accuracy","points":10}]',
       chat_message_count: 5,
       ai_prompt_tokens: 3000,
       ai_completion_tokens: 1500,
       duration_ms: 60000,
+      score_total: 70,
+      grade: "C",
       completed: true,
       metadata: '{"v":2}',
       created_at: new Date("2025-06-01T12:00:00Z"),
@@ -262,6 +276,119 @@ describe("MssqlMetricsStore", () => {
     expect(history[0].commandsExecuted).toEqual(["oc get nodes"]);
     expect(history[0].scoringEvents).toEqual([{ type: "accuracy", points: 10 }]);
     expect(history[0].metadata).toEqual({ v: 2 });
+    expect(history[0].lifecycleState).toBe("abandoned");
+    expect(history[0].commandCount).toBe(2);
     expect(history[0].durationMs).toBe(60000);
+    expect(history[0].scoreTotal).toBe(70);
+    expect(history[0].grade).toBe("C");
+  });
+
+  it("getGameplayAnalytics() maps summary, difficulty buckets, and recent sessions", async () => {
+    const summaryReq = createMockRequest([
+      {
+        total_sessions: 4,
+        completed_sessions: 2,
+        abandoned_sessions: 1,
+        in_progress_sessions: 1,
+        avg_completion_duration_ms: 90000,
+        avg_completion_command_count: 5.5,
+        avg_completion_chat_message_count: 7.5,
+        avg_completion_score_total: 82,
+      },
+    ]);
+    const difficultyReq = createMockRequest([
+      {
+        difficulty: "easy",
+        total_sessions: 3,
+        completed_sessions: 2,
+        abandoned_sessions: 1,
+        in_progress_sessions: 0,
+      },
+    ]);
+    const scenarioReq = createMockRequest([
+      {
+        scenario_title: "The Sleeping Cluster",
+        difficulty: "easy",
+        total_sessions: 3,
+        completed_sessions: 2,
+        abandoned_sessions: 1,
+        in_progress_sessions: 0,
+      },
+    ]);
+    const recentReq = createMockRequest([
+      {
+        session_token: "tok-2",
+        lifecycle_state: "completed",
+        nickname: "player1",
+        difficulty: "easy",
+        scenario_title: "The Sleeping Cluster",
+        command_count: 4,
+        chat_message_count: 6,
+        duration_ms: 80000,
+        score_total: 85,
+        grade: "B",
+        created_at: new Date("2025-06-01T12:00:00Z"),
+      },
+    ]);
+
+    const pool = {
+      request: vi.fn()
+        .mockReturnValueOnce(summaryReq)
+        .mockReturnValueOnce(difficultyReq)
+        .mockReturnValueOnce(scenarioReq)
+        .mockReturnValueOnce(recentReq),
+    } as unknown as sql.ConnectionPool;
+
+    const store = new MssqlMetricsStore(pool);
+    const analytics = await store.getGameplayAnalytics();
+
+    expect(analytics.summary).toEqual({
+      totalSessions: 4,
+      completedSessions: 2,
+      abandonedSessions: 1,
+      inProgressSessions: 1,
+      completionRate: 50,
+      abandonmentRate: 25,
+      avgCompletionDurationMs: 90000,
+      avgCompletionCommandCount: 5.5,
+      avgCompletionChatMessageCount: 7.5,
+      avgCompletionScoreTotal: 82,
+    });
+    expect(analytics.byDifficulty).toEqual([
+      {
+        difficulty: "easy",
+        totalSessions: 3,
+        completedSessions: 2,
+        abandonedSessions: 1,
+        inProgressSessions: 0,
+        completionRate: 66.67,
+      },
+    ]);
+    expect(analytics.byScenario).toEqual([
+      {
+        difficulty: "easy",
+        scenarioTitle: "The Sleeping Cluster",
+        totalSessions: 3,
+        completedSessions: 2,
+        abandonedSessions: 1,
+        inProgressSessions: 0,
+        completionRate: 66.67,
+      },
+    ]);
+    expect(analytics.recentSessions).toEqual([
+      {
+        sessionToken: "tok-2",
+        lifecycleState: "completed",
+        nickname: "player1",
+        difficulty: "easy",
+        scenarioTitle: "The Sleeping Cluster",
+        commandCount: 4,
+        chatMessageCount: 6,
+        durationMs: 80000,
+        scoreTotal: 85,
+        grade: "B",
+        createdAt: new Date("2025-06-01T12:00:00Z").toISOString(),
+      },
+    ]);
   });
 });

@@ -7,6 +7,7 @@ import { scoresRouter } from "./routes/scores";
 import { healthRouter } from "./routes/health";
 import { aiRouter } from "./routes/ai";
 import { guideRouter } from "./routes/guide";
+import { gameplayRouter } from "./routes/gameplay";
 import { getAiReadiness } from "./lib/ai-config";
 import { aiRateLimit } from "./lib/rate-limit";
 import { initStorage, shutdownStorage, getStorageBackend } from "./lib/storage";
@@ -35,6 +36,7 @@ async function main() {
   app.use("/api/command", aiRateLimit, commandRouter);
   app.use("/api/scenario", aiRateLimit, scenarioRouter);
   app.use("/api/scores", scoresRouter);
+  app.use("/api/gameplay", gameplayRouter);
   app.use("/api/ai", aiRouter);
   app.use("/api/guide", guideRouter);
   app.use("/", healthRouter);
