@@ -2,6 +2,9 @@
 
 > AI provider integration, token management, and context compaction are
 > documented in [AI_RUNTIME.md](AI_RUNTIME.md).
+>
+> Choosing a public **DNS name** for the website (criteria, shortlist, checklist)
+> is covered in [DNS_REGISTRATION.md](DNS_REGISTRATION.md).
 
 ## Tech Stack
 
@@ -33,7 +36,8 @@ SRESimulator/
 │   └── Community-reported-issues.md
 ├── docs/
 │   ├── ARCHITECTURE.md                   # This file
-│   └── AI_RUNTIME.md                     # AI provider, compaction, token management
+│   ├── AI_RUNTIME.md                     # AI provider, compaction, token management
+│   └── DNS_REGISTRATION.md               # Public site DNS name criteria & checklist
 ├── frontend/                             # Next.js application (UI only)
 │   ├── src/
 │   │   ├── app/
