@@ -400,7 +400,10 @@ describe("MssqlMetricsStore", () => {
   });
 
   it("recordGameplay() treats duplicate lifecycle inserts as idempotent", async () => {
-    const duplicateError = Object.assign(new Error("duplicate key"), { number: 2601 });
+    const duplicateError = Object.assign(
+      new Error("Cannot insert duplicate key row with unique index 'ux_gameplay_metrics_session_lifecycle'"),
+      { number: 2601 }
+    );
     const req = {
       input: vi.fn().mockReturnThis(),
       query: vi.fn().mockRejectedValue(duplicateError),
@@ -414,6 +417,26 @@ describe("MssqlMetricsStore", () => {
       sessionToken: "tok-1",
       lifecycleState: "completed",
     })).resolves.toBeUndefined();
+  });
+
+  it("recordGameplay() rethrows unrelated unique constraint violations", async () => {
+    const duplicateError = Object.assign(
+      new Error("Cannot insert duplicate key row with unique index 'ux_gameplay_metrics_other_constraint'"),
+      { number: 2601 }
+    );
+    const req = {
+      input: vi.fn().mockReturnThis(),
+      query: vi.fn().mockRejectedValue(duplicateError),
+    };
+    const pool = {
+      request: vi.fn().mockReturnValue(req),
+    } as unknown as sql.ConnectionPool;
+    const store = new MssqlMetricsStore(pool);
+
+    await expect(store.recordGameplay({
+      sessionToken: "tok-1",
+      lifecycleState: "completed",
+    })).rejects.toThrow("ux_gameplay_metrics_other_constraint");
   });
 
   it("getPlayerHistory() maps JSON string columns back to objects", async () => {

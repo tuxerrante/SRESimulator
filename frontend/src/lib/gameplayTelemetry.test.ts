@@ -5,6 +5,7 @@ import {
   markCompletionTelemetrySent,
   scoreToGrade,
   sendGameplayTelemetryEvent,
+  sendCompletionTelemetryIfNeeded,
   shouldSendAbandonmentEvent,
 } from "./gameplayTelemetry";
 import type { GameStatus, Scenario } from "@shared/types/game";
@@ -207,14 +208,33 @@ describe("sendGameplayTelemetryEvent", () => {
       configurable: true,
     });
 
-    sendGameplayTelemetryEvent({
+    await expect(sendGameplayTelemetryEvent({
       sessionToken: "session-123",
       lifecycleState: "completed",
-    });
+    })).resolves.toBe(true);
 
     await Promise.resolve();
     expect(sendBeacon).toHaveBeenCalledTimes(1);
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("returns false when fallback fetch fails", async () => {
+    const fetchMock = vi.fn().mockRejectedValue(new Error("network down"));
+    Object.defineProperty(globalThis, "fetch", {
+      value: fetchMock,
+      configurable: true,
+    });
+    Object.defineProperty(globalThis, "navigator", {
+      value: {
+        sendBeacon: vi.fn().mockReturnValue(false),
+      },
+      configurable: true,
+    });
+
+    await expect(sendGameplayTelemetryEvent({
+      sessionToken: "session-123",
+      lifecycleState: "completed",
+    })).resolves.toBe(false);
   });
 
   it("tracks completion telemetry per session token", () => {
@@ -222,5 +242,27 @@ describe("sendGameplayTelemetryEvent", () => {
     markCompletionTelemetrySent("session-123");
     expect(hasCompletionTelemetryBeenSent("session-123")).toBe(true);
     expect(hasCompletionTelemetryBeenSent("session-456")).toBe(false);
+  });
+
+  it("marks completion telemetry only after delivery succeeds", async () => {
+    const fetchMock = vi.fn().mockRejectedValue(new Error("network down"));
+    Object.defineProperty(globalThis, "fetch", {
+      value: fetchMock,
+      configurable: true,
+    });
+    Object.defineProperty(globalThis, "navigator", {
+      value: {
+        sendBeacon: vi.fn().mockReturnValue(false),
+      },
+      configurable: true,
+    });
+
+    await expect(sendCompletionTelemetryIfNeeded(makeState())).resolves.toBe(false);
+    expect(hasCompletionTelemetryBeenSent("session-123")).toBe(false);
+
+    fetchMock.mockResolvedValue({ ok: true });
+
+    await expect(sendCompletionTelemetryIfNeeded(makeState())).resolves.toBe(true);
+    expect(hasCompletionTelemetryBeenSent("session-123")).toBe(true);
   });
 });

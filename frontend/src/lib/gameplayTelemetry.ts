@@ -89,9 +89,27 @@ export function markCompletionTelemetrySent(sessionToken: string): void {
   }
 }
 
-export function sendGameplayTelemetryEvent(
+export async function sendCompletionTelemetryIfNeeded(
+  state: GameplayTelemetryStateSnapshot,
+): Promise<boolean> {
+  const sessionToken = state.sessionToken;
+  if (!sessionToken || hasCompletionTelemetryBeenSent(sessionToken)) {
+    return false;
+  }
+
+  const delivered = await sendGameplayTelemetryEvent(
+    buildGameplayTelemetryPayload(state, "completed"),
+  );
+  if (delivered) {
+    markCompletionTelemetrySent(sessionToken);
+  }
+
+  return delivered;
+}
+
+export async function sendGameplayTelemetryEvent(
   payload: GameplayTelemetryEvent,
-): void {
+): Promise<boolean> {
   const body = JSON.stringify(payload);
 
   try {
@@ -99,19 +117,26 @@ export function sendGameplayTelemetryEvent(
       const blob = new Blob([body], { type: "application/json" });
       const queued = navigator.sendBeacon("/api/gameplay", blob);
       if (queued) {
-        return;
+        return true;
       }
     }
   } catch {
     // Fall back to fetch below.
   }
 
-  void fetch("/api/gameplay", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body,
-    keepalive: true,
-  }).catch(() => {
-    // Best-effort telemetry should never block the gameplay flow.
-  });
+  if (typeof fetch !== "function") {
+    return false;
+  }
+
+  try {
+    const response = await fetch("/api/gameplay", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body,
+      keepalive: true,
+    });
+    return response.ok;
+  } catch {
+    return false;
+  }
 }

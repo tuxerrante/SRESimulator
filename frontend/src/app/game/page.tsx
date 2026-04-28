@@ -12,8 +12,7 @@ import { OnboardingTour, resetOnboardingTour, hasSeenOnboardingTour } from "@/co
 import { useCommand } from "@/hooks/useCommand";
 import {
   buildGameplayTelemetryPayload,
-  hasCompletionTelemetryBeenSent,
-  markCompletionTelemetrySent,
+  sendCompletionTelemetryIfNeeded,
   sendGameplayTelemetryEvent,
   shouldSendAbandonmentEvent,
 } from "@/lib/gameplayTelemetry";
@@ -36,15 +35,7 @@ export default function GamePage() {
 
   useEffect(() => {
     if (status !== "completed" || !sessionToken) return;
-    if (hasCompletionTelemetryBeenSent(sessionToken)) return;
-
-    const state = useGameStore.getState();
-    if (!state.sessionToken) return;
-
-    sendGameplayTelemetryEvent(
-      buildGameplayTelemetryPayload(state, "completed"),
-    );
-    markCompletionTelemetrySent(sessionToken);
+    void sendCompletionTelemetryIfNeeded(useGameStore.getState());
   }, [sessionToken, status]);
 
   useEffect(() => {

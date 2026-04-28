@@ -1,13 +1,21 @@
 import type sql from "mssql";
 import type { IMetricsStore, GameplayRecord } from "./types";
 
+const DUPLICATE_LIFECYCLE_INDEX = "ux_gameplay_metrics_session_lifecycle";
+
 function isDuplicateLifecycleEventError(error: unknown): boolean {
   if (!error || typeof error !== "object") {
     return false;
   }
 
   const number = (error as { number?: unknown }).number;
-  return number === 2601 || number === 2627;
+  const message = (error as { message?: unknown }).message;
+
+  return (
+    (number === 2601 || number === 2627) &&
+    typeof message === "string" &&
+    message.toLowerCase().includes(DUPLICATE_LIFECYCLE_INDEX)
+  );
 }
 
 export class MssqlMetricsStore implements IMetricsStore {
