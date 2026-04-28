@@ -400,17 +400,28 @@ helm_deploy_sre() {
   ensure_namespace "$ns"
   apply_aks_gateway_defaults
 
-  if [ "$AKS_EXPOSURE_MODE" = "gateway" ]; then
-    if aks_gateway_bootstrap_enabled; then
-      ensure_aks_gateway_stack "$ns" || return 1
-    fi
-    DEPLOY_HOST="$AKS_GATEWAY_HOST"
-    DEPLOY_SCHEME="https"
-  else
-    resolve_aks_public_endpoint || return 1
-    DEPLOY_HOST="$AKS_FRONTEND_PUBLIC_ENDPOINT_HOST"
-    DEPLOY_SCHEME="${AKS_FRONTEND_PUBLIC_ORIGIN_SCHEME:-http}"
-  fi
+  case "$AKS_EXPOSURE_MODE" in
+    gateway)
+      if aks_gateway_bootstrap_enabled; then
+        ensure_aks_gateway_stack "$ns" || return 1
+      fi
+      DEPLOY_HOST="$AKS_GATEWAY_HOST"
+      DEPLOY_SCHEME="https"
+      ;;
+    publicService)
+      resolve_aks_public_endpoint || return 1
+      DEPLOY_HOST="$AKS_FRONTEND_PUBLIC_ENDPOINT_HOST"
+      DEPLOY_SCHEME="${AKS_FRONTEND_PUBLIC_ORIGIN_SCHEME:-http}"
+      ;;
+    none)
+      DEPLOY_HOST="127.0.0.1:${AKS_LOCAL_PORT_FORWARD_PORT:-38080}"
+      DEPLOY_SCHEME="http"
+      ;;
+    *)
+      echo "error: unsupported AKS_EXPOSURE_MODE='${AKS_EXPOSURE_MODE}' (expected gateway, publicService, or none)" >&2
+      return 1
+      ;;
+  esac
 
   local exposure_values_file
   if ! exposure_values_file="$(write_aks_exposure_values)"; then

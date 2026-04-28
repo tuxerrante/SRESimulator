@@ -112,6 +112,22 @@ describe.skipIf(SKIP)("MssqlSessionStore (real SQL)", () => {
     expect(session!.persistentScoreEligible).toBe(false);
   });
 
+  it("gets a session without consuming it", async () => {
+    const { MssqlSessionStore } = await import(
+      "../lib/storage/mssql-session-store"
+    );
+    const store = new MssqlSessionStore(pool);
+
+    const token = await store.create("hard", "Etcd Quorum Loss");
+    createdSessionTokens.push(token);
+
+    const session = await store.get(token);
+    expect(session).not.toBeNull();
+    expect(session!.token.toLowerCase()).toBe(token.toLowerCase());
+    expect(session!.difficulty).toBe("hard");
+    expect(session!.used).toBe(false);
+  });
+
   it("returns null when consuming an already-used token", async () => {
     const { MssqlSessionStore } = await import(
       "../lib/storage/mssql-session-store"
@@ -328,12 +344,16 @@ describe.skipIf(SKIP)("MssqlMetricsStore (real SQL)", () => {
       nickname: nick,
       difficulty: "easy",
       scenarioTitle: "Master Down",
+      lifecycleState: "completed",
+      commandCount: 2,
       commandsExecuted: ["oc get nodes", "oc get pods -A"],
       scoringEvents: [{ type: "safety", points: 5 }],
       chatMessageCount: 8,
       aiPromptTokens: 3000,
       aiCompletionTokens: 1500,
       durationMs: 120_000,
+      scoreTotal: 88,
+      grade: "B",
       completed: true,
       metadata: { version: "test" },
     });
@@ -344,10 +364,14 @@ describe.skipIf(SKIP)("MssqlMetricsStore (real SQL)", () => {
     const record = history[0];
     expect(record.nickname).toBe(nick);
     expect(record.difficulty).toBe("easy");
+    expect(record.lifecycleState).toBe("completed");
+    expect(record.commandCount).toBe(2);
     expect(record.commandsExecuted).toEqual(["oc get nodes", "oc get pods -A"]);
     expect(record.scoringEvents).toEqual([{ type: "safety", points: 5 }]);
     expect(record.chatMessageCount).toBe(8);
     expect(record.durationMs).toBe(120_000);
+    expect(record.scoreTotal).toBe(88);
+    expect(record.grade).toBe("B");
     expect(record.completed).toBe(true);
     expect(record.metadata).toEqual({ version: "test" });
   });
@@ -362,6 +386,45 @@ describe.skipIf(SKIP)("MssqlMetricsStore (real SQL)", () => {
 
     const history = await store.getPlayerHistory("");
     expect(history.length).toBeGreaterThanOrEqual(0);
+  });
+
+  it("dedupes duplicate lifecycle inserts for the same session token", async () => {
+    const { MssqlSessionStore } = await import(
+      "../lib/storage/mssql-session-store"
+    );
+    const { MssqlMetricsStore } = await import(
+      "../lib/storage/mssql-metrics-store"
+    );
+    const sessionStore = new MssqlSessionStore(pool);
+    const store = new MssqlMetricsStore(pool);
+    const nick = trackNickname(shortId("d"));
+    const sessionToken = await sessionStore.create("medium", "Bad Egress");
+    createdSessionTokens.push(sessionToken);
+
+    await store.recordGameplay({
+      sessionToken,
+      nickname: nick,
+      difficulty: "medium",
+      scenarioTitle: "Bad Egress",
+      lifecycleState: "completed",
+      completed: true,
+    });
+    await expect(store.recordGameplay({
+      sessionToken,
+      nickname: nick,
+      difficulty: "medium",
+      scenarioTitle: "Bad Egress",
+      lifecycleState: "completed",
+      completed: true,
+    })).resolves.not.toThrow();
+
+    const history = await store.getPlayerHistory(nick);
+    expect(
+      history.filter((record) =>
+        record.sessionToken?.toLowerCase() === sessionToken.toLowerCase() &&
+        record.lifecycleState === "completed"
+      )
+    ).toHaveLength(1);
   });
 });
 
