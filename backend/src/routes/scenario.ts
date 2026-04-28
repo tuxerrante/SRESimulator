@@ -191,7 +191,7 @@ scenarioRouter.post("/", async (req: Request, res: Response) => {
         anonymousClaimKey: reservedClaimKeys[0] ?? null,
         persistentScoreEligible: accessDecision.sessionIdentityKind === "github",
       });
-      await recordStartedTelemetry(sessionToken, difficulty, scenarioTitle);
+      void recordStartedTelemetry(sessionToken, difficulty, scenarioTitle);
       claimReservationCommitted = true;
 
       return {

@@ -61,8 +61,8 @@ function sanitizeCommands(value: unknown): string[] {
 function sanitizeScoringEvents(value: unknown): unknown[] {
   if (!Array.isArray(value)) return [];
   const events = value
-    .filter((item) => typeof item === "object" && item !== null)
-    .slice(0, MAX_SCORING_EVENTS);
+    .slice(0, MAX_SCORING_EVENTS)
+    .filter((item) => typeof item === "object" && item !== null);
 
   const sanitized: unknown[] = [];
   let totalLength = 2;

@@ -9,6 +9,7 @@ async function httpRequest(
   method: "POST",
   path: string,
   body?: unknown,
+  extraHeaders: Record<string, string> = {},
 ): Promise<{ status: number; body: Record<string, unknown> }> {
   const { request } = await import("http");
   return new Promise((resolve, reject) => {
@@ -26,6 +27,7 @@ async function httpRequest(
         headers["Content-Type"] = "application/json";
         headers["Content-Length"] = String(Buffer.byteLength(payload));
       }
+      Object.assign(headers, extraHeaders);
 
       const req = request(
         {
@@ -206,6 +208,29 @@ describe("gameplay routes", () => {
     expect(JSON.stringify(history[0].scoringEvents ?? []).length).toBeLessThanOrEqual(2000);
   });
 
+  it("POST /api/gameplay only inspects the first scoring event slots", async () => {
+    const token = await getSessionStore().create("medium", "Bad Egress");
+    const app = createApp();
+
+    const response = await httpRequest(app, "POST", "/api/gameplay", {
+      sessionToken: token,
+      lifecycleState: "abandoned",
+      nickname: "slot-cap",
+      scoringEvents: [
+        ...Array.from({ length: 49 }, (_, index) => ({ type: "bonus", points: index })),
+        "skip-me",
+        { type: "bonus", points: 999 },
+      ],
+    });
+
+    expect(response.status).toBe(202);
+
+    const history = await getMetricsStore().getPlayerHistory("slot-cap");
+    expect(history).toHaveLength(1);
+    expect(history[0].scoringEvents).toHaveLength(49);
+    expect(history[0].scoringEvents).not.toContainEqual({ type: "bonus", points: 999 });
+  });
+
   it("POST /api/gameplay ignores dangerous metadata prototype keys", async () => {
     const token = await getSessionStore().create("easy", "The Sleeping Cluster");
     const app = createApp();
@@ -273,6 +298,29 @@ describe("gameplay routes", () => {
     const limited = await httpRequest(app, "POST", "/api/gameplay", {
       sessionToken: token,
       lifecycleState: "completed",
+    });
+
+    expect(limited.status).toBe(429);
+    expect(limited.body.error).toContain("Too many gameplay telemetry events");
+  });
+
+  it("POST /api/gameplay rate limit ignores spoofed x-forwarded-for headers", async () => {
+    process.env.GAMEPLAY_TELEMETRY_RATE_LIMIT_MAX = "1";
+    const token = await getSessionStore().create("easy", "The Sleeping Cluster");
+    const app = createApp();
+
+    expect((await httpRequest(app, "POST", "/api/gameplay", {
+      sessionToken: token,
+      lifecycleState: "started",
+    }, {
+      "x-forwarded-for": "1.1.1.1",
+    })).status).toBe(202);
+
+    const limited = await httpRequest(app, "POST", "/api/gameplay", {
+      sessionToken: token,
+      lifecycleState: "abandoned",
+    }, {
+      "x-forwarded-for": "203.0.113.25",
     });
 
     expect(limited.status).toBe(429);

@@ -8,6 +8,7 @@ async function postJson(
   path: string,
   body: unknown,
   extraHeaders: Record<string, string> = {},
+  timeoutMs?: number,
 ): Promise<{ status: number; body: Record<string, unknown> }> {
   const { request } = await import("http");
   return new Promise((resolve, reject) => {
@@ -33,6 +34,9 @@ async function postJson(
           },
         },
         (res) => {
+          if (timeout) {
+            clearTimeout(timeout);
+          }
           let data = "";
           res.on("data", (chunk) => (data += chunk));
           res.on("end", () => {
@@ -45,7 +49,16 @@ async function postJson(
         },
       );
 
+      const timeout = timeoutMs
+        ? setTimeout(() => {
+            req.destroy(new Error(`Request timed out after ${timeoutMs}ms`));
+          }, timeoutMs)
+        : undefined;
+
       req.on("error", (error) => {
+        if (timeout) {
+          clearTimeout(timeout);
+        }
         server.close();
         reject(error);
       });
@@ -166,5 +179,38 @@ describe("scenario telemetry", () => {
     expect(upsertGithubViewer).toHaveBeenCalled();
     expect(warn).toHaveBeenCalled();
     expect(JSON.stringify(warn.mock.calls)).not.toContain("session-123");
+  });
+
+  it("returns the scenario without waiting for started telemetry to finish", async () => {
+    const create = vi.fn().mockResolvedValue("session-123");
+    const upsertGithubViewer = vi.fn().mockResolvedValue(undefined);
+    const recordGameplay = vi.fn().mockImplementation(() => new Promise<void>(() => {}));
+
+    vi.doMock("../lib/storage", async () => {
+      const actual = await vi.importActual<typeof import("../lib/storage")>("../lib/storage");
+      return {
+        ...actual,
+        getSessionStore: () => ({ create }),
+        getPlayerStore: () => ({ upsertGithubViewer }),
+        getMetricsStore: () => ({ recordGameplay }),
+      };
+    });
+
+    const { scenarioRouter } = await import("./scenario");
+    const app = express();
+    app.use(express.json());
+    app.use("/api/scenario", scenarioRouter);
+
+    const response = await postJson(
+      app,
+      "/api/scenario",
+      { difficulty: "easy" },
+      { cookie: githubAuthCookie },
+      200,
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.body.sessionToken).toBe("session-123");
+    expect(recordGameplay).toHaveBeenCalled();
   });
 });
