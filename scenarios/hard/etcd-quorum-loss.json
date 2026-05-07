@@ -1,0 +1,50 @@
+{
+  "id": "scenario_etcd_quorum_loss",
+  "title": "Etcd Quorum Loss",
+  "difficulty": "hard",
+  "description": "A disruptive power event has left the control plane in a split state. Multiple etcd members are unhealthy, leader elections are thrashing, and API availability is collapsing under repeated retries.",
+  "incidentTicket": {
+    "id": "IcM-241305",
+    "severity": "Sev2",
+    "title": "Control plane unstable after regional power event",
+    "description": "The cluster never recovered cleanly after a brief power interruption. Engineers report intermittent API failures and repeated control plane restarts.",
+    "customerImpact": "Administrative actions are unreliable, operators cannot reconcile consistently, and customer workloads are at risk if recovery steps are not sequenced carefully.",
+    "reportedTime": "{{daysAgo:3}}",
+    "clusterName": "aro-prod-centralus-03",
+    "region": "centralus"
+  },
+  "clusterContext": {
+    "name": "aro-prod-centralus-03",
+    "version": "4.20.3",
+    "region": "centralus",
+    "nodeCount": 12,
+    "status": "Critical",
+    "recentEvents": [
+      "{{minutesAgo:210}} - etcd: member master-1 failed to rejoin cluster after reboot",
+      "{{minutesAgo:160}} - kube-apiserver: request latency exceeded emergency threshold",
+      "{{minutesAgo:25}} - cluster-etcd-operator: quorum degraded, recovery required"
+    ],
+    "alerts": [
+      {
+        "name": "EtcdMembersDown",
+        "severity": "critical",
+        "message": "Two etcd members are unhealthy and quorum is no longer stable.",
+        "firingTime": "{{minutesAgo:22}}"
+      },
+      {
+        "name": "KubeAPILatencyHigh",
+        "severity": "critical",
+        "message": "API server latency remains above the critical SLO band while leader elections continue.",
+        "firingTime": "{{minutesAgo:15}}"
+      }
+    ],
+    "upgradeHistory": [
+      {
+        "from": "4.20.2",
+        "to": "4.20.3",
+        "status": "completed",
+        "timestamp": "{{daysAgo:7}}"
+      }
+    ]
+  }
+}

@@ -9,6 +9,11 @@ import {
 import { getAiReadiness } from "../lib/ai-config";
 import { generateMockScenario } from "../lib/mock-ai";
 import { generateAiText, AiThrottledError } from "../lib/ai-runtime";
+import {
+  getCatalogScenario,
+  isCatalogScenarioSource,
+  ScenarioCatalogError,
+} from "../lib/scenario-catalog";
 import { utcNow } from "../lib/sim-clock";
 import { verifyTurnstileToken } from "../lib/turnstile";
 import {
@@ -61,6 +66,7 @@ async function recordStartedTelemetry(
   sessionToken: string,
   difficulty: Difficulty,
   scenarioTitle: string,
+  source = "scenario",
 ): Promise<void> {
   try {
     await getMetricsStore().recordGameplay({
@@ -69,7 +75,7 @@ async function recordStartedTelemetry(
       scenarioTitle,
       lifecycleState: "started",
       completed: false,
-      metadata: { source: "scenario" },
+      metadata: { source },
     });
   } catch (error) {
     console.warn("Failed to record scenario gameplay telemetry", {
@@ -178,7 +184,10 @@ scenarioRouter.post("/", async (req: Request, res: Response) => {
       return anonymousClaimKeys;
     };
 
-    const createSessionForScenario = async (scenarioTitle: string): Promise<{
+    const createSessionForScenario = async (
+      scenarioTitle: string,
+      source = "scenario",
+    ): Promise<{
       sessionToken: string;
       identityKind: "github" | "anonymous";
     }> => {
@@ -191,7 +200,7 @@ scenarioRouter.post("/", async (req: Request, res: Response) => {
         anonymousClaimKey: reservedClaimKeys[0] ?? null,
         persistentScoreEligible: accessDecision.sessionIdentityKind === "github",
       });
-      void recordStartedTelemetry(sessionToken, difficulty, scenarioTitle);
+      void recordStartedTelemetry(sessionToken, difficulty, scenarioTitle, source);
       claimReservationCommitted = true;
 
       return {
@@ -199,6 +208,21 @@ scenarioRouter.post("/", async (req: Request, res: Response) => {
         identityKind: accessDecision.sessionIdentityKind,
       };
     };
+
+    if (isCatalogScenarioSource()) {
+      const catalogScenario = await getCatalogScenario(difficulty);
+      reservedClaimKeys = await reserveAnonymousClaimKeys();
+      const session = await createSessionForScenario(
+        catalogScenario.title,
+        "scenario-catalog"
+      );
+      res.json({
+        scenario: catalogScenario,
+        sessionToken: session.sessionToken,
+        identityKind: session.identityKind,
+      });
+      return;
+    }
 
     const readiness = getAiReadiness();
     if (readiness.mockMode) {
@@ -319,6 +343,11 @@ ${scenarioContext}`,
     }
     if (error instanceof AiThrottledError) {
       res.status(429).json({ error: error.message });
+      return;
+    }
+    if (error instanceof ScenarioCatalogError) {
+      console.warn("Scenario catalog error", { message: error.message });
+      res.status(error.status).json({ error: error.clientMessage });
       return;
     }
     const message =
