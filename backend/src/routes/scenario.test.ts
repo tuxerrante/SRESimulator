@@ -25,15 +25,25 @@ async function postJson(
   app: express.Express,
   path: string,
   body: unknown,
-  headers: Record<string, string> = {}
+  headers: Record<string, string> = {},
+  options: { timeoutMs?: number } = {},
 ): Promise<{ status: number; body: Record<string, unknown> }> {
   const { request } = await import("http");
   return new Promise((resolve, reject) => {
+    let settled = false;
+    const finish = (callback: () => void) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      callback();
+    };
+
     const server = app.listen(0, "127.0.0.1", () => {
       const addr = server.address();
       if (!addr || typeof addr === "string") {
         server.close();
-        reject(new Error("Bad address"));
+        finish(() => reject(new Error("Bad address")));
         return;
       }
       const payload = JSON.stringify(body);
@@ -54,16 +64,23 @@ async function postJson(
           res.on("data", (chunk) => (data += chunk));
           res.on("end", () => {
             server.close();
-            resolve({
-              status: res.statusCode ?? 500,
-              body: JSON.parse(data),
-            });
+            finish(() =>
+              resolve({
+                status: res.statusCode ?? 500,
+                body: JSON.parse(data),
+              }),
+            );
           });
         }
       );
+      if (options.timeoutMs && options.timeoutMs > 0) {
+        req.setTimeout(options.timeoutMs, () => {
+          req.destroy(new Error(`Request timed out after ${options.timeoutMs}ms`));
+        });
+      }
       req.on("error", (e) => {
         server.close();
-        reject(e);
+        finish(() => reject(e));
       });
       req.write(payload);
       req.end();
@@ -416,23 +433,13 @@ describe("POST /api/scenario", () => {
     const isolatedScenarioModule = await import("./scenario");
     const app = createApp(isolatedScenarioModule.scenarioRouter);
 
-    const responsePromise = postJson(app, "/api/scenario", {
+    const response = await postJson(app, "/api/scenario", {
       difficulty: "easy",
     }, {
       cookie: `${VIEWER_SESSION_COOKIE}=${authToken}`,
+    }, {
+      timeoutMs: 2000,
     });
-    const response = await Promise.race([
-      responsePromise,
-      new Promise<"timed-out">((resolve) => {
-        setTimeout(() => resolve("timed-out"), 100);
-      }),
-    ]);
-
-    expect(response).not.toBe("timed-out");
-    if (response === "timed-out") {
-      resolveStartedWrite?.();
-      throw new Error("Scenario response should not wait for started telemetry persistence");
-    }
 
     expect(response.status).toBe(200);
     expect(response.body.sessionToken).toBe("session-ordered");

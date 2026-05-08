@@ -1,6 +1,6 @@
 import { Children, isValidElement } from "react";
 import type { ReactElement, ReactNode } from "react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("next/font/google", () => ({
   Geist: () => ({ variable: "font-geist-sans" }),
@@ -42,6 +42,10 @@ describe("RootLayout", () => {
 
     const nextServer = await import("next/server");
     vi.mocked(nextServer.connection).mockResolvedValue(undefined);
+  });
+
+  afterEach(() => {
+    process.env = originalEnv;
   });
 
   it("reads runtime config on the server and passes it into the browser bootstrap", async () => {

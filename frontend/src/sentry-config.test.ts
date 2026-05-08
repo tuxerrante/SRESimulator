@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const sentryMocks = vi.hoisted(() => ({
   init: vi.fn(),
@@ -21,6 +21,10 @@ describe("frontend server and edge sentry config", () => {
       NEXT_PUBLIC_SENTRY_ENVIRONMENT: "production",
       NEXT_PUBLIC_SENTRY_RELEASE: "frontend@1.2.3",
     };
+  });
+
+  afterEach(() => {
+    process.env = originalEnv;
   });
 
   it("omits a runtime release override in server init", async () => {

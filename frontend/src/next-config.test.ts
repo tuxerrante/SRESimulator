@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const sentryMocks = vi.hoisted(() => ({
   withSentryConfig: vi.fn((nextConfig: unknown, options: unknown) => ({
@@ -22,6 +22,10 @@ describe("frontend next config", () => {
     delete process.env.SENTRY_ORG;
     delete process.env.SENTRY_PROJECT;
     delete process.env.SENTRY_RELEASE;
+  });
+
+  afterEach(() => {
+    process.env = originalEnv;
   });
 
   it("wraps Next config and disables source map upload when build credentials are absent", async () => {
