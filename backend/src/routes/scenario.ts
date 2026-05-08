@@ -23,6 +23,7 @@ import {
 import { buildAnonymousClaimKeys } from "../lib/anonymous-claim";
 import { evaluateScenarioAccess } from "../lib/scenario-access";
 import { matchesSharedSecret } from "../lib/shared-secret";
+import { captureBackendRouteError } from "../lib/telemetry/capture";
 import { verifySignedClientIp } from "../../../shared/auth/client-ip";
 import type { Difficulty, Scenario } from "../../../shared/types/game";
 import type { TrafficSource } from "../../../shared/types/leaderboard";
@@ -377,6 +378,7 @@ ${scenarioContext}`,
       res.status(error.status).json({ error: error.clientMessage });
       return;
     }
+    captureBackendRouteError(req, error);
     const message =
       error instanceof Error ? error.message : "Scenario generation failed";
     res.status(500).json({ error: message });

@@ -2,6 +2,7 @@ import { Router, type Request, type Response } from "express";
 import { getMetricsStore, getSessionStore } from "../lib/storage";
 import { gameplayTelemetryRateLimit } from "../lib/rate-limit";
 import { matchesSharedSecret } from "../lib/shared-secret";
+import { captureBackendRouteError } from "../lib/telemetry/capture";
 import type { GameplayLifecycleState } from "../../../shared/types/gameplay";
 
 export const gameplayRouter = Router();
@@ -169,6 +170,7 @@ gameplayRouter.post("/", gameplayTelemetryRateLimit, async (req: Request, res: R
 
     res.status(202).json({ ok: true });
   } catch (error) {
+    captureBackendRouteError(req, error);
     console.error("Failed to record gameplay event", { error });
     res.status(500).json({ error: "Failed to record gameplay event" });
   }
@@ -184,6 +186,7 @@ gameplayRouter.get("/admin", async (req: Request, res: Response) => {
     const analytics = await getMetricsStore().getGameplayAnalytics();
     res.json(analytics);
   } catch (error) {
+    captureBackendRouteError(req, error);
     console.error("Failed to read gameplay analytics", { error });
     res.status(500).json({ error: "Failed to read gameplay analytics" });
   }

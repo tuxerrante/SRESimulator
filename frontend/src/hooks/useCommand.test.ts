@@ -9,7 +9,7 @@ import type { Scenario } from "@shared/types/game";
 import { useGameStore } from "@/stores/gameStore";
 import { buildTelemetryHeaders } from "@/lib/telemetry/request-context";
 import { captureFrontendError } from "@/lib/telemetry/capture";
-import { useChat } from "./useChat";
+import { useCommand } from "./useCommand";
 
 vi.mock("@/lib/telemetry/request-context", () => ({
   buildTelemetryHeaders: vi.fn(),
@@ -71,7 +71,7 @@ function createScenario(): Scenario {
   };
 }
 
-describe("useChat", () => {
+describe("useCommand", () => {
   beforeEach(() => {
     Object.defineProperty(globalThis, "localStorage", {
       value: localStorageMock,
@@ -80,6 +80,7 @@ describe("useChat", () => {
     });
     localStorageMock.clear();
     useGameStore.getState().resetGame();
+    vi.clearAllMocks();
     vi.restoreAllMocks();
     vi.mocked(buildTelemetryHeaders).mockResolvedValue({
       [REQUEST_ID_HEADER]: "req-123",
@@ -88,28 +89,63 @@ describe("useChat", () => {
     });
   });
 
-  it("captures safe telemetry when the chat request fails", async () => {
-    const networkError = new Error("network down");
+  it("captures safe telemetry when the command request fails", async () => {
+    const networkError = new Error("proxy down");
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(networkError));
 
     useGameStore.getState().startGame(createScenario(), "session-raw-token");
 
-    const { result } = renderHook(() => useChat());
+    const { result } = renderHook(() => useCommand());
 
     await act(async () => {
-      await result.current.sendMessage("check the cluster");
+      await result.current.executeCommand("oc get pods", "oc");
     });
 
     expect(captureFrontendError).toHaveBeenCalledWith(networkError, {
-      feature: "chat",
+      feature: "command",
       phase: "reading",
       difficulty: "easy",
       requestId: "req-123",
       actorRef: "actor-123",
       gameSessionRef: "gsr-123",
     });
-    expect(useGameStore.getState().messages.at(-1)?.content).toBe(
-      "Error: network down. Please try again.",
+    expect(useGameStore.getState().terminalEntries.at(-1)?.output).toBe(
+      "Error: Failed to simulate command execution",
     );
+  });
+
+  it("captures safe telemetry when the command proxy returns a non-ok response", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: false,
+        status: 502,
+        async text() {
+          return JSON.stringify({ error: "Proxy gateway failed", exitCode: 1 });
+        },
+      } as Response),
+    );
+
+    useGameStore.getState().startGame(createScenario(), "session-raw-token");
+
+    const { result } = renderHook(() => useCommand());
+
+    await act(async () => {
+      await result.current.executeCommand("oc get pods", "oc");
+    });
+
+    expect(captureFrontendError).toHaveBeenCalledTimes(1);
+    const [error, context] = vi.mocked(captureFrontendError).mock.calls[0] ?? [];
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toBe("Command proxy request failed (502)");
+    expect(context).toEqual({
+      feature: "command",
+      phase: "reading",
+      difficulty: "easy",
+      requestId: "req-123",
+      actorRef: "actor-123",
+      gameSessionRef: "gsr-123",
+    });
+    expect(useGameStore.getState().terminalEntries.at(-1)?.output).toBe("Proxy gateway failed");
   });
 });

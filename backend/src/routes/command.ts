@@ -9,6 +9,7 @@ import {
   type CommandHistoryEntry,
 } from "../lib/prompts/command";
 import { resolveAngleBracketPlaceholders } from "../lib/prompts/scenario-resources";
+import { captureBackendRouteError } from "../lib/telemetry/capture";
 import type { Scenario } from "../../../shared/types/game";
 import { stripTerminalCommandEcho } from "../../../shared/stripTerminalCommandEcho";
 
@@ -182,6 +183,7 @@ commandRouter.post("/", async (req: Request, res: Response) => {
       message.includes("without output text") ||
       message.includes("did not include text content")
     ) {
+      captureBackendRouteError(req, error);
       const fallbackType = VALID_COMMAND_TYPES.includes(req.body.type)
         ? req.body.type
         : "oc";
@@ -200,6 +202,7 @@ commandRouter.post("/", async (req: Request, res: Response) => {
       return;
     }
 
+    captureBackendRouteError(req, error);
     res.status(500).json({ error: message });
   }
 });

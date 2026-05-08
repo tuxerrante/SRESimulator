@@ -6,6 +6,7 @@ import { Trophy, ArrowLeft, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { Difficulty } from "@shared/types/game";
 import type { LeaderboardEntry, HallOfFameEntry } from "@shared/types/leaderboard";
+import { captureFrontendError } from "@/lib/telemetry/capture";
 
 type Tab = "all" | Difficulty;
 
@@ -84,7 +85,12 @@ export default function LeaderboardPage() {
         if (!res.ok) throw new Error((data.error as string) || "Failed to load scores");
         setEntries(data.entries as LeaderboardEntry[]);
         setHallOfFame(data.hallOfFame as HallOfFameEntry[]);
-      } catch {
+      } catch (error) {
+        captureFrontendError(error, {
+          feature: "scores",
+          difficulty: activeTab === "all" ? undefined : activeTab,
+          requestId: crypto.randomUUID(),
+        });
         setEntries([]);
         setHallOfFame([]);
       } finally {

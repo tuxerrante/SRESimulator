@@ -218,7 +218,74 @@ secret reference on the backend deployment.
 `oc port-forward` tunnel to the backend service and confirms that this path
 responds with `200`.
 
-## 6. AOAI Capacity & Scaling Notes
+## 6. Sentry rollout verification
+
+Control the production Sentry rollout through the Helm chart values:
+
+```yaml
+frontend:
+  sentry:
+    enabled: false
+    dsn: ""
+    environment: production
+    replaySessionSampleRate: "0"
+    replayOnErrorSampleRate: "0"
+
+backend:
+  sentry:
+    enabled: false
+    dsn: ""
+    environment: production
+    release: ""
+```
+
+The chart maps these values to:
+
+- Frontend: `NEXT_PUBLIC_SENTRY_ENABLED`, `NEXT_PUBLIC_SENTRY_DSN`,
+  `NEXT_PUBLIC_SENTRY_ENVIRONMENT`,
+  `NEXT_PUBLIC_SENTRY_REPLAY_SESSION_SAMPLE_RATE`, and
+  `NEXT_PUBLIC_SENTRY_REPLAY_ON_ERROR_SAMPLE_RATE`
+- Backend: `SENTRY_ENABLED`, `SENTRY_DSN`, `SENTRY_ENVIRONMENT`, and
+  `SENTRY_RELEASE`
+
+For the browser path, the deployed frontend container env is read by the server
+app shell at request time and injected into the initial HTML before browser
+code runs, so browser Sentry enablement is runtime-driven from Helm/container
+env rather than frozen into the browser bundle at build time or delayed behind
+a client effect. Backend Sentry still reads `SENTRY_*` directly from the
+backend process env.
+
+Readable browser stack traces also require build-time source-map upload
+credentials on the frontend build:
+
+- `SENTRY_AUTH_TOKEN`
+- `SENTRY_ORG`
+- `SENTRY_PROJECT`
+- optional `SENTRY_RELEASE` when you need an explicit upload release name
+
+If those build-time variables are absent, the frontend build still succeeds,
+but Sentry source-map upload remains disabled. If you do set
+`SENTRY_RELEASE`, it must exactly match the uploaded artifact release; if it
+could drift, omit it instead of trying to carry a separate runtime frontend
+release value.
+
+Keep frontend and backend Sentry disabled unless the production DSNs are set.
+For launch, leave both replay sample rates at `0` unless production traffic
+volume proves it is safe to increase them.
+
+After deployment:
+
+1. Send one backend test event to confirm server-side ingest.
+2. Optionally send one generic frontend test event only as a browser ingest
+   smoke check.
+3. For correlation verification, trigger a request-driven failure through the
+   deployed chat or command proxy path; generic test events do not prove
+   actor/session/request tagging.
+4. Confirm the resulting captured events carry the expected pseudonymous
+   actor/session/request correlation tags and that no nickname, token, or
+   transcript content appears in the payload.
+
+## 7. AOAI Capacity & Scaling Notes
 
 The Azure OpenAI deployment is provisioned with a **Standard (pay-as-you-go)**
 SKU. Key things to know:
@@ -260,7 +327,7 @@ minutes (it only updates the rate limit on the existing deployment).
 See [Azure OpenAI Quotas and Limits](https://learn.microsoft.com/en-us/azure/ai-foundry/openai/quotas-limits)
 for the full reference. Quota tiers auto-upgrade with usage.
 
-## 7. Tear Down (when done)
+## 8. Tear Down (when done)
 
 ```bash
 CLUSTER_FLAVOR=aks make tf-destroy
