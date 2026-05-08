@@ -181,10 +181,16 @@ describe("scenario telemetry", () => {
     expect(JSON.stringify(warn.mock.calls)).not.toContain("session-123");
   });
 
-  it("returns the scenario without waiting for started telemetry to finish", async () => {
+  it("does not wait for started telemetry to finish before returning the scenario", async () => {
     const create = vi.fn().mockResolvedValue("session-123");
     const upsertGithubViewer = vi.fn().mockResolvedValue(undefined);
-    const recordGameplay = vi.fn().mockImplementation(() => new Promise<void>(() => {}));
+    let resolveStartedTelemetry: (() => void) | undefined;
+    const recordGameplay = vi.fn().mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveStartedTelemetry = resolve;
+        })
+    );
 
     vi.doMock("../lib/storage", async () => {
       const actual = await vi.importActual<typeof import("../lib/storage")>("../lib/storage");
@@ -206,11 +212,13 @@ describe("scenario telemetry", () => {
       "/api/scenario",
       { difficulty: "easy" },
       { cookie: githubAuthCookie },
-      200,
+      100
     );
 
     expect(response.status).toBe(200);
     expect(response.body.sessionToken).toBe("session-123");
     expect(recordGameplay).toHaveBeenCalled();
+
+    resolveStartedTelemetry?.();
   });
 });

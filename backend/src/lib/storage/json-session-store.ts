@@ -27,6 +27,7 @@ export class JsonSessionStore implements ISessionStore {
         ? {
             difficulty: difficultyOrInput,
             scenarioTitle: scenarioTitle ?? "Unknown Scenario",
+            trafficSource: "player",
             identityKind: "anonymous",
             anonymousClaimKey: null,
             githubLogin: null,
@@ -40,6 +41,7 @@ export class JsonSessionStore implements ISessionStore {
       scenarioTitle: input.scenarioTitle,
       startTime: Date.now(),
       used: false,
+      trafficSource: input.trafficSource ?? "player",
       identityKind: input.identityKind,
       githubUserId: input.githubUserId ?? null,
       githubLogin: input.githubLogin ?? null,

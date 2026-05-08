@@ -74,6 +74,7 @@ async function postJson(
 describe("POST /api/scenario", () => {
   const originalEnv: Record<string, string | undefined> = {};
   let scenarioRouter: typeof import("./scenario").scenarioRouter;
+  let getSessionStore: typeof import("../lib/storage").getSessionStore;
   let tmpDir: string;
   const anonymousUserAgent = "scenario-test-agent";
 
@@ -115,6 +116,7 @@ describe("POST /api/scenario", () => {
 
     const storageModule = await import("../lib/storage");
     await storageModule.initStorage();
+    getSessionStore = storageModule.getSessionStore;
 
     const scenarioModule = await import("./scenario");
     scenarioRouter = scenarioModule.scenarioRouter;
@@ -182,6 +184,60 @@ describe("POST /api/scenario", () => {
     const scenario = res.body.scenario as Record<string, unknown>;
     expect(scenario.difficulty).toBe("easy");
     expect(scenario.id).toBe("scenario_mock_easy");
+  });
+
+  it("ignores an automated traffic header without the matching server token", async () => {
+    const authToken = createViewerSessionToken(
+      {
+        kind: "github",
+        githubUserId: "traffic-player",
+        githubLogin: "traffic-player",
+        displayName: "Traffic Player",
+        avatarUrl: null,
+        issuedAt: Date.now(),
+        expiresAt: Date.now() + 60_000,
+      },
+      "test-secret",
+    );
+    const app = createApp(scenarioRouter);
+    const res = await postJson(app, "/api/scenario", {
+      difficulty: "easy",
+    }, {
+      cookie: `${VIEWER_SESSION_COOKIE}=${authToken}`,
+      "x-traffic-source": "automated",
+    });
+
+    expect(res.status).toBe(200);
+    const session = await getSessionStore().get(String(res.body.sessionToken));
+    expect(session?.trafficSource).toBe("player");
+  });
+
+  it("stores automated traffic when the request presents the configured server token", async () => {
+    process.env.AUTOMATED_TRAFFIC_TOKEN = "test-traffic-token";
+    const authToken = createViewerSessionToken(
+      {
+        kind: "github",
+        githubUserId: "traffic-automation",
+        githubLogin: "traffic-automation",
+        displayName: "Traffic Automation",
+        avatarUrl: null,
+        issuedAt: Date.now(),
+        expiresAt: Date.now() + 60_000,
+      },
+      "test-secret",
+    );
+    const app = createApp(scenarioRouter);
+    const res = await postJson(app, "/api/scenario", {
+      difficulty: "easy",
+    }, {
+      cookie: `${VIEWER_SESSION_COOKIE}=${authToken}`,
+      "x-traffic-source": "automated",
+      "x-traffic-source-token": "test-traffic-token",
+    });
+
+    expect(res.status).toBe(200);
+    const session = await getSessionStore().get(String(res.body.sessionToken));
+    expect(session?.trafficSource).toBe("automated");
   });
 
   it("rejects invalid difficulty", async () => {
@@ -274,5 +330,95 @@ describe("POST /api/scenario", () => {
 
     expect(res.status).toBe(403);
     expect(res.body.code).toBe("github_required");
+  });
+
+  it("returns the session token without waiting for started telemetry persistence", async () => {
+    process.env.AI_MOCK_MODE = "true";
+    process.env.AUTH_SESSION_SECRET = "test-secret";
+    process.env.ANTI_ABUSE_HMAC_SECRET = "test-hmac";
+
+    const authToken = createViewerSessionToken(
+      {
+        kind: "github",
+        githubUserId: "ordered-player",
+        githubLogin: "ordered-player",
+        displayName: "Ordered Player",
+        avatarUrl: null,
+        issuedAt: Date.now(),
+        expiresAt: Date.now() + 60_000,
+      },
+      "test-secret"
+    );
+
+    let resolveStartedWrite: (() => void) | undefined;
+    const startedWrite = new Promise<void>((resolve) => {
+      resolveStartedWrite = resolve;
+    });
+
+    const recordGameplay = vi.fn((data: { lifecycleState?: string }) => {
+      if (data.lifecycleState === "started") {
+        return startedWrite;
+      }
+      return Promise.resolve();
+    });
+
+    vi.resetModules();
+    const storageModule = await import("../lib/storage");
+    vi.spyOn(storageModule, "getMetricsStore").mockReturnValue({
+      recordGameplay,
+      hasLifecycleEvent: vi.fn(),
+      getPlayerHistory: vi.fn(),
+      getGameplayAnalytics: vi.fn(),
+    });
+    vi.spyOn(storageModule, "getPlayerStore").mockReturnValue({
+      upsertGithubViewer: vi.fn().mockResolvedValue({
+        githubUserId: "ordered-player",
+        githubLogin: "ordered-player",
+        displayName: "Ordered Player",
+        avatarUrl: null,
+      }),
+      getByGithubUserId: vi.fn(),
+    });
+    vi.spyOn(storageModule, "getSessionStore").mockReturnValue({
+      create: vi.fn().mockResolvedValue("session-ordered"),
+      get: vi.fn(),
+      validateAndConsume: vi.fn(),
+    });
+
+    const isolatedScenarioModule = await import("./scenario");
+    const app = createApp(isolatedScenarioModule.scenarioRouter);
+
+    const responsePromise = postJson(app, "/api/scenario", {
+      difficulty: "easy",
+    }, {
+      cookie: `${VIEWER_SESSION_COOKIE}=${authToken}`,
+    });
+    const response = await Promise.race([
+      responsePromise,
+      new Promise<"timed-out">((resolve) => {
+        setTimeout(() => resolve("timed-out"), 100);
+      }),
+    ]);
+
+    expect(response).not.toBe("timed-out");
+    if (response === "timed-out") {
+      resolveStartedWrite?.();
+      throw new Error("Scenario response should not wait for started telemetry persistence");
+    }
+
+    expect(response.status).toBe(200);
+    expect(response.body.sessionToken).toBe("session-ordered");
+    expect(recordGameplay).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionToken: "session-ordered",
+        lifecycleState: "started",
+      })
+    );
+
+    resolveStartedWrite?.();
+    await startedWrite;
+
+    vi.restoreAllMocks();
+    vi.resetModules();
   });
 });

@@ -24,6 +24,7 @@ import { buildAnonymousClaimKeys } from "../lib/anonymous-claim";
 import { evaluateScenarioAccess } from "../lib/scenario-access";
 import { verifySignedClientIp } from "../../../shared/auth/client-ip";
 import type { Difficulty, Scenario } from "../../../shared/types/game";
+import type { TrafficSource } from "../../../shared/types/leaderboard";
 
 export const scenarioRouter = Router();
 const VALID_DIFFICULTIES: Difficulty[] = ["easy", "medium", "hard"];
@@ -32,6 +33,21 @@ const ANONYMOUS_TRIAL_TTL_MS = 24 * 60 * 60 * 1000;
 interface ScenarioRequestBody {
   difficulty: Difficulty;
   turnstileToken?: string;
+}
+
+function getTrafficSource(req: Request): TrafficSource {
+  const requestedSource = req.get("x-traffic-source")?.trim().toLowerCase();
+  if (requestedSource !== "automated") {
+    return "player";
+  }
+
+  const expectedToken = process.env.AUTOMATED_TRAFFIC_TOKEN;
+  const providedToken = req.get("x-traffic-source-token")?.trim();
+  if (!expectedToken || !providedToken || providedToken !== expectedToken) {
+    return "player";
+  }
+
+  return "automated";
 }
 
 function getClientIp(req: Request, secret: string | undefined): string | undefined {
@@ -66,11 +82,13 @@ async function recordStartedTelemetry(
   sessionToken: string,
   difficulty: Difficulty,
   scenarioTitle: string,
+  trafficSource: TrafficSource,
   source = "scenario",
 ): Promise<void> {
   try {
     await getMetricsStore().recordGameplay({
       sessionToken,
+      trafficSource,
       difficulty,
       scenarioTitle,
       lifecycleState: "started",
@@ -191,17 +209,25 @@ scenarioRouter.post("/", async (req: Request, res: Response) => {
       sessionToken: string;
       identityKind: "github" | "anonymous";
     }> => {
+      const trafficSource = getTrafficSource(req);
       const sessionToken = await getSessionStore().create({
         difficulty,
         scenarioTitle,
+        trafficSource,
         identityKind: accessDecision.sessionIdentityKind,
         githubUserId: viewer?.githubUserId ?? null,
         githubLogin: viewer?.githubLogin ?? null,
         anonymousClaimKey: reservedClaimKeys[0] ?? null,
         persistentScoreEligible: accessDecision.sessionIdentityKind === "github",
       });
-      void recordStartedTelemetry(sessionToken, difficulty, scenarioTitle, source);
       claimReservationCommitted = true;
+      void recordStartedTelemetry(
+        sessionToken,
+        difficulty,
+        scenarioTitle,
+        trafficSource,
+        source,
+      );
 
       return {
         sessionToken,

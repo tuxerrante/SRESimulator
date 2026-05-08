@@ -6,7 +6,7 @@ import { join } from "path";
 
 async function httpRequest(
   app: express.Express,
-  method: "POST",
+  method: "GET" | "POST",
   path: string,
   body?: unknown,
   extraHeaders: Record<string, string> = {},
@@ -61,11 +61,16 @@ async function httpRequest(
   });
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
 describe("gameplay routes", () => {
   let tmpDir: string;
   let origDataDir: string | undefined;
   let origMockMode: string | undefined;
   let origGameplayRateLimitMax: string | undefined;
+  let origGameplayAdminToken: string | undefined;
 
   let gameplayRouter: typeof import("./gameplay").gameplayRouter;
   let getSessionStore: typeof import("../lib/storage").getSessionStore;
@@ -76,9 +81,11 @@ describe("gameplay routes", () => {
     origDataDir = process.env.DATA_DIR;
     origMockMode = process.env.AI_MOCK_MODE;
     origGameplayRateLimitMax = process.env.GAMEPLAY_TELEMETRY_RATE_LIMIT_MAX;
+    origGameplayAdminToken = process.env.GAMEPLAY_ADMIN_TOKEN;
     process.env.DATA_DIR = tmpDir;
     process.env.AI_MOCK_MODE = "true";
     delete process.env.GAMEPLAY_TELEMETRY_RATE_LIMIT_MAX;
+    delete process.env.GAMEPLAY_ADMIN_TOKEN;
     delete process.env.STORAGE_BACKEND;
 
     vi.resetModules();
@@ -109,6 +116,12 @@ describe("gameplay routes", () => {
       delete process.env.GAMEPLAY_TELEMETRY_RATE_LIMIT_MAX;
     } else {
       process.env.GAMEPLAY_TELEMETRY_RATE_LIMIT_MAX = origGameplayRateLimitMax;
+    }
+
+    if (origGameplayAdminToken === undefined) {
+      delete process.env.GAMEPLAY_ADMIN_TOKEN;
+    } else {
+      process.env.GAMEPLAY_ADMIN_TOKEN = origGameplayAdminToken;
     }
 
     await rm(tmpDir, { recursive: true, force: true });
@@ -185,6 +198,162 @@ describe("gameplay routes", () => {
 
     expect(response.status).toBe(400);
     expect(response.body.error).toContain("Invalid lifecycle state");
+  });
+
+  it("POST /api/gameplay records the session traffic source", async () => {
+    const token = await getSessionStore().create({
+      difficulty: "easy",
+      scenarioTitle: "The Sleeping Cluster",
+      trafficSource: "automated",
+      identityKind: "github",
+      githubUserId: "traffic-gh",
+      githubLogin: "traffic-gh",
+      anonymousClaimKey: null,
+      persistentScoreEligible: true,
+    });
+    const app = createApp();
+
+    const response = await httpRequest(app, "POST", "/api/gameplay", {
+      sessionToken: token,
+      lifecycleState: "completed",
+      nickname: "traffic-player",
+    });
+
+    expect(response.status).toBe(202);
+
+    const history = await getMetricsStore().getPlayerHistory("traffic-player");
+    expect(history).toHaveLength(1);
+    expect(history[0]?.trafficSource).toBe("automated");
+  });
+
+  it("GET /api/gameplay/admin rejects requests without the admin bearer token", async () => {
+    process.env.GAMEPLAY_ADMIN_TOKEN = "gameplay-admin-secret";
+    const app = createApp();
+
+    const response = await httpRequest(app, "GET", "/api/gameplay/admin");
+
+    expect(response.status).toBe(401);
+    expect(response.body.error).toContain("Unauthorized");
+  });
+
+  it("GET /api/gameplay/admin summarizes the latest player-only session state without exposing session tokens", async () => {
+    process.env.GAMEPLAY_ADMIN_TOKEN = "gameplay-admin-secret";
+    const playerToken = await getSessionStore().create({
+      difficulty: "hard",
+      scenarioTitle: "Etcd Quorum Loss",
+      trafficSource: "player",
+      identityKind: "github",
+      githubUserId: "analytics-player",
+      githubLogin: "analytics-player",
+      anonymousClaimKey: null,
+      persistentScoreEligible: true,
+    });
+    const automatedToken = await getSessionStore().create({
+      difficulty: "easy",
+      scenarioTitle: "Synthetic Smoke",
+      trafficSource: "automated",
+      identityKind: "github",
+      githubUserId: "analytics-bot",
+      githubLogin: "analytics-bot",
+      anonymousClaimKey: null,
+      persistentScoreEligible: true,
+    });
+    const app = createApp();
+
+    expect((await httpRequest(app, "POST", "/api/gameplay", {
+      sessionToken: playerToken,
+      lifecycleState: "started",
+      metadata: { source: "scenario" },
+    })).status).toBe(202);
+
+    expect((await httpRequest(app, "POST", "/api/gameplay", {
+      sessionToken: playerToken,
+      lifecycleState: "completed",
+      nickname: "player-admin",
+      commandCount: 6,
+      chatMessageCount: 8,
+      durationMs: 120000,
+      scoreTotal: 82,
+      grade: "B",
+    })).status).toBe(202);
+
+    expect((await httpRequest(app, "POST", "/api/gameplay", {
+      sessionToken: automatedToken,
+      lifecycleState: "completed",
+      nickname: "automation",
+      commandCount: 1,
+      chatMessageCount: 1,
+      durationMs: 1000,
+      scoreTotal: 100,
+      grade: "A",
+    })).status).toBe(202);
+
+    const admin = await httpRequest(app, "GET", "/api/gameplay/admin", undefined, {
+      authorization: "Bearer gameplay-admin-secret",
+    });
+
+    expect(admin.status).toBe(200);
+    expect(admin.body.summary).toMatchObject({
+      totalSessions: 1,
+      completedSessions: 1,
+      abandonedSessions: 0,
+      inProgressSessions: 0,
+    });
+    expect(admin.body.byDifficulty).toEqual([
+      expect.objectContaining({
+        difficulty: "hard",
+        totalSessions: 1,
+        completedSessions: 1,
+      }),
+    ]);
+    expect(admin.body.recentSessions).toEqual([
+      expect.objectContaining({
+        lifecycleState: "completed",
+        difficulty: "hard",
+        scenarioTitle: "Etcd Quorum Loss",
+        nickname: "player-admin",
+        commandCount: 6,
+        scoreTotal: 82,
+        grade: "B",
+      }),
+    ]);
+    const recentSessions = admin.body.recentSessions;
+    expect(Array.isArray(recentSessions)).toBe(true);
+    if (!Array.isArray(recentSessions)) {
+      throw new Error("Expected recentSessions to be an array");
+    }
+
+    const recentSession = recentSessions[0];
+    expect(isRecord(recentSession)).toBe(true);
+    if (!isRecord(recentSession)) {
+      throw new Error("Expected the first recent session entry to be an object");
+    }
+
+    expect(Object.prototype.hasOwnProperty.call(recentSession, "sessionToken")).toBe(false);
+  });
+
+  it("GET /api/gameplay/admin is not rate limited by gameplay POST traffic", async () => {
+    process.env.GAMEPLAY_ADMIN_TOKEN = "gameplay-admin-secret";
+    process.env.GAMEPLAY_TELEMETRY_RATE_LIMIT_MAX = "1";
+    const token = await getSessionStore().create("easy", "The Sleeping Cluster");
+    const app = createApp();
+
+    expect((await httpRequest(app, "POST", "/api/gameplay", {
+      sessionToken: token,
+      lifecycleState: "started",
+    })).status).toBe(202);
+
+    const admin = await httpRequest(app, "GET", "/api/gameplay/admin", undefined, {
+      authorization: "Bearer gameplay-admin-secret",
+    });
+
+    expect(admin.status).toBe(200);
+    expect(admin.body.summary).toMatchObject({
+      totalSessions: 1,
+      completedSessions: 0,
+      abandonedSessions: 0,
+      inProgressSessions: 1,
+    });
   });
 
   it("POST /api/gameplay caps oversized scoring event payloads", async () => {

@@ -1,6 +1,6 @@
 import type { Difficulty } from "../../../../shared/types/game";
-import type { LeaderboardEntry, HallOfFameEntry } from "../../../../shared/types/leaderboard";
-import type { GameplayLifecycleState } from "../../../../shared/types/gameplay";
+import type { LeaderboardEntry, HallOfFameEntry, TrafficSource } from "../../../../shared/types/leaderboard";
+import type { GameplayAnalytics, GameplayLifecycleState } from "../../../../shared/types/gameplay";
 import type { GithubViewer } from "../../../../shared/auth/viewer";
 
 export type SessionIdentityKind = "github" | "anonymous";
@@ -11,6 +11,7 @@ export interface GameSession {
   scenarioTitle: string;
   startTime: number;
   used: boolean;
+  trafficSource: TrafficSource;
   identityKind: SessionIdentityKind;
   githubUserId: string | null;
   githubLogin: string | null;
@@ -21,6 +22,7 @@ export interface GameSession {
 export interface CreateGameSessionInput {
   difficulty: Difficulty;
   scenarioTitle: string;
+  trafficSource?: TrafficSource;
   identityKind: SessionIdentityKind;
   githubUserId?: string | null;
   githubLogin?: string | null;
@@ -46,6 +48,7 @@ export interface AnonymousTrialClaim {
 export interface GameplayRecord {
   id?: string;
   sessionToken?: string;
+  trafficSource?: TrafficSource;
   nickname?: string;
   difficulty?: Difficulty;
   scenarioTitle?: string;
@@ -84,6 +87,7 @@ export interface IMetricsStore {
     lifecycleState: GameplayLifecycleState,
   ): Promise<boolean>;
   getPlayerHistory(nickname: string): Promise<GameplayRecord[]>;
+  getGameplayAnalytics(): Promise<GameplayAnalytics>;
 }
 
 export interface IPlayerStore {

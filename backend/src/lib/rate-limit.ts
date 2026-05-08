@@ -1,4 +1,35 @@
 import rateLimit, { ipKeyGenerator } from "express-rate-limit";
+import { verifySignedClientIp } from "../../../shared/auth/client-ip";
+
+interface RateLimitRequestLike {
+  ip?: string;
+  headers: Record<string, string | string[] | undefined>;
+}
+
+export function getRateLimitKey(
+  req: RateLimitRequestLike,
+  antiAbuseSecret = process.env.ANTI_ABUSE_HMAC_SECRET,
+): string {
+  const signedIpHeader = req.headers["x-sresim-client-ip"];
+  const signatureHeader = req.headers["x-sresim-client-ip-signature"];
+  const signedIp = Array.isArray(signedIpHeader) ? signedIpHeader[0] : signedIpHeader;
+  const signature = Array.isArray(signatureHeader) ? signatureHeader[0] : signatureHeader;
+
+  if (
+    antiAbuseSecret &&
+    signedIp &&
+    signature &&
+    verifySignedClientIp(signedIp, signature, antiAbuseSecret)
+  ) {
+    return ipKeyGenerator(signedIp);
+  }
+
+  if (req.ip) {
+    return ipKeyGenerator(req.ip);
+  }
+
+  return "unknown";
+}
 
 /**
  * Per-IP rate limiter for AI-backed routes to prevent a single client
@@ -15,16 +46,7 @@ export const aiRateLimit = rateLimit({
   message: {
     error: "Too many requests. Please slow down and try again in a moment.",
   },
-  keyGenerator: (req) => {
-    const clientIp =
-      req.ip ??
-      req.headers["x-forwarded-for"]?.toString().split(",")[0]?.trim() ??
-      "";
-    if (!clientIp) {
-      return "unknown";
-    }
-    return ipKeyGenerator(clientIp);
-  },
+  keyGenerator: (req) => getRateLimitKey(req),
 });
 
 export const gameplayTelemetryRateLimit = rateLimit({
@@ -38,14 +60,5 @@ export const gameplayTelemetryRateLimit = rateLimit({
   message: {
     error: "Too many gameplay telemetry events. Please slow down and try again shortly.",
   },
-  keyGenerator: (req) => {
-    const clientIp =
-      req.ip ??
-      req.headers["x-forwarded-for"]?.toString().split(",")[0]?.trim() ??
-      "";
-    if (!clientIp) {
-      return "unknown";
-    }
-    return ipKeyGenerator(clientIp);
-  },
+  keyGenerator: (req) => getRateLimitKey(req),
 });

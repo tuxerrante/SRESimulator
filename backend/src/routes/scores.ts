@@ -95,6 +95,7 @@ scoresRouter.post("/", async (req: Request, res: Response) => {
       identityKind: "github",
       githubUserId: session.githubUserId,
       githubLogin: session.githubLogin ?? undefined,
+      trafficSource: session.trafficSource,
       timestamp: Date.now(),
     };
 

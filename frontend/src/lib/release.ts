@@ -1,7 +1,9 @@
 export const APP_VERSION = "v0.1.2";
 
-export const HOME_FEATURE_HIGHLIGHTS: string[] = [
-  "Introduced AI-guided break-fix scenarios across easy, medium, and hard SRE tracks.",
-  "Added phase-aware scoring for reading, context gathering, facts, theory building, and action quality.",
-  "Shipped ARO deployment workflows with readiness probes and operational checks for safer releases.",
-];
+const GITHUB_RELEASES_URL = "https://github.com/tuxerrante/SRESimulator/releases";
+
+export function getReleaseUrl(version: string): string {
+  return `${GITHUB_RELEASES_URL}/tag/${encodeURIComponent(version)}`;
+}
+
+export const APP_RELEASE_URL = getReleaseUrl(APP_VERSION);

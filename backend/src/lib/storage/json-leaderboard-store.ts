@@ -15,6 +15,14 @@ function sortEntries(entries: LeaderboardEntry[]): LeaderboardEntry[] {
   });
 }
 
+function isPublicPlayerEntry(entry: LeaderboardEntry): boolean {
+  return (
+    entry.identityKind === "github" &&
+    Boolean(entry.githubUserId) &&
+    (entry.trafficSource ?? "player") === "player"
+  );
+}
+
 export class JsonLeaderboardStore implements ILeaderboardStore {
   private readonly dataDir: string;
   private readonly filePath: string;
@@ -59,10 +67,9 @@ export class JsonLeaderboardStore implements ILeaderboardStore {
       ? entries.filter(
           (e) =>
             e.difficulty === difficulty &&
-            e.identityKind === "github" &&
-            Boolean(e.githubUserId)
+            isPublicPlayerEntry(e)
         )
-      : entries.filter((e) => e.identityKind === "github" && Boolean(e.githubUserId));
+      : entries.filter(isPublicPlayerEntry);
     return sortEntries(filtered).slice(0, MAX_ENTRIES_PER_DIFFICULTY);
   }
 
@@ -79,6 +86,7 @@ export class JsonLeaderboardStore implements ILeaderboardStore {
     >();
 
     for (const entry of entries) {
+      if (!isPublicPlayerEntry(entry)) continue;
       if (!entry.githubUserId) continue;
       const existing = playerMap.get(entry.githubUserId) ?? {
         nickname: entry.nickname,
@@ -117,7 +125,10 @@ export class JsonLeaderboardStore implements ILeaderboardStore {
       const entries = await this.readEntries();
 
       const existingIdx = entries.findIndex(
-        (e) => e.githubUserId === entry.githubUserId && e.difficulty === entry.difficulty
+        (e) =>
+          e.githubUserId === entry.githubUserId &&
+          e.difficulty === entry.difficulty &&
+          (e.trafficSource ?? "player") === (entry.trafficSource ?? "player")
       );
 
       if (existingIdx !== -1) {
@@ -136,13 +147,14 @@ export class JsonLeaderboardStore implements ILeaderboardStore {
 
       const grouped: Record<string, LeaderboardEntry[]> = {};
       for (const e of entries) {
-        if (!grouped[e.difficulty]) grouped[e.difficulty] = [];
-        grouped[e.difficulty].push(e);
+        const key = `${e.difficulty}:${e.trafficSource ?? "player"}`;
+        if (!grouped[key]) grouped[key] = [];
+        grouped[key].push(e);
       }
 
       const trimmed: LeaderboardEntry[] = [];
-      for (const difficulty of Object.keys(grouped)) {
-        const sorted = sortEntries(grouped[difficulty]);
+      for (const key of Object.keys(grouped)) {
+        const sorted = sortEntries(grouped[key]);
         trimmed.push(...sorted.slice(0, MAX_ENTRIES_PER_DIFFICULTY));
       }
 

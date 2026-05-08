@@ -12,7 +12,13 @@ interface ChatPanelProps {
 }
 
 export function ChatPanel({ onRunCommand }: ChatPanelProps) {
-  const { messages, isStreaming, sendMessage } = useChat();
+  const {
+    messages,
+    isStreaming,
+    sendMessage,
+    retryLastMessage,
+    canRetryLastMessage,
+  } = useChat();
   const scrollRef = useRef<HTMLDivElement>(null);
 
   // Subscribe to the raw messages array to detect content updates during streaming
@@ -56,6 +62,18 @@ export function ChatPanel({ onRunCommand }: ChatPanelProps) {
           </div>
         )}
       </div>
+
+      {canRetryLastMessage && (
+        <div className="border-t border-zinc-700 bg-zinc-900 px-3 pt-3">
+          <button
+            type="button"
+            onClick={retryLastMessage}
+            className="rounded-md border border-amber-500/60 px-3 py-1.5 text-sm font-medium text-amber-300 transition-colors hover:bg-amber-500/10"
+          >
+            Retry last message
+          </button>
+        </div>
+      )}
 
       <ChatInput onSend={sendMessage} disabled={isStreaming} />
     </div>

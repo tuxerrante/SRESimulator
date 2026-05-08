@@ -4,8 +4,8 @@ import { gameplayTelemetryRateLimit } from "../lib/rate-limit";
 import type { GameplayLifecycleState } from "../../../shared/types/gameplay";
 
 export const gameplayRouter = Router();
-gameplayRouter.use(gameplayTelemetryRateLimit);
 
+const GAMEPLAY_ADMIN_TOKEN_HEADER = "x-gameplay-admin-token";
 const MAX_COMMANDS = 50;
 const MAX_COMMAND_LENGTH = 200;
 const MAX_SCORING_EVENTS = 50;
@@ -104,7 +104,21 @@ function sanitizeMetadata(value: unknown): Record<string, unknown> {
   return sanitized;
 }
 
-gameplayRouter.post("/", async (req: Request, res: Response) => {
+function hasGameplayAdminAccess(req: Request): boolean {
+  const expectedToken = process.env.GAMEPLAY_ADMIN_TOKEN?.trim();
+  if (!expectedToken) {
+    return false;
+  }
+
+  const authorization = req.get("authorization")?.trim();
+  if (authorization?.startsWith("Bearer ")) {
+    return authorization.slice("Bearer ".length).trim() === expectedToken;
+  }
+
+  return req.get(GAMEPLAY_ADMIN_TOKEN_HEADER)?.trim() === expectedToken;
+}
+
+gameplayRouter.post("/", gameplayTelemetryRateLimit, async (req: Request, res: Response) => {
   try {
     const body: GameplayEventBody = req.body;
 
@@ -136,6 +150,7 @@ gameplayRouter.post("/", async (req: Request, res: Response) => {
 
     await getMetricsStore().recordGameplay({
       sessionToken: body.sessionToken,
+      trafficSource: session.trafficSource,
       nickname: sanitizeString(body.nickname, 20),
       difficulty: session.difficulty,
       scenarioTitle: session.scenarioTitle,
@@ -155,5 +170,20 @@ gameplayRouter.post("/", async (req: Request, res: Response) => {
   } catch (error) {
     console.error("Failed to record gameplay event", { error });
     res.status(500).json({ error: "Failed to record gameplay event" });
+  }
+});
+
+gameplayRouter.get("/admin", async (req: Request, res: Response) => {
+  try {
+    if (!hasGameplayAdminAccess(req)) {
+      res.status(401).json({ error: "Unauthorized" });
+      return;
+    }
+
+    const analytics = await getMetricsStore().getGameplayAnalytics();
+    res.json(analytics);
+  } catch (error) {
+    console.error("Failed to read gameplay analytics", { error });
+    res.status(500).json({ error: "Failed to read gameplay analytics" });
   }
 });

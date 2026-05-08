@@ -10,7 +10,7 @@ import { DifficultyGrid } from "@/components/home/DifficultyGrid";
 import { TurnstileWidget } from "@/components/home/TurnstileWidget";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
-import { APP_VERSION, HOME_FEATURE_HIGHLIGHTS } from "@/lib/release";
+import { APP_RELEASE_URL, APP_VERSION } from "@/lib/release";
 import { getAnonymousVerificationMessage } from "@/lib/auth/anonymous-verification";
 import { collectBrowserFingerprintHash } from "@/lib/auth/fingerprint";
 import { buildScenarioRequestBody } from "@/lib/auth/scenario-request";
@@ -26,7 +26,6 @@ export default function HomePage() {
   const clearViewer = useGameStore((s) => s.clearViewer);
   const [loading, setLoading] = useState<Difficulty | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [showReleaseNotes, setShowReleaseNotes] = useState(false);
   const [authConfigured, setAuthConfigured] = useState(false);
   const [sessionReady, setSessionReady] = useState(false);
   const [sessionLoadError, setSessionLoadError] = useState(false);
@@ -350,38 +349,20 @@ export default function HomePage() {
         <div className="text-zinc-500 text-xs text-center">
           ARO SRE Simulator &mdash; Investigation training powered by AI
           <span className="mx-2">&middot;</span>
-          <button
-            type="button"
-            onClick={() => setShowReleaseNotes((prev) => !prev)}
+          <a
+            aria-label={`View GitHub release ${APP_VERSION}`}
+            href={APP_RELEASE_URL}
+            target="_blank"
+            rel="noopener noreferrer"
             className="underline decoration-zinc-600 underline-offset-2 hover:text-zinc-200 hover:decoration-zinc-300 transition-colors"
-            aria-expanded={showReleaseNotes}
-            aria-controls="release-notes-panel"
-            aria-label={`${showReleaseNotes ? "Hide" : "Show"} release notes (${APP_VERSION})`}
           >
             {APP_VERSION}
-          </button>
+          </a>
           <span className="mx-2">&middot;</span>
           <Link href="/about" className="hover:text-zinc-200 transition-colors">
             About
           </Link>
         </div>
-        <section
-          id="release-notes-panel"
-          hidden={!showReleaseNotes}
-          aria-hidden={!showReleaseNotes}
-          className="w-full max-w-2xl rounded-xl border border-zinc-800 bg-zinc-900/70 p-4 text-left"
-        >
-          <h2 className="mb-2 text-sm font-semibold text-zinc-100">
-            Main feature updates
-          </h2>
-          <ul className="space-y-1 text-sm text-zinc-300">
-            {HOME_FEATURE_HIGHLIGHTS.map((feature) => (
-              <li key={feature} className="leading-relaxed">
-                - {feature}
-              </li>
-            ))}
-          </ul>
-        </section>
       </footer>
     </div>
   );
