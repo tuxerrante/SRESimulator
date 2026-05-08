@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import express from "express";
-import { mkdtemp, rm } from "fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
 import {
@@ -11,6 +11,7 @@ import {
   hashAnonymousProofUserAgent,
 } from "../../../shared/auth/anonymous-proof";
 import { createSignedClientIp } from "../../../shared/auth/client-ip";
+import { buildAnonymousClaimKeys } from "../lib/anonymous-claim";
 
 const generateAiTextMock = vi.fn();
 
@@ -117,6 +118,8 @@ describe("scenario reservation before AI generation", () => {
     process.env.TURNSTILE_SECRET_KEY = "test-secret";
     process.env.AUTH_SESSION_SECRET = "test-secret";
     process.env.ANTI_ABUSE_HMAC_SECRET = "test-hmac";
+    delete process.env.SCENARIO_SOURCE;
+    delete process.env.SCENARIO_CATALOG_DIR;
     delete process.env.STORAGE_BACKEND;
     generateAiTextMock.mockReset().mockImplementation(
       () =>
@@ -161,6 +164,8 @@ describe("scenario reservation before AI generation", () => {
     delete process.env.TURNSTILE_SECRET_KEY;
     delete process.env.AUTH_SESSION_SECRET;
     delete process.env.ANTI_ABUSE_HMAC_SECRET;
+    delete process.env.SCENARIO_SOURCE;
+    delete process.env.SCENARIO_CATALOG_DIR;
     await rm(tmpDir, { recursive: true, force: true });
   });
 
@@ -192,5 +197,255 @@ describe("scenario reservation before AI generation", () => {
 
     expect([first.status, second.status].sort()).toEqual([200, 429]);
     expect(generateAiTextMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("returns a curated catalog scenario without calling AI generation when catalog mode is enabled", async () => {
+    process.env.SCENARIO_SOURCE = "catalog";
+
+    const storageModule = await import("../lib/storage");
+    await storageModule.initStorage();
+    const scenarioModule = await import("./scenario");
+    const app = createApp(scenarioModule.scenarioRouter);
+    const headers = {
+      cookie: createAnonymousProofCookie("fp_catalog"),
+      "user-agent": anonymousUserAgent,
+      ...createSignedClientIpHeaders("203.0.113.45"),
+    };
+
+    const response = await postJson(
+      app,
+      "/api/scenario",
+      { difficulty: "easy", turnstileToken: "pass" },
+      headers
+    );
+
+    expect(response.status).toBe(200);
+    const scenario = response.body.scenario as Record<string, unknown>;
+    expect(scenario.id).toBe("scenario_sleeping_cluster");
+    expect(JSON.stringify(scenario)).not.toContain("{{minutesAgo:");
+    expect(JSON.stringify(scenario)).not.toContain("{{daysAgo:");
+    expect(generateAiTextMock).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when catalog mode is enabled but no curated scenario is available", async () => {
+    process.env.SCENARIO_SOURCE = "catalog";
+    process.env.SCENARIO_CATALOG_DIR = tmpDir;
+
+    const storageModule = await import("../lib/storage");
+    await storageModule.initStorage();
+    const scenarioModule = await import("./scenario");
+    const app = createApp(scenarioModule.scenarioRouter);
+    const headers = {
+      cookie: createAnonymousProofCookie("fp_catalog_missing"),
+      "user-agent": anonymousUserAgent,
+      ...createSignedClientIpHeaders("203.0.113.46"),
+    };
+
+    const response = await postJson(
+      app,
+      "/api/scenario",
+      { difficulty: "easy", turnstileToken: "pass" },
+      headers
+    );
+
+    expect(response.status).toBe(503);
+    expect(response.body.error).toBe("Scenario catalog is not available for easy difficulty.");
+    expect(generateAiTextMock).not.toHaveBeenCalled();
+  });
+
+  it("returns a client-safe error when a catalog file is invalid", async () => {
+    process.env.SCENARIO_SOURCE = "catalog";
+    process.env.SCENARIO_CATALOG_DIR = tmpDir;
+    await mkdir(join(tmpDir, "easy"), { recursive: true });
+    await writeFile(
+      join(tmpDir, "easy", "broken.json"),
+      JSON.stringify({
+        id: "scenario_broken",
+        difficulty: "easy",
+        description: "broken",
+        incidentTicket: { id: "IcM-1", title: "broken" },
+        clusterContext: { name: "broken", nodeCount: 1 },
+      })
+    );
+
+    const storageModule = await import("../lib/storage");
+    await storageModule.initStorage();
+    const scenarioModule = await import("./scenario");
+    const app = createApp(scenarioModule.scenarioRouter);
+    const headers = {
+      cookie: createAnonymousProofCookie("fp_catalog_invalid"),
+      "user-agent": anonymousUserAgent,
+      ...createSignedClientIpHeaders("203.0.113.47"),
+    };
+
+    const response = await postJson(
+      app,
+      "/api/scenario",
+      { difficulty: "easy", turnstileToken: "pass" },
+      headers
+    );
+
+    expect(response.status).toBe(500);
+    expect(response.body.error).toBe("Scenario catalog is invalid.");
+    expect(JSON.stringify(response.body)).not.toContain(tmpDir);
+    expect(JSON.stringify(response.body)).not.toContain("broken.json");
+    expect(generateAiTextMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects catalog scenarios that omit required nested arrays", async () => {
+    process.env.SCENARIO_SOURCE = "catalog";
+    process.env.SCENARIO_CATALOG_DIR = tmpDir;
+    await mkdir(join(tmpDir, "easy"), { recursive: true });
+    await writeFile(
+      join(tmpDir, "easy", "missing-alerts.json"),
+      JSON.stringify({
+        id: "scenario_missing_alerts",
+        title: "Missing alerts",
+        difficulty: "easy",
+        description: "broken",
+        incidentTicket: {
+          id: "IcM-2",
+          severity: "Sev3",
+          title: "broken",
+          description: "broken",
+          customerImpact: "impact",
+          reportedTime: new Date().toISOString(),
+          clusterName: "cluster",
+          region: "eastus",
+        },
+        clusterContext: {
+          name: "cluster",
+          version: "4.19.0",
+          region: "eastus",
+          nodeCount: 1,
+          status: "Degraded",
+          recentEvents: [],
+          upgradeHistory: [],
+        },
+      })
+    );
+
+    const storageModule = await import("../lib/storage");
+    await storageModule.initStorage();
+    const scenarioModule = await import("./scenario");
+    const app = createApp(scenarioModule.scenarioRouter);
+    const headers = {
+      cookie: createAnonymousProofCookie("fp_catalog_missing_alerts"),
+      "user-agent": anonymousUserAgent,
+      ...createSignedClientIpHeaders("203.0.113.48"),
+    };
+
+    const response = await postJson(
+      app,
+      "/api/scenario",
+      { difficulty: "easy", turnstileToken: "pass" },
+      headers
+    );
+
+    expect(response.status).toBe(500);
+    expect(response.body.error).toBe("Scenario catalog is invalid.");
+    expect(generateAiTextMock).not.toHaveBeenCalled();
+  });
+
+  it("returns a client-safe error when a catalog file contains invalid JSON syntax", async () => {
+    process.env.SCENARIO_SOURCE = "catalog";
+    process.env.SCENARIO_CATALOG_DIR = tmpDir;
+    await mkdir(join(tmpDir, "easy"), { recursive: true });
+    await writeFile(join(tmpDir, "easy", "invalid-json.json"), "{");
+
+    const storageModule = await import("../lib/storage");
+    await storageModule.initStorage();
+    const scenarioModule = await import("./scenario");
+    const app = createApp(scenarioModule.scenarioRouter);
+    const headers = {
+      cookie: createAnonymousProofCookie("fp_catalog_bad_json"),
+      "user-agent": anonymousUserAgent,
+      ...createSignedClientIpHeaders("203.0.113.49"),
+    };
+
+    const response = await postJson(
+      app,
+      "/api/scenario",
+      { difficulty: "easy", turnstileToken: "pass" },
+      headers
+    );
+
+    expect(response.status).toBe(500);
+    expect(response.body.error).toBe("Scenario catalog is invalid.");
+    expect(JSON.stringify(response.body)).not.toContain(tmpDir);
+    expect(JSON.stringify(response.body)).not.toContain("invalid-json.json");
+    expect(generateAiTextMock).not.toHaveBeenCalled();
+  });
+
+  it("returns a client-safe error when catalog file reads fail before JSON parsing", async () => {
+    process.env.SCENARIO_SOURCE = "catalog";
+    process.env.SCENARIO_CATALOG_DIR = tmpDir;
+    await mkdir(join(tmpDir, "easy", "directory.json"), { recursive: true });
+
+    const storageModule = await import("../lib/storage");
+    await storageModule.initStorage();
+    const scenarioModule = await import("./scenario");
+    const app = createApp(scenarioModule.scenarioRouter);
+    const headers = {
+      cookie: createAnonymousProofCookie("fp_catalog_read_failure"),
+      "user-agent": anonymousUserAgent,
+      ...createSignedClientIpHeaders("203.0.113.51"),
+    };
+
+    const response = await postJson(
+      app,
+      "/api/scenario",
+      { difficulty: "easy", turnstileToken: "pass" },
+      headers
+    );
+
+    expect(response.status).toBe(500);
+    expect(response.body.error).toBe("Scenario catalog is invalid.");
+    expect(JSON.stringify(response.body)).not.toContain(tmpDir);
+    expect(JSON.stringify(response.body)).not.toContain("directory.json");
+    expect(generateAiTextMock).not.toHaveBeenCalled();
+  });
+
+  it("returns the anonymous daily-limit response before validating catalog files", async () => {
+    process.env.SCENARIO_SOURCE = "catalog";
+    process.env.SCENARIO_CATALOG_DIR = tmpDir;
+    await mkdir(join(tmpDir, "easy"), { recursive: true });
+    await writeFile(join(tmpDir, "easy", "invalid-json.json"), "{");
+
+    const storageModule = await import("../lib/storage");
+    await storageModule.initStorage();
+    const claimKeys = buildAnonymousClaimKeys(
+      {
+        fingerprintHash: "fp_catalog_claim_priority",
+        ip: "203.0.113.50",
+        userAgent: anonymousUserAgent,
+      },
+      "test-hmac"
+    );
+    await storageModule.getAnonymousTrialStore().reserveClaimKeys(claimKeys, {
+      claimKey: claimKeys[0]!,
+      createdAt: Date.now(),
+      expiresAt: Date.now() + 60_000,
+    });
+
+    const scenarioModule = await import("./scenario");
+    const app = createApp(scenarioModule.scenarioRouter);
+    const headers = {
+      cookie: createAnonymousProofCookie("fp_catalog_claim_priority"),
+      "user-agent": anonymousUserAgent,
+      ...createSignedClientIpHeaders("203.0.113.50"),
+    };
+
+    const response = await postJson(
+      app,
+      "/api/scenario",
+      { difficulty: "easy", turnstileToken: "pass" },
+      headers
+    );
+
+    expect(response.status).toBe(429);
+    expect(response.body.code).toBe("anonymous_daily_limit_reached");
+    expect(response.body.error).toBe("Anonymous Easy mode is limited to one run per day.");
+    expect(generateAiTextMock).not.toHaveBeenCalled();
   });
 });

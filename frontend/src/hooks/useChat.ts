@@ -5,6 +5,26 @@ import { useGameStore } from "@/stores/gameStore";
 import { extractPhase, extractScoreMarkers, extractResolved } from "@/lib/chat-markers";
 import type { ChatMessage } from "@shared/types/chat";
 
+function getNextSseEvent(buffer: string): { data: string; rest: string } | null {
+  const normalizedBuffer = buffer.replace(/\r\n/g, "\n");
+  const separatorIndex = normalizedBuffer.indexOf("\n\n");
+  if (separatorIndex === -1) {
+    return null;
+  }
+
+  const rawEvent = normalizedBuffer.slice(0, separatorIndex);
+  const data = rawEvent
+    .split("\n")
+    .filter((line) => line.startsWith("data: "))
+    .map((line) => line.slice(6))
+    .join("\n");
+
+  return {
+    data,
+    rest: normalizedBuffer.slice(separatorIndex + 2),
+  };
+}
+
 export function useChat() {
   const {
     messages,
@@ -74,19 +94,22 @@ export function useChat() {
 
         const decoder = new TextDecoder();
         let accumulated = "";
+        let buffer = "";
+        let streamDone = false;
 
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
+        const processBufferedEvents = () => {
+          while (true) {
+            const event = getNextSseEvent(buffer);
+            if (!event) return;
 
-          const chunk = decoder.decode(value, { stream: true });
-          const lines = chunk.split("\n");
+            buffer = event.rest;
+            const data = event.data;
+            if (!data) continue;
 
-          for (const line of lines) {
-            if (!line.startsWith("data: ")) continue;
-            const data = line.slice(6);
-
-            if (data === "[DONE]") break;
+            if (data === "[DONE]") {
+              streamDone = true;
+              return;
+            }
 
             try {
               const parsed = JSON.parse(data);
@@ -100,10 +123,22 @@ export function useChat() {
                 updateLastAssistantMessage(accumulated);
               }
             } catch (e) {
-              if (e instanceof SyntaxError) continue;
               throw e;
             }
           }
+        };
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) {
+            buffer += decoder.decode();
+            processBufferedEvents();
+            break;
+          }
+
+          buffer += decoder.decode(value, { stream: true });
+          processBufferedEvents();
+          if (streamDone) break;
         }
 
         // Post-stream processing
