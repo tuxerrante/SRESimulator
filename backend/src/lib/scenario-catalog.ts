@@ -281,7 +281,10 @@ export async function getCatalogScenario(
   difficulty: Difficulty,
 ): Promise<Scenario> {
   if (!cachedCatalogPromise) {
-    cachedCatalogPromise = loadCatalog();
+    cachedCatalogPromise = loadCatalog().catch((error) => {
+      cachedCatalogPromise = null;
+      throw error;
+    });
   }
 
   const catalog = await cachedCatalogPromise;

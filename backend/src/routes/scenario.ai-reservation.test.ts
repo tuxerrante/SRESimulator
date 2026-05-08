@@ -11,6 +11,7 @@ import {
   hashAnonymousProofUserAgent,
 } from "../../../shared/auth/anonymous-proof";
 import { createSignedClientIp } from "../../../shared/auth/client-ip";
+import { buildAnonymousClaimKeys } from "../lib/anonymous-claim";
 
 const generateAiTextMock = vi.fn();
 
@@ -373,6 +374,49 @@ describe("scenario reservation before AI generation", () => {
     expect(response.body.error).toBe("Scenario catalog is invalid.");
     expect(JSON.stringify(response.body)).not.toContain(tmpDir);
     expect(JSON.stringify(response.body)).not.toContain("invalid-json.json");
+    expect(generateAiTextMock).not.toHaveBeenCalled();
+  });
+
+  it("returns the anonymous daily-limit response before validating catalog files", async () => {
+    process.env.SCENARIO_SOURCE = "catalog";
+    process.env.SCENARIO_CATALOG_DIR = tmpDir;
+    await mkdir(join(tmpDir, "easy"), { recursive: true });
+    await writeFile(join(tmpDir, "easy", "invalid-json.json"), "{");
+
+    const storageModule = await import("../lib/storage");
+    await storageModule.initStorage();
+    const claimKeys = buildAnonymousClaimKeys(
+      {
+        fingerprintHash: "fp_catalog_claim_priority",
+        ip: "203.0.113.50",
+        userAgent: anonymousUserAgent,
+      },
+      "test-hmac"
+    );
+    await storageModule.getAnonymousTrialStore().reserveClaimKeys(claimKeys, {
+      claimKey: claimKeys[0]!,
+      createdAt: Date.now(),
+      expiresAt: Date.now() + 60_000,
+    });
+
+    const scenarioModule = await import("./scenario");
+    const app = createApp(scenarioModule.scenarioRouter);
+    const headers = {
+      cookie: createAnonymousProofCookie("fp_catalog_claim_priority"),
+      "user-agent": anonymousUserAgent,
+      ...createSignedClientIpHeaders("203.0.113.50"),
+    };
+
+    const response = await postJson(
+      app,
+      "/api/scenario",
+      { difficulty: "easy", turnstileToken: "pass" },
+      headers
+    );
+
+    expect(response.status).toBe(429);
+    expect(response.body.code).toBe("anonymous_daily_limit_reached");
+    expect(response.body.error).toBe("Anonymous Easy mode is limited to one run per day.");
     expect(generateAiTextMock).not.toHaveBeenCalled();
   });
 });

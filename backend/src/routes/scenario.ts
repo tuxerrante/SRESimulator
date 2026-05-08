@@ -210,8 +210,8 @@ scenarioRouter.post("/", async (req: Request, res: Response) => {
     };
 
     if (isCatalogScenarioSource()) {
-      const catalogScenario = await getCatalogScenario(difficulty);
       reservedClaimKeys = await reserveAnonymousClaimKeys();
+      const catalogScenario = await getCatalogScenario(difficulty);
       const session = await createSessionForScenario(
         catalogScenario.title,
         "scenario-catalog"
