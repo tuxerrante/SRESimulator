@@ -34,11 +34,12 @@ function formatCommandHistory(history: CommandHistoryEntry[] | undefined): strin
   const lines: string[] = [];
   let totalChars = 0;
 
-  for (const h of sanitized) {
+  for (let index = sanitized.length - 1; index >= 0; index -= 1) {
+    const h = sanitized[index]!;
     const line = `$ ${h.command}\n${h.output}`;
     const nextTotal = totalChars + line.length + (lines.length > 0 ? 2 : 0);
     if (nextTotal > MAX_HISTORY_CHARS) break;
-    lines.push(line);
+    lines.unshift(line);
     totalChars = nextTotal;
   }
 

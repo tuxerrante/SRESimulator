@@ -288,6 +288,41 @@ describe("POST /api/command", () => {
     expect(generateAiTextMock.mock.calls[0]?.[0]?.maxTokens).toBe(8192);
   });
 
+  it("preserves recent command mutations in late-game history overflow", async () => {
+    enableLiveAiRuntime();
+    const longOutput = "x".repeat(780);
+    const commandHistory = Array.from({ length: 24 }, (_, index) => ({
+      command: `oc get machines -n openshift-machine-api batch-${index}`,
+      output: `machine-${index} ${longOutput}`,
+      type: "oc" as const,
+    }));
+    commandHistory[23] = {
+      command: "oc delete machine worker-eastus2-2",
+      output: 'machine.machine.openshift.io "worker-eastus2-2" deleted',
+      type: "oc",
+    };
+
+    generateAiTextMock.mockImplementation(async (request) => {
+      const prompt = String(request.system ?? "");
+      return prompt.includes("$ oc delete machine worker-eastus2-2")
+        ? "NAME                   STATUS\nworker-eastus2-1        Running"
+        : "NAME                   STATUS\nworker-eastus2-1        Running\nworker-eastus2-2        Running";
+    });
+
+    const app = createApp();
+    const res = await postJson(app, "/api/command", {
+      command: "oc get machines -n openshift-machine-api",
+      type: "oc",
+      scenario: makeScenario(),
+      commandHistory,
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body.exitCode).toBe(0);
+    expect(String(res.body.output)).toContain("worker-eastus2-1");
+    expect(String(res.body.output)).not.toContain("worker-eastus2-2");
+  });
+
   it("falls back to mock output when live command generation exceeds the timeout budget", async () => {
     enableLiveAiRuntime();
     process.env.AI_COMMAND_TIMEOUT_MS = "50";
