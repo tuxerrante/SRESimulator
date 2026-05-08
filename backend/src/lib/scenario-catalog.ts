@@ -237,7 +237,16 @@ async function loadCatalogDirectory(
   const scenarios = await Promise.all(
     scenarioFiles.map(async (fileName) => {
       const filePath = join(difficultyDir, fileName);
-      const raw = await readFile(filePath, "utf8");
+      let raw: string;
+      try {
+        raw = await readFile(filePath, "utf8");
+      } catch (error) {
+        throw invalidCatalog(
+          `Catalog scenario ${filePath} could not be read: ${
+            error instanceof Error ? error.message : "read failure"
+          }`,
+        );
+      }
       let parsed: unknown;
       try {
         parsed = JSON.parse(raw) as unknown;

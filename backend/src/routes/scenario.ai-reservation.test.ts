@@ -377,6 +377,35 @@ describe("scenario reservation before AI generation", () => {
     expect(generateAiTextMock).not.toHaveBeenCalled();
   });
 
+  it("returns a client-safe error when catalog file reads fail before JSON parsing", async () => {
+    process.env.SCENARIO_SOURCE = "catalog";
+    process.env.SCENARIO_CATALOG_DIR = tmpDir;
+    await mkdir(join(tmpDir, "easy", "directory.json"), { recursive: true });
+
+    const storageModule = await import("../lib/storage");
+    await storageModule.initStorage();
+    const scenarioModule = await import("./scenario");
+    const app = createApp(scenarioModule.scenarioRouter);
+    const headers = {
+      cookie: createAnonymousProofCookie("fp_catalog_read_failure"),
+      "user-agent": anonymousUserAgent,
+      ...createSignedClientIpHeaders("203.0.113.51"),
+    };
+
+    const response = await postJson(
+      app,
+      "/api/scenario",
+      { difficulty: "easy", turnstileToken: "pass" },
+      headers
+    );
+
+    expect(response.status).toBe(500);
+    expect(response.body.error).toBe("Scenario catalog is invalid.");
+    expect(JSON.stringify(response.body)).not.toContain(tmpDir);
+    expect(JSON.stringify(response.body)).not.toContain("directory.json");
+    expect(generateAiTextMock).not.toHaveBeenCalled();
+  });
+
   it("returns the anonymous daily-limit response before validating catalog files", async () => {
     process.env.SCENARIO_SOURCE = "catalog";
     process.env.SCENARIO_CATALOG_DIR = tmpDir;
