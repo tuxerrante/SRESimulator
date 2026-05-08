@@ -19,17 +19,11 @@ BEGIN
     CONSTRAINT df_leaderboard_entries_traffic_source DEFAULT 'player';
 END;
 
-UPDATE sessions
-SET traffic_source = 'player'
-WHERE traffic_source IS NULL;
+EXEC('UPDATE sessions SET traffic_source = ''player'' WHERE traffic_source IS NULL;');
 
-UPDATE gameplay_metrics
-SET traffic_source = 'player'
-WHERE traffic_source IS NULL;
+EXEC('UPDATE gameplay_metrics SET traffic_source = ''player'' WHERE traffic_source IS NULL;');
 
-UPDATE leaderboard_entries
-SET traffic_source = 'player'
-WHERE traffic_source IS NULL;
+EXEC('UPDATE leaderboard_entries SET traffic_source = ''player'' WHERE traffic_source IS NULL;');
 
 IF NOT EXISTS (
   SELECT * FROM sys.check_constraints
