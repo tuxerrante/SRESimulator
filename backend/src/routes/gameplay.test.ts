@@ -236,6 +236,23 @@ describe("gameplay routes", () => {
     expect(response.body.error).toContain("Unauthorized");
   });
 
+  it("GET /api/gameplay/admin accepts a trimmed bearer token when the configured token has surrounding whitespace", async () => {
+    process.env.GAMEPLAY_ADMIN_TOKEN = "  gameplay-admin-secret  ";
+    const app = createApp();
+
+    const response = await httpRequest(app, "GET", "/api/gameplay/admin", undefined, {
+      authorization: "Bearer gameplay-admin-secret",
+    });
+
+    expect(response.status).toBe(200);
+    expect(response.body.summary).toMatchObject({
+      totalSessions: 0,
+      completedSessions: 0,
+      abandonedSessions: 0,
+      inProgressSessions: 0,
+    });
+  });
+
   it("GET /api/gameplay/admin summarizes the latest player-only session state without exposing session tokens", async () => {
     process.env.GAMEPLAY_ADMIN_TOKEN = "gameplay-admin-secret";
     const playerToken = await getSessionStore().create({

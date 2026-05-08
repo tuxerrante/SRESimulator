@@ -1,6 +1,7 @@
 import { Router, type Request, type Response } from "express";
 import { getMetricsStore, getSessionStore } from "../lib/storage";
 import { gameplayTelemetryRateLimit } from "../lib/rate-limit";
+import { matchesSharedSecret } from "../lib/shared-secret";
 import type { GameplayLifecycleState } from "../../../shared/types/gameplay";
 
 export const gameplayRouter = Router();
@@ -105,17 +106,17 @@ function sanitizeMetadata(value: unknown): Record<string, unknown> {
 }
 
 function hasGameplayAdminAccess(req: Request): boolean {
-  const expectedToken = process.env.GAMEPLAY_ADMIN_TOKEN?.trim();
-  if (!expectedToken) {
+  const expectedToken = process.env.GAMEPLAY_ADMIN_TOKEN;
+  if (!expectedToken?.trim()) {
     return false;
   }
 
   const authorization = req.get("authorization")?.trim();
   if (authorization?.startsWith("Bearer ")) {
-    return authorization.slice("Bearer ".length).trim() === expectedToken;
+    return matchesSharedSecret(authorization.slice("Bearer ".length), expectedToken);
   }
 
-  return req.get(GAMEPLAY_ADMIN_TOKEN_HEADER)?.trim() === expectedToken;
+  return matchesSharedSecret(req.get(GAMEPLAY_ADMIN_TOKEN_HEADER), expectedToken);
 }
 
 gameplayRouter.post("/", gameplayTelemetryRateLimit, async (req: Request, res: Response) => {

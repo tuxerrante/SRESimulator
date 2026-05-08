@@ -240,6 +240,34 @@ describe("POST /api/scenario", () => {
     expect(session?.trafficSource).toBe("automated");
   });
 
+  it("stores automated traffic when the configured token has surrounding whitespace", async () => {
+    process.env.AUTOMATED_TRAFFIC_TOKEN = "  test-traffic-token  ";
+    const authToken = createViewerSessionToken(
+      {
+        kind: "github",
+        githubUserId: "traffic-automation-trimmed",
+        githubLogin: "traffic-automation-trimmed",
+        displayName: "Traffic Automation Trimmed",
+        avatarUrl: null,
+        issuedAt: Date.now(),
+        expiresAt: Date.now() + 60_000,
+      },
+      "test-secret",
+    );
+    const app = createApp(scenarioRouter);
+    const res = await postJson(app, "/api/scenario", {
+      difficulty: "easy",
+    }, {
+      cookie: `${VIEWER_SESSION_COOKIE}=${authToken}`,
+      "x-traffic-source": " automated ",
+      "x-traffic-source-token": " test-traffic-token ",
+    });
+
+    expect(res.status).toBe(200);
+    const session = await getSessionStore().get(String(res.body.sessionToken));
+    expect(session?.trafficSource).toBe("automated");
+  });
+
   it("rejects invalid difficulty", async () => {
     const app = createApp(scenarioRouter);
     const res = await postJson(app, "/api/scenario", {

@@ -22,6 +22,7 @@ import {
 } from "../lib/viewer-auth";
 import { buildAnonymousClaimKeys } from "../lib/anonymous-claim";
 import { evaluateScenarioAccess } from "../lib/scenario-access";
+import { matchesSharedSecret } from "../lib/shared-secret";
 import { verifySignedClientIp } from "../../../shared/auth/client-ip";
 import type { Difficulty, Scenario } from "../../../shared/types/game";
 import type { TrafficSource } from "../../../shared/types/leaderboard";
@@ -42,8 +43,8 @@ function getTrafficSource(req: Request): TrafficSource {
   }
 
   const expectedToken = process.env.AUTOMATED_TRAFFIC_TOKEN;
-  const providedToken = req.get("x-traffic-source-token")?.trim();
-  if (!expectedToken || !providedToken || providedToken !== expectedToken) {
+  const providedToken = req.get("x-traffic-source-token");
+  if (!matchesSharedSecret(providedToken, expectedToken)) {
     return "player";
   }
 
