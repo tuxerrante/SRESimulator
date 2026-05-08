@@ -6,6 +6,7 @@ import { Trophy, ArrowLeft, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { Difficulty } from "@shared/types/game";
 import type { LeaderboardEntry, HallOfFameEntry } from "@shared/types/leaderboard";
+import { captureFrontendError } from "@/lib/telemetry/capture";
 
 type Tab = "all" | Difficulty;
 
@@ -21,6 +22,14 @@ const DIFFICULTY_COLORS: Record<Difficulty, string> = {
   medium: "bg-amber-900/50 text-amber-400 border-amber-800/50",
   hard: "bg-red-900/50 text-red-400 border-red-800/50",
 };
+
+function buildSafeRequestId(): string | undefined {
+  try {
+    return crypto.randomUUID();
+  } catch {
+    return undefined;
+  }
+}
 
 function formatDuration(ms: number): string {
   const totalSeconds = Math.floor(ms / 1000);
@@ -84,7 +93,12 @@ export default function LeaderboardPage() {
         if (!res.ok) throw new Error((data.error as string) || "Failed to load scores");
         setEntries(data.entries as LeaderboardEntry[]);
         setHallOfFame(data.hallOfFame as HallOfFameEntry[]);
-      } catch {
+      } catch (error) {
+        captureFrontendError(error, {
+          feature: "scores",
+          difficulty: activeTab === "all" ? undefined : activeTab,
+          requestId: buildSafeRequestId(),
+        });
         setEntries([]);
         setHallOfFame([]);
       } finally {

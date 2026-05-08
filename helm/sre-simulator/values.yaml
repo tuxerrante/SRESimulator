@@ -24,6 +24,12 @@ frontend:
     limits:
       cpu: 500m
       memory: 256Mi
+  sentry:
+    enabled: false
+    dsn: ""
+    environment: production
+    replaySessionSampleRate: "0"
+    replayOnErrorSampleRate: "0"
 
 backend:
   image:
@@ -45,6 +51,11 @@ backend:
     limits:
       cpu: 500m
       memory: 512Mi
+  sentry:
+    enabled: false
+    dsn: ""
+    environment: production
+    release: ""
 
 ai:
   provider: vertex

@@ -3,6 +3,13 @@
 import { useCallback, useState } from "react";
 import { useGameStore } from "@/stores/gameStore";
 import { extractPhase, extractScoreMarkers, extractResolved } from "@/lib/chat-markers";
+import { buildTelemetryHeaders } from "@/lib/telemetry/request-context";
+import { captureFrontendError } from "@/lib/telemetry/capture";
+import {
+  ACTOR_REF_HEADER,
+  GAME_SESSION_REF_HEADER,
+  REQUEST_ID_HEADER,
+} from "@shared/telemetry/constants";
 import type { ChatMessage } from "@shared/types/chat";
 
 const TIMEOUT_ERROR_MESSAGE =
@@ -64,6 +71,7 @@ export function useChat() {
     messages,
     isStreaming,
     scenario,
+    sessionToken,
     currentPhase,
     addMessage,
     updateLastAssistantMessage,
@@ -122,11 +130,17 @@ export function useChat() {
       }
       setStreaming(true);
 
+      let telemetryHeaders: Record<string, string> = {};
+
       try {
+        telemetryHeaders = await buildTelemetryHeaders(sessionToken);
 
         const response = await fetch("/api/chat", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            ...telemetryHeaders,
+          },
           body: JSON.stringify({
             messages: chatMessages,
             scenario,
@@ -214,6 +228,14 @@ export function useChat() {
         if (extractResolved(accumulated)) endGame();
         setRetryMessage(null);
       } catch (error) {
+        captureFrontendError(error, {
+          feature: "chat",
+          phase: currentPhase,
+          difficulty: scenario?.difficulty,
+          requestId: telemetryHeaders[REQUEST_ID_HEADER],
+          actorRef: telemetryHeaders[ACTOR_REF_HEADER],
+          gameSessionRef: telemetryHeaders[GAME_SESSION_REF_HEADER],
+        });
         const chatError = toUserFacingChatError(error);
         updateLastAssistantMessage(chatError.message);
         if (chatError.retryable) {
@@ -227,6 +249,7 @@ export function useChat() {
       messages,
       isStreaming,
       scenario,
+      sessionToken,
       currentPhase,
       addMessage,
       updateLastAssistantMessage,

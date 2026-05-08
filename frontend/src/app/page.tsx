@@ -14,6 +14,21 @@ import { APP_RELEASE_URL, APP_VERSION } from "@/lib/release";
 import { getAnonymousVerificationMessage } from "@/lib/auth/anonymous-verification";
 import { collectBrowserFingerprintHash } from "@/lib/auth/fingerprint";
 import { buildScenarioRequestBody } from "@/lib/auth/scenario-request";
+import { buildTelemetryHeaders } from "@/lib/telemetry/request-context";
+import { captureFrontendError } from "@/lib/telemetry/capture";
+import {
+  ACTOR_REF_HEADER,
+  GAME_SESSION_REF_HEADER,
+  REQUEST_ID_HEADER,
+} from "@shared/telemetry/constants";
+
+function buildSafeRequestId(): string | undefined {
+  try {
+    return crypto.randomUUID();
+  } catch {
+    return undefined;
+  }
+}
 
 export default function HomePage() {
   const router = useRouter();
@@ -66,7 +81,11 @@ export default function HomePage() {
         } else {
           clearViewer();
         }
-      } catch {
+      } catch (error) {
+        captureFrontendError(error, {
+          feature: "auth-session",
+          requestId: buildSafeRequestId(),
+        });
         setSessionLoadError(true);
         setAuthConfigured(false);
         clearViewer();
@@ -133,10 +152,16 @@ export default function HomePage() {
     setLoading(difficulty);
     setError(null);
 
+    let telemetryHeaders: Record<string, string> = {};
+
     try {
+      telemetryHeaders = await buildTelemetryHeaders(useGameStore.getState().sessionToken);
       const response = await fetch("/api/scenario", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...telemetryHeaders,
+        },
         body: JSON.stringify(
           buildScenarioRequestBody({
             difficulty,
@@ -163,6 +188,13 @@ export default function HomePage() {
       startGame(scenario, sessionToken);
       router.push("/game");
     } catch (err) {
+      captureFrontendError(err, {
+        feature: "scenario",
+        difficulty,
+        requestId: telemetryHeaders[REQUEST_ID_HEADER],
+        actorRef: telemetryHeaders[ACTOR_REF_HEADER],
+        gameSessionRef: telemetryHeaders[GAME_SESSION_REF_HEADER],
+      });
       setError(err instanceof Error ? err.message : "Something went wrong");
     } finally {
       setLoading(null);

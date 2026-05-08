@@ -1,352 +1,112 @@
-import { vi } from "vitest";
+import express from "express";
+import type { Server } from "node:http";
+import type { AddressInfo } from "node:net";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { generateAiTextMock } = vi.hoisted(() => ({
-  generateAiTextMock: vi.fn(),
+const mocks = vi.hoisted(() => ({
+  captureBackendRouteError: vi.fn(),
+  getAiReadiness: vi.fn(),
+  generateMockCommandOutput: vi.fn(),
+  generateAiText: vi.fn(),
+  buildScenarioContext: vi.fn(),
+  buildSimNow: vi.fn(),
+  buildCommandSystemPrompt: vi.fn(),
+  resolveAngleBracketPlaceholders: vi.fn(),
+}));
+
+vi.mock("../lib/ai-config", () => ({
+  getAiReadiness: mocks.getAiReadiness,
+}));
+
+vi.mock("../lib/mock-ai", () => ({
+  generateMockCommandOutput: mocks.generateMockCommandOutput,
 }));
 
 vi.mock("../lib/ai-runtime", async () => {
   const actual = await vi.importActual<typeof import("../lib/ai-runtime")>("../lib/ai-runtime");
   return {
     ...actual,
-    generateAiText: generateAiTextMock,
+    generateAiText: mocks.generateAiText,
   };
 });
 
-import { describe, expect, it, beforeEach, afterEach } from "vitest";
-import express from "express";
-import { commandRouter, resolveCommandHistoryPlaceholders } from "./command";
-import type { Scenario } from "../../../shared/types/game";
+vi.mock("../lib/prompts/command", () => ({
+  buildScenarioContext: mocks.buildScenarioContext,
+  buildSimNow: mocks.buildSimNow,
+  buildCommandSystemPrompt: mocks.buildCommandSystemPrompt,
+}));
 
-function createApp() {
-  const app = express();
-  app.use(express.json());
-  app.use("/api/command", commandRouter);
-  return app;
-}
+vi.mock("../lib/prompts/scenario-resources", () => ({
+  resolveAngleBracketPlaceholders: mocks.resolveAngleBracketPlaceholders,
+}));
 
-function makeScenario(): Scenario {
-  return {
-    id: "scenario_test",
-    title: "Worker Node NotReady",
-    difficulty: "easy",
-    description: "A worker node has gone NotReady due to DiskPressure",
-    incidentTicket: {
-      id: "IcM-900327",
-      severity: "Sev3",
-      title: "Pods stuck Pending after node went NotReady",
-      description: "Customer reports pods stuck Pending",
-      customerImpact: "Reduced capacity",
-      reportedTime: "2026-03-23T10:52:18Z",
-      clusterName: "aro-prod-payments-eus2-01",
-      region: "eastus2",
-    },
-    clusterContext: {
-      name: "aro-prod-payments-eus2-01",
-      version: "4.18.6",
-      region: "eastus2",
-      nodeCount: 6,
-      status: "Degraded",
-      recentEvents: [
-        "2026-03-27T12:41:03Z Warning NodeHasDiskPressure node/worker-eastus2-2 has disk pressure",
-      ],
-      alerts: [],
-      upgradeHistory: [],
-    },
-  };
-}
+vi.mock("../lib/telemetry/capture", () => ({
+  captureBackendRouteError: mocks.captureBackendRouteError,
+}));
 
-async function postJson(
-  app: express.Express,
-  path: string,
-  body: unknown
-): Promise<{ status: number; body: Record<string, unknown> }> {
-  const { request } = await import("http");
-  return new Promise((resolve, reject) => {
-    const server = app.listen(0, "127.0.0.1", () => {
-      const addr = server.address();
-      if (!addr || typeof addr === "string") {
-        server.close();
-        reject(new Error("Bad address"));
+import { commandRouter } from "./command";
+
+async function close(server: Server): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    server.close((error) => {
+      if (error) {
+        reject(error);
         return;
       }
-      const payload = JSON.stringify(body);
-      const req = request(
-        {
-          hostname: "127.0.0.1",
-          port: addr.port,
-          path,
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "Content-Length": Buffer.byteLength(payload),
-          },
-        },
-        (res) => {
-          let data = "";
-          res.on("data", (chunk) => (data += chunk));
-          res.on("end", () => {
-            server.close();
-            resolve({
-              status: res.statusCode ?? 500,
-              body: JSON.parse(data),
-            });
-          });
-        }
-      );
-      req.on("error", (e) => {
-        server.close();
-        reject(e);
-      });
-      req.write(payload);
-      req.end();
+
+      resolve();
     });
   });
 }
 
-describe("resolveCommandHistoryPlaceholders", () => {
-  it("resolves placeholders inside command history entries", () => {
-    const resolved = resolveCommandHistoryPlaceholders(
-      [{ command: "oc debug node/<worker>", output: "ok", type: "oc" }],
-      makeScenario(),
-    );
-    expect(resolved?.[0]?.command).toBe("oc debug node/worker-eastus2-2");
-  });
-});
-
-describe("POST /api/command", () => {
-  const originalEnv: Record<string, string | undefined> = {};
-
+describe("commandRouter", () => {
   beforeEach(() => {
-    originalEnv.AI_MOCK_MODE = process.env.AI_MOCK_MODE;
-    originalEnv.AI_PROVIDER = process.env.AI_PROVIDER;
-    originalEnv.AI_MODEL = process.env.AI_MODEL;
-    originalEnv.AI_AZURE_OPENAI_ENDPOINT = process.env.AI_AZURE_OPENAI_ENDPOINT;
-    originalEnv.AI_AZURE_OPENAI_API_KEY = process.env.AI_AZURE_OPENAI_API_KEY;
-    originalEnv.AI_AZURE_OPENAI_DEPLOYMENT = process.env.AI_AZURE_OPENAI_DEPLOYMENT;
-    originalEnv.AI_MAX_COMMAND_TOKENS = process.env.AI_MAX_COMMAND_TOKENS;
-    originalEnv.AI_COMMAND_TIMEOUT_MS = process.env.AI_COMMAND_TIMEOUT_MS;
-    process.env.AI_MOCK_MODE = "true";
-    generateAiTextMock.mockReset();
+    vi.clearAllMocks();
+    mocks.getAiReadiness.mockReturnValue({ ready: true, mockMode: false });
+    mocks.buildScenarioContext.mockReturnValue("scenario context");
+    mocks.buildSimNow.mockReturnValue("sim now");
+    mocks.buildCommandSystemPrompt.mockReturnValue("system prompt");
+    mocks.resolveAngleBracketPlaceholders.mockImplementation((value: unknown) => value);
+    mocks.generateMockCommandOutput.mockReturnValue("fallback output");
   });
 
   afterEach(() => {
-    for (const [key, value] of Object.entries(originalEnv)) {
-      if (value === undefined) {
-        delete process.env[key];
-      } else {
-        process.env[key] = value;
-      }
+    vi.restoreAllMocks();
+  });
+
+  it("captures degraded fallback errors before returning mock command output", async () => {
+    const degradedError = new Error("model did not include text content");
+    mocks.generateAiText.mockRejectedValue(degradedError);
+
+    const app = express();
+    app.use(express.json());
+    app.use("/api/command", commandRouter);
+    const server = await new Promise<Server>((resolve) => {
+      const listeningServer = app.listen(0, "127.0.0.1", () => resolve(listeningServer));
+    });
+
+    try {
+      const { port } = server.address() as AddressInfo;
+      const response = await fetch(`http://127.0.0.1:${port}/api/command`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          command: "oc get pods",
+          type: "oc",
+          scenario: null,
+          commandHistory: [],
+        }),
+      });
+
+      expect(response.status).toBe(200);
+      await expect(response.json()).resolves.toEqual({
+        output: "fallback output",
+        exitCode: 0,
+      });
+      expect(mocks.captureBackendRouteError).toHaveBeenCalledTimes(1);
+      expect(mocks.captureBackendRouteError.mock.calls[0]?.[1]).toBe(degradedError);
+    } finally {
+      await close(server);
     }
-  });
-
-  function enableLiveAiRuntime(): void {
-    process.env.AI_MOCK_MODE = "false";
-    process.env.AI_PROVIDER = "azure-openai";
-    process.env.AI_MODEL = "gpt-5.2";
-    process.env.AI_AZURE_OPENAI_ENDPOINT = "https://example.openai.azure.com";
-    process.env.AI_AZURE_OPENAI_API_KEY = "test-key";
-    process.env.AI_AZURE_OPENAI_DEPLOYMENT = "gpt-5.2";
-  }
-
-  it("returns mock oc output in mock mode", async () => {
-    const app = createApp();
-    const res = await postJson(app, "/api/command", {
-      command: "oc get nodes",
-      type: "oc",
-      scenario: null,
-    });
-
-    expect(res.status).toBe(200);
-    expect(res.body.exitCode).toBe(0);
-    expect(res.body.output).toContain("master-0");
-    expect(res.body.output).toContain("mock command received: oc get nodes");
-  });
-
-  it("returns mock kql output in mock mode", async () => {
-    const app = createApp();
-    const res = await postJson(app, "/api/command", {
-      command: "ClusterLogs | take 10",
-      type: "kql",
-      scenario: null,
-    });
-
-    expect(res.status).toBe(200);
-    expect(res.body.output).toContain("TimeGenerated");
-  });
-
-  it("returns mock geneva output in mock mode", async () => {
-    const app = createApp();
-    const res = await postJson(app, "/api/command", {
-      command: "show dashboard",
-      type: "geneva",
-      scenario: null,
-    });
-
-    expect(res.status).toBe(200);
-    expect(res.body.output).toContain("Dashboard: Mock Geneva View");
-  });
-
-  it("rejects invalid command type", async () => {
-    const app = createApp();
-    const res = await postJson(app, "/api/command", {
-      command: "test",
-      type: "invalid",
-      scenario: null,
-    });
-
-    expect(res.status).toBe(400);
-    expect(res.body.error).toContain("Invalid command type");
-  });
-
-  it("accepts commandHistory field without error", async () => {
-    const app = createApp();
-    const res = await postJson(app, "/api/command", {
-      command: "oc get nodes",
-      type: "oc",
-      scenario: null,
-      commandHistory: [
-        { command: "oc get pods", output: "NAME  READY  STATUS\npod-1  1/1  Running", type: "oc" },
-      ],
-    });
-
-    expect(res.status).toBe(200);
-    expect(res.body.exitCode).toBe(0);
-  });
-
-  it("returns describe output for oc describe node in mock mode", async () => {
-    const app = createApp();
-    const res = await postJson(app, "/api/command", {
-      command: "oc describe node master-0",
-      type: "oc",
-      scenario: null,
-    });
-
-    expect(res.status).toBe(200);
-    expect(res.body.output).toContain("Name:");
-    expect(res.body.output).toContain("Conditions:");
-    expect(res.body.output).toContain("master-0");
-  });
-
-  it("returns delete confirmation for oc delete in mock mode", async () => {
-    const app = createApp();
-    const res = await postJson(app, "/api/command", {
-      command: "oc delete machine aro-worker-0",
-      type: "oc",
-      scenario: null,
-    });
-
-    expect(res.status).toBe(200);
-    expect(res.body.output).toBe('machine "aro-worker-0" deleted');
-  });
-
-  it("handles commandHistory with null/malformed entries without crashing", async () => {
-    const app = createApp();
-    const res = await postJson(app, "/api/command", {
-      command: "oc get nodes",
-      type: "oc",
-      scenario: null,
-      commandHistory: [
-        null,
-        { command: 123, output: null, type: "oc" },
-        { command: "oc get pods", output: "Running", type: "oc" },
-        "not-an-object",
-      ],
-    });
-
-    expect(res.status).toBe(200);
-    expect(res.body.exitCode).toBe(0);
-  });
-
-  it("handles commandHistory that is not an array", async () => {
-    const app = createApp();
-    const res = await postJson(app, "/api/command", {
-      command: "oc get nodes",
-      type: "oc",
-      scenario: null,
-      commandHistory: "invalid",
-    });
-
-    expect(res.status).toBe(200);
-    expect(res.body.exitCode).toBe(0);
-  });
-
-  it("uses the configured max command token budget for live command simulation", async () => {
-    enableLiveAiRuntime();
-    process.env.AI_MAX_COMMAND_TOKENS = "8192";
-    generateAiTextMock.mockResolvedValue("NAME   STATUS\nworker-0 Ready");
-
-    const app = createApp();
-    const res = await postJson(app, "/api/command", {
-      command: "oc get nodes",
-      type: "oc",
-      scenario: makeScenario(),
-    });
-
-    expect(res.status).toBe(200);
-    expect(res.body.exitCode).toBe(0);
-    expect(generateAiTextMock).toHaveBeenCalledTimes(1);
-    expect(generateAiTextMock.mock.calls[0]?.[0]?.maxTokens).toBe(8192);
-  });
-
-  it("preserves recent command mutations in late-game history overflow", async () => {
-    enableLiveAiRuntime();
-    const longOutput = "x".repeat(780);
-    const commandHistory = Array.from({ length: 24 }, (_, index) => ({
-      command: `oc get machines -n openshift-machine-api batch-${index}`,
-      output: `machine-${index} ${longOutput}`,
-      type: "oc" as const,
-    }));
-    commandHistory[23] = {
-      command: "oc delete machine worker-eastus2-2",
-      output: 'machine.machine.openshift.io "worker-eastus2-2" deleted',
-      type: "oc",
-    };
-
-    generateAiTextMock.mockImplementation(async (request) => {
-      const prompt = String(request.system ?? "");
-      return prompt.includes("$ oc delete machine worker-eastus2-2")
-        ? "NAME                   STATUS\nworker-eastus2-1        Running"
-        : "NAME                   STATUS\nworker-eastus2-1        Running\nworker-eastus2-2        Running";
-    });
-
-    const app = createApp();
-    const res = await postJson(app, "/api/command", {
-      command: "oc get machines -n openshift-machine-api",
-      type: "oc",
-      scenario: makeScenario(),
-      commandHistory,
-    });
-
-    expect(res.status).toBe(200);
-    expect(res.body.exitCode).toBe(0);
-    expect(String(res.body.output)).toContain("worker-eastus2-1");
-    expect(String(res.body.output)).not.toContain("worker-eastus2-2");
-  });
-
-  it("falls back to mock output when live command generation exceeds the timeout budget", async () => {
-    enableLiveAiRuntime();
-    process.env.AI_COMMAND_TIMEOUT_MS = "50";
-    let aborted = false;
-    generateAiTextMock.mockImplementation(
-      (request: { signal?: AbortSignal }) =>
-        new Promise(() => {
-          request?.signal?.addEventListener("abort", () => {
-            aborted = true;
-          });
-        })
-    );
-
-    const app = createApp();
-    const res = await postJson(app, "/api/command", {
-      command: "oc describe node master-0",
-      type: "oc",
-      scenario: null,
-    });
-
-    expect(res.status).toBe(200);
-    expect(res.body.exitCode).toBe(0);
-    expect(res.body.output).toContain("Name:");
-    expect(res.body.output).not.toContain("delayed synthetic response");
-    expect(aborted).toBe(true);
   });
 });

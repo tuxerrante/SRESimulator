@@ -1,3 +1,4 @@
+import "./instrument";
 import { getAiReadiness } from "./lib/ai-config";
 import { initStorage, shutdownStorage, getStorageBackend } from "./lib/storage";
 import { createApp } from "./app";

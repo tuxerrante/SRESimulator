@@ -27,6 +27,16 @@ spec:
           env:
             - name: BACKEND_INTERNAL_BASE_URL
               value: "http://{{ include "sre-simulator.fullname" . }}-backend:{{ .Values.backend.port }}"
+            - name: NEXT_PUBLIC_SENTRY_ENABLED
+              value: {{ ternary "true" "false" .Values.frontend.sentry.enabled | quote }}
+            - name: NEXT_PUBLIC_SENTRY_DSN
+              value: {{ .Values.frontend.sentry.dsn | quote }}
+            - name: NEXT_PUBLIC_SENTRY_ENVIRONMENT
+              value: {{ .Values.frontend.sentry.environment | quote }}
+            - name: NEXT_PUBLIC_SENTRY_REPLAY_SESSION_SAMPLE_RATE
+              value: {{ .Values.frontend.sentry.replaySessionSampleRate | quote }}
+            - name: NEXT_PUBLIC_SENTRY_REPLAY_ON_ERROR_SAMPLE_RATE
+              value: {{ .Values.frontend.sentry.replayOnErrorSampleRate | quote }}
           ports:
             - containerPort: {{ .Values.frontend.port }}
               protocol: TCP

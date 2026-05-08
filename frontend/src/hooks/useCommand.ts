@@ -2,6 +2,13 @@
 
 import { useCallback } from "react";
 import { useGameStore } from "@/stores/gameStore";
+import { buildTelemetryHeaders } from "@/lib/telemetry/request-context";
+import { captureFrontendError } from "@/lib/telemetry/capture";
+import {
+  ACTOR_REF_HEADER,
+  GAME_SESSION_REF_HEADER,
+  REQUEST_ID_HEADER,
+} from "@shared/telemetry/constants";
 import type { TerminalEntry } from "@shared/types/terminal";
 
 const MAX_COMMAND_HISTORY = 24;
@@ -41,6 +48,16 @@ export function useCommand() {
         });
       }
 
+      let telemetryHeaders: Record<string, string> = {};
+      const buildCommandTelemetryContext = () => ({
+        feature: "command",
+        phase: state.currentPhase,
+        difficulty: scenario?.difficulty,
+        requestId: telemetryHeaders[REQUEST_ID_HEADER],
+        actorRef: telemetryHeaders[ACTOR_REF_HEADER],
+        gameSessionRef: telemetryHeaders[GAME_SESSION_REF_HEADER],
+      });
+
       try {
         const entries = useGameStore.getState().terminalEntries;
         const commandHistory = entries.slice(-MAX_COMMAND_HISTORY).map((e) => ({
@@ -50,10 +67,14 @@ export function useCommand() {
             : e.output,
           type: e.type,
         }));
+        telemetryHeaders = await buildTelemetryHeaders(useGameStore.getState().sessionToken);
 
         const response = await fetch("/api/command", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            ...telemetryHeaders,
+          },
           body: JSON.stringify({ command, type, scenario, commandHistory }),
         });
 
@@ -63,6 +84,13 @@ export function useCommand() {
           data = JSON.parse(raw);
         } catch {
           data = { error: `Server error (${response.status}): ${raw.slice(0, 120)}`, exitCode: 1 };
+        }
+
+        if (!response.ok) {
+          captureFrontendError(
+            new Error(`Command proxy request failed (${response.status})`),
+            buildCommandTelemetryContext(),
+          );
         }
 
         const entry: TerminalEntry = {
@@ -89,7 +117,8 @@ export function useCommand() {
         }
 
         recalculateScore();
-      } catch {
+      } catch (error) {
+        captureFrontendError(error, buildCommandTelemetryContext());
         const entry: TerminalEntry = {
           id: crypto.randomUUID(),
           command,

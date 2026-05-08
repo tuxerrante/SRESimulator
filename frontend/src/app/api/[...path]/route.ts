@@ -10,6 +10,7 @@ import {
   readAnonymousProofToken,
 } from "@shared/auth/anonymous-proof";
 import { createSignedClientIp } from "@shared/auth/client-ip";
+import { REQUEST_ID_HEADER } from "@shared/telemetry/constants";
 import { isSecureRequest, shouldTrustProxyHeaders } from "@/lib/auth/request-context";
 
 export const runtime = "nodejs";
@@ -57,6 +58,9 @@ async function proxyRequest(request: NextRequest): Promise<NextResponse> {
   const targetUrl = `${getBackendBaseUrl()}${backendPath}${request.nextUrl.search}`;
 
   const headers = new Headers(request.headers);
+  if (!headers.get(REQUEST_ID_HEADER)) {
+    headers.set(REQUEST_ID_HEADER, crypto.randomUUID());
+  }
   headers.delete("host");
   headers.delete("content-length");
   headers.delete("connection");
