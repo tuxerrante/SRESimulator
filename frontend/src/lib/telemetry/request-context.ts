@@ -22,14 +22,27 @@ async function toGameSessionRef(sessionToken: string | null): Promise<string | u
 }
 
 export async function buildTelemetryHeaders(sessionToken: string | null): Promise<Record<string, string>> {
-  const headers: Record<string, string> = {
-    [REQUEST_ID_HEADER]: crypto.randomUUID(),
-    [ACTOR_REF_HEADER]: getOrCreateActorRef(),
-  };
+  const headers: Record<string, string> = {};
 
-  const gameSessionRef = await toGameSessionRef(sessionToken);
-  if (gameSessionRef) {
-    headers[GAME_SESSION_REF_HEADER] = gameSessionRef;
+  try {
+    headers[REQUEST_ID_HEADER] = crypto.randomUUID();
+  } catch {
+    // Keep requests functional even if random UUID generation fails.
+  }
+
+  try {
+    headers[ACTOR_REF_HEADER] = getOrCreateActorRef();
+  } catch {
+    // Keep requests functional even if actor correlation cannot be generated.
+  }
+
+  try {
+    const gameSessionRef = await toGameSessionRef(sessionToken);
+    if (gameSessionRef) {
+      headers[GAME_SESSION_REF_HEADER] = gameSessionRef;
+    }
+  } catch {
+    // Keep requests functional even if session hashing is unavailable.
   }
 
   return headers;

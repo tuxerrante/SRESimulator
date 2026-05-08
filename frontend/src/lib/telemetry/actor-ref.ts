@@ -1,10 +1,12 @@
 const ACTOR_REF_KEY = "sresim-actor-ref";
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 let inMemoryActorRef: string | null = null;
 
 export function getOrCreateActorRef(): string {
   try {
     const existing = globalThis.localStorage?.getItem(ACTOR_REF_KEY)?.trim();
-    if (existing) {
+    if (existing && UUID_PATTERN.test(existing)) {
       inMemoryActorRef = existing;
       return existing;
     }

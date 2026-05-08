@@ -1,6 +1,7 @@
 import * as Sentry from "@sentry/node";
 import type { Request } from "express";
 import { buildSentryRequestContext } from "./request-context";
+import { isSentryEnabled } from "./sentry";
 
 type ErrorWithCause = Error & { cause?: unknown };
 
@@ -37,12 +38,22 @@ function sanitizeErrorStack(
 function buildSafeBackendError(
   error: unknown,
   safeMessage: string,
+  seen = new WeakSet<Error>(),
 ): Error {
+  if (error instanceof Error) {
+    if (seen.has(error)) {
+      const cycleSafeError = new Error(safeMessage);
+      cycleSafeError.name = error.name;
+      return cycleSafeError;
+    }
+    seen.add(error);
+  }
+
   const originalCause = error instanceof Error
     ? (error as ErrorWithCause).cause
     : undefined;
   const safeCause = originalCause instanceof Error
-    ? buildSafeBackendError(originalCause, safeMessage)
+    ? buildSafeBackendError(originalCause, safeMessage, seen)
     : undefined;
 
   const safeError = new Error(safeMessage) as ErrorWithCause;
@@ -64,18 +75,25 @@ export function captureBackendRouteError(
   error: unknown,
   safeMessage?: string,
 ): void {
-  const context = buildSentryRequestContext(req);
+  if (!isSentryEnabled()) {
+    return;
+  }
 
-  Sentry.withScope((scope) => {
-    Object.entries(context.tags).forEach(([key, value]) => {
-      scope.setTag(key, value);
+  const context = buildSentryRequestContext(req);
+  try {
+    Sentry.withScope((scope) => {
+      Object.entries(context.tags).forEach(([key, value]) => {
+        scope.setTag(key, value);
+      });
+      scope.setContext("request", context.extra.request as Record<string, unknown>);
+      Sentry.captureException(
+        buildSafeBackendError(
+          error,
+          safeMessage ?? defaultBackendSentryMessage(context.tags.feature ?? "unknown"),
+        ),
+      );
     });
-    scope.setContext("request", context.extra.request as Record<string, unknown>);
-    Sentry.captureException(
-      buildSafeBackendError(
-        error,
-        safeMessage ?? defaultBackendSentryMessage(context.tags.feature ?? "unknown"),
-      ),
-    );
-  });
+  } catch {
+    // Telemetry failures must never break request error handling paths.
+  }
 }

@@ -5,6 +5,11 @@ import { useGameStore } from "@/stores/gameStore";
 import { extractPhase, extractScoreMarkers, extractResolved } from "@/lib/chat-markers";
 import { buildTelemetryHeaders } from "@/lib/telemetry/request-context";
 import { captureFrontendError } from "@/lib/telemetry/capture";
+import {
+  ACTOR_REF_HEADER,
+  GAME_SESSION_REF_HEADER,
+  REQUEST_ID_HEADER,
+} from "@shared/telemetry/constants";
 import type { ChatMessage } from "@shared/types/chat";
 
 const TIMEOUT_ERROR_MESSAGE =
@@ -227,9 +232,9 @@ export function useChat() {
           feature: "chat",
           phase: currentPhase,
           difficulty: scenario?.difficulty,
-          requestId: telemetryHeaders["x-sresim-request-id"],
-          actorRef: telemetryHeaders["x-sresim-actor-ref"],
-          gameSessionRef: telemetryHeaders["x-sresim-game-session-ref"],
+          requestId: telemetryHeaders[REQUEST_ID_HEADER],
+          actorRef: telemetryHeaders[ACTOR_REF_HEADER],
+          gameSessionRef: telemetryHeaders[GAME_SESSION_REF_HEADER],
         });
         const chatError = toUserFacingChatError(error);
         updateLastAssistantMessage(chatError.message);

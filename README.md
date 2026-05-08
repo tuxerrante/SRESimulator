@@ -121,8 +121,6 @@ deployed same-origin proxy path.
   [infra/POST_APPLY_CHECKLIST.md](infra/POST_APPLY_CHECKLIST.md)
 - Release and versioning policy:
   [docs/RELEASES.md](docs/RELEASES.md)
-- Infra post-apply checklist:
-  [infra/POST_APPLY_CHECKLIST.md](infra/POST_APPLY_CHECKLIST.md)
 - Original product design:
   [CLAUDE.md](CLAUDE.md)
 

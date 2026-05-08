@@ -16,6 +16,11 @@ import { collectBrowserFingerprintHash } from "@/lib/auth/fingerprint";
 import { buildScenarioRequestBody } from "@/lib/auth/scenario-request";
 import { buildTelemetryHeaders } from "@/lib/telemetry/request-context";
 import { captureFrontendError } from "@/lib/telemetry/capture";
+import {
+  ACTOR_REF_HEADER,
+  GAME_SESSION_REF_HEADER,
+  REQUEST_ID_HEADER,
+} from "@shared/telemetry/constants";
 
 export default function HomePage() {
   const router = useRouter();
@@ -178,8 +183,9 @@ export default function HomePage() {
       captureFrontendError(err, {
         feature: "scenario",
         difficulty,
-        requestId: telemetryHeaders["x-sresim-request-id"],
-        actorRef: telemetryHeaders["x-sresim-actor-ref"],
+        requestId: telemetryHeaders[REQUEST_ID_HEADER],
+        actorRef: telemetryHeaders[ACTOR_REF_HEADER],
+        gameSessionRef: telemetryHeaders[GAME_SESSION_REF_HEADER],
       });
       setError(err instanceof Error ? err.message : "Something went wrong");
     } finally {

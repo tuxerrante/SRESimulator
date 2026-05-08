@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   ACTOR_REF_HEADER,
   GAME_SESSION_REF_HEADER,
@@ -34,6 +34,8 @@ async function loadRequestContextModule() {
 }
 
 describe("buildTelemetryHeaders", () => {
+  const originalCrypto = globalThis.crypto;
+
   beforeEach(() => {
     Object.defineProperty(globalThis, "localStorage", {
       value: localStorageMock,
@@ -42,6 +44,14 @@ describe("buildTelemetryHeaders", () => {
     });
     localStorageMock.clear();
     vi.restoreAllMocks();
+  });
+
+  afterEach(() => {
+    Object.defineProperty(globalThis, "crypto", {
+      value: originalCrypto,
+      writable: true,
+      configurable: true,
+    });
   });
 
   it("returns pseudonymous request headers without leaking the raw session token", async () => {
@@ -67,5 +77,27 @@ describe("buildTelemetryHeaders", () => {
     expect(first[ACTOR_REF_HEADER]).toBe(second[ACTOR_REF_HEADER]);
     expect(first[GAME_SESSION_REF_HEADER]).toBe(second[GAME_SESSION_REF_HEADER]);
     expect(first[REQUEST_ID_HEADER]).not.toBe(second[REQUEST_ID_HEADER]);
+  });
+
+  it("fails open when browser crypto APIs are unavailable", async () => {
+    Object.defineProperty(globalThis, "crypto", {
+      value: {
+        randomUUID() {
+          throw new Error("randomUUID unavailable");
+        },
+        subtle: {
+          digest: vi.fn(async () => {
+            throw new Error("digest unavailable");
+          }),
+        },
+      } as unknown as Crypto,
+      writable: true,
+      configurable: true,
+    });
+
+    const { buildTelemetryHeaders } = await loadRequestContextModule();
+    const headers = await buildTelemetryHeaders("session-raw-token");
+
+    expect(headers).toEqual({});
   });
 });

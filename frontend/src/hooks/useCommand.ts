@@ -4,6 +4,11 @@ import { useCallback } from "react";
 import { useGameStore } from "@/stores/gameStore";
 import { buildTelemetryHeaders } from "@/lib/telemetry/request-context";
 import { captureFrontendError } from "@/lib/telemetry/capture";
+import {
+  ACTOR_REF_HEADER,
+  GAME_SESSION_REF_HEADER,
+  REQUEST_ID_HEADER,
+} from "@shared/telemetry/constants";
 import type { TerminalEntry } from "@shared/types/terminal";
 
 const MAX_COMMAND_HISTORY = 24;
@@ -48,9 +53,9 @@ export function useCommand() {
         feature: "command",
         phase: state.currentPhase,
         difficulty: scenario?.difficulty,
-        requestId: telemetryHeaders["x-sresim-request-id"],
-        actorRef: telemetryHeaders["x-sresim-actor-ref"],
-        gameSessionRef: telemetryHeaders["x-sresim-game-session-ref"],
+        requestId: telemetryHeaders[REQUEST_ID_HEADER],
+        actorRef: telemetryHeaders[ACTOR_REF_HEADER],
+        gameSessionRef: telemetryHeaders[GAME_SESSION_REF_HEADER],
       });
 
       try {

@@ -68,6 +68,19 @@ describe("getOrCreateActorRef", () => {
     expect(second).toBe(first);
   });
 
+  it("replaces malformed stored actor refs with a new UUID", async () => {
+    mockStorage.set("sresim-actor-ref", "user@example.com");
+
+    const { getOrCreateActorRef } = await loadActorRefModule();
+    const actorRef = getOrCreateActorRef();
+
+    expect(actorRef).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
+    );
+    expect(actorRef).not.toBe("user@example.com");
+    expect(mockStorage.get("sresim-actor-ref")).toBe(actorRef);
+  });
+
   it("falls back to a stable in-memory actor reference when storage throws", async () => {
     const blockedStorage: Storage = {
       getItem: vi.fn(() => {

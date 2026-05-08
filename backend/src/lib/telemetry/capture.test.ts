@@ -1,5 +1,5 @@
 import type { Request } from "express";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { captureBackendRouteError } from "./capture";
 
 type ErrorWithCause = Error & { cause?: unknown };
@@ -27,8 +27,26 @@ vi.mock("@sentry/node", () => ({
 }));
 
 describe("captureBackendRouteError", () => {
+  const originalSentryEnabled = process.env.SENTRY_ENABLED;
+  const originalSentryDsn = process.env.SENTRY_DSN;
+
   beforeEach(() => {
     vi.clearAllMocks();
+    process.env.SENTRY_ENABLED = "true";
+    process.env.SENTRY_DSN = "https://public@example.ingest.sentry.io/1";
+  });
+
+  afterEach(() => {
+    if (originalSentryEnabled === undefined) {
+      delete process.env.SENTRY_ENABLED;
+    } else {
+      process.env.SENTRY_ENABLED = originalSentryEnabled;
+    }
+    if (originalSentryDsn === undefined) {
+      delete process.env.SENTRY_DSN;
+    } else {
+      process.env.SENTRY_DSN = originalSentryDsn;
+    }
   });
 
   it("captures only safe route tags and request context", () => {
@@ -118,5 +136,41 @@ describe("captureBackendRouteError", () => {
     expect(captured.message).toBe("Chat stream failed");
     expect(captured.stack).toContain("at streamLoop (chat.ts:104:7)");
     expect(captured.stack).not.toContain("provider leaked body");
+  });
+
+  it("does nothing when sentry is disabled", () => {
+    process.env.SENTRY_ENABLED = "false";
+
+    const request = {
+      method: "POST",
+      path: "/",
+      baseUrl: "/api/chat",
+      get() {
+        return undefined;
+      },
+    } as unknown as Request;
+
+    captureBackendRouteError(request, new Error("boom"));
+
+    expect(sentryMocks.withScope).not.toHaveBeenCalled();
+    expect(sentryMocks.captureException).not.toHaveBeenCalled();
+  });
+
+  it("swallows sentry capture failures", () => {
+    sentryMocks.withScope.mockImplementationOnce(() => {
+      throw new Error("sentry unavailable");
+    });
+    const request = {
+      method: "POST",
+      path: "/",
+      baseUrl: "/api/chat",
+      get() {
+        return undefined;
+      },
+    } as unknown as Request;
+
+    expect(() =>
+      captureBackendRouteError(request, new Error("provider leaked body")),
+    ).not.toThrow();
   });
 });
