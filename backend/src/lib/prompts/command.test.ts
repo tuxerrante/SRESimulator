@@ -214,6 +214,19 @@ describe("buildCommandSystemPrompt", () => {
     expect(prompt).toContain("$ oc get pods -n ns-19");
   });
 
+  it("preserves the newest commands when history overflows the prompt budget", () => {
+    const history = Array.from({ length: 24 }, (_, index) => ({
+      command: `oc get machines -n openshift-machine-api batch-${index}`,
+      output: `machine-${index} ${"x".repeat(780)}`,
+      type: "oc" as const,
+    }));
+
+    const prompt = buildCommandSystemPrompt("oc", "ctx", "now", history);
+
+    expect(prompt).toContain("$ oc get machines -n openshift-machine-api batch-23");
+    expect(prompt).not.toContain("$ oc get machines -n openshift-machine-api batch-0");
+  });
+
   it("omits history section when no history provided", () => {
     const prompt = buildCommandSystemPrompt("oc", "ctx", "now");
     expect(prompt).not.toContain("Previously Executed Commands");
