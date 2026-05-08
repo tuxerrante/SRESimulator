@@ -1,7 +1,6 @@
 import * as Sentry from "@sentry/nextjs";
 import { getOrCreateActorRef } from "@/lib/telemetry/actor-ref";
 import {
-  FRONTEND_SENTRY_RUNTIME_CONFIG_GLOBAL,
   type FrontendSentryRuntimeConfig,
   readInjectedFrontendSentryRuntimeConfig,
 } from "@/lib/telemetry/bootstrap-config";
@@ -39,5 +38,3 @@ if (runtimeConfig?.enabled) {
 }
 
 export const onRouterTransitionStart = Sentry.captureRouterTransitionStart;
-
-void FRONTEND_SENTRY_RUNTIME_CONFIG_GLOBAL;

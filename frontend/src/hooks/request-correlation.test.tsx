@@ -93,6 +93,7 @@ function createChatResponse(): Response {
 
 function createCommandResponse(): Response {
   return {
+    ok: true,
     status: 200,
     async text() {
       return JSON.stringify({ output: "ok", exitCode: 0 });

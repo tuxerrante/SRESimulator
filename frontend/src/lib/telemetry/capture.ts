@@ -38,12 +38,22 @@ function sanitizeErrorStack(
 function buildSafeFrontendError(
   error: unknown,
   safeMessage: string,
+  seen = new WeakSet<Error>(),
 ): Error {
+  if (error instanceof Error) {
+    if (seen.has(error)) {
+      const cycleSafeError = new Error(safeMessage);
+      cycleSafeError.name = error.name;
+      return cycleSafeError;
+    }
+    seen.add(error);
+  }
+
   const originalCause = error instanceof Error
     ? (error as ErrorWithCause).cause
     : undefined;
   const safeCause = originalCause instanceof Error
-    ? buildSafeFrontendError(originalCause, safeMessage)
+    ? buildSafeFrontendError(originalCause, safeMessage, seen)
     : undefined;
 
   const safeError = new Error(safeMessage) as ErrorWithCause;

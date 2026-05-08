@@ -22,6 +22,14 @@ import {
   REQUEST_ID_HEADER,
 } from "@shared/telemetry/constants";
 
+function buildSafeRequestId(): string | undefined {
+  try {
+    return crypto.randomUUID();
+  } catch {
+    return undefined;
+  }
+}
+
 export default function HomePage() {
   const router = useRouter();
   const startGame = useGameStore((s) => s.startGame);
@@ -76,7 +84,7 @@ export default function HomePage() {
       } catch (error) {
         captureFrontendError(error, {
           feature: "auth-session",
-          requestId: crypto.randomUUID(),
+          requestId: buildSafeRequestId(),
         });
         setSessionLoadError(true);
         setAuthConfigured(false);

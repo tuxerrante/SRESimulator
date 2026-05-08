@@ -23,6 +23,14 @@ const DIFFICULTY_COLORS: Record<Difficulty, string> = {
   hard: "bg-red-900/50 text-red-400 border-red-800/50",
 };
 
+function buildSafeRequestId(): string | undefined {
+  try {
+    return crypto.randomUUID();
+  } catch {
+    return undefined;
+  }
+}
+
 function formatDuration(ms: number): string {
   const totalSeconds = Math.floor(ms / 1000);
   const minutes = Math.floor(totalSeconds / 60);
@@ -89,7 +97,7 @@ export default function LeaderboardPage() {
         captureFrontendError(error, {
           feature: "scores",
           difficulty: activeTab === "all" ? undefined : activeTab,
-          requestId: crypto.randomUUID(),
+          requestId: buildSafeRequestId(),
         });
         setEntries([]);
         setHallOfFame([]);

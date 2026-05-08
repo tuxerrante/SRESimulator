@@ -98,6 +98,10 @@ describe("buildTelemetryHeaders", () => {
     const { buildTelemetryHeaders } = await loadRequestContextModule();
     const headers = await buildTelemetryHeaders("session-raw-token");
 
-    expect(headers).toEqual({});
+    expect(headers[REQUEST_ID_HEADER]).toBeUndefined();
+    expect(headers[GAME_SESSION_REF_HEADER]).toBeUndefined();
+    expect(headers[ACTOR_REF_HEADER]).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
+    );
   });
 });

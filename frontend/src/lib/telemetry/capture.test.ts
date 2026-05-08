@@ -104,4 +104,23 @@ describe("captureFrontendError", () => {
     expect(captured.stack).toContain("at processBufferedEvents (useChat.ts:194:15)");
     expect(captured.stack).not.toContain("upstream stream body");
   });
+
+  it("handles cyclic error causes without stack overflow", () => {
+    const error = new Error("cyclic root") as ErrorWithCause;
+    error.cause = error;
+
+    expect(() =>
+      captureFrontendError(error, { feature: "chat" }),
+    ).not.toThrow();
+
+    const captured = sentryMocks.captureException.mock.calls[0]?.[0] as unknown;
+    expect(captured).toBeInstanceOf(Error);
+    if (!(captured instanceof Error)) {
+      return;
+    }
+
+    expect(captured.message).toBe("Chat request failed");
+    expect(captured.cause).toBeInstanceOf(Error);
+    expect(captured.cause).not.toBe(captured);
+  });
 });

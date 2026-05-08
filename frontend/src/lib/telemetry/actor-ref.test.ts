@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mockStorage = new Map<string, string>();
 const localStorageMock: Storage = {
@@ -30,6 +30,8 @@ async function loadActorRefModule() {
 }
 
 describe("getOrCreateActorRef", () => {
+  const originalCrypto = globalThis.crypto;
+
   beforeEach(() => {
     Object.defineProperty(globalThis, "localStorage", {
       value: localStorageMock,
@@ -38,6 +40,14 @@ describe("getOrCreateActorRef", () => {
     });
     mockStorage.clear();
     vi.restoreAllMocks();
+  });
+
+  afterEach(() => {
+    Object.defineProperty(globalThis, "crypto", {
+      value: originalCrypto,
+      writable: true,
+      configurable: true,
+    });
   });
 
   it("creates and then reuses a stable anonymous actor reference", async () => {
@@ -117,5 +127,24 @@ describe("getOrCreateActorRef", () => {
       /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
     );
     expect(second).toBe(first);
+  });
+
+  it("uses a non-throwing uuid fallback when randomUUID is unavailable", async () => {
+    Object.defineProperty(globalThis, "crypto", {
+      value: {
+        randomUUID() {
+          throw new Error("randomUUID unavailable");
+        },
+      } as unknown as Crypto,
+      writable: true,
+      configurable: true,
+    });
+
+    const { getOrCreateActorRef } = await loadActorRefModule();
+    const actorRef = getOrCreateActorRef();
+
+    expect(actorRef).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
+    );
   });
 });
