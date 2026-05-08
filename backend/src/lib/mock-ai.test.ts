@@ -154,10 +154,10 @@ describe("generateMockCommandOutput", () => {
   it("keeps the mock machine list aligned with the mock scenario region", () => {
     const scenario = generateMockScenario("medium");
     const output = generateMockCommandOutput("oc get machines -A", "oc");
+    const region = scenario.incidentTicket.region;
 
-    expect(scenario.incidentTicket.region).toBe("westus3");
-    expect(scenario.clusterContext.region).toBe("westus3");
-    expect(output).toContain("westus3");
+    expect(scenario.clusterContext.region).toBe(region);
+    expect(output).toContain(region);
     expect(output).not.toContain("eastus");
   });
 
