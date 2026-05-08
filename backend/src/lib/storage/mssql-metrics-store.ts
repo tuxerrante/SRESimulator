@@ -97,7 +97,27 @@ export class MssqlMetricsStore implements IMetricsStore {
         metadata: string;
         created_at: Date;
       }>(`
-        SELECT TOP 100 * FROM gameplay_metrics
+        SELECT TOP 100
+          id,
+          session_token,
+          traffic_source,
+          nickname,
+          difficulty,
+          scenario_title,
+          lifecycle_state,
+          command_count,
+          commands_executed,
+          scoring_events,
+          COALESCE(chat_message_count, 0) AS chat_message_count,
+          ai_prompt_tokens,
+          ai_completion_tokens,
+          duration_ms,
+          score_total,
+          grade,
+          completed,
+          metadata,
+          created_at
+        FROM gameplay_metrics
         WHERE nickname = @nickname
         ORDER BY created_at DESC
       `);
@@ -242,7 +262,7 @@ export class MssqlMetricsStore implements IMetricsStore {
         difficulty,
         scenario_title,
         command_count,
-        chat_message_count,
+        COALESCE(chat_message_count, 0) AS chat_message_count,
         duration_ms,
         score_total,
         grade,

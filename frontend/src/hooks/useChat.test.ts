@@ -112,4 +112,21 @@ describe("useChat", () => {
       "Error: network down. Please try again.",
     );
   });
+
+  it("falls back to a generic chat error when upstream message normalizes empty", async () => {
+    const noisyError = new Error("...  !!!");
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(noisyError));
+
+    useGameStore.getState().startGame(createScenario(), "session-raw-token");
+
+    const { result } = renderHook(() => useChat());
+
+    await act(async () => {
+      await result.current.sendMessage("check the cluster");
+    });
+
+    expect(useGameStore.getState().messages.at(-1)?.content).toBe(
+      "Error: Something went wrong. Please try again.",
+    );
+  });
 });

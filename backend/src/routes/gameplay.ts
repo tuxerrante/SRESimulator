@@ -107,8 +107,8 @@ function sanitizeMetadata(value: unknown): Record<string, unknown> {
 }
 
 function hasGameplayAdminAccess(req: Request): boolean {
-  const expectedToken = process.env.GAMEPLAY_ADMIN_TOKEN;
-  if (!expectedToken?.trim()) {
+  const expectedToken = process.env.GAMEPLAY_ADMIN_TOKEN?.trim();
+  if (!expectedToken) {
     return false;
   }
 

@@ -31,7 +31,8 @@ function isGatewayTimeout(status: number | null, message: string): boolean {
 
 function formatGenericChatError(message: string): string {
   const normalized = message.trim().replace(/^Error:\s*/i, "").replace(/[.!?\s]+$/, "");
-  return `Error: ${normalized}. Please try again.`;
+  const safeMessage = normalized || "Something went wrong";
+  return `Error: ${safeMessage}. Please try again.`;
 }
 
 function toUserFacingChatError(error: unknown): ChatRequestError {

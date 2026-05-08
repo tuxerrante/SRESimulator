@@ -43,7 +43,7 @@ function getTrafficSource(req: Request): TrafficSource {
     return "player";
   }
 
-  const expectedToken = process.env.AUTOMATED_TRAFFIC_TOKEN;
+  const expectedToken = process.env.AUTOMATED_TRAFFIC_TOKEN?.trim();
   const providedToken = req.get("x-traffic-source-token");
   if (!matchesSharedSecret(providedToken, expectedToken)) {
     return "player";
