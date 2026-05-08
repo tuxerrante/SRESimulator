@@ -151,6 +151,16 @@ describe("generateMockCommandOutput", () => {
     expect(output).toContain("aro-mock-master-0");
   });
 
+  it("keeps the mock machine list aligned with the mock scenario region", () => {
+    const scenario = generateMockScenario("medium");
+    const output = generateMockCommandOutput("oc get machines -A", "oc");
+
+    expect(scenario.incidentTicket.region).toBe("westus3");
+    expect(scenario.clusterContext.region).toBe("westus3");
+    expect(output).toContain("westus3");
+    expect(output).not.toContain("eastus");
+  });
+
   it("returns events for oc get events", () => {
     const output = generateMockCommandOutput("oc get events --sort-by='.lastTimestamp'", "oc");
     expect(output).toContain("LAST SEEN");
