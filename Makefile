@@ -37,6 +37,9 @@ AKS_FRONTEND_PUBLIC_IP_NAME ?= $(if $(strip $(AKS_CLUSTER)),$(AKS_CLUSTER)-aks-f
 AKS_FRONTEND_PUBLIC_HOST ?=
 AKS_FRONTEND_PUBLIC_ORIGIN_SCHEME ?= http
 AKS_EXPOSURE_MODE ?= gateway
+# AKS e2e targets fall back to local port-forwarding unless an operator
+# explicitly overrides AKS_EXPOSURE_MODE for the command they are running.
+AKS_E2E_EXPOSURE_MODE ?= none
 AKS_SKIP_GATEWAY_BOOTSTRAP ?= false
 AKS_LOCAL_PORT_FORWARD_PORT ?= 38080
 AKS_GATEWAY_HOST ?= play.sresimulator.osadev.cloud
@@ -73,7 +76,7 @@ DB_SECRET_SOURCE_NAMESPACE ?=
 
 export AZURE_SUBSCRIPTION_ID CLUSTER_FLAVOR ARO_RG ARO_CLUSTER
 export AKS_RG AKS_CLUSTER AKS_FRONTEND_PUBLIC_IP_NAME AKS_FRONTEND_PUBLIC_HOST AKS_FRONTEND_PUBLIC_ORIGIN_SCHEME AKS_FRONTEND_IMAGE_REPO AKS_BACKEND_IMAGE_REPO GHCR_IMAGE_PULL_SECRET
-export AKS_EXPOSURE_MODE AKS_GATEWAY_HOST AKS_GATEWAY_CLASS_NAME
+export AKS_EXPOSURE_MODE AKS_E2E_EXPOSURE_MODE AKS_GATEWAY_HOST AKS_GATEWAY_CLASS_NAME
 export AKS_GATEWAY_TLS_SECRET_NAME AKS_CLUSTER_ISSUER_NAME
 export AKS_DNS_ZONE_NAME AKS_DNS_ZONE_RESOURCE_GROUP
 export AKS_CERT_MANAGER_IDENTITY_NAME AKS_CERT_MANAGER_ACME_EMAIL
@@ -420,6 +423,8 @@ env-check: ## Show source of required e2e vars (values hidden)
 		echo "  AKS_RG: $(call e2e_var_source,AKS_RG)"; \
 		echo "  AKS_CLUSTER: $(call e2e_var_source,AKS_CLUSTER)"; \
 		echo "  AKS_FRONTEND_PUBLIC_IP_NAME: $(call e2e_var_source,AKS_FRONTEND_PUBLIC_IP_NAME)"; \
+		echo "  AKS_EXPOSURE_MODE: $(call e2e_var_source,AKS_EXPOSURE_MODE)"; \
+		echo "  AKS_E2E_EXPOSURE_MODE: $(call e2e_var_source,AKS_E2E_EXPOSURE_MODE)"; \
 	else \
 		echo "  ARO_RG: $(call e2e_var_source,ARO_RG)"; \
 		echo "  ARO_CLUSTER: $(call e2e_var_source,ARO_CLUSTER)"; \
@@ -477,6 +482,9 @@ e2e-azure-route-up: env-check ## Deploy frontend/backend to the selected cluster
 		exit 1; \
 	fi; \
 	. scripts/select-deploy.sh; \
+	if [ "$(CLUSTER_FLAVOR)" = "aks" ] && [ -z "$(AKS_EXPOSURE_MODE_EXPLICIT)" ]; then \
+		export AKS_EXPOSURE_MODE="$(AKS_E2E_EXPOSURE_MODE)"; \
+	fi; \
 	TS=$$(date +%Y%m%d-%H%M%S); \
 	NS="$(E2E_NAMESPACE_PREFIX)-$$TS"; \
 	if [ "$(CLUSTER_FLAVOR)" = "aks" ]; then TAG="$${TAG:-latest}"; else TAG="e2e$$TS"; fi; \
@@ -522,7 +530,7 @@ e2e-azure-route-up: env-check ## Deploy frontend/backend to the selected cluster
 	wait_for_rollout "$$NS"; \
 	PORT_FORWARD_PID=""; \
 	PORT_FORWARD_LOG=""; \
-	if [ "$(CLUSTER_FLAVOR)" = "aks" ] && [ "$(AKS_EXPOSURE_MODE)" = "none" ]; then \
+	if [ "$(CLUSTER_FLAVOR)" = "aks" ] && [ "$${AKS_EXPOSURE_MODE:-}" = "none" ]; then \
 		PORT_FORWARD_LOG="/tmp/sre-e2e-$$NS-frontend-port-forward.log"; \
 		nohup "$$KUBE_CLI" -n "$$NS" port-forward "svc/$(E2E_RELEASE)-frontend" "$(AKS_LOCAL_PORT_FORWARD_PORT):$(FRONTEND_PORT)" >"$$PORT_FORWARD_LOG" 2>&1 & \
 		PORT_FORWARD_PID=$$!; \
@@ -560,6 +568,8 @@ e2e-azure-route-refresh: env-check ## Refresh the selected e2e namespace (NS=...
 	fi; \
 	if [ "$(CLUSTER_FLAVOR)" = "aks" ] && [ -z "$(AKS_EXPOSURE_MODE_EXPLICIT)" ] && [ -n "$${DEPLOYED_AKS_EXPOSURE_MODE:-}" ]; then \
 		export AKS_EXPOSURE_MODE="$$DEPLOYED_AKS_EXPOSURE_MODE"; \
+	elif [ "$(CLUSTER_FLAVOR)" = "aks" ] && [ -z "$(AKS_EXPOSURE_MODE_EXPLICIT)" ]; then \
+		export AKS_EXPOSURE_MODE="$(AKS_E2E_EXPOSURE_MODE)"; \
 	fi; \
 	. scripts/select-deploy.sh; \
 	TS=$$(date +%Y%m%d-%H%M%S); \

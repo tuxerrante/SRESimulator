@@ -29,6 +29,18 @@ assert_equals() {
   fi
 }
 
+assert_matches() {
+  local pattern=$1 file=$2
+  grep -Eq "$pattern" "$file" || fail "expected pattern '$pattern' in $file"
+}
+
+assert_not_matches() {
+  local pattern=$1 file=$2
+  if grep -Eq "$pattern" "$file"; then
+    fail "did not expect pattern '$pattern' in $file"
+  fi
+}
+
 assert_call_count_at_most() {
   local max_calls=$1 file=$2
   local call_count
@@ -157,6 +169,161 @@ case "${verb}:${resource}" in
 esac
 EOF
   chmod +x "$TMP_DIR/bin/kubectl"
+}
+
+write_fake_e2e_clis() {
+  mkdir -p "$TMP_DIR/e2e-bin"
+
+  cat >"$TMP_DIR/e2e-bin/az" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+printf '%s\n' "$*" >>"${FAKE_AZ_LOG:?}"
+
+case "$*" in
+  "account show --query id -o tsv")
+    printf '%s\n' "${FAKE_AZ_ACCOUNT_ID:-00000000-0000-0000-0000-000000000001}"
+    ;;
+  account\ set\ -s\ *)
+    ;;
+  aks\ get-credentials\ *)
+    ;;
+  cognitiveservices\ account\ show\ *)
+    printf '%s\n' "${FAKE_AOAI_ENDPOINT:-https://aoai.example.test/}"
+    ;;
+  cognitiveservices\ account\ keys\ list\ *)
+    printf '%s\n' "${FAKE_AOAI_KEY:-fake-aoai-key}"
+    ;;
+  network\ public-ip\ show\ *"--query ipAddress -o tsv")
+    printf '%s\n' "${FAKE_AKS_PUBLIC_IP:-203.0.113.10}"
+    ;;
+  network\ public-ip\ show\ *"--query dnsSettings.fqdn -o tsv")
+    printf '%s\n' "${FAKE_AKS_PUBLIC_FQDN:-aks.example.test}"
+    ;;
+  *)
+    echo "unexpected fake az invocation: $*" >&2
+    exit 1
+    ;;
+esac
+EOF
+  chmod +x "$TMP_DIR/e2e-bin/az"
+
+  cat >"$TMP_DIR/e2e-bin/helm" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+log_file="${FAKE_HELM_LOG:?}"
+capture_file="${FAKE_HELM_VALUES_CAPTURE:?}"
+printf '%s\n' "$*" >>"$log_file"
+rm -f "$capture_file"
+
+idx=1
+while [ "$idx" -le "$#" ]; do
+  eval "arg=\${$idx}"
+  if [ "$arg" = "-f" ]; then
+    idx=$((idx + 1))
+    eval "values_file=\${$idx}"
+    cp "$values_file" "$capture_file"
+  fi
+  idx=$((idx + 1))
+done
+EOF
+  chmod +x "$TMP_DIR/e2e-bin/helm"
+
+  cat >"$TMP_DIR/e2e-bin/curl" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+printf '%s\n' "$*" >>"${FAKE_CURL_LOG:?}"
+
+for arg in "$@"; do
+  if [ "$arg" = "-w" ]; then
+    printf '200'
+    exit 0
+  fi
+done
+
+printf '%s\n' '{"ok":true}'
+EOF
+  chmod +x "$TMP_DIR/e2e-bin/curl"
+
+  cat >"$TMP_DIR/e2e-bin/nohup" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+printf '%s\n' "$*" >>"${FAKE_NOHUP_LOG:?}"
+exec "$@"
+EOF
+  chmod +x "$TMP_DIR/e2e-bin/nohup"
+
+  cat >"$TMP_DIR/e2e-bin/kubectl" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+log_file="${FAKE_KUBECTL_LOG:?}"
+state_dir="${FAKE_KUBECTL_STATE_DIR:?}"
+mkdir -p "$state_dir/namespaces"
+
+printf '%s\n' "$*" >>"$log_file"
+
+if [ "${1:-}" = "-n" ]; then
+  namespace="${2:-}"
+  shift 2
+else
+  namespace=""
+fi
+
+command="$*"
+
+case "$command" in
+  "get namespace "*)
+    target_ns="${command#get namespace }"
+    [ -f "$state_dir/namespaces/$target_ns" ]
+    ;;
+  get\ namespace/*)
+    target_ns="${command#get namespace/}"
+    [ -f "$state_dir/namespaces/$target_ns" ]
+    ;;
+  "create namespace "*)
+    target_ns="${command#create namespace }"
+    : >"$state_dir/namespaces/$target_ns"
+    ;;
+  create\ secret\ generic\ azure-openai-creds*)
+    printf '%s\n' \
+      'apiVersion: v1' \
+      'kind: Secret' \
+      'metadata:' \
+      '  name: azure-openai-creds'
+    ;;
+  "apply -f -")
+    cat >/dev/null
+    ;;
+  rollout\ status\ deployment/*)
+    ;;
+  port-forward\ svc/sre-simulator-frontend\ *)
+    sleep "${FAKE_PORT_FORWARD_SLEEP:-5}"
+    ;;
+  *)
+    echo "unexpected fake kubectl invocation: namespace=${namespace} args=$command" >&2
+    exit 1
+    ;;
+esac
+EOF
+  chmod +x "$TMP_DIR/e2e-bin/kubectl"
+}
+
+cleanup_port_forward_from_metadata() {
+  local metadata_file=$1
+  local port_forward_pid=""
+
+  if [ ! -f "$metadata_file" ]; then
+    return 0
+  fi
+
+  port_forward_pid="$(sed -n 's/^PORT_FORWARD_PID=//p' "$metadata_file")"
+  if [ -n "$port_forward_pid" ] && printf '%s\n' "$port_forward_pid" | grep -Eq '^[0-9]+$'; then
+    kill "$port_forward_pid" >/dev/null 2>&1 || true
+  fi
 }
 
 stub_cluster_helpers() {
@@ -941,10 +1108,199 @@ EOF
   assert_contains 'Unexpected backend ingress found: sre-simulator-backend' "$output_file"
 }
 
+run_e2e_route_up_default_none_mode_check() {
+  local metadata_file output_file az_log kubectl_log helm_log helm_values curl_log nohup_log state_dir
+
+  write_fake_e2e_clis
+  metadata_file="$TMP_DIR/e2e-up-default.env"
+  output_file="$TMP_DIR/e2e-up-default.out"
+  az_log="$TMP_DIR/e2e-up-default.az.log"
+  kubectl_log="$TMP_DIR/e2e-up-default.kubectl.log"
+  helm_log="$TMP_DIR/e2e-up-default.helm.log"
+  helm_values="$TMP_DIR/e2e-up-default.values.yaml"
+  curl_log="$TMP_DIR/e2e-up-default.curl.log"
+  nohup_log="$TMP_DIR/e2e-up-default.nohup.log"
+  state_dir="$TMP_DIR/e2e-up-default.state"
+  mkdir -p "$state_dir"
+  : >"$az_log"
+  : >"$kubectl_log"
+  : >"$helm_log"
+  : >"$curl_log"
+  : >"$nohup_log"
+
+  if ! env \
+    -u AKS_EXPOSURE_MODE \
+    PATH="$TMP_DIR/e2e-bin:$PATH" \
+    FAKE_AZ_LOG="$az_log" \
+    FAKE_KUBECTL_LOG="$kubectl_log" \
+    FAKE_KUBECTL_STATE_DIR="$state_dir" \
+    FAKE_HELM_LOG="$helm_log" \
+    FAKE_HELM_VALUES_CAPTURE="$helm_values" \
+    FAKE_CURL_LOG="$curl_log" \
+    FAKE_NOHUP_LOG="$nohup_log" \
+    FAKE_PORT_FORWARD_SLEEP=30 \
+    make -s -C "$ROOT_DIR" e2e-azure-route-up \
+      E2E_ENV_FILE="$TMP_DIR/missing.env" \
+      E2E_METADATA_FILE="$metadata_file" \
+      E2E_NAMESPACE_PREFIX="test-e2e" \
+      CLUSTER_FLAVOR=aks \
+      AZURE_SUBSCRIPTION_ID=00000000-0000-0000-0000-000000000001 \
+      AKS_RG=test-aks-rg \
+      AKS_CLUSTER=test-aks \
+      AOAI_RG=test-aoai-rg \
+      AOAI_ACCOUNT=test-aoai \
+      AOAI_DEPLOYMENT=gpt-4o-mini \
+      AKS_E2E_EXPOSURE_MODE=none \
+      AKS_LOCAL_PORT_FORWARD_PORT=38080 \
+      FRONTEND_PORT=3000 >"$output_file" 2>&1; then
+    cat "$output_file" >&2 || true
+    fail "e2e-azure-route-up should default AKS e2e traffic to AKS_E2E_EXPOSURE_MODE when AKS_EXPOSURE_MODE is not explicitly overridden"
+  fi
+
+  cleanup_port_forward_from_metadata "$metadata_file"
+  assert_contains 'DEPLOYED_AKS_EXPOSURE_MODE=none' "$metadata_file"
+  assert_contains 'URL=http://127.0.0.1:38080' "$metadata_file"
+  assert_matches '^PORT_FORWARD_LOG=/tmp/sre-e2e-.*-frontend-port-forward\.log$' "$metadata_file"
+  assert_contains 'mode: "none"' "$helm_values"
+  assert_contains 'host: "127.0.0.1:38080"' "$helm_values"
+  assert_contains 'scheme: "http"' "$helm_values"
+  assert_not_contains 'loadBalancerIP:' "$helm_values"
+  assert_contains 'port-forward svc/sre-simulator-frontend 38080:3000' "$kubectl_log"
+  assert_not_contains 'network public-ip show' "$az_log"
+  assert_contains 'http://127.0.0.1:38080/api/ai/probe?live=true' "$curl_log"
+}
+
+run_e2e_route_up_explicit_override_check() {
+  local metadata_file output_file az_log kubectl_log helm_log helm_values curl_log nohup_log state_dir
+
+  write_fake_e2e_clis
+  metadata_file="$TMP_DIR/e2e-up-override.env"
+  output_file="$TMP_DIR/e2e-up-override.out"
+  az_log="$TMP_DIR/e2e-up-override.az.log"
+  kubectl_log="$TMP_DIR/e2e-up-override.kubectl.log"
+  helm_log="$TMP_DIR/e2e-up-override.helm.log"
+  helm_values="$TMP_DIR/e2e-up-override.values.yaml"
+  curl_log="$TMP_DIR/e2e-up-override.curl.log"
+  nohup_log="$TMP_DIR/e2e-up-override.nohup.log"
+  state_dir="$TMP_DIR/e2e-up-override.state"
+  mkdir -p "$state_dir"
+  : >"$az_log"
+  : >"$kubectl_log"
+  : >"$helm_log"
+  : >"$curl_log"
+  : >"$nohup_log"
+
+  if ! env \
+    PATH="$TMP_DIR/e2e-bin:$PATH" \
+    FAKE_AZ_LOG="$az_log" \
+    FAKE_KUBECTL_LOG="$kubectl_log" \
+    FAKE_KUBECTL_STATE_DIR="$state_dir" \
+    FAKE_HELM_LOG="$helm_log" \
+    FAKE_HELM_VALUES_CAPTURE="$helm_values" \
+    FAKE_CURL_LOG="$curl_log" \
+    FAKE_NOHUP_LOG="$nohup_log" \
+    make -s -C "$ROOT_DIR" e2e-azure-route-up \
+      E2E_ENV_FILE="$TMP_DIR/missing.env" \
+      E2E_METADATA_FILE="$metadata_file" \
+      E2E_NAMESPACE_PREFIX="test-e2e" \
+      CLUSTER_FLAVOR=aks \
+      AZURE_SUBSCRIPTION_ID=00000000-0000-0000-0000-000000000001 \
+      AKS_RG=test-aks-rg \
+      AKS_CLUSTER=test-aks \
+      AOAI_RG=test-aoai-rg \
+      AOAI_ACCOUNT=test-aoai \
+      AOAI_DEPLOYMENT=gpt-4o-mini \
+      AKS_E2E_EXPOSURE_MODE=none \
+      AKS_EXPOSURE_MODE=publicService >"$output_file" 2>&1; then
+    cat "$output_file" >&2 || true
+    fail "e2e-azure-route-up should keep honoring an explicit AKS_EXPOSURE_MODE override"
+  fi
+
+  assert_contains 'DEPLOYED_AKS_EXPOSURE_MODE=publicService' "$metadata_file"
+  assert_contains 'URL=http://aks.example.test' "$metadata_file"
+  assert_not_matches '^PORT_FORWARD_PID=[0-9]+$' "$metadata_file"
+  assert_contains 'mode: "publicService"' "$helm_values"
+  assert_contains 'host: "aks.example.test"' "$helm_values"
+  assert_contains 'scheme: "http"' "$helm_values"
+  assert_contains 'loadBalancerIP: "203.0.113.10"' "$helm_values"
+  assert_matches '^network public-ip show -g test-aks-rg -n .+ --query ipAddress -o tsv$' "$az_log"
+  assert_matches '^network public-ip show -g test-aks-rg -n .+ --query dnsSettings.fqdn -o tsv$' "$az_log"
+  assert_not_contains 'port-forward svc/sre-simulator-frontend' "$kubectl_log"
+  assert_contains 'http://aks.example.test/api/ai/probe?live=true' "$curl_log"
+}
+
+run_e2e_route_refresh_metadata_mode_check() {
+  local metadata_file output_file az_log kubectl_log helm_log helm_values curl_log nohup_log state_dir
+
+  write_fake_e2e_clis
+  metadata_file="$TMP_DIR/e2e-refresh.env"
+  output_file="$TMP_DIR/e2e-refresh.out"
+  az_log="$TMP_DIR/e2e-refresh.az.log"
+  kubectl_log="$TMP_DIR/e2e-refresh.kubectl.log"
+  helm_log="$TMP_DIR/e2e-refresh.helm.log"
+  helm_values="$TMP_DIR/e2e-refresh.values.yaml"
+  curl_log="$TMP_DIR/e2e-refresh.curl.log"
+  nohup_log="$TMP_DIR/e2e-refresh.nohup.log"
+  state_dir="$TMP_DIR/e2e-refresh.state"
+  mkdir -p "$state_dir/namespaces"
+  : >"$state_dir/namespaces/test-refresh"
+  : >"$az_log"
+  : >"$kubectl_log"
+  : >"$helm_log"
+  : >"$curl_log"
+  : >"$nohup_log"
+  cat >"$metadata_file" <<'EOF'
+NS=test-refresh
+RELEASE=sre-simulator
+URL=http://old.example.test
+TAG=latest
+CLUSTER_FLAVOR=aks
+DEPLOYED_AKS_EXPOSURE_MODE=publicService
+PORT_FORWARD_PID=
+PORT_FORWARD_LOG=
+EOF
+
+  if ! env \
+    -u AKS_EXPOSURE_MODE \
+    PATH="$TMP_DIR/e2e-bin:$PATH" \
+    FAKE_AZ_LOG="$az_log" \
+    FAKE_KUBECTL_LOG="$kubectl_log" \
+    FAKE_KUBECTL_STATE_DIR="$state_dir" \
+    FAKE_HELM_LOG="$helm_log" \
+    FAKE_HELM_VALUES_CAPTURE="$helm_values" \
+    FAKE_CURL_LOG="$curl_log" \
+    FAKE_NOHUP_LOG="$nohup_log" \
+    make -s -C "$ROOT_DIR" e2e-azure-route-refresh \
+      E2E_ENV_FILE="$TMP_DIR/missing.env" \
+      E2E_METADATA_FILE="$metadata_file" \
+      CLUSTER_FLAVOR=aks \
+      AZURE_SUBSCRIPTION_ID=00000000-0000-0000-0000-000000000001 \
+      AKS_RG=test-aks-rg \
+      AKS_CLUSTER=test-aks \
+      AOAI_RG=test-aoai-rg \
+      AOAI_ACCOUNT=test-aoai \
+      AOAI_DEPLOYMENT=gpt-4o-mini \
+      AKS_E2E_EXPOSURE_MODE=none >"$output_file" 2>&1; then
+    cat "$output_file" >&2 || true
+    fail "e2e-azure-route-refresh should honor DEPLOYED_AKS_EXPOSURE_MODE from metadata when no explicit override is present"
+  fi
+
+  assert_contains 'NS=test-refresh' "$metadata_file"
+  assert_contains 'DEPLOYED_AKS_EXPOSURE_MODE=publicService' "$metadata_file"
+  assert_contains 'URL=http://aks.example.test' "$metadata_file"
+  assert_not_matches '^PORT_FORWARD_PID=[0-9]+$' "$metadata_file"
+  assert_contains 'mode: "publicService"' "$helm_values"
+  assert_contains 'loadBalancerIP: "203.0.113.10"' "$helm_values"
+  assert_contains 'get namespace/test-refresh' "$kubectl_log"
+  assert_not_contains 'port-forward svc/sre-simulator-frontend' "$kubectl_log"
+  assert_contains 'http://aks.example.test/api/ai/probe?live=true' "$curl_log"
+}
+
 run_makefile_gateway_defaults_check() {
   local makefile="$ROOT_DIR/Makefile"
 
   assert_contains 'AKS_EXPOSURE_MODE ?= gateway' "$makefile"
+  assert_contains 'AKS_E2E_EXPOSURE_MODE ?= none' "$makefile"
   assert_contains 'AKS_GATEWAY_HOST ?= play.sresimulator.osadev.cloud' "$makefile"
   assert_contains 'AKS_GATEWAY_CLASS_NAME ?= eg' "$makefile"
   assert_contains 'AKS_GATEWAY_TLS_SECRET_NAME ?= sre-simulator-gateway-tls' "$makefile"
@@ -955,7 +1311,7 @@ run_makefile_gateway_defaults_check() {
   assert_contains 'AKS_CERT_MANAGER_ACME_EMAIL ?=' "$makefile"
   assert_not_contains 'AKS_CERT_MANAGER_ACME_EMAIL ?= aaffinit@redhat.com' "$makefile"
   assert_contains 'AKS_SKIP_GATEWAY_BOOTSTRAP ?= false' "$makefile"
-  assert_contains 'export AKS_EXPOSURE_MODE AKS_GATEWAY_HOST AKS_GATEWAY_CLASS_NAME' "$makefile"
+  assert_contains 'export AKS_EXPOSURE_MODE AKS_E2E_EXPOSURE_MODE AKS_GATEWAY_HOST AKS_GATEWAY_CLASS_NAME' "$makefile"
   assert_contains 'export AKS_GATEWAY_TLS_SECRET_NAME AKS_CLUSTER_ISSUER_NAME' "$makefile"
   assert_contains 'export AKS_DNS_ZONE_NAME AKS_DNS_ZONE_RESOURCE_GROUP' "$makefile"
   assert_contains 'export AKS_CERT_MANAGER_IDENTITY_NAME AKS_CERT_MANAGER_ACME_EMAIL' "$makefile"
@@ -980,7 +1336,13 @@ run_makefile_port_forward_e2e_targets_check() {
   local makefile="$ROOT_DIR/Makefile"
 
   assert_contains 'AKS_LOCAL_PORT_FORWARD_PORT ?= 38080' "$makefile"
+  assert_contains 'AKS_E2E_EXPOSURE_MODE ?= none' "$makefile"
   assert_contains 'export AKS_SKIP_GATEWAY_BOOTSTRAP AKS_LOCAL_PORT_FORWARD_PORT' "$makefile"
+  assert_contains 'echo "  AKS_EXPOSURE_MODE: $(call e2e_var_source,AKS_EXPOSURE_MODE)"' "$makefile"
+  assert_contains 'echo "  AKS_E2E_EXPOSURE_MODE: $(call e2e_var_source,AKS_E2E_EXPOSURE_MODE)"' "$makefile"
+  assert_contains 'if [ "$(CLUSTER_FLAVOR)" = "aks" ] && [ -z "$(AKS_EXPOSURE_MODE_EXPLICIT)" ]; then \' "$makefile"
+  assert_contains 'export AKS_EXPOSURE_MODE="$(AKS_E2E_EXPOSURE_MODE)"; \' "$makefile"
+  assert_contains 'elif [ "$(CLUSTER_FLAVOR)" = "aks" ] && [ -z "$(AKS_EXPOSURE_MODE_EXPLICIT)" ]; then \' "$makefile"
   assert_contains 'DEPLOYED_AKS_EXPOSURE_MODE=%s\n' "$makefile"
   assert_contains 'PORT_FORWARD_PID=%s\nPORT_FORWARD_LOG=%s\n' "$makefile"
   assert_contains 'cleanup_port_forward() {' "$makefile"
@@ -1047,6 +1409,9 @@ main() {
   run_public_exposure_audit_operator_override_check
   run_public_exposure_audit_gateway_frontend_ingress_rejection_check
   run_public_exposure_audit_gateway_backend_ingress_rejection_check
+  run_e2e_route_up_default_none_mode_check
+  run_e2e_route_up_explicit_override_check
+  run_e2e_route_refresh_metadata_mode_check
   run_makefile_gateway_defaults_check
   run_makefile_gateway_audit_targets_check
   run_makefile_port_forward_e2e_targets_check
