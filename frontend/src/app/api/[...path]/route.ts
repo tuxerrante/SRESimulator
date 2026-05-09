@@ -123,10 +123,16 @@ async function proxyRequest(request: NextRequest): Promise<NextResponse> {
   headers.delete("x-forwarded-for");
   headers.delete("x-real-ip");
   headers.delete("forwarded");
+  headers.delete("x-sresim-client-ip");
+  headers.delete("x-sresim-client-ip-signature");
 
+  const trustProxyHeaders = shouldTrustProxyHeaders();
   const hasBody = request.method !== "GET" && request.method !== "HEAD";
   const antiAbuseSecret = process.env.ANTI_ABUSE_HMAC_SECRET;
   const clientIp = getTrustedClientIp(request);
+  if (trustProxyHeaders && isScenarioProxyRequest(request) && !clientIp) {
+    return NextResponse.json({ error: "Trusted proxy client IP verification failed" }, { status: 400 });
+  }
   if (clientIp && antiAbuseSecret) {
     headers.set("x-sresim-client-ip", clientIp);
     headers.set("x-sresim-client-ip-signature", createSignedClientIp(clientIp, antiAbuseSecret));

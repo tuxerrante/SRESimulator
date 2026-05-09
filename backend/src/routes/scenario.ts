@@ -44,6 +44,9 @@ const MAX_RECENT_EVENTS = 50;
 const MAX_ALERTS = 20;
 const MAX_UPGRADE_HISTORY = 20;
 const ISO_8601_UTC_TIMESTAMP_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/;
+const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+const SEVEN_DAYS_MS = 7 * ONE_DAY_MS;
+const TIMESTAMP_GRACE_MS = 5 * 60 * 1000;
 
 class InvalidScenarioPayloadError extends Error {
   readonly clientMessage = "Scenario generation returned an invalid payload.";
@@ -76,7 +79,7 @@ function assertEnum<T extends readonly string[]>(
   }
 }
 
-function assertIsoTimestamp(value: unknown, field: string): void {
+function assertIsoTimestamp(value: unknown, field: string): Date {
   assertNonEmptyString(value, field);
   if (!ISO_8601_UTC_TIMESTAMP_PATTERN.test(value)) {
     throw new InvalidScenarioPayloadError(`AI scenario field ${field} must be an ISO 8601 timestamp`);
@@ -92,6 +95,8 @@ function assertIsoTimestamp(value: unknown, field: string): void {
   ) {
     throw new InvalidScenarioPayloadError(`AI scenario field ${field} must be an ISO 8601 timestamp`);
   }
+
+  return parsed;
 }
 
 function assertStringArray(
@@ -137,9 +142,19 @@ function validateScenarioPayload(payload: unknown, difficulty: Difficulty): Scen
   assertNonEmptyString(incidentTicket.title, "incidentTicket.title");
   assertNonEmptyString(incidentTicket.description, "incidentTicket.description");
   assertNonEmptyString(incidentTicket.customerImpact, "incidentTicket.customerImpact");
-  assertIsoTimestamp(incidentTicket.reportedTime, "incidentTicket.reportedTime");
+  const reportedTime = assertIsoTimestamp(incidentTicket.reportedTime, "incidentTicket.reportedTime");
   assertNonEmptyString(incidentTicket.clusterName, "incidentTicket.clusterName");
   assertNonEmptyString(incidentTicket.region, "incidentTicket.region");
+  const now = Date.now();
+  const reportedAgeMs = now - reportedTime.getTime();
+  if (
+    reportedAgeMs < ONE_DAY_MS - TIMESTAMP_GRACE_MS ||
+    reportedAgeMs > SEVEN_DAYS_MS + TIMESTAMP_GRACE_MS
+  ) {
+    throw new InvalidScenarioPayloadError(
+      "AI scenario field incidentTicket.reportedTime must be within the past 1-7 days",
+    );
+  }
 
   assertNonEmptyString(clusterContext.name, "clusterContext.name");
   assertNonEmptyString(clusterContext.version, "clusterContext.version");
@@ -187,7 +202,13 @@ function validateScenarioPayload(payload: unknown, difficulty: Difficulty): Scen
     assertNonEmptyString(alert.name, `clusterContext.alerts[${index}].name`);
     assertEnum(alert.severity, ALERT_SEVERITIES, `clusterContext.alerts[${index}].severity`);
     assertNonEmptyString(alert.message, `clusterContext.alerts[${index}].message`);
-    assertIsoTimestamp(alert.firingTime, `clusterContext.alerts[${index}].firingTime`);
+    const firingTime = assertIsoTimestamp(alert.firingTime, `clusterContext.alerts[${index}].firingTime`);
+    const firingAgeMs = now - firingTime.getTime();
+    if (firingAgeMs < 0 || firingAgeMs > SEVEN_DAYS_MS) {
+      throw new InvalidScenarioPayloadError(
+        `AI scenario field clusterContext.alerts[${index}].firingTime must be within the past 7 days`,
+      );
+    }
   }
 
   if (!Array.isArray(clusterContext.upgradeHistory)) {
@@ -213,7 +234,15 @@ function validateScenarioPayload(payload: unknown, difficulty: Difficulty): Scen
       UPGRADE_STATUSES,
       `clusterContext.upgradeHistory[${index}].status`,
     );
-    assertIsoTimestamp(upgrade.timestamp, `clusterContext.upgradeHistory[${index}].timestamp`);
+    const upgradeTimestamp = assertIsoTimestamp(
+      upgrade.timestamp,
+      `clusterContext.upgradeHistory[${index}].timestamp`,
+    );
+    if (upgradeTimestamp.getTime() > now) {
+      throw new InvalidScenarioPayloadError(
+        `AI scenario field clusterContext.upgradeHistory[${index}].timestamp must not be in the future`,
+      );
+    }
   }
 
   return payload as unknown as Scenario;

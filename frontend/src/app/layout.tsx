@@ -30,7 +30,7 @@ export default function RootLayout({
       >
         <Script
           id="sentry-browser-runtime-config"
-          strategy="beforeInteractive"
+          strategy="afterInteractive"
           src="/api/telemetry/browser-config"
         />
         {children}

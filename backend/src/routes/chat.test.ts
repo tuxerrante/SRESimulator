@@ -121,7 +121,7 @@ describe("chatRouter", () => {
       });
 
       expect(response.status).toBe(200);
-      await expect(response.text()).resolves.toContain('data: {"error":"stream exploded"}');
+      await expect(response.text()).resolves.toContain('data: {"error":"Chat stream failed"}');
       expect(mocks.captureBackendRouteError).toHaveBeenCalledTimes(1);
       expect(mocks.captureBackendRouteError.mock.calls[0]?.[1]).toBe(streamError);
       expect(mocks.captureBackendRouteError.mock.calls[0]?.[2]).toBe("Chat stream failed");

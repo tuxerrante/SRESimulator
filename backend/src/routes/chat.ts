@@ -102,9 +102,7 @@ chatRouter.post("/", async (req: Request, res: Response) => {
       res.end();
     } catch (error) {
       captureBackendRouteError(req, error, "Chat stream failed");
-      const errMsg =
-        error instanceof Error ? error.message : "Stream error";
-      res.write(`data: ${JSON.stringify({ error: errMsg })}\n\n`);
+      res.write(`data: ${JSON.stringify({ error: "Chat stream failed" })}\n\n`);
       res.end();
     }
   } catch (error) {
@@ -113,8 +111,6 @@ chatRouter.post("/", async (req: Request, res: Response) => {
       return;
     }
     captureBackendRouteError(req, error);
-    const message =
-      error instanceof Error ? error.message : "Internal server error";
-    res.status(500).json({ error: message });
+    res.status(500).json({ error: "Chat request failed" });
   }
 });

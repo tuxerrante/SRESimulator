@@ -52,6 +52,8 @@ describe("frontend backend proxy route", () => {
     expect(headers.get(REQUEST_ID_HEADER)).toBe("3a8f6d6e-32ef-4a97-8891-0bc5987888f1");
     expect(headers.get(ACTOR_REF_HEADER)).toBe("2c9374a5-94f3-4c58-aab5-413f28643f03");
     expect(headers.get(GAME_SESSION_REF_HEADER)).toBe("4d2c91fa8e7b6a10");
+    expect(headers.get("x-sresim-client-ip")).toBeNull();
+    expect(headers.get("x-sresim-client-ip-signature")).toBeNull();
   });
 
   it("fails open when request-id generation is unavailable", async () => {
@@ -161,7 +163,7 @@ describe("frontend backend proxy route", () => {
     expect(headers.get("x-sresim-client-ip-signature")).toBeTruthy();
   });
 
-  it("does not sign client IP when trusted proxy headers disagree", async () => {
+  it("rejects trusted proxy requests when client IP headers disagree", async () => {
     process.env.ANTI_ABUSE_HMAC_SECRET = "test-hmac";
     process.env.BACKEND_INTERNAL_BASE_URL = "http://backend.internal";
     process.env.TRUST_PROXY_HEADERS = "true";
@@ -189,15 +191,16 @@ describe("frontend backend proxy route", () => {
       }),
     });
 
-    await POST(request);
+    const response = await POST(request);
 
-    const [, options] = fetchMock.mock.calls[0] as [string, RequestInit];
-    const headers = options.headers as Headers;
-    expect(headers.get("x-sresim-client-ip")).toBeNull();
-    expect(headers.get("x-sresim-client-ip-signature")).toBeNull();
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({
+      error: "Trusted proxy client IP verification failed",
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("does not sign client IP when forwarded chain contains invalid hops", async () => {
+  it("rejects trusted proxy requests when forwarded chain contains invalid hops", async () => {
     process.env.ANTI_ABUSE_HMAC_SECRET = "test-hmac";
     process.env.BACKEND_INTERNAL_BASE_URL = "http://backend.internal";
     process.env.TRUST_PROXY_HEADERS = "true";
@@ -225,11 +228,12 @@ describe("frontend backend proxy route", () => {
       }),
     });
 
-    await POST(request);
+    const response = await POST(request);
 
-    const [, options] = fetchMock.mock.calls[0] as [string, RequestInit];
-    const headers = options.headers as Headers;
-    expect(headers.get("x-sresim-client-ip")).toBeNull();
-    expect(headers.get("x-sresim-client-ip-signature")).toBeNull();
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({
+      error: "Trusted proxy client IP verification failed",
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });

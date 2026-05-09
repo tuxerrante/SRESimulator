@@ -308,7 +308,7 @@ export default function HomePage() {
           )}
         </div>
 
-        {sessionReady && !sessionLoadError && !viewer && (
+        {!sessionLoadError && !viewer && (
           <div className="mb-6 w-full max-w-3xl rounded-xl border border-zinc-800 bg-zinc-900/70 p-4">
             <div className="mb-3 text-sm font-semibold text-zinc-100">
               Anonymous play

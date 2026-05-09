@@ -491,24 +491,22 @@ describe("MssqlMetricsStore", () => {
   });
 
   it("getGameplayAnalytics() coalesces empty summary counts to zero for playerless datasets", async () => {
+    const summaryRow = {
+      total_sessions: 0,
+      completed_sessions: null,
+      abandoned_sessions: null,
+      in_progress_sessions: null,
+      avg_completion_duration_ms: null,
+      avg_completion_command_count: null,
+      avg_completion_chat_message_count: null,
+      avg_completion_score_total: null,
+    };
     const req = {
       input: vi.fn().mockReturnThis(),
-      query: vi.fn()
-        .mockResolvedValueOnce({
-          recordset: [{
-            total_sessions: 0,
-            completed_sessions: null,
-            abandoned_sessions: null,
-            in_progress_sessions: null,
-            avg_completion_duration_ms: null,
-            avg_completion_command_count: null,
-            avg_completion_chat_message_count: null,
-            avg_completion_score_total: null,
-          }],
-        })
-        .mockResolvedValueOnce({ recordset: [] })
-        .mockResolvedValueOnce({ recordset: [] })
-        .mockResolvedValueOnce({ recordset: [] }),
+      query: vi.fn().mockResolvedValue({
+        recordset: [summaryRow],
+        recordsets: [[summaryRow], [], [], []],
+      }),
     };
     const pool = {
       request: vi.fn().mockReturnValue(req),
@@ -536,24 +534,22 @@ describe("MssqlMetricsStore", () => {
   });
 
   it("getGameplayAnalytics() ranks terminal states ahead of later started events", async () => {
+    const summaryRow = {
+      total_sessions: 0,
+      completed_sessions: 0,
+      abandoned_sessions: 0,
+      in_progress_sessions: 0,
+      avg_completion_duration_ms: null,
+      avg_completion_command_count: null,
+      avg_completion_chat_message_count: null,
+      avg_completion_score_total: null,
+    };
     const req = {
       input: vi.fn().mockReturnThis(),
-      query: vi.fn()
-        .mockResolvedValueOnce({
-          recordset: [{
-            total_sessions: 0,
-            completed_sessions: 0,
-            abandoned_sessions: 0,
-            in_progress_sessions: 0,
-            avg_completion_duration_ms: null,
-            avg_completion_command_count: null,
-            avg_completion_chat_message_count: null,
-            avg_completion_score_total: null,
-          }],
-        })
-        .mockResolvedValueOnce({ recordset: [] })
-        .mockResolvedValueOnce({ recordset: [] })
-        .mockResolvedValueOnce({ recordset: [] }),
+      query: vi.fn().mockResolvedValue({
+        recordset: [summaryRow],
+        recordsets: [[summaryRow], [], [], []],
+      }),
     };
     const pool = {
       request: vi.fn().mockReturnValue(req),
@@ -562,11 +558,12 @@ describe("MssqlMetricsStore", () => {
 
     await store.getGameplayAnalytics();
 
-    const sqlStatements = req.query.mock.calls.map((call: unknown[]) => call[0] as string);
-    for (const statement of sqlStatements) {
-      expect(statement).toContain(
-        "CASE WHEN lifecycle_state IN ('completed', 'abandoned') THEN 1 ELSE 0 END DESC"
-      );
-    }
+    const sql = req.query.mock.calls[0][0] as string;
+    expect(sql).toContain(
+      "CASE WHEN lifecycle_state IN ('completed', 'abandoned') THEN 1 ELSE 0 END DESC"
+    );
+    expect(sql).toContain("PARTITION BY session_token");
+    expect(sql).toContain("INTO #latest_sessions");
+    expect(sql).toContain("DROP TABLE #latest_sessions");
   });
 });

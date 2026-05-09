@@ -59,7 +59,7 @@ describe("RootLayout", () => {
         const element = asElementWithProps(child);
         return (
           element?.props.id === "sentry-browser-runtime-config" &&
-          element?.props.strategy === "beforeInteractive"
+          element?.props.strategy === "afterInteractive"
         );
       },
     );

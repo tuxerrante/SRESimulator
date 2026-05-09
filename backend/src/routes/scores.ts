@@ -27,9 +27,8 @@ scoresRouter.get("/", async (req: Request, res: Response) => {
     res.json({ entries, hallOfFame });
   } catch (error) {
     captureBackendRouteError(req, error);
-    const message =
-      error instanceof Error ? error.message : "Failed to fetch leaderboard";
-    res.status(500).json({ error: message });
+    void error;
+    res.status(500).json({ error: "Failed to fetch leaderboard" });
   }
 });
 
@@ -109,8 +108,7 @@ scoresRouter.post("/", async (req: Request, res: Response) => {
     });
   } catch (error) {
     captureBackendRouteError(req, error);
-    const message =
-      error instanceof Error ? error.message : "Failed to save score";
-    res.status(500).json({ error: message });
+    void error;
+    res.status(500).json({ error: "Failed to save score" });
   }
 });

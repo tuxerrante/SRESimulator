@@ -95,3 +95,18 @@ BEGIN
       ON gameplay_metrics (traffic_source, created_at)
   ');
 END;
+
+IF EXISTS (
+  SELECT * FROM sys.indexes
+  WHERE name = 'idx_metrics_traffic_source_session_created'
+    AND object_id = OBJECT_ID('gameplay_metrics')
+)
+BEGIN
+  DROP INDEX idx_metrics_traffic_source_session_created
+  ON gameplay_metrics;
+END;
+
+EXEC('
+  CREATE INDEX idx_metrics_traffic_source_session_created
+    ON gameplay_metrics (traffic_source, session_token, lifecycle_state, created_at DESC, id DESC)
+');

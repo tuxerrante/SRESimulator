@@ -160,22 +160,7 @@ export class MssqlMetricsStore implements IMetricsStore {
   }
 
   async getGameplayAnalytics(): Promise<GameplayAnalytics> {
-    const latestSessionCte = `
-      WITH latest AS (
-        SELECT *,
-          ROW_NUMBER() OVER (
-            PARTITION BY COALESCE(CAST(session_token AS NVARCHAR(36)), CAST(id AS NVARCHAR(36)))
-            ORDER BY
-              CASE WHEN lifecycle_state IN ('completed', 'abandoned') THEN 1 ELSE 0 END DESC,
-              created_at DESC,
-              id DESC
-          ) AS rn
-        FROM gameplay_metrics
-        WHERE traffic_source = 'player'
-      )
-    `;
-
-    const summaryResult = await this.pool.request().query<{
+    type SummaryRow = {
       total_sessions: number;
       completed_sessions: number;
       abandoned_sessions: number;
@@ -184,66 +169,23 @@ export class MssqlMetricsStore implements IMetricsStore {
       avg_completion_command_count: number | null;
       avg_completion_chat_message_count: number | null;
       avg_completion_score_total: number | null;
-    }>(`
-      ${latestSessionCte}
-      SELECT
-        COUNT(*) AS total_sessions,
-        COALESCE(SUM(CASE WHEN lifecycle_state = 'completed' THEN 1 ELSE 0 END), 0) AS completed_sessions,
-        COALESCE(SUM(CASE WHEN lifecycle_state = 'abandoned' THEN 1 ELSE 0 END), 0) AS abandoned_sessions,
-        COALESCE(SUM(CASE WHEN lifecycle_state = 'started' THEN 1 ELSE 0 END), 0) AS in_progress_sessions,
-        AVG(CASE WHEN lifecycle_state = 'completed' THEN TRY_CAST(duration_ms AS FLOAT) END) AS avg_completion_duration_ms,
-        AVG(CASE WHEN lifecycle_state = 'completed' THEN TRY_CAST(command_count AS FLOAT) END) AS avg_completion_command_count,
-        AVG(CASE WHEN lifecycle_state = 'completed' THEN TRY_CAST(chat_message_count AS FLOAT) END) AS avg_completion_chat_message_count,
-        AVG(CASE WHEN lifecycle_state = 'completed' THEN TRY_CAST(score_total AS FLOAT) END) AS avg_completion_score_total
-      FROM latest
-      WHERE rn = 1
-    `);
-
-    const difficultyResult = await this.pool.request().query<{
+    };
+    type DifficultyRow = {
       difficulty: string;
       total_sessions: number;
       completed_sessions: number;
       abandoned_sessions: number;
       in_progress_sessions: number;
-    }>(`
-      ${latestSessionCte}
-      SELECT
-        difficulty,
-        COUNT(*) AS total_sessions,
-        SUM(CASE WHEN lifecycle_state = 'completed' THEN 1 ELSE 0 END) AS completed_sessions,
-        SUM(CASE WHEN lifecycle_state = 'abandoned' THEN 1 ELSE 0 END) AS abandoned_sessions,
-        SUM(CASE WHEN lifecycle_state = 'started' THEN 1 ELSE 0 END) AS in_progress_sessions
-      FROM latest
-      WHERE rn = 1
-        AND difficulty IS NOT NULL
-      GROUP BY difficulty
-      ORDER BY difficulty
-    `);
-
-    const scenarioResult = await this.pool.request().query<{
+    };
+    type ScenarioRow = {
       scenario_title: string;
       difficulty: string | null;
       total_sessions: number;
       completed_sessions: number;
       abandoned_sessions: number;
       in_progress_sessions: number;
-    }>(`
-      ${latestSessionCte}
-      SELECT TOP 10
-        scenario_title,
-        difficulty,
-        COUNT(*) AS total_sessions,
-        SUM(CASE WHEN lifecycle_state = 'completed' THEN 1 ELSE 0 END) AS completed_sessions,
-        SUM(CASE WHEN lifecycle_state = 'abandoned' THEN 1 ELSE 0 END) AS abandoned_sessions,
-        SUM(CASE WHEN lifecycle_state = 'started' THEN 1 ELSE 0 END) AS in_progress_sessions
-      FROM latest
-      WHERE rn = 1
-        AND scenario_title IS NOT NULL
-      GROUP BY scenario_title, difficulty
-      ORDER BY total_sessions DESC, scenario_title ASC
-    `);
-
-    const recentResult = await this.pool.request().query<{
+    };
+    type RecentRow = {
       lifecycle_state: string | null;
       nickname: string | null;
       difficulty: string | null;
@@ -254,8 +196,115 @@ export class MssqlMetricsStore implements IMetricsStore {
       score_total: number | null;
       grade: string | null;
       created_at: Date;
-    }>(`
+    };
+
+    const latestSessionCte = `
+      WITH ranked_sessions AS (
+        SELECT
+          lifecycle_state,
+          nickname,
+          difficulty,
+          scenario_title,
+          command_count,
+          chat_message_count,
+          duration_ms,
+          score_total,
+          grade,
+          created_at,
+          ROW_NUMBER() OVER (
+            PARTITION BY session_token
+            ORDER BY
+              CASE WHEN lifecycle_state IN ('completed', 'abandoned') THEN 1 ELSE 0 END DESC,
+              created_at DESC,
+              id DESC
+          ) AS rn
+        FROM gameplay_metrics
+        WHERE traffic_source = 'player'
+          AND session_token IS NOT NULL
+      ),
+      latest AS (
+        SELECT
+          lifecycle_state,
+          nickname,
+          difficulty,
+          scenario_title,
+          command_count,
+          chat_message_count,
+          duration_ms,
+          score_total,
+          grade,
+          created_at
+        FROM ranked_sessions
+        WHERE rn = 1
+        UNION ALL
+        SELECT
+          lifecycle_state,
+          nickname,
+          difficulty,
+          scenario_title,
+          command_count,
+          chat_message_count,
+          duration_ms,
+          score_total,
+          grade,
+          created_at
+        FROM gameplay_metrics
+        WHERE traffic_source = 'player'
+          AND session_token IS NULL
+      )
+    `;
+
+    const analyticsResult = await this.pool.request().query<SummaryRow>(`
       ${latestSessionCte}
+      SELECT
+        lifecycle_state,
+        nickname,
+        difficulty,
+        scenario_title,
+        command_count,
+        chat_message_count,
+        duration_ms,
+        score_total,
+        grade,
+        created_at
+      INTO #latest_sessions
+      FROM latest
+      ;
+
+      SELECT
+        COUNT(*) AS total_sessions,
+        COALESCE(SUM(CASE WHEN lifecycle_state = 'completed' THEN 1 ELSE 0 END), 0) AS completed_sessions,
+        COALESCE(SUM(CASE WHEN lifecycle_state = 'abandoned' THEN 1 ELSE 0 END), 0) AS abandoned_sessions,
+        COALESCE(SUM(CASE WHEN lifecycle_state = 'started' THEN 1 ELSE 0 END), 0) AS in_progress_sessions,
+        AVG(CASE WHEN lifecycle_state = 'completed' THEN TRY_CAST(duration_ms AS FLOAT) END) AS avg_completion_duration_ms,
+        AVG(CASE WHEN lifecycle_state = 'completed' THEN TRY_CAST(command_count AS FLOAT) END) AS avg_completion_command_count,
+        AVG(CASE WHEN lifecycle_state = 'completed' THEN TRY_CAST(chat_message_count AS FLOAT) END) AS avg_completion_chat_message_count,
+        AVG(CASE WHEN lifecycle_state = 'completed' THEN TRY_CAST(score_total AS FLOAT) END) AS avg_completion_score_total
+      FROM #latest_sessions;
+
+      SELECT
+        difficulty,
+        COUNT(*) AS total_sessions,
+        SUM(CASE WHEN lifecycle_state = 'completed' THEN 1 ELSE 0 END) AS completed_sessions,
+        SUM(CASE WHEN lifecycle_state = 'abandoned' THEN 1 ELSE 0 END) AS abandoned_sessions,
+        SUM(CASE WHEN lifecycle_state = 'started' THEN 1 ELSE 0 END) AS in_progress_sessions
+      FROM #latest_sessions
+      WHERE difficulty IS NOT NULL
+      GROUP BY difficulty
+      ORDER BY difficulty;
+
+      SELECT TOP 10
+        scenario_title,
+        difficulty,
+        COUNT(*) AS total_sessions,
+        SUM(CASE WHEN lifecycle_state = 'completed' THEN 1 ELSE 0 END) AS completed_sessions,
+        SUM(CASE WHEN lifecycle_state = 'abandoned' THEN 1 ELSE 0 END) AS abandoned_sessions,
+        SUM(CASE WHEN lifecycle_state = 'started' THEN 1 ELSE 0 END) AS in_progress_sessions
+      FROM #latest_sessions
+      WHERE scenario_title IS NOT NULL
+      GROUP BY scenario_title, difficulty
+      ORDER BY total_sessions DESC, scenario_title ASC;
+
       SELECT TOP 20
         lifecycle_state,
         nickname,
@@ -267,12 +316,18 @@ export class MssqlMetricsStore implements IMetricsStore {
         score_total,
         grade,
         created_at
-      FROM latest
-      WHERE rn = 1
-      ORDER BY created_at DESC
+      FROM #latest_sessions
+      ORDER BY created_at DESC;
+
+      DROP TABLE #latest_sessions;
     `);
 
-    const summary = summaryResult.recordset[0] ?? {
+    const recordsets = analyticsResult.recordsets as unknown[];
+    const summaryRows = (recordsets[0] as SummaryRow[] | undefined) ?? analyticsResult.recordset;
+    const difficultyRows = (recordsets[1] as DifficultyRow[] | undefined) ?? [];
+    const scenarioRows = (recordsets[2] as ScenarioRow[] | undefined) ?? [];
+    const recentRows = (recordsets[3] as RecentRow[] | undefined) ?? [];
+    const summary = summaryRows[0] ?? {
       total_sessions: 0,
       completed_sessions: 0,
       abandoned_sessions: 0,
@@ -296,7 +351,7 @@ export class MssqlMetricsStore implements IMetricsStore {
         avgCompletionChatMessageCount: summary.avg_completion_chat_message_count,
         avgCompletionScoreTotal: summary.avg_completion_score_total,
       },
-      byDifficulty: difficultyResult.recordset.map((row): GameplayDifficultyAnalytics => ({
+      byDifficulty: (difficultyRows ?? []).map((row): GameplayDifficultyAnalytics => ({
         difficulty: row.difficulty as GameplayDifficultyAnalytics["difficulty"],
         totalSessions: row.total_sessions,
         completedSessions: row.completed_sessions,
@@ -304,7 +359,7 @@ export class MssqlMetricsStore implements IMetricsStore {
         inProgressSessions: row.in_progress_sessions,
         completionRate: toRate(row.completed_sessions, row.total_sessions),
       })),
-      byScenario: scenarioResult.recordset.map((row): GameplayScenarioAnalytics => ({
+      byScenario: (scenarioRows ?? []).map((row): GameplayScenarioAnalytics => ({
         scenarioTitle: row.scenario_title,
         difficulty: (row.difficulty ?? undefined) as GameplayScenarioAnalytics["difficulty"],
         totalSessions: row.total_sessions,
@@ -313,7 +368,7 @@ export class MssqlMetricsStore implements IMetricsStore {
         inProgressSessions: row.in_progress_sessions,
         completionRate: toRate(row.completed_sessions, row.total_sessions),
       })),
-      recentSessions: recentResult.recordset.map((row) => ({
+      recentSessions: (recentRows ?? []).map((row) => ({
         lifecycleState: (row.lifecycle_state ?? "completed") as "started" | "completed" | "abandoned",
         nickname: row.nickname ?? undefined,
         difficulty: (row.difficulty ?? undefined) as GameplayRecord["difficulty"],
