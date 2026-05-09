@@ -248,12 +248,10 @@ The chart maps these values to:
 - Backend: `SENTRY_ENABLED`, `SENTRY_DSN`, `SENTRY_ENVIRONMENT`, and
   `SENTRY_RELEASE`
 
-For the browser path, the deployed frontend container env is read by the server
-app shell at request time and injected into the initial HTML before browser
-code runs, so browser Sentry enablement is runtime-driven from Helm/container
-env rather than frozen into the browser bundle at build time or delayed behind
-a client effect. Backend Sentry still reads `SENTRY_*` directly from the
-backend process env.
+For the browser path, the Helm `frontend.sentry.*` values currently remain a
+staged rollout input while browser-side Sentry bootstrap stays disabled in this
+release train. Backend Sentry still reads `SENTRY_*` directly from the backend
+process env.
 
 Readable browser stack traces also require build-time source-map upload
 credentials on the frontend build:
