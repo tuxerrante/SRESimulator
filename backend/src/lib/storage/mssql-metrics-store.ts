@@ -171,7 +171,7 @@ export class MssqlMetricsStore implements IMetricsStore {
               id DESC
           ) AS rn
         FROM gameplay_metrics
-        WHERE COALESCE(traffic_source, 'player') = 'player'
+        WHERE traffic_source = 'player'
       )
     `;
 

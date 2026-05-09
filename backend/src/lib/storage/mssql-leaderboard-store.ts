@@ -63,7 +63,7 @@ export class MssqlLeaderboardStore implements ILeaderboardStore {
       query = `
         SELECT TOP (@limit) * FROM leaderboard_entries
         WHERE difficulty = @difficulty
-          AND COALESCE(traffic_source, 'player') = 'player'
+          AND traffic_source = 'player'
           AND identity_kind = 'github'
           AND github_user_id IS NOT NULL
         ORDER BY score_total DESC, duration_ms ASC
@@ -71,7 +71,7 @@ export class MssqlLeaderboardStore implements ILeaderboardStore {
     } else {
       query = `
         SELECT TOP (@limit) * FROM leaderboard_entries
-        WHERE COALESCE(traffic_source, 'player') = 'player'
+        WHERE traffic_source = 'player'
           AND identity_kind = 'github'
           AND github_user_id IS NOT NULL
         ORDER BY score_total DESC, duration_ms ASC
@@ -103,7 +103,7 @@ export class MssqlLeaderboardStore implements ILeaderboardStore {
               ORDER BY created_at DESC, id DESC
             ) AS nickname_rank
           FROM leaderboard_entries
-          WHERE COALESCE(traffic_source, 'player') = 'player'
+          WHERE traffic_source = 'player'
             AND identity_kind = 'github'
             AND github_user_id IS NOT NULL
         ),
@@ -174,7 +174,7 @@ export class MssqlLeaderboardStore implements ILeaderboardStore {
         ) AS source
         ON target.github_user_id = source.github_user_id
           AND target.difficulty = source.difficulty
-          AND COALESCE(target.traffic_source, 'player') = source.traffic_source
+          AND target.traffic_source = source.traffic_source
         WHEN MATCHED AND (@scoreTotal > target.score_total OR (@scoreTotal = target.score_total AND @durationMs < target.duration_ms)) THEN
           UPDATE SET
             id = @id,
@@ -220,11 +220,11 @@ export class MssqlLeaderboardStore implements ILeaderboardStore {
       .query(`
         DELETE FROM leaderboard_entries
         WHERE difficulty = @difficulty
-          AND COALESCE(traffic_source, 'player') = @trafficSource
+          AND traffic_source = @trafficSource
           AND id NOT IN (
             SELECT TOP (@keepCount) id FROM leaderboard_entries
             WHERE difficulty = @difficulty
-              AND COALESCE(traffic_source, 'player') = @trafficSource
+              AND traffic_source = @trafficSource
             ORDER BY score_total DESC, duration_ms ASC
           )
       `);

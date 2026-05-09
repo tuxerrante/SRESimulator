@@ -143,7 +143,8 @@ describe("frontend backend proxy route", () => {
       headers: {
         "content-type": "application/json",
         "user-agent": "Proxy Test Browser",
-        "x-forwarded-for": "198.51.100.66, 203.0.113.5",
+        "x-real-ip": "203.0.113.5",
+        "x-forwarded-for": "203.0.113.5, 10.0.0.1",
       },
       body: JSON.stringify({
         difficulty: "easy",
@@ -160,7 +161,7 @@ describe("frontend backend proxy route", () => {
     expect(headers.get("x-sresim-client-ip-signature")).toBeTruthy();
   });
 
-  it("prefers x-real-ip over a potentially pre-seeded x-forwarded-for chain", async () => {
+  it("does not sign client IP when trusted proxy headers disagree", async () => {
     process.env.ANTI_ABUSE_HMAC_SECRET = "test-hmac";
     process.env.BACKEND_INTERNAL_BASE_URL = "http://backend.internal";
     process.env.TRUST_PROXY_HEADERS = "true";
@@ -179,7 +180,7 @@ describe("frontend backend proxy route", () => {
         "content-type": "application/json",
         "user-agent": "Proxy Test Browser",
         "x-real-ip": "203.0.113.7",
-        "x-forwarded-for": "198.51.100.8, 203.0.113.7",
+        "x-forwarded-for": "198.51.100.8, 10.0.0.1",
       },
       body: JSON.stringify({
         difficulty: "easy",
@@ -192,7 +193,43 @@ describe("frontend backend proxy route", () => {
 
     const [, options] = fetchMock.mock.calls[0] as [string, RequestInit];
     const headers = options.headers as Headers;
-    expect(headers.get("x-sresim-client-ip")).toBe("203.0.113.7");
-    expect(headers.get("x-sresim-client-ip-signature")).toBeTruthy();
+    expect(headers.get("x-sresim-client-ip")).toBeNull();
+    expect(headers.get("x-sresim-client-ip-signature")).toBeNull();
+  });
+
+  it("does not sign client IP when forwarded chain contains invalid hops", async () => {
+    process.env.ANTI_ABUSE_HMAC_SECRET = "test-hmac";
+    process.env.BACKEND_INTERNAL_BASE_URL = "http://backend.internal";
+    process.env.TRUST_PROXY_HEADERS = "true";
+
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const request = new NextRequest("https://play.example.com/api/scenario", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "user-agent": "Proxy Test Browser",
+        "x-real-ip": "203.0.113.7",
+        "x-forwarded-for": "garbage, 203.0.113.7",
+      },
+      body: JSON.stringify({
+        difficulty: "easy",
+        turnstileToken: "token-123",
+        fingerprintHash: "fingerprint-123",
+      }),
+    });
+
+    await POST(request);
+
+    const [, options] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const headers = options.headers as Headers;
+    expect(headers.get("x-sresim-client-ip")).toBeNull();
+    expect(headers.get("x-sresim-client-ip-signature")).toBeNull();
   });
 });

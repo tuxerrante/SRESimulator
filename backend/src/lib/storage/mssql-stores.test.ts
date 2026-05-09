@@ -174,7 +174,7 @@ describe("MssqlLeaderboardStore", () => {
     await store.getLeaderboard();
 
     const sql = req.query.mock.calls[0][0] as string;
-    expect(sql).toContain("COALESCE(traffic_source, 'player') = 'player'");
+    expect(sql).toContain("traffic_source = 'player'");
     expect(sql).toContain("identity_kind = 'github'");
     expect(sql).toContain("github_user_id IS NOT NULL");
   });

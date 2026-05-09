@@ -43,6 +43,7 @@ const UPGRADE_STATUSES = ["completed", "failed", "in_progress"] as const;
 const MAX_RECENT_EVENTS = 50;
 const MAX_ALERTS = 20;
 const MAX_UPGRADE_HISTORY = 20;
+const ISO_8601_UTC_TIMESTAMP_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/;
 
 class InvalidScenarioPayloadError extends Error {
   readonly clientMessage = "Scenario generation returned an invalid payload.";
@@ -77,7 +78,18 @@ function assertEnum<T extends readonly string[]>(
 
 function assertIsoTimestamp(value: unknown, field: string): void {
   assertNonEmptyString(value, field);
-  if (!Number.isFinite(Date.parse(value))) {
+  if (!ISO_8601_UTC_TIMESTAMP_PATTERN.test(value)) {
+    throw new InvalidScenarioPayloadError(`AI scenario field ${field} must be an ISO 8601 timestamp`);
+  }
+
+  const normalized = value.includes(".")
+    ? value.replace(/\.(\d{1,3})Z$/, (_, ms: string) => `.${ms.padEnd(3, "0")}Z`)
+    : value.replace(/Z$/, ".000Z");
+  const parsed = new Date(normalized);
+  if (
+    !Number.isFinite(parsed.getTime()) ||
+    parsed.toISOString() !== normalized
+  ) {
     throw new InvalidScenarioPayloadError(`AI scenario field ${field} must be an ISO 8601 timestamp`);
   }
 }

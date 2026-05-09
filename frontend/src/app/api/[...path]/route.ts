@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { isIP } from "node:net";
 import {
   ANONYMOUS_PROOF_COOKIE,
   ANONYMOUS_PROOF_TTL_MS,
@@ -16,6 +17,40 @@ import { isSecureRequest, shouldTrustProxyHeaders } from "@/lib/auth/request-con
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+function assertTrustedProxySigningConfiguration(): void {
+  if (
+    shouldTrustProxyHeaders() &&
+    !process.env.ANTI_ABUSE_HMAC_SECRET?.trim()
+  ) {
+    throw new Error(
+      "TRUST_PROXY_HEADERS=true requires ANTI_ABUSE_HMAC_SECRET for signed client IP verification",
+    );
+  }
+}
+
+function readIpHeader(value: string | null): string | null {
+  const candidate = value?.trim();
+  if (!candidate || isIP(candidate) === 0) {
+    return null;
+  }
+  return candidate;
+}
+
+function readForwardedIps(value: string | null): string[] {
+  if (!value) {
+    return [];
+  }
+
+  const parts = value
+    .split(",")
+    .map((part) => part.trim())
+    .filter(Boolean);
+  if (parts.length === 0 || parts.some((part) => isIP(part) === 0)) {
+    return [];
+  }
+  return parts;
+}
+
 function getBackendBaseUrl(): string {
   const base = process.env.BACKEND_INTERNAL_BASE_URL || "http://127.0.0.1:8080";
   return base.endsWith("/") ? base.slice(0, -1) : base;
@@ -26,22 +61,22 @@ function getTrustedClientIp(request: NextRequest): string | null {
     return null;
   }
 
-  const realIp = request.headers.get("x-real-ip")?.trim();
-  if (realIp) {
-    return realIp;
+  const realIp = readIpHeader(request.headers.get("x-real-ip"));
+  if (!realIp) {
+    return null;
   }
 
-  const forwardedFor = request.headers.get("x-forwarded-for");
-  if (forwardedFor) {
-    const trustedHop = forwardedFor
-      .split(",")
-      .map((part) => part.trim())
-      .filter(Boolean)
-      .at(-1);
-    return trustedHop || null;
+  const forwardedIps = readForwardedIps(request.headers.get("x-forwarded-for"));
+  if (forwardedIps.length === 0) {
+    return null;
   }
 
-  return null;
+  const clientHop = forwardedIps[0];
+  if (!clientHop || clientHop !== realIp) {
+    return null;
+  }
+
+  return realIp;
 }
 
 function upsertCookieHeader(
@@ -189,3 +224,5 @@ export const PATCH = proxyRequest;
 export const DELETE = proxyRequest;
 export const OPTIONS = proxyRequest;
 export const HEAD = proxyRequest;
+
+assertTrustedProxySigningConfiguration();

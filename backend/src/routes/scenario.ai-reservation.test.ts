@@ -324,6 +324,58 @@ describe("scenario reservation before AI generation", () => {
     expect(response.body.error).toBe("Scenario generation returned an invalid payload.");
   });
 
+  it("rejects AI scenarios when timestamps are parseable but not strict ISO 8601", async () => {
+    const invalidScenario = createValidAiScenario();
+    invalidScenario.incidentTicket.reportedTime = "03/07/2026 12:34:56";
+    generateAiTextMock.mockResolvedValueOnce(JSON.stringify(invalidScenario));
+
+    const storageModule = await import("../lib/storage");
+    await storageModule.initStorage();
+    const scenarioModule = await import("./scenario");
+    const app = createApp(scenarioModule.scenarioRouter);
+    const headers = {
+      cookie: createAnonymousProofCookie("fp_non_iso_timestamp"),
+      "user-agent": anonymousUserAgent,
+      ...createSignedClientIpHeaders("203.0.113.95"),
+    };
+
+    const response = await postJson(
+      app,
+      "/api/scenario",
+      { difficulty: "easy", turnstileToken: "pass" },
+      headers
+    );
+
+    expect(response.status).toBe(502);
+    expect(response.body.error).toBe("Scenario generation returned an invalid payload.");
+  });
+
+  it("rejects AI scenarios with impossible calendar dates", async () => {
+    const invalidScenario = createValidAiScenario();
+    invalidScenario.incidentTicket.reportedTime = "2026-02-29T12:34:56Z";
+    generateAiTextMock.mockResolvedValueOnce(JSON.stringify(invalidScenario));
+
+    const storageModule = await import("../lib/storage");
+    await storageModule.initStorage();
+    const scenarioModule = await import("./scenario");
+    const app = createApp(scenarioModule.scenarioRouter);
+    const headers = {
+      cookie: createAnonymousProofCookie("fp_impossible_date"),
+      "user-agent": anonymousUserAgent,
+      ...createSignedClientIpHeaders("203.0.113.94"),
+    };
+
+    const response = await postJson(
+      app,
+      "/api/scenario",
+      { difficulty: "easy", turnstileToken: "pass" },
+      headers
+    );
+
+    expect(response.status).toBe(502);
+    expect(response.body.error).toBe("Scenario generation returned an invalid payload.");
+  });
+
   it("returns a curated catalog scenario without calling AI generation when catalog mode is enabled", async () => {
     process.env.SCENARIO_SOURCE = "catalog";
 

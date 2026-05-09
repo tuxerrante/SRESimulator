@@ -203,6 +203,6 @@ commandRouter.post("/", async (req: Request, res: Response) => {
     }
 
     captureBackendRouteError(req, error);
-    res.status(500).json({ error: message });
+    res.status(500).json({ error: "Command simulation failed" });
   }
 });

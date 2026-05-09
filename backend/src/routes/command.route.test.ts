@@ -350,4 +350,21 @@ describe("POST /api/command", () => {
     expect(res.body.output).not.toContain("delayed synthetic response");
     expect(aborted).toBe(true);
   });
+
+  it("returns a client-safe generic message when live command generation fails", async () => {
+    enableLiveAiRuntime();
+    generateAiTextMock.mockRejectedValue(
+      new Error("Azure OpenAI request failed (429): leaked upstream diagnostics")
+    );
+
+    const app = createApp();
+    const res = await postJson(app, "/api/command", {
+      command: "oc get nodes",
+      type: "oc",
+      scenario: makeScenario(),
+    });
+
+    expect(res.status).toBe(500);
+    expect(res.body.error).toBe("Command simulation failed");
+  });
 });
