@@ -7,12 +7,6 @@ vi.mock("next/font/google", () => ({
   Geist_Mono: () => ({ variable: "font-geist-mono" }),
 }));
 
-vi.mock("next/script", () => ({
-  default: function MockNextScript() {
-    return null;
-  },
-}));
-
 function asElementWithProps(
   node: ReactNode,
 ): ReactElement<Record<string, unknown>> | null {
@@ -33,7 +27,7 @@ describe("RootLayout", () => {
     process.env = originalEnv;
   });
 
-  it("loads runtime sentry bootstrap from the telemetry config route", async () => {
+  it("renders layout body children without telemetry bootstrap script", async () => {
     const { default: RootLayout } = await import("./layout");
 
     const tree = RootLayout({
@@ -54,18 +48,9 @@ describe("RootLayout", () => {
     const bodyChildren = Children.toArray(
       (bodyElement?.props.children ?? null) as ReactNode,
     );
-    const script = bodyChildren.find(
-      (child) => {
-        const element = asElementWithProps(child);
-        return (
-          element?.props.id === "sentry-browser-runtime-config" &&
-          element?.props.strategy === "afterInteractive"
-        );
-      },
-    );
-
-    expect(script).toBeTruthy();
-    const scriptElement = asElementWithProps(script);
-    expect(scriptElement?.props.src).toBe("/api/telemetry/browser-config");
+    expect(bodyChildren).toHaveLength(1);
+    const contentElement = asElementWithProps(bodyChildren[0] ?? null);
+    expect(contentElement?.type).toBe("div");
+    expect(contentElement?.props.children).toBe("hello runtime");
   });
 });

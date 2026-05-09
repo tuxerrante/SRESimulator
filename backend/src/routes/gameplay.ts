@@ -213,7 +213,8 @@ gameplayRouter.post("/", gameplayTelemetryRateLimit, async (req: Request, res: R
     res.status(202).json({ ok: true });
   } catch (error) {
     captureBackendRouteError(req, error);
-    console.error("Failed to record gameplay event", { error });
+    const errorName = error instanceof Error ? error.name : "UnknownError";
+    console.error("Failed to record gameplay event", { errorName });
     res.status(500).json({ error: "Failed to record gameplay event" });
   }
 });
@@ -233,7 +234,8 @@ gameplayRouter.get(
     res.json(analytics);
   } catch (error) {
     captureBackendRouteError(req, error);
-    console.error("Failed to read gameplay analytics", { error });
+    const errorName = error instanceof Error ? error.name : "UnknownError";
+    console.error("Failed to read gameplay analytics", { errorName });
     res.status(500).json({ error: "Failed to read gameplay analytics" });
   }
 },
