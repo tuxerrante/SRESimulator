@@ -4,11 +4,13 @@ import { getRateLimitKey } from "./rate-limit";
 
 function createRequest(options?: {
   ip?: string;
+  socketIp?: string;
   signedIp?: string;
   signature?: string;
 }) {
   return {
     ip: options?.ip,
+    socket: options?.socketIp ? { remoteAddress: options.socketIp } : undefined,
     headers: {
       "x-sresim-client-ip": options?.signedIp,
       "x-sresim-client-ip-signature": options?.signature,
@@ -43,5 +45,20 @@ describe("getRateLimitKey", () => {
 
     expect(key).toBeTruthy();
     expect(key).not.toBe(getRateLimitKey(createRequest({ ip: "198.51.100.10" }), "test-hmac"));
+  });
+
+  it("prefers the socket remote address over req.ip when signed headers are invalid", () => {
+    const key = getRateLimitKey(
+      createRequest({
+        ip: "198.51.100.200",
+        socketIp: "10.0.0.15",
+        signedIp: "203.0.113.10",
+        signature: "bad-signature",
+      }),
+      "test-hmac",
+    );
+
+    const socketKey = getRateLimitKey(createRequest({ ip: "127.0.0.1", socketIp: "10.0.0.15" }), "test-hmac");
+    expect(key).toBe(socketKey);
   });
 });

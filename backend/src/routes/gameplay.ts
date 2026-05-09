@@ -1,6 +1,7 @@
 import { Router, type Request, type Response } from "express";
+import rateLimit from "express-rate-limit";
 import { getMetricsStore, getSessionStore } from "../lib/storage";
-import { gameplayAdminRateLimit, gameplayTelemetryRateLimit } from "../lib/rate-limit";
+import { getRateLimitKey, gameplayTelemetryRateLimit } from "../lib/rate-limit";
 import { matchesSharedSecret } from "../lib/shared-secret";
 import { captureBackendRouteError } from "../lib/telemetry/capture";
 import type { GameplayLifecycleState } from "../../../shared/types/gameplay";
@@ -9,6 +10,8 @@ export const gameplayRouter = Router();
 
 const GAMEPLAY_ADMIN_TOKEN_HEADER = "x-gameplay-admin-token";
 const GAMEPLAY_ADMIN_VARY_HEADERS = "Authorization, X-Gameplay-Admin-Token";
+const GAMEPLAY_ADMIN_AUTH_KEY = "auth";
+const GAMEPLAY_ADMIN_ANON_KEY = "anon";
 const MAX_COMMANDS = 50;
 const MAX_COMMAND_LENGTH = 200;
 const MAX_SCORING_EVENTS = 50;
@@ -126,6 +129,36 @@ function applyAdminResponseHardening(res: Response): void {
   res.set("Vary", GAMEPLAY_ADMIN_VARY_HEADERS);
 }
 
+function hasPreparedGameplayAdminAccess(res: Response): boolean {
+  const value = res.locals.gameplayAdminAuthorized;
+  return value === true;
+}
+
+function prepareGameplayAdminRequest(req: Request, res: Response, next: () => void): void {
+  applyAdminResponseHardening(res);
+  res.locals.gameplayAdminAuthorized = hasGameplayAdminAccess(req);
+  next();
+}
+
+const gameplayAdminRateLimit = rateLimit({
+  windowMs: 60 * 1000,
+  limit: () => {
+    const parsed = Number.parseInt(process.env.GAMEPLAY_ADMIN_RATE_LIMIT_MAX ?? "15", 10);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : 15;
+  },
+  standardHeaders: "draft-7",
+  legacyHeaders: false,
+  message: {
+    error: "Too many gameplay admin requests. Please retry in a moment.",
+  },
+  keyGenerator: (req, res) => {
+    const bucket = hasPreparedGameplayAdminAccess(res)
+      ? GAMEPLAY_ADMIN_AUTH_KEY
+      : GAMEPLAY_ADMIN_ANON_KEY;
+    return `${bucket}:${getRateLimitKey(req)}`;
+  },
+});
+
 gameplayRouter.post("/", gameplayTelemetryRateLimit, async (req: Request, res: Response) => {
   try {
     const body: GameplayEventBody = req.body;
@@ -182,11 +215,13 @@ gameplayRouter.post("/", gameplayTelemetryRateLimit, async (req: Request, res: R
   }
 });
 
-gameplayRouter.get("/admin", gameplayAdminRateLimit, async (req: Request, res: Response) => {
+gameplayRouter.get(
+  "/admin",
+  prepareGameplayAdminRequest,
+  gameplayAdminRateLimit,
+  async (req: Request, res: Response) => {
   try {
-    applyAdminResponseHardening(res);
-
-    if (!hasGameplayAdminAccess(req)) {
+    if (!hasPreparedGameplayAdminAccess(res)) {
       res.status(401).json({ error: "Unauthorized" });
       return;
     }
@@ -198,4 +233,5 @@ gameplayRouter.get("/admin", gameplayAdminRateLimit, async (req: Request, res: R
     console.error("Failed to read gameplay analytics", { error });
     res.status(500).json({ error: "Failed to read gameplay analytics" });
   }
-});
+},
+);

@@ -3,6 +3,9 @@ import { verifySignedClientIp } from "../../../shared/auth/client-ip";
 
 interface RateLimitRequestLike {
   ip?: string;
+  socket?: {
+    remoteAddress?: string;
+  };
   headers: Record<string, string | string[] | undefined>;
 }
 
@@ -30,6 +33,11 @@ export function getRateLimitKey(
     verifySignedClientIp(signedIp, signature, antiAbuseSecret)
   ) {
     return ipKeyGenerator(signedIp);
+  }
+
+  const socketIp = req.socket?.remoteAddress;
+  if (socketIp) {
+    return ipKeyGenerator(socketIp);
   }
 
   if (req.ip) {

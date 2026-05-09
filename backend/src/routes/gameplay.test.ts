@@ -410,6 +410,42 @@ describe("gameplay routes", () => {
     expect(limited.body.error).toContain("Too many gameplay admin requests");
   });
 
+  it("GET /api/gameplay/admin keeps cache hardening headers on 429 responses", async () => {
+    process.env.GAMEPLAY_ADMIN_TOKEN = "gameplay-admin-secret";
+    process.env.GAMEPLAY_ADMIN_RATE_LIMIT_MAX = "1";
+    const app = createApp();
+
+    expect((await httpRequest(app, "GET", "/api/gameplay/admin", undefined, {
+      authorization: "Bearer gameplay-admin-secret",
+    })).status).toBe(200);
+
+    const limited = await httpRequest(app, "GET", "/api/gameplay/admin", undefined, {
+      authorization: "Bearer gameplay-admin-secret",
+    });
+
+    expect(limited.status).toBe(429);
+    expect(String(limited.headers["cache-control"] ?? "")).toContain("no-store");
+    const varyHeader = Array.isArray(limited.headers.vary)
+      ? limited.headers.vary.join(",")
+      : String(limited.headers.vary ?? "");
+    expect(varyHeader.toLowerCase()).toContain("authorization");
+    expect(varyHeader.toLowerCase()).toContain("x-gameplay-admin-token");
+  });
+
+  it("GET /api/gameplay/admin keeps authenticated traffic available after unauthorized rate limit usage", async () => {
+    process.env.GAMEPLAY_ADMIN_TOKEN = "gameplay-admin-secret";
+    process.env.GAMEPLAY_ADMIN_RATE_LIMIT_MAX = "1";
+    const app = createApp();
+
+    const unauthorized = await httpRequest(app, "GET", "/api/gameplay/admin");
+    const authorized = await httpRequest(app, "GET", "/api/gameplay/admin", undefined, {
+      authorization: "Bearer gameplay-admin-secret",
+    });
+
+    expect(unauthorized.status).toBe(401);
+    expect(authorized.status).toBe(200);
+  });
+
   it("POST /api/gameplay caps oversized scoring event payloads", async () => {
     const token = await getSessionStore().create("medium", "Bad Egress");
     const app = createApp();

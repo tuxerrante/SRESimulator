@@ -132,6 +132,19 @@ function validateScenarioPayload(payload: unknown, difficulty: Difficulty): Scen
   assertNonEmptyString(clusterContext.name, "clusterContext.name");
   assertNonEmptyString(clusterContext.version, "clusterContext.version");
   assertNonEmptyString(clusterContext.region, "clusterContext.region");
+  if (incidentTicket.clusterName !== clusterContext.name) {
+    throw new InvalidScenarioPayloadError(
+      "AI scenario fields incidentTicket.clusterName and clusterContext.name must match",
+    );
+  }
+  if (
+    incidentTicket.region.trim().toLowerCase() !==
+    clusterContext.region.trim().toLowerCase()
+  ) {
+    throw new InvalidScenarioPayloadError(
+      "AI scenario fields incidentTicket.region and clusterContext.region must match",
+    );
+  }
   if (
     typeof clusterContext.nodeCount !== "number" ||
     !Number.isFinite(clusterContext.nodeCount) ||
@@ -547,8 +560,6 @@ ${scenarioContext}`,
       return;
     }
     captureBackendRouteError(req, error);
-    const message =
-      error instanceof Error ? error.message : "Scenario generation failed";
-    res.status(500).json({ error: message });
+    res.status(500).json({ error: "Scenario generation failed" });
   }
 });

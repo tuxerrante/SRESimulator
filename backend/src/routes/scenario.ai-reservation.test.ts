@@ -239,6 +239,65 @@ describe("scenario reservation before AI generation", () => {
     expect(second.status).toBe(200);
   });
 
+  it("releases reserved anonymous claims when AI returns non-JSON output", async () => {
+    generateAiTextMock
+      .mockResolvedValueOnce("not valid json")
+      .mockResolvedValueOnce(JSON.stringify(createValidAiScenario()));
+
+    const storageModule = await import("../lib/storage");
+    await storageModule.initStorage();
+    const scenarioModule = await import("./scenario");
+    const app = createApp(scenarioModule.scenarioRouter);
+    const headers = {
+      cookie: createAnonymousProofCookie("fp_invalid_json"),
+      "user-agent": anonymousUserAgent,
+      ...createSignedClientIpHeaders("203.0.113.98"),
+    };
+
+    const first = await postJson(
+      app,
+      "/api/scenario",
+      { difficulty: "easy", turnstileToken: "pass" },
+      headers
+    );
+    const second = await postJson(
+      app,
+      "/api/scenario",
+      { difficulty: "easy", turnstileToken: "pass" },
+      headers
+    );
+
+    expect(first.status).toBe(502);
+    expect(first.body.error).toBe("Scenario generation returned an invalid payload.");
+    expect(second.status).toBe(200);
+  });
+
+  it("rejects AI scenarios when incident and cluster context identity fields diverge", async () => {
+    const invalidScenario = createValidAiScenario();
+    invalidScenario.incidentTicket.region = "westeurope";
+    generateAiTextMock.mockResolvedValueOnce(JSON.stringify(invalidScenario));
+
+    const storageModule = await import("../lib/storage");
+    await storageModule.initStorage();
+    const scenarioModule = await import("./scenario");
+    const app = createApp(scenarioModule.scenarioRouter);
+    const headers = {
+      cookie: createAnonymousProofCookie("fp_mismatch_region"),
+      "user-agent": anonymousUserAgent,
+      ...createSignedClientIpHeaders("203.0.113.97"),
+    };
+
+    const response = await postJson(
+      app,
+      "/api/scenario",
+      { difficulty: "easy", turnstileToken: "pass" },
+      headers
+    );
+
+    expect(response.status).toBe(502);
+    expect(response.body.error).toBe("Scenario generation returned an invalid payload.");
+  });
+
   it("returns a curated catalog scenario without calling AI generation when catalog mode is enabled", async () => {
     process.env.SCENARIO_SOURCE = "catalog";
 
