@@ -94,14 +94,10 @@ describe("createApp", () => {
     process.env.SENTRY_DSN = "https://examplePublicKey@o0.ingest.sentry.io/0";
 
     const init = vi.fn();
-    const setTags = vi.fn();
-    const setExtras = vi.fn();
     const setupExpressErrorHandler = vi.fn();
 
     vi.doMock("@sentry/node", () => ({
       init,
-      setTags,
-      setExtras,
       setupExpressErrorHandler,
     }));
 
@@ -113,7 +109,7 @@ describe("createApp", () => {
     expect(setupExpressErrorHandler).toHaveBeenCalledWith(app);
   });
 
-  it("applies request context before JSON parsing fails", async () => {
+  it("keeps malformed JSON handling independent from sentry scope mutation", async () => {
     process.env.SENTRY_ENABLED = "true";
     process.env.SENTRY_DSN = "https://examplePublicKey@o0.ingest.sentry.io/0";
 
@@ -139,28 +135,13 @@ describe("createApp", () => {
       const { port } = server.address() as AddressInfo;
       const response = await fetch(`http://127.0.0.1:${port}/api/scenario`, {
         method: "POST",
-        headers: {
-          "content-type": "application/json",
-          "x-sresim-request-id": "3a8f6d6e-32ef-4a97-8891-0bc5987888f1",
-          "x-sresim-actor-ref": "2c9374a5-94f3-4c58-aab5-413f28643f03",
-          "x-sresim-game-session-ref": "4d2c91fa8e7b6a10",
-        },
+        headers: { "content-type": "application/json" },
         body: "{",
       });
 
       expect(response.status).toBe(400);
-      expect(setTags).toHaveBeenCalledWith({
-        feature: "scenario",
-        requestId: "3a8f6d6e-32ef-4a97-8891-0bc5987888f1",
-        actorRef: "2c9374a5-94f3-4c58-aab5-413f28643f03",
-        gameSessionRef: "4d2c91fa8e7b6a10",
-      });
-      expect(setExtras).toHaveBeenCalledWith({
-        request: {
-          method: "POST",
-          route: "/api/scenario",
-        },
-      });
+      expect(setTags).not.toHaveBeenCalled();
+      expect(setExtras).not.toHaveBeenCalled();
       expect(init).not.toHaveBeenCalled();
     } finally {
       await close(server);

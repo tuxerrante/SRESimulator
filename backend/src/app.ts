@@ -10,7 +10,6 @@ import { healthRouter } from "./routes/health";
 import { aiRouter } from "./routes/ai";
 import { guideRouter } from "./routes/guide";
 import { aiRateLimit } from "./lib/rate-limit";
-import { buildSentryRequestContext } from "./lib/telemetry/request-context";
 import { isSentryEnabled } from "./lib/telemetry/sentry";
 
 export function shouldTrustProxyHeaders(): boolean {
@@ -34,15 +33,6 @@ export function createApp(): express.Express {
 
   // Match the frontend proxy model: forwarded headers are only trusted when explicitly enabled.
   app.set("trust proxy", shouldTrustProxyHeaders());
-
-  if (isSentryEnabled()) {
-    app.use((req, _res, next) => {
-      const context = buildSentryRequestContext(req);
-      Sentry.setTags(context.tags);
-      Sentry.setExtras(context.extra);
-      next();
-    });
-  }
 
   app.use(cors({
     origin: process.env.CORS_ORIGIN || "http://localhost:3000",

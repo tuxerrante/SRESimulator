@@ -85,14 +85,3 @@ export const gameplayTelemetryRateLimit = rateLimit({
   },
   keyGenerator: (req) => getRateLimitKey(req),
 });
-
-export const gameplayAdminRateLimit = rateLimit({
-  windowMs: 60 * 1000,
-  limit: () => readPositiveLimitFromEnv(process.env.GAMEPLAY_ADMIN_RATE_LIMIT_MAX, 15),
-  standardHeaders: "draft-7",
-  legacyHeaders: false,
-  message: {
-    error: "Too many gameplay admin requests. Please retry in a moment.",
-  },
-  keyGenerator: (req) => getRateLimitKey(req),
-});
