@@ -17,6 +17,7 @@ async function close(server: Server): Promise<void> {
 
 describe("createApp", () => {
   const originalTrustProxyHeaders = process.env.TRUST_PROXY_HEADERS;
+  const originalAntiAbuseSecret = process.env.ANTI_ABUSE_HMAC_SECRET;
   const originalSentryEnabled = process.env.SENTRY_ENABLED;
   const originalSentryDsn = process.env.SENTRY_DSN;
 
@@ -28,6 +29,12 @@ describe("createApp", () => {
       delete process.env.TRUST_PROXY_HEADERS;
     } else {
       process.env.TRUST_PROXY_HEADERS = originalTrustProxyHeaders;
+    }
+
+    if (originalAntiAbuseSecret === undefined) {
+      delete process.env.ANTI_ABUSE_HMAC_SECRET;
+    } else {
+      process.env.ANTI_ABUSE_HMAC_SECRET = originalAntiAbuseSecret;
     }
 
     if (originalSentryEnabled === undefined) {
@@ -54,11 +61,22 @@ describe("createApp", () => {
 
   it("trusts proxy headers only when explicitly enabled", async () => {
     process.env.TRUST_PROXY_HEADERS = "true";
+    process.env.ANTI_ABUSE_HMAC_SECRET = "test-hmac";
 
     const { createApp } = await import("./app");
     const app = createApp();
 
     expect(app.get("trust proxy")).toBe(true);
+  });
+
+  it("rejects trust proxy mode without anti-abuse signing secret", async () => {
+    process.env.TRUST_PROXY_HEADERS = "true";
+    delete process.env.ANTI_ABUSE_HMAC_SECRET;
+
+    const { createApp } = await import("./app");
+    expect(() => createApp()).toThrow(
+      "TRUST_PROXY_HEADERS=true requires ANTI_ABUSE_HMAC_SECRET",
+    );
   });
 
   it("builds the express app without requiring Sentry env vars", async () => {

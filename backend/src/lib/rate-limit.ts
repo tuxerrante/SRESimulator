@@ -17,6 +17,10 @@ function readPositiveLimitFromEnv(
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
+function shouldTreatReqIpAsTrustedFallback(): boolean {
+  return process.env.TRUST_PROXY_HEADERS !== "true";
+}
+
 export function getRateLimitKey(
   req: RateLimitRequestLike,
   antiAbuseSecret = process.env.ANTI_ABUSE_HMAC_SECRET,
@@ -35,13 +39,19 @@ export function getRateLimitKey(
     return ipKeyGenerator(signedIp);
   }
 
-  const socketIp = req.socket?.remoteAddress;
-  if (socketIp) {
-    return ipKeyGenerator(socketIp);
-  }
-
-  if (req.ip) {
-    return ipKeyGenerator(req.ip);
+  if (shouldTreatReqIpAsTrustedFallback()) {
+    if (req.ip) {
+      return ipKeyGenerator(req.ip);
+    }
+    const socketIp = req.socket?.remoteAddress;
+    if (socketIp) {
+      return ipKeyGenerator(socketIp);
+    }
+  } else {
+    const socketIp = req.socket?.remoteAddress;
+    if (socketIp) {
+      return ipKeyGenerator(socketIp);
+    }
   }
 
   return "unknown";
