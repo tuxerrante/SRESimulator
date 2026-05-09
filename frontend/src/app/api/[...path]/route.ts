@@ -53,13 +53,24 @@ function isScenarioProxyRequest(request: NextRequest): boolean {
   return request.method === "POST" && request.nextUrl.pathname === "/api/scenario";
 }
 
+function buildSafeRequestId(): string | undefined {
+  try {
+    return crypto.randomUUID();
+  } catch {
+    return undefined;
+  }
+}
+
 async function proxyRequest(request: NextRequest): Promise<NextResponse> {
   const backendPath = request.nextUrl.pathname || "/";
   const targetUrl = `${getBackendBaseUrl()}${backendPath}${request.nextUrl.search}`;
 
   const headers = new Headers(request.headers);
   if (!headers.get(REQUEST_ID_HEADER)) {
-    headers.set(REQUEST_ID_HEADER, crypto.randomUUID());
+    const requestId = buildSafeRequestId();
+    if (requestId) {
+      headers.set(REQUEST_ID_HEADER, requestId);
+    }
   }
   headers.delete("host");
   headers.delete("content-length");

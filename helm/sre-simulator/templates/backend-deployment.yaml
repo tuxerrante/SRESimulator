@@ -38,8 +38,11 @@ spec:
               value: {{ .Values.backend.sentry.dsn | quote }}
             - name: SENTRY_ENVIRONMENT
               value: {{ .Values.backend.sentry.environment | quote }}
+            {{- $sentryRelease := .Values.backend.sentry.release | default "" | trim }}
+            {{- if $sentryRelease }}
             - name: SENTRY_RELEASE
-              value: {{ .Values.backend.sentry.release | quote }}
+              value: {{ $sentryRelease | quote }}
+            {{- end }}
             {{- if .Values.ai.azureOpenai.endpointFromSecret.existingSecretName }}
             - name: AI_AZURE_OPENAI_ENDPOINT
               valueFrom:

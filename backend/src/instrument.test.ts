@@ -71,4 +71,26 @@ describe("instrument", () => {
 
     expect(init).toHaveBeenCalledOnce();
   });
+
+  it("normalizes blank release values to undefined", async () => {
+    process.env.SENTRY_ENABLED = "true";
+    process.env.SENTRY_DSN = "https://examplePublicKey@o0.ingest.sentry.io/0";
+    process.env.SENTRY_RELEASE = "   ";
+
+    const init = vi.fn();
+
+    vi.doMock("@sentry/node", () => ({ init }));
+
+    const { initBackendSentry } = await import("./lib/telemetry/sentry");
+
+    initBackendSentry();
+
+    expect(init).toHaveBeenCalledOnce();
+    expect(init).toHaveBeenCalledWith({
+      dsn: "https://examplePublicKey@o0.ingest.sentry.io/0",
+      environment: "development",
+      release: undefined,
+      sendDefaultPii: false,
+    });
+  });
 });

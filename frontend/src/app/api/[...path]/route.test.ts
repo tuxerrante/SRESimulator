@@ -54,6 +54,37 @@ describe("frontend backend proxy route", () => {
     expect(headers.get(GAME_SESSION_REF_HEADER)).toBe("4d2c91fa8e7b6a10");
   });
 
+  it("fails open when request-id generation is unavailable", async () => {
+    process.env.BACKEND_INTERNAL_BASE_URL = "http://backend.test";
+
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response("ok", {
+        status: 200,
+        headers: { "content-type": "text/plain" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const request = new NextRequest("http://localhost:3000/api/chat", {
+      method: "GET",
+    });
+
+    vi.stubGlobal("crypto", {
+      randomUUID() {
+        throw new Error("randomUUID unavailable");
+      },
+    } as unknown as Crypto);
+
+    const response = await GET(request);
+
+    expect(response.status).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    const [, options] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const headers = options.headers as Headers;
+    expect(headers.get(REQUEST_ID_HEADER)).toBeNull();
+  });
+
   it("mints an anonymous proof cookie and strips the raw fingerprint from scenario requests", async () => {
     process.env.ANTI_ABUSE_HMAC_SECRET = "test-hmac";
     process.env.BACKEND_INTERNAL_BASE_URL = "http://backend.internal";
