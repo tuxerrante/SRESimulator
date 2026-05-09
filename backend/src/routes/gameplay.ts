@@ -1,6 +1,6 @@
 import { Router, type Request, type Response } from "express";
 import { getMetricsStore, getSessionStore } from "../lib/storage";
-import { gameplayTelemetryRateLimit } from "../lib/rate-limit";
+import { gameplayAdminRateLimit, gameplayTelemetryRateLimit } from "../lib/rate-limit";
 import { matchesSharedSecret } from "../lib/shared-secret";
 import { captureBackendRouteError } from "../lib/telemetry/capture";
 import type { GameplayLifecycleState } from "../../../shared/types/gameplay";
@@ -8,6 +8,7 @@ import type { GameplayLifecycleState } from "../../../shared/types/gameplay";
 export const gameplayRouter = Router();
 
 const GAMEPLAY_ADMIN_TOKEN_HEADER = "x-gameplay-admin-token";
+const GAMEPLAY_ADMIN_VARY_HEADERS = "Authorization, X-Gameplay-Admin-Token";
 const MAX_COMMANDS = 50;
 const MAX_COMMAND_LENGTH = 200;
 const MAX_SCORING_EVENTS = 50;
@@ -120,6 +121,11 @@ function hasGameplayAdminAccess(req: Request): boolean {
   return matchesSharedSecret(req.get(GAMEPLAY_ADMIN_TOKEN_HEADER), expectedToken);
 }
 
+function applyAdminResponseHardening(res: Response): void {
+  res.set("Cache-Control", "no-store, private");
+  res.set("Vary", GAMEPLAY_ADMIN_VARY_HEADERS);
+}
+
 gameplayRouter.post("/", gameplayTelemetryRateLimit, async (req: Request, res: Response) => {
   try {
     const body: GameplayEventBody = req.body;
@@ -176,8 +182,10 @@ gameplayRouter.post("/", gameplayTelemetryRateLimit, async (req: Request, res: R
   }
 });
 
-gameplayRouter.get("/admin", async (req: Request, res: Response) => {
+gameplayRouter.get("/admin", gameplayAdminRateLimit, async (req: Request, res: Response) => {
   try {
+    applyAdminResponseHardening(res);
+
     if (!hasGameplayAdminAccess(req)) {
       res.status(401).json({ error: "Unauthorized" });
       return;

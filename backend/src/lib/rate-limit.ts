@@ -6,6 +6,14 @@ interface RateLimitRequestLike {
   headers: Record<string, string | string[] | undefined>;
 }
 
+function readPositiveLimitFromEnv(
+  rawValue: string | undefined,
+  fallback: number,
+): number {
+  const parsed = Number.parseInt(rawValue ?? "", 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
 export function getRateLimitKey(
   req: RateLimitRequestLike,
   antiAbuseSecret = process.env.ANTI_ABUSE_HMAC_SECRET,
@@ -51,14 +59,22 @@ export const aiRateLimit = rateLimit({
 
 export const gameplayTelemetryRateLimit = rateLimit({
   windowMs: 60 * 1000,
-  limit: () => {
-    const parsed = Number.parseInt(process.env.GAMEPLAY_TELEMETRY_RATE_LIMIT_MAX ?? "60", 10);
-    return Number.isFinite(parsed) && parsed > 0 ? parsed : 60;
-  },
+  limit: () => readPositiveLimitFromEnv(process.env.GAMEPLAY_TELEMETRY_RATE_LIMIT_MAX, 60),
   standardHeaders: "draft-7",
   legacyHeaders: false,
   message: {
     error: "Too many gameplay telemetry events. Please slow down and try again shortly.",
+  },
+  keyGenerator: (req) => getRateLimitKey(req),
+});
+
+export const gameplayAdminRateLimit = rateLimit({
+  windowMs: 60 * 1000,
+  limit: () => readPositiveLimitFromEnv(process.env.GAMEPLAY_ADMIN_RATE_LIMIT_MAX, 15),
+  standardHeaders: "draft-7",
+  legacyHeaders: false,
+  message: {
+    error: "Too many gameplay admin requests. Please retry in a moment.",
   },
   keyGenerator: (req) => getRateLimitKey(req),
 });

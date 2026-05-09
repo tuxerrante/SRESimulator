@@ -7,10 +7,6 @@ vi.mock("next/font/google", () => ({
   Geist_Mono: () => ({ variable: "font-geist-mono" }),
 }));
 
-vi.mock("next/server", () => ({
-  connection: vi.fn(),
-}));
-
 vi.mock("next/script", () => ({
   default: function MockNextScript() {
     return null;
@@ -30,33 +26,19 @@ describe("RootLayout", () => {
 
   beforeEach(async () => {
     vi.resetModules();
-    process.env = {
-      ...originalEnv,
-      NEXT_PUBLIC_SENTRY_ENABLED: "true",
-      NEXT_PUBLIC_SENTRY_DSN: "https://public@example.ingest.sentry.io/1",
-      NEXT_PUBLIC_SENTRY_ENVIRONMENT: "production",
-      NEXT_PUBLIC_SENTRY_RELEASE: "frontend@1.2.3",
-      NEXT_PUBLIC_SENTRY_REPLAY_SESSION_SAMPLE_RATE: "0.25",
-      NEXT_PUBLIC_SENTRY_REPLAY_ON_ERROR_SAMPLE_RATE: "1",
-    };
-
-    const nextServer = await import("next/server");
-    vi.mocked(nextServer.connection).mockResolvedValue(undefined);
+    process.env = { ...originalEnv };
   });
 
   afterEach(() => {
     process.env = originalEnv;
   });
 
-  it("reads runtime config on the server and passes it into the browser bootstrap", async () => {
-    const nextServer = await import("next/server");
+  it("loads runtime sentry bootstrap from the telemetry config route", async () => {
     const { default: RootLayout } = await import("./layout");
 
-    const tree = await RootLayout({
+    const tree = RootLayout({
       children: <div>hello runtime</div>,
     });
-
-    expect(nextServer.connection).toHaveBeenCalledTimes(1);
 
     const htmlElement = asElementWithProps(tree);
     const htmlChildren = Children.toArray(
@@ -84,16 +66,6 @@ describe("RootLayout", () => {
 
     expect(script).toBeTruthy();
     const scriptElement = asElementWithProps(script);
-    expect(String(scriptElement?.props.children ?? "")).toContain(
-      "__SRESIM_SENTRY_BROWSER_CONFIG__",
-    );
-    expect(String(scriptElement?.props.children ?? "")).toContain(
-      '"enabled":true',
-    );
-    expect(String(scriptElement?.props.children ?? "")).toContain(
-      '"dsn":"https://public@example.ingest.sentry.io/1"',
-    );
-    expect(String(scriptElement?.props.children ?? "")).not.toContain("frontend@1.2.3");
-    expect(String(scriptElement?.props.children ?? "")).not.toContain('"release"');
+    expect(scriptElement?.props.src).toBe("/api/telemetry/browser-config");
   });
 });

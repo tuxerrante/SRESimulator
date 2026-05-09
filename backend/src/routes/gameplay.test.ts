@@ -10,7 +10,11 @@ async function httpRequest(
   path: string,
   body?: unknown,
   extraHeaders: Record<string, string> = {},
-): Promise<{ status: number; body: Record<string, unknown> }> {
+): Promise<{
+  status: number;
+  body: Record<string, unknown>;
+  headers: Record<string, string | string[] | undefined>;
+}> {
   const { request } = await import("http");
   return new Promise((resolve, reject) => {
     const server = app.listen(0, "127.0.0.1", () => {
@@ -45,6 +49,7 @@ async function httpRequest(
             resolve({
               status: res.statusCode ?? 500,
               body: JSON.parse(data),
+              headers: res.headers,
             });
           });
         },
@@ -70,6 +75,7 @@ describe("gameplay routes", () => {
   let origDataDir: string | undefined;
   let origMockMode: string | undefined;
   let origGameplayRateLimitMax: string | undefined;
+  let origGameplayAdminRateLimitMax: string | undefined;
   let origGameplayAdminToken: string | undefined;
 
   let gameplayRouter: typeof import("./gameplay").gameplayRouter;
@@ -81,10 +87,12 @@ describe("gameplay routes", () => {
     origDataDir = process.env.DATA_DIR;
     origMockMode = process.env.AI_MOCK_MODE;
     origGameplayRateLimitMax = process.env.GAMEPLAY_TELEMETRY_RATE_LIMIT_MAX;
+    origGameplayAdminRateLimitMax = process.env.GAMEPLAY_ADMIN_RATE_LIMIT_MAX;
     origGameplayAdminToken = process.env.GAMEPLAY_ADMIN_TOKEN;
     process.env.DATA_DIR = tmpDir;
     process.env.AI_MOCK_MODE = "true";
     delete process.env.GAMEPLAY_TELEMETRY_RATE_LIMIT_MAX;
+    delete process.env.GAMEPLAY_ADMIN_RATE_LIMIT_MAX;
     delete process.env.GAMEPLAY_ADMIN_TOKEN;
     delete process.env.STORAGE_BACKEND;
 
@@ -116,6 +124,12 @@ describe("gameplay routes", () => {
       delete process.env.GAMEPLAY_TELEMETRY_RATE_LIMIT_MAX;
     } else {
       process.env.GAMEPLAY_TELEMETRY_RATE_LIMIT_MAX = origGameplayRateLimitMax;
+    }
+
+    if (origGameplayAdminRateLimitMax === undefined) {
+      delete process.env.GAMEPLAY_ADMIN_RATE_LIMIT_MAX;
+    } else {
+      process.env.GAMEPLAY_ADMIN_RATE_LIMIT_MAX = origGameplayAdminRateLimitMax;
     }
 
     if (origGameplayAdminToken === undefined) {
@@ -251,6 +265,12 @@ describe("gameplay routes", () => {
       abandonedSessions: 0,
       inProgressSessions: 0,
     });
+    expect(String(response.headers["cache-control"] ?? "")).toContain("no-store");
+    const varyHeader = Array.isArray(response.headers.vary)
+      ? response.headers.vary.join(",")
+      : String(response.headers.vary ?? "");
+    expect(varyHeader.toLowerCase()).toContain("authorization");
+    expect(varyHeader.toLowerCase()).toContain("x-gameplay-admin-token");
   });
 
   it("GET /api/gameplay/admin summarizes the latest player-only session state without exposing session tokens", async () => {
@@ -371,6 +391,23 @@ describe("gameplay routes", () => {
       abandonedSessions: 0,
       inProgressSessions: 1,
     });
+  });
+
+  it("GET /api/gameplay/admin applies a dedicated admin rate limit bucket", async () => {
+    process.env.GAMEPLAY_ADMIN_TOKEN = "gameplay-admin-secret";
+    process.env.GAMEPLAY_ADMIN_RATE_LIMIT_MAX = "1";
+    const app = createApp();
+
+    const first = await httpRequest(app, "GET", "/api/gameplay/admin", undefined, {
+      authorization: "Bearer gameplay-admin-secret",
+    });
+    const limited = await httpRequest(app, "GET", "/api/gameplay/admin", undefined, {
+      authorization: "Bearer gameplay-admin-secret",
+    });
+
+    expect(first.status).toBe(200);
+    expect(limited.status).toBe(429);
+    expect(limited.body.error).toContain("Too many gameplay admin requests");
   });
 
   it("POST /api/gameplay caps oversized scoring event payloads", async () => {

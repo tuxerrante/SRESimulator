@@ -1,11 +1,6 @@
 import type { Metadata } from "next";
-import { connection } from "next/server";
 import Script from "next/script";
 import { Geist, Geist_Mono } from "next/font/google";
-import {
-  readFrontendSentryRuntimeConfig,
-  serializeFrontendSentryRuntimeConfig,
-} from "@/lib/telemetry/bootstrap-config";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -23,14 +18,11 @@ export const metadata: Metadata = {
   description: "The Break-Fix Game for Azure Red Hat OpenShift",
 };
 
-export default async function RootLayout({
+export default function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
-  await connection();
-  const sentryConfig = readFrontendSentryRuntimeConfig(process.env);
-
   return (
     <html lang="en" className="dark">
       <body
@@ -39,9 +31,8 @@ export default async function RootLayout({
         <Script
           id="sentry-browser-runtime-config"
           strategy="beforeInteractive"
-        >
-          {serializeFrontendSentryRuntimeConfig(sentryConfig)}
-        </Script>
+          src="/api/telemetry/browser-config"
+        />
         {children}
       </body>
     </html>

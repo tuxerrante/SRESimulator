@@ -37,6 +37,163 @@ interface ScenarioRequestBody {
   turnstileToken?: string;
 }
 
+const INCIDENT_SEVERITIES = ["Sev1", "Sev2", "Sev3", "Sev4"] as const;
+const ALERT_SEVERITIES = ["critical", "warning", "info"] as const;
+const UPGRADE_STATUSES = ["completed", "failed", "in_progress"] as const;
+const MAX_RECENT_EVENTS = 50;
+const MAX_ALERTS = 20;
+const MAX_UPGRADE_HISTORY = 20;
+
+class InvalidScenarioPayloadError extends Error {
+  readonly clientMessage = "Scenario generation returned an invalid payload.";
+
+  constructor(message: string) {
+    super(message);
+    this.name = "InvalidScenarioPayloadError";
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function assertNonEmptyString(value: unknown, field: string): asserts value is string {
+  if (typeof value !== "string" || value.trim() === "") {
+    throw new InvalidScenarioPayloadError(`AI scenario field ${field} must be a non-empty string`);
+  }
+}
+
+function assertEnum<T extends readonly string[]>(
+  value: unknown,
+  allowed: T,
+  field: string,
+): asserts value is T[number] {
+  if (typeof value !== "string" || !allowed.includes(value)) {
+    throw new InvalidScenarioPayloadError(
+      `AI scenario field ${field} must be one of: ${allowed.join(", ")}`,
+    );
+  }
+}
+
+function assertIsoTimestamp(value: unknown, field: string): void {
+  assertNonEmptyString(value, field);
+  if (!Number.isFinite(Date.parse(value))) {
+    throw new InvalidScenarioPayloadError(`AI scenario field ${field} must be an ISO 8601 timestamp`);
+  }
+}
+
+function assertStringArray(
+  value: unknown,
+  field: string,
+  maxItems: number,
+): asserts value is string[] {
+  if (!Array.isArray(value)) {
+    throw new InvalidScenarioPayloadError(`AI scenario field ${field} must be an array`);
+  }
+  if (value.length > maxItems) {
+    throw new InvalidScenarioPayloadError(
+      `AI scenario field ${field} must contain at most ${maxItems} items`,
+    );
+  }
+  for (const [index, entry] of value.entries()) {
+    assertNonEmptyString(entry, `${field}[${index}]`);
+  }
+}
+
+function validateScenarioPayload(payload: unknown, difficulty: Difficulty): Scenario {
+  if (!isRecord(payload)) {
+    throw new InvalidScenarioPayloadError("AI scenario payload must be a JSON object");
+  }
+
+  assertNonEmptyString(payload.id, "id");
+  assertNonEmptyString(payload.title, "title");
+  assertNonEmptyString(payload.description, "description");
+  if (payload.difficulty !== difficulty) {
+    throw new InvalidScenarioPayloadError(`AI scenario difficulty must be ${difficulty}`);
+  }
+
+  const incidentTicket = payload.incidentTicket;
+  const clusterContext = payload.clusterContext;
+  if (!isRecord(incidentTicket) || !isRecord(clusterContext)) {
+    throw new InvalidScenarioPayloadError(
+      "AI scenario payload must include incidentTicket and clusterContext objects",
+    );
+  }
+
+  assertNonEmptyString(incidentTicket.id, "incidentTicket.id");
+  assertEnum(incidentTicket.severity, INCIDENT_SEVERITIES, "incidentTicket.severity");
+  assertNonEmptyString(incidentTicket.title, "incidentTicket.title");
+  assertNonEmptyString(incidentTicket.description, "incidentTicket.description");
+  assertNonEmptyString(incidentTicket.customerImpact, "incidentTicket.customerImpact");
+  assertIsoTimestamp(incidentTicket.reportedTime, "incidentTicket.reportedTime");
+  assertNonEmptyString(incidentTicket.clusterName, "incidentTicket.clusterName");
+  assertNonEmptyString(incidentTicket.region, "incidentTicket.region");
+
+  assertNonEmptyString(clusterContext.name, "clusterContext.name");
+  assertNonEmptyString(clusterContext.version, "clusterContext.version");
+  assertNonEmptyString(clusterContext.region, "clusterContext.region");
+  if (
+    typeof clusterContext.nodeCount !== "number" ||
+    !Number.isFinite(clusterContext.nodeCount) ||
+    !Number.isInteger(clusterContext.nodeCount) ||
+    clusterContext.nodeCount < 1
+  ) {
+    throw new InvalidScenarioPayloadError(
+      "AI scenario field clusterContext.nodeCount must be a positive integer",
+    );
+  }
+  assertNonEmptyString(clusterContext.status, "clusterContext.status");
+  assertStringArray(clusterContext.recentEvents, "clusterContext.recentEvents", MAX_RECENT_EVENTS);
+
+  if (!Array.isArray(clusterContext.alerts)) {
+    throw new InvalidScenarioPayloadError("AI scenario field clusterContext.alerts must be an array");
+  }
+  if (clusterContext.alerts.length > MAX_ALERTS) {
+    throw new InvalidScenarioPayloadError(
+      `AI scenario field clusterContext.alerts must contain at most ${MAX_ALERTS} items`,
+    );
+  }
+  for (const [index, alert] of clusterContext.alerts.entries()) {
+    if (!isRecord(alert)) {
+      throw new InvalidScenarioPayloadError(
+        `AI scenario field clusterContext.alerts[${index}] must be an object`,
+      );
+    }
+    assertNonEmptyString(alert.name, `clusterContext.alerts[${index}].name`);
+    assertEnum(alert.severity, ALERT_SEVERITIES, `clusterContext.alerts[${index}].severity`);
+    assertNonEmptyString(alert.message, `clusterContext.alerts[${index}].message`);
+    assertIsoTimestamp(alert.firingTime, `clusterContext.alerts[${index}].firingTime`);
+  }
+
+  if (!Array.isArray(clusterContext.upgradeHistory)) {
+    throw new InvalidScenarioPayloadError(
+      "AI scenario field clusterContext.upgradeHistory must be an array",
+    );
+  }
+  if (clusterContext.upgradeHistory.length > MAX_UPGRADE_HISTORY) {
+    throw new InvalidScenarioPayloadError(
+      `AI scenario field clusterContext.upgradeHistory must contain at most ${MAX_UPGRADE_HISTORY} items`,
+    );
+  }
+  for (const [index, upgrade] of clusterContext.upgradeHistory.entries()) {
+    if (!isRecord(upgrade)) {
+      throw new InvalidScenarioPayloadError(
+        `AI scenario field clusterContext.upgradeHistory[${index}] must be an object`,
+      );
+    }
+    assertNonEmptyString(upgrade.from, `clusterContext.upgradeHistory[${index}].from`);
+    assertNonEmptyString(upgrade.to, `clusterContext.upgradeHistory[${index}].to`);
+    assertEnum(
+      upgrade.status,
+      UPGRADE_STATUSES,
+      `clusterContext.upgradeHistory[${index}].status`,
+    );
+    assertIsoTimestamp(upgrade.timestamp, `clusterContext.upgradeHistory[${index}].timestamp`);
+  }
+
+  return payload as unknown as Scenario;
+}
+
 function getTrafficSource(req: Request): TrafficSource {
   const requestedSource = req.get("x-traffic-source")?.trim().toLowerCase();
   if (requestedSource !== "automated") {
@@ -357,7 +514,13 @@ ${scenarioContext}`,
     // Strip markdown code fences if present
     text = text.replace(/^```(?:json)?\s*\n?/i, "").replace(/\n?```\s*$/i, "").trim();
 
-    const scenario: Scenario = JSON.parse(text);
+    let rawScenario: unknown;
+    try {
+      rawScenario = JSON.parse(text) as unknown;
+    } catch {
+      throw new InvalidScenarioPayloadError("AI scenario response was not valid JSON");
+    }
+    const scenario = validateScenarioPayload(rawScenario, difficulty);
 
     const session = await createSessionForScenario(scenario.title);
 
@@ -371,6 +534,11 @@ ${scenarioContext}`,
     }
     if (error instanceof AiThrottledError) {
       res.status(429).json({ error: error.message });
+      return;
+    }
+    if (error instanceof InvalidScenarioPayloadError) {
+      console.warn("Invalid AI scenario payload", { message: error.message });
+      res.status(502).json({ error: error.clientMessage });
       return;
     }
     if (error instanceof ScenarioCatalogError) {

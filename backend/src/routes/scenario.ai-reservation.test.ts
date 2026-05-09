@@ -91,6 +91,35 @@ describe("scenario reservation before AI generation", () => {
   const anonymousUserAgent = "scenario-ai-test-agent";
   let tmpDir: string;
 
+  function createValidAiScenario() {
+    return {
+      id: "scenario_slow",
+      title: "Slow AI Scenario",
+      difficulty: "easy",
+      description: "desc",
+      incidentTicket: {
+        id: "IcM-123456",
+        severity: "Sev3",
+        title: "title",
+        description: "desc",
+        customerImpact: "impact",
+        reportedTime: new Date().toISOString(),
+        clusterName: "cluster",
+        region: "eastus",
+      },
+      clusterContext: {
+        name: "cluster",
+        version: "4.18.1",
+        region: "eastus",
+        nodeCount: 3,
+        status: "Degraded",
+        recentEvents: [],
+        alerts: [],
+        upgradeHistory: [],
+      },
+    };
+  }
+
   function createAnonymousProofCookie(fingerprintHash: string): string {
     const issuedAt = Date.now();
     const proofToken = createAnonymousProofToken(
@@ -125,34 +154,7 @@ describe("scenario reservation before AI generation", () => {
       () =>
         new Promise<string>((resolve) => {
           setTimeout(() => {
-            resolve(
-              JSON.stringify({
-                id: "scenario_slow",
-                title: "Slow AI Scenario",
-                difficulty: "easy",
-                description: "desc",
-                incidentTicket: {
-                  id: "IcM-123456",
-                  severity: "Sev3",
-                  title: "title",
-                  description: "desc",
-                  customerImpact: "impact",
-                  reportedTime: new Date().toISOString(),
-                  clusterName: "cluster",
-                  region: "eastus",
-                },
-                clusterContext: {
-                  name: "cluster",
-                  version: "4.18.1",
-                  region: "eastus",
-                  nodeCount: 3,
-                  status: "Degraded",
-                  recentEvents: [],
-                  alerts: [],
-                  upgradeHistory: [],
-                },
-              })
-            );
+            resolve(JSON.stringify(createValidAiScenario()));
           }, 50);
         })
     );
@@ -197,6 +199,44 @@ describe("scenario reservation before AI generation", () => {
 
     expect([first.status, second.status].sort()).toEqual([200, 429]);
     expect(generateAiTextMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("releases reserved anonymous claims when AI returns schema-invalid JSON", async () => {
+    const invalidScenario = createValidAiScenario();
+    invalidScenario.clusterContext = {
+      ...invalidScenario.clusterContext,
+      alerts: "bad-value" as unknown as [],
+    };
+    generateAiTextMock
+      .mockResolvedValueOnce(JSON.stringify(invalidScenario))
+      .mockResolvedValueOnce(JSON.stringify(createValidAiScenario()));
+
+    const storageModule = await import("../lib/storage");
+    await storageModule.initStorage();
+    const scenarioModule = await import("./scenario");
+    const app = createApp(scenarioModule.scenarioRouter);
+    const headers = {
+      cookie: createAnonymousProofCookie("fp_invalid_payload"),
+      "user-agent": anonymousUserAgent,
+      ...createSignedClientIpHeaders("203.0.113.99"),
+    };
+
+    const first = await postJson(
+      app,
+      "/api/scenario",
+      { difficulty: "easy", turnstileToken: "pass" },
+      headers
+    );
+    const second = await postJson(
+      app,
+      "/api/scenario",
+      { difficulty: "easy", turnstileToken: "pass" },
+      headers
+    );
+
+    expect(first.status).toBe(502);
+    expect(first.body.error).toBe("Scenario generation returned an invalid payload.");
+    expect(second.status).toBe(200);
   });
 
   it("returns a curated catalog scenario without calling AI generation when catalog mode is enabled", async () => {
