@@ -117,8 +117,11 @@ function hasGameplayAdminAccess(req: Request): boolean {
   }
 
   const authorization = req.get("authorization")?.trim();
-  if (authorization?.startsWith("Bearer ")) {
-    return matchesSharedSecret(authorization.slice("Bearer ".length), expectedToken);
+  if (authorization) {
+    const [scheme, token, ...rest] = authorization.split(/\s+/);
+    if (scheme?.toLowerCase() === "bearer" && token && rest.length === 0) {
+      return matchesSharedSecret(token, expectedToken);
+    }
   }
 
   return matchesSharedSecret(req.get(GAMEPLAY_ADMIN_TOKEN_HEADER), expectedToken);
