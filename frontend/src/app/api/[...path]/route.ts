@@ -26,12 +26,22 @@ function getTrustedClientIp(request: NextRequest): string | null {
     return null;
   }
 
-  const forwardedFor = request.headers.get("x-forwarded-for");
-  if (forwardedFor) {
-    return forwardedFor.split(",")[0]?.trim() || null;
+  const realIp = request.headers.get("x-real-ip")?.trim();
+  if (realIp) {
+    return realIp;
   }
 
-  return request.headers.get("x-real-ip")?.trim() || null;
+  const forwardedFor = request.headers.get("x-forwarded-for");
+  if (forwardedFor) {
+    const trustedHop = forwardedFor
+      .split(",")
+      .map((part) => part.trim())
+      .filter(Boolean)
+      .at(-1);
+    return trustedHop || null;
+  }
+
+  return null;
 }
 
 function upsertCookieHeader(
@@ -167,8 +177,8 @@ async function proxyRequest(request: NextRequest): Promise<NextResponse> {
     }
     return response;
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Unknown proxy error";
-    return NextResponse.json({ error: `Backend proxy failed: ${message}` }, { status: 502 });
+    void error;
+    return NextResponse.json({ error: "Backend proxy failed" }, { status: 502 });
   }
 }
 
