@@ -2,7 +2,7 @@ import type { InvestigationPhase } from "../../../shared/types/chat";
 import type { Difficulty, Scenario } from "../../../shared/types/game";
 import { utcOffsetMinutes, utcDaysAgo } from "./sim-clock";
 
-const REGION = "eastus";
+const REGION = "westus3";
 
 function severityForDifficulty(difficulty: Difficulty): "Sev2" | "Sev3" | "Sev4" {
   if (difficulty === "hard") return "Sev2";
@@ -209,11 +209,11 @@ function mockOcOutput(command: string): string {
   if (/^get\s+machine/i.test(trimmed)) {
     return [
       "NAME                                   PHASE         TYPE              REGION    ZONE   AGE",
-      "aro-mock-master-0                      Running       Standard_D8s_v3   eastus    1      90d",
-      "aro-mock-master-1                      Running       Standard_D8s_v3   eastus    2      90d",
-      "aro-mock-master-2                      Running       Standard_D8s_v3   eastus    3      90d",
-      "aro-mock-worker-0                      Running       Standard_D4s_v3   eastus    1      90d",
-      "aro-mock-worker-1                      Running       Standard_D4s_v3   eastus    2      90d",
+      `aro-mock-master-0                      Running       Standard_D8s_v3   ${REGION}    1      90d`,
+      `aro-mock-master-1                      Running       Standard_D8s_v3   ${REGION}    2      90d`,
+      `aro-mock-master-2                      Running       Standard_D8s_v3   ${REGION}    3      90d`,
+      `aro-mock-worker-0                      Running       Standard_D4s_v3   ${REGION}    1      90d`,
+      `aro-mock-worker-1                      Running       Standard_D4s_v3   ${REGION}    2      90d`,
     ].join("\n");
   }
 
