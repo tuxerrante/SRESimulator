@@ -118,6 +118,8 @@ describe("db-inspect CLI", () => {
         NODE_PATH: fakeNodePath,
         MSSQL_FAKE_FAIL_CONNECT_ONCE: "1",
         DB_INSPECT_RETRY_BASE_DELAY_MS: "0",
+        SQL: "",
+        REPORT: "",
       },
     });
 
@@ -135,6 +137,7 @@ describe("db-inspect CLI", () => {
         DATABASE_URL: "Server=fake;Database=test;",
         NODE_PATH: fakeNodePath,
         REPORT: "player-completion",
+        SQL: "",
         MSSQL_FAKE_EXPECT_PLAYER_COMPLETION: "1",
       },
     });
@@ -154,6 +157,7 @@ describe("db-inspect CLI", () => {
         DATABASE_URL: "Server=fake;Database=test;",
         NODE_PATH: fakeNodePath,
         REPORT: "player-completion",
+        SQL: "",
         MSSQL_FAKE_EXPECT_PLAYER_COMPLETION: "legacy",
       },
     });
@@ -174,6 +178,7 @@ describe("db-inspect CLI", () => {
           DATABASE_URL: "Server=fake;Database=test;",
           NODE_PATH: fakeNodePath,
           REPORT: "unknown-report",
+          SQL: "",
         },
       }),
     ).rejects.toMatchObject({
@@ -187,6 +192,7 @@ describe("db-inspect CLI", () => {
           DATABASE_URL: "Server=fake;Database=test;",
           NODE_PATH: fakeNodePath,
           REPORT: "unknown-report",
+          SQL: "",
         },
       }),
     ).rejects.not.toMatchObject({
