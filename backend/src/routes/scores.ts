@@ -27,7 +27,6 @@ scoresRouter.get("/", async (req: Request, res: Response) => {
     res.json({ entries, hallOfFame });
   } catch (error) {
     captureBackendRouteError(req, error);
-    void error;
     res.status(500).json({ error: "Failed to fetch leaderboard" });
   }
 });
@@ -108,7 +107,6 @@ scoresRouter.post("/", async (req: Request, res: Response) => {
     });
   } catch (error) {
     captureBackendRouteError(req, error);
-    void error;
     res.status(500).json({ error: "Failed to save score" });
   }
 });

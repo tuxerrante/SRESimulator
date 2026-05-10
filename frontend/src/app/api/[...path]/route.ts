@@ -217,8 +217,7 @@ async function proxyRequest(request: NextRequest): Promise<NextResponse> {
       });
     }
     return response;
-  } catch (error) {
-    void error;
+  } catch {
     return NextResponse.json({ error: "Backend proxy failed" }, { status: 502 });
   }
 }

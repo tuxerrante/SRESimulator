@@ -94,12 +94,13 @@ creates automatically.
 
 Production Sentry rollout is wired through Helm values rather than image
 rebuilds. `frontend.sentry.*` populates deployed `NEXT_PUBLIC_SENTRY_*`
-container env. Browser-side Sentry bootstrap is intentionally kept disabled in
-this release train until a dedicated runtime bootstrap path is reintroduced and
-validated end-to-end. `backend.sentry.*` continues to drive the server-side
-`SENTRY_*` env directly. Keep both disabled until the production DSNs are
-available, and leave the frontend replay sample rates at `0` for launch unless
-production volume proves it is safe to raise them.
+container env. Browser Sentry initialization reads a runtime bootstrap script
+from the same-origin telemetry route and initializes once that config is
+available, keeping enablement runtime-driven without freezing config at build
+time. `backend.sentry.*` continues to drive the server-side `SENTRY_*` env
+directly. Keep both disabled until the production DSNs are available, and
+leave the frontend replay sample rates at `0` for launch unless production
+volume proves it is safe to raise them.
 
 Browser source-map upload is separate from runtime enablement: the frontend
 build uploads source maps only when `SENTRY_AUTH_TOKEN`, `SENTRY_ORG`, and

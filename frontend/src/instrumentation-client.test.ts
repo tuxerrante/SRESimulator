@@ -14,6 +14,7 @@ describe("instrumentation-client", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.resetModules();
+    vi.useRealTimers();
     delete (
       globalThis as typeof globalThis & {
         __SRESIM_SENTRY_BROWSER_CONFIG__?: unknown;
@@ -72,6 +73,30 @@ describe("instrumentation-client", () => {
     await import("../instrumentation-client");
 
     expect(sentry.init).not.toHaveBeenCalled();
+  });
+
+  it("initializes browser sentry after runtime config becomes available", async () => {
+    vi.useFakeTimers();
+    const sentry = await import("@sentry/nextjs");
+    await import("../instrumentation-client");
+
+    expect(sentry.init).not.toHaveBeenCalled();
+
+    (
+      globalThis as typeof globalThis & {
+        __SRESIM_SENTRY_BROWSER_CONFIG__?: unknown;
+      }
+    ).__SRESIM_SENTRY_BROWSER_CONFIG__ = {
+      enabled: true,
+      dsn: "https://public@example.ingest.sentry.io/1",
+      environment: "production",
+      replaySessionSampleRate: 0.25,
+      replayOnErrorSampleRate: 1,
+    };
+
+    await vi.advanceTimersByTimeAsync(100);
+
+    expect(sentry.init).toHaveBeenCalledTimes(1);
   });
 
   it("re-exports the router transition hook for navigation instrumentation", async () => {

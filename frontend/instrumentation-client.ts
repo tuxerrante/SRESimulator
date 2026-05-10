@@ -11,14 +11,18 @@ declare global {
     | undefined;
 }
 
-const runtimeConfig = readInjectedFrontendSentryRuntimeConfig(
-  globalThis as Record<string, unknown>,
-);
+const RUNTIME_CONFIG_RETRY_MS = 50;
+const RUNTIME_CONFIG_MAX_ATTEMPTS = 40;
+let sentryInitialized = false;
 
-if (runtimeConfig?.enabled) {
+function initBrowserSentry(config: FrontendSentryRuntimeConfig): void {
+  if (!config.enabled || sentryInitialized) {
+    return;
+  }
+  sentryInitialized = true;
   Sentry.init({
-    dsn: runtimeConfig.dsn,
-    environment: runtimeConfig.environment,
+    dsn: config.dsn,
+    environment: config.environment,
     sendDefaultPii: false,
     integrations: [
       Sentry.replayIntegration({
@@ -27,14 +31,39 @@ if (runtimeConfig?.enabled) {
         blockAllMedia: true,
       }),
     ],
-    replaysSessionSampleRate: runtimeConfig.replaySessionSampleRate,
-    replaysOnErrorSampleRate: runtimeConfig.replayOnErrorSampleRate,
+    replaysSessionSampleRate: config.replaySessionSampleRate,
+    replaysOnErrorSampleRate: config.replayOnErrorSampleRate,
     initialScope: {
       tags: {
         actorRef: getOrCreateActorRef(),
       },
     },
   });
+}
+
+function tryInitFromInjectedConfig(): boolean {
+  const runtimeConfig = readInjectedFrontendSentryRuntimeConfig(
+    globalThis as Record<string, unknown>,
+  );
+  if (!runtimeConfig) {
+    return false;
+  }
+  initBrowserSentry(runtimeConfig);
+  return sentryInitialized;
+}
+
+function scheduleRuntimeConfigInit(attempt = 0): void {
+  if (sentryInitialized || attempt >= RUNTIME_CONFIG_MAX_ATTEMPTS) {
+    return;
+  }
+  if (tryInitFromInjectedConfig()) {
+    return;
+  }
+  setTimeout(() => scheduleRuntimeConfigInit(attempt + 1), RUNTIME_CONFIG_RETRY_MS);
+}
+
+if (!tryInitFromInjectedConfig()) {
+  scheduleRuntimeConfigInit();
 }
 
 export const onRouterTransitionStart = Sentry.captureRouterTransitionStart;
