@@ -16,3 +16,11 @@ export interface ScoringEvent {
 
 export const MAX_SCORE_PER_DIMENSION = 25;
 export const MAX_TOTAL_SCORE = 100;
+
+export function scoreToGrade(totalScore: number): string {
+  if (totalScore >= 90) return "A";
+  if (totalScore >= 80) return "B";
+  if (totalScore >= 70) return "C";
+  if (totalScore >= 60) return "D";
+  return "F";
+}

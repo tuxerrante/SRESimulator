@@ -28,6 +28,52 @@ function toRate(part: number, total: number): number {
   return Math.round((part / total) * 10000) / 100;
 }
 
+interface GameplayRow {
+  id: string;
+  session_token: string | null;
+  traffic_source: "player" | "automated" | null;
+  nickname: string | null;
+  difficulty: string | null;
+  scenario_title: string | null;
+  lifecycle_state: string | null;
+  command_count: number;
+  commands_executed: string;
+  scoring_events: string;
+  chat_message_count: number;
+  ai_prompt_tokens: number;
+  ai_completion_tokens: number;
+  duration_ms: number | null;
+  score_total: number | null;
+  grade: string | null;
+  completed: boolean;
+  metadata: string;
+  created_at: Date;
+}
+
+function mapGameplayRow(row: GameplayRow): GameplayRecord {
+  return {
+    id: row.id,
+    sessionToken: row.session_token ?? undefined,
+    trafficSource: row.traffic_source ?? undefined,
+    nickname: row.nickname ?? undefined,
+    difficulty: (row.difficulty ?? undefined) as GameplayRecord["difficulty"],
+    scenarioTitle: row.scenario_title ?? undefined,
+    lifecycleState: (row.lifecycle_state ?? undefined) as GameplayRecord["lifecycleState"],
+    commandCount: row.command_count,
+    commandsExecuted: JSON.parse(row.commands_executed || "[]") as string[],
+    scoringEvents: JSON.parse(row.scoring_events || "[]") as unknown[],
+    chatMessageCount: row.chat_message_count,
+    aiPromptTokens: row.ai_prompt_tokens,
+    aiCompletionTokens: row.ai_completion_tokens,
+    durationMs: row.duration_ms != null ? Number(row.duration_ms) : undefined,
+    scoreTotal: row.score_total != null ? Number(row.score_total) : undefined,
+    grade: row.grade ?? undefined,
+    completed: row.completed,
+    metadata: JSON.parse(row.metadata || "{}") as Record<string, unknown>,
+    createdAt: row.created_at,
+  };
+}
+
 export class MssqlMetricsStore implements IMetricsStore {
   constructor(private pool: sql.ConnectionPool) {}
 
@@ -76,27 +122,7 @@ export class MssqlMetricsStore implements IMetricsStore {
   async getPlayerHistory(nickname: string): Promise<GameplayRecord[]> {
     const result = await this.pool.request()
       .input("nickname", nickname)
-      .query<{
-        id: string;
-        session_token: string | null;
-        traffic_source: "player" | "automated" | null;
-        nickname: string | null;
-        difficulty: string | null;
-        scenario_title: string | null;
-        lifecycle_state: string | null;
-        command_count: number;
-        commands_executed: string;
-        scoring_events: string;
-        chat_message_count: number;
-        ai_prompt_tokens: number;
-        ai_completion_tokens: number;
-        duration_ms: number | null;
-        score_total: number | null;
-        grade: string | null;
-        completed: boolean;
-        metadata: string;
-        created_at: Date;
-      }>(`
+      .query<GameplayRow>(`
         SELECT TOP 100
           id,
           session_token,
@@ -122,27 +148,7 @@ export class MssqlMetricsStore implements IMetricsStore {
         ORDER BY created_at DESC
       `);
 
-    return result.recordset.map((r) => ({
-      id: r.id,
-      sessionToken: r.session_token ?? undefined,
-      trafficSource: r.traffic_source ?? undefined,
-      nickname: r.nickname ?? undefined,
-      difficulty: (r.difficulty ?? undefined) as GameplayRecord["difficulty"],
-      scenarioTitle: r.scenario_title ?? undefined,
-      lifecycleState: (r.lifecycle_state ?? undefined) as GameplayRecord["lifecycleState"],
-      commandCount: r.command_count,
-      commandsExecuted: JSON.parse(r.commands_executed || "[]") as string[],
-      scoringEvents: JSON.parse(r.scoring_events || "[]") as unknown[],
-      chatMessageCount: r.chat_message_count,
-      aiPromptTokens: r.ai_prompt_tokens,
-      aiCompletionTokens: r.ai_completion_tokens,
-      durationMs: r.duration_ms != null ? Number(r.duration_ms) : undefined,
-      scoreTotal: r.score_total != null ? Number(r.score_total) : undefined,
-      grade: r.grade ?? undefined,
-      completed: r.completed,
-      metadata: JSON.parse(r.metadata || "{}") as Record<string, unknown>,
-      createdAt: r.created_at,
-    }));
+    return result.recordset.map(mapGameplayRow);
   }
 
   async hasLifecycleEvent(sessionToken: string, lifecycleState: GameplayRecord["lifecycleState"]): Promise<boolean> {
@@ -157,6 +163,84 @@ export class MssqlMetricsStore implements IMetricsStore {
       `);
 
     return result.recordset.length > 0;
+  }
+
+  async getLatestBySessionToken(sessionToken: string): Promise<GameplayRecord | null> {
+    const result = await this.pool.request()
+      .input("sessionToken", sessionToken)
+      .query<GameplayRow>(`
+        SELECT TOP 1
+          id,
+          session_token,
+          traffic_source,
+          nickname,
+          difficulty,
+          scenario_title,
+          lifecycle_state,
+          command_count,
+          commands_executed,
+          scoring_events,
+          COALESCE(chat_message_count, 0) AS chat_message_count,
+          ai_prompt_tokens,
+          ai_completion_tokens,
+          duration_ms,
+          score_total,
+          grade,
+          completed,
+          metadata,
+          created_at
+        FROM gameplay_metrics
+        WHERE session_token = @sessionToken
+        ORDER BY
+          CASE WHEN lifecycle_state IN ('completed', 'abandoned') THEN 1 ELSE 0 END DESC,
+          created_at DESC,
+          id DESC
+      `);
+
+    const row = result.recordset[0];
+    if (!row) {
+      return null;
+    }
+
+    return mapGameplayRow(row);
+  }
+
+  async getLatestCompletedBySessionToken(sessionToken: string): Promise<GameplayRecord | null> {
+    const result = await this.pool.request()
+      .input("sessionToken", sessionToken)
+      .query<GameplayRow>(`
+        SELECT TOP 1
+          id,
+          session_token,
+          traffic_source,
+          nickname,
+          difficulty,
+          scenario_title,
+          lifecycle_state,
+          command_count,
+          commands_executed,
+          scoring_events,
+          COALESCE(chat_message_count, 0) AS chat_message_count,
+          ai_prompt_tokens,
+          ai_completion_tokens,
+          duration_ms,
+          score_total,
+          grade,
+          completed,
+          metadata,
+          created_at
+        FROM gameplay_metrics
+        WHERE session_token = @sessionToken
+          AND lifecycle_state = 'completed'
+        ORDER BY created_at DESC, id DESC
+      `);
+
+    const row = result.recordset[0];
+    if (!row) {
+      return null;
+    }
+
+    return mapGameplayRow(row);
   }
 
   async getGameplayAnalytics(): Promise<GameplayAnalytics> {

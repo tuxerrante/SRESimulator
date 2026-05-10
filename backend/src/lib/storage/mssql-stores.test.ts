@@ -490,6 +490,86 @@ describe("MssqlMetricsStore", () => {
     expect(sql).toContain("AND lifecycle_state = @lifecycleState");
   });
 
+  it("getLatestBySessionToken() returns the newest record for a session", async () => {
+    const row = {
+      id: "latest-1",
+      session_token: "tok-latest",
+      traffic_source: "player",
+      nickname: "tester",
+      difficulty: "easy",
+      scenario_title: "Master Down",
+      lifecycle_state: "completed",
+      command_count: 3,
+      commands_executed: '["oc get nodes"]',
+      scoring_events: '[{"type":"bonus","dimension":"accuracy","points":10}]',
+      chat_message_count: 4,
+      ai_prompt_tokens: 100,
+      ai_completion_tokens: 50,
+      duration_ms: 45000,
+      score_total: 80,
+      grade: "B",
+      completed: true,
+      metadata: '{"k":"v"}',
+      created_at: new Date("2026-05-02T09:00:00Z"),
+    };
+    const { pool, req } = createMockPool([row]);
+    const store = new MssqlMetricsStore(pool);
+
+    const result = await store.getLatestBySessionToken("tok-latest");
+
+    expect(result).toMatchObject({
+      sessionToken: "tok-latest",
+      lifecycleState: "completed",
+      scoreTotal: 80,
+      grade: "B",
+    });
+    expect(req.input).toHaveBeenCalledWith("sessionToken", "tok-latest");
+    expect((req.query.mock.calls[0][0] as string)).toContain(
+      "WHERE session_token = @sessionToken",
+    );
+    expect((req.query.mock.calls[0][0] as string)).toContain(
+      "CASE WHEN lifecycle_state IN ('completed', 'abandoned') THEN 1 ELSE 0 END DESC",
+    );
+  });
+
+  it("getLatestCompletedBySessionToken() only selects completed lifecycle rows", async () => {
+    const row = {
+      id: "latest-completed-1",
+      session_token: "tok-latest",
+      traffic_source: "player",
+      nickname: "tester",
+      difficulty: "easy",
+      scenario_title: "Master Down",
+      lifecycle_state: "completed",
+      command_count: 3,
+      commands_executed: '["oc get nodes"]',
+      scoring_events: '[{"type":"bonus","dimension":"accuracy","points":10}]',
+      chat_message_count: 4,
+      ai_prompt_tokens: 100,
+      ai_completion_tokens: 50,
+      duration_ms: 45000,
+      score_total: 80,
+      grade: "B",
+      completed: true,
+      metadata: '{"k":"v"}',
+      created_at: new Date("2026-05-02T09:00:00Z"),
+    };
+    const { pool, req } = createMockPool([row]);
+    const store = new MssqlMetricsStore(pool);
+
+    const result = await store.getLatestCompletedBySessionToken("tok-latest");
+
+    expect(result).toMatchObject({
+      sessionToken: "tok-latest",
+      lifecycleState: "completed",
+      scoreTotal: 80,
+      grade: "B",
+    });
+    const sql = req.query.mock.calls[0][0] as string;
+    expect(sql).toContain("WHERE session_token = @sessionToken");
+    expect(sql).toContain("AND lifecycle_state = 'completed'");
+  });
+
   it("getGameplayAnalytics() coalesces empty summary counts to zero for playerless datasets", async () => {
     const summaryRow = {
       total_sessions: 0,

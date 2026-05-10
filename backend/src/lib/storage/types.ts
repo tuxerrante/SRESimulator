@@ -86,6 +86,8 @@ export interface IMetricsStore {
     sessionToken: string,
     lifecycleState: GameplayLifecycleState,
   ): Promise<boolean>;
+  getLatestBySessionToken(sessionToken: string): Promise<GameplayRecord | null>;
+  getLatestCompletedBySessionToken(sessionToken: string): Promise<GameplayRecord | null>;
   getPlayerHistory(nickname: string): Promise<GameplayRecord[]>;
   getGameplayAnalytics(): Promise<GameplayAnalytics>;
 }

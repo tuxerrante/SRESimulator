@@ -5,6 +5,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const { generateAiTextMock } = vi.hoisted(() => ({
   generateAiTextMock: vi.fn(),
 }));
+const storageMocks = vi.hoisted(() => ({
+  getSessionStore: vi.fn(),
+  sessionGet: vi.fn(),
+}));
 
 vi.mock("../lib/ai-runtime", async () => {
   const actual = await vi.importActual<typeof import("../lib/ai-runtime")>("../lib/ai-runtime");
@@ -13,6 +17,10 @@ vi.mock("../lib/ai-runtime", async () => {
     generateAiText: generateAiTextMock,
   };
 });
+
+vi.mock("../lib/storage", () => ({
+  getSessionStore: storageMocks.getSessionStore,
+}));
 
 import { commandRouter, resolveCommandHistoryPlaceholders } from "./command";
 
@@ -128,6 +136,22 @@ describe("POST /api/command", () => {
     originalEnv.AI_COMMAND_TIMEOUT_MS = process.env.AI_COMMAND_TIMEOUT_MS;
     process.env.AI_MOCK_MODE = "true";
     generateAiTextMock.mockReset();
+    storageMocks.getSessionStore.mockReturnValue({
+      get: storageMocks.sessionGet,
+    });
+    storageMocks.sessionGet.mockResolvedValue({
+      token: "session-123",
+      difficulty: "easy",
+      scenarioTitle: "Worker Node NotReady",
+      startTime: Date.now(),
+      used: false,
+      trafficSource: "player",
+      identityKind: "anonymous",
+      githubUserId: null,
+      githubLogin: null,
+      anonymousClaimKey: null,
+      persistentScoreEligible: false,
+    });
   });
 
   afterEach(() => {
@@ -152,6 +176,7 @@ describe("POST /api/command", () => {
   it("returns mock oc output in mock mode", async () => {
     const app = createApp();
     const res = await postJson(app, "/api/command", {
+      sessionToken: "session-123",
       command: "oc get nodes",
       type: "oc",
       scenario: null,
@@ -166,6 +191,7 @@ describe("POST /api/command", () => {
   it("returns mock kql output in mock mode", async () => {
     const app = createApp();
     const res = await postJson(app, "/api/command", {
+      sessionToken: "session-123",
       command: "ClusterLogs | take 10",
       type: "kql",
       scenario: null,
@@ -178,6 +204,7 @@ describe("POST /api/command", () => {
   it("returns mock geneva output in mock mode", async () => {
     const app = createApp();
     const res = await postJson(app, "/api/command", {
+      sessionToken: "session-123",
       command: "show dashboard",
       type: "geneva",
       scenario: null,
@@ -190,6 +217,7 @@ describe("POST /api/command", () => {
   it("rejects invalid command type", async () => {
     const app = createApp();
     const res = await postJson(app, "/api/command", {
+      sessionToken: "session-123",
       command: "test",
       type: "invalid",
       scenario: null,
@@ -199,9 +227,35 @@ describe("POST /api/command", () => {
     expect(res.body.error).toContain("Invalid command type");
   });
 
+  it("rejects requests missing session tokens", async () => {
+    const app = createApp();
+    const res = await postJson(app, "/api/command", {
+      command: "oc get nodes",
+      type: "oc",
+      scenario: null,
+    });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("Session token is required");
+  });
+
+  it("rejects malformed scenario payloads", async () => {
+    const app = createApp();
+    const res = await postJson(app, "/api/command", {
+      sessionToken: "session-123",
+      command: "oc get nodes",
+      type: "oc",
+      scenario: { title: "incomplete" },
+    });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("Invalid scenario payload");
+  });
+
   it("accepts commandHistory field without error", async () => {
     const app = createApp();
     const res = await postJson(app, "/api/command", {
+      sessionToken: "session-123",
       command: "oc get nodes",
       type: "oc",
       scenario: null,
@@ -217,6 +271,7 @@ describe("POST /api/command", () => {
   it("returns describe output for oc describe node in mock mode", async () => {
     const app = createApp();
     const res = await postJson(app, "/api/command", {
+      sessionToken: "session-123",
       command: "oc describe node master-0",
       type: "oc",
       scenario: null,
@@ -231,6 +286,7 @@ describe("POST /api/command", () => {
   it("returns delete confirmation for oc delete in mock mode", async () => {
     const app = createApp();
     const res = await postJson(app, "/api/command", {
+      sessionToken: "session-123",
       command: "oc delete machine aro-worker-0",
       type: "oc",
       scenario: null,
@@ -243,6 +299,7 @@ describe("POST /api/command", () => {
   it("handles commandHistory with null/malformed entries without crashing", async () => {
     const app = createApp();
     const res = await postJson(app, "/api/command", {
+      sessionToken: "session-123",
       command: "oc get nodes",
       type: "oc",
       scenario: null,
@@ -261,6 +318,7 @@ describe("POST /api/command", () => {
   it("handles commandHistory that is not an array", async () => {
     const app = createApp();
     const res = await postJson(app, "/api/command", {
+      sessionToken: "session-123",
       command: "oc get nodes",
       type: "oc",
       scenario: null,
@@ -278,6 +336,7 @@ describe("POST /api/command", () => {
 
     const app = createApp();
     const res = await postJson(app, "/api/command", {
+      sessionToken: "session-123",
       command: "oc get nodes",
       type: "oc",
       scenario: makeScenario(),
@@ -312,6 +371,7 @@ describe("POST /api/command", () => {
 
     const app = createApp();
     const res = await postJson(app, "/api/command", {
+      sessionToken: "session-123",
       command: "oc get machines -n openshift-machine-api",
       type: "oc",
       scenario: makeScenario(),
@@ -339,13 +399,16 @@ describe("POST /api/command", () => {
 
     const app = createApp();
     const res = await postJson(app, "/api/command", {
+      sessionToken: "session-123",
       command: "oc describe node master-0",
       type: "oc",
       scenario: null,
     });
 
     expect(res.status).toBe(200);
-    expect(res.body.exitCode).toBe(0);
+    expect(res.body.exitCode).toBe(1);
+    expect(res.body.mode).toBe("degraded");
+    expect(res.body.degradedReason).toBe("timeout");
     expect(res.body.output).toContain("Name:");
     expect(res.body.output).not.toContain("delayed synthetic response");
     expect(aborted).toBe(true);
@@ -359,6 +422,7 @@ describe("POST /api/command", () => {
 
     const app = createApp();
     const res = await postJson(app, "/api/command", {
+      sessionToken: "session-123",
       command: "oc get nodes",
       type: "oc",
       scenario: makeScenario(),

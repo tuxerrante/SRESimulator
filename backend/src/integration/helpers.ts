@@ -14,6 +14,7 @@ export interface ChatMessage {
 }
 
 export interface ChatRequestBody {
+  sessionToken: string;
   messages: ChatMessage[];
   scenario: unknown | null;
   currentPhase: string;
@@ -129,6 +130,7 @@ export async function getTokenMetrics(
 export function buildChatBody(
   messageCount: number,
   phase: string = "reading",
+  sessionToken: string = "session-token",
 ): ChatRequestBody {
   const messages: ChatMessage[] = [];
   for (let i = 0; i < messageCount; i++) {
@@ -137,5 +139,5 @@ export function buildChatBody(
       content: `Turn ${i}: ${"x".repeat(200)}`,
     });
   }
-  return { messages, scenario: null, currentPhase: phase };
+  return { sessionToken, messages, scenario: null, currentPhase: phase };
 }

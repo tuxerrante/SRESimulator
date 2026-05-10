@@ -12,6 +12,8 @@ const mocks = vi.hoisted(() => ({
   buildSimNow: vi.fn(),
   buildCommandSystemPrompt: vi.fn(),
   resolveAngleBracketPlaceholders: vi.fn(),
+  getSessionStore: vi.fn(),
+  sessionGet: vi.fn(),
 }));
 
 vi.mock("../lib/ai-config", () => ({
@@ -44,6 +46,10 @@ vi.mock("../lib/telemetry/capture", () => ({
   captureBackendRouteError: mocks.captureBackendRouteError,
 }));
 
+vi.mock("../lib/storage", () => ({
+  getSessionStore: mocks.getSessionStore,
+}));
+
 import { commandRouter } from "./command";
 
 async function close(server: Server): Promise<void> {
@@ -68,6 +74,22 @@ describe("commandRouter", () => {
     mocks.buildCommandSystemPrompt.mockReturnValue("system prompt");
     mocks.resolveAngleBracketPlaceholders.mockImplementation((value: unknown) => value);
     mocks.generateMockCommandOutput.mockReturnValue("fallback output");
+    mocks.getSessionStore.mockReturnValue({
+      get: mocks.sessionGet,
+    });
+    mocks.sessionGet.mockResolvedValue({
+      token: "session-123",
+      difficulty: "easy",
+      scenarioTitle: "Test Scenario",
+      startTime: Date.now(),
+      used: false,
+      trafficSource: "player",
+      identityKind: "anonymous",
+      githubUserId: null,
+      githubLogin: null,
+      anonymousClaimKey: null,
+      persistentScoreEligible: false,
+    });
   });
 
   afterEach(() => {
@@ -91,6 +113,7 @@ describe("commandRouter", () => {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
+          sessionToken: "session-123",
           command: "oc get pods",
           type: "oc",
           scenario: null,
@@ -101,7 +124,9 @@ describe("commandRouter", () => {
       expect(response.status).toBe(200);
       await expect(response.json()).resolves.toEqual({
         output: "fallback output",
-        exitCode: 0,
+        exitCode: 1,
+        mode: "degraded",
+        degradedReason: "missing_output",
       });
       expect(mocks.captureBackendRouteError).toHaveBeenCalledTimes(1);
       expect(mocks.captureBackendRouteError.mock.calls[0]?.[1]).toBe(degradedError);

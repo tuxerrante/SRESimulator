@@ -71,7 +71,7 @@ export function useChat() {
     messages,
     isStreaming,
     scenario,
-    sessionToken,
+    sessionToken: activeSessionToken,
     currentPhase,
     addMessage,
     updateLastAssistantMessage,
@@ -133,7 +133,7 @@ export function useChat() {
       let telemetryHeaders: Record<string, string> = {};
 
       try {
-        telemetryHeaders = await buildTelemetryHeaders(sessionToken);
+        telemetryHeaders = await buildTelemetryHeaders(activeSessionToken);
         const response = await fetch("/api/chat", {
           method: "POST",
           headers: {
@@ -141,8 +141,8 @@ export function useChat() {
             ...telemetryHeaders,
           },
           body: JSON.stringify({
+            sessionToken: activeSessionToken,
             messages: chatMessages,
-            sessionToken,
             scenario,
             currentPhase,
           }),
@@ -249,7 +249,7 @@ export function useChat() {
       messages,
       isStreaming,
       scenario,
-      sessionToken,
+      activeSessionToken,
       currentPhase,
       addMessage,
       updateLastAssistantMessage,

@@ -1,5 +1,15 @@
 import express from "express";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+const mocks = vi.hoisted(() => ({
+  getSessionStore: vi.fn(),
+  sessionGet: vi.fn(),
+}));
+
+vi.mock("../lib/storage", () => ({
+  getSessionStore: mocks.getSessionStore,
+}));
+
 import { chatRouter } from "./chat";
 
 function createApp() {
@@ -64,6 +74,22 @@ describe("POST /api/chat mock mode", () => {
 
   beforeEach(() => {
     process.env.AI_MOCK_MODE = "true";
+    mocks.getSessionStore.mockReturnValue({
+      get: mocks.sessionGet,
+    });
+    mocks.sessionGet.mockResolvedValue({
+      token: "session-123",
+      difficulty: "easy",
+      scenarioTitle: "Test Scenario",
+      startTime: Date.now(),
+      used: false,
+      trafficSource: "player",
+      identityKind: "anonymous",
+      githubUserId: null,
+      githubLogin: null,
+      anonymousClaimKey: null,
+      persistentScoreEligible: false,
+    });
   });
 
   afterEach(() => {
@@ -77,6 +103,7 @@ describe("POST /api/chat mock mode", () => {
   it("returns SSE stream with mock chat response", async () => {
     const app = createApp();
     const res = await postSSE(app, "/api/chat", {
+      sessionToken: "session-123",
       messages: [{ role: "user", content: "hello" }],
       scenario: null,
       currentPhase: "reading",
@@ -99,11 +126,25 @@ describe("POST /api/chat mock mode", () => {
   it("reflects the current phase in the response", async () => {
     const app = createApp();
     const res = await postSSE(app, "/api/chat", {
+      sessionToken: "session-123",
       messages: [{ role: "user", content: "checking context" }],
       scenario: null,
       currentPhase: "context",
     });
 
     expect(res.rawBody).toContain("[PHASE:context]");
+  });
+
+  it("rejects malformed scenario payloads", async () => {
+    const app = createApp();
+    const res = await postSSE(app, "/api/chat", {
+      sessionToken: "session-123",
+      messages: [{ role: "user", content: "hello" }],
+      scenario: { title: "incomplete" },
+      currentPhase: "reading",
+    });
+
+    expect(res.status).toBe(400);
+    expect(res.rawBody).toContain("Invalid scenario payload");
   });
 });

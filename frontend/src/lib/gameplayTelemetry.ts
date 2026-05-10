@@ -1,7 +1,7 @@
 import type { InvestigationPhase } from "@shared/types/chat";
 import type { GameStatus, Scenario } from "@shared/types/game";
 import type { GameplayLifecycleState, GameplayTelemetryEvent } from "@shared/types/gameplay";
-import type { Score, ScoringEvent } from "@shared/types/scoring";
+import { scoreToGrade, type Score, type ScoringEvent } from "@shared/types/scoring";
 import type { TerminalEntry } from "@shared/types/terminal";
 
 export interface GameplayTelemetryStateSnapshot {
@@ -21,13 +21,16 @@ export interface GameplayTelemetryStateSnapshot {
 }
 
 const COMPLETION_SENT_KEY_PREFIX = "gameplay-telemetry-completed:";
+const COMPLETION_ACKED_KEY_PREFIX = "gameplay-telemetry-completed-ack:";
 
-export function scoreToGrade(totalScore: number): string {
-  if (totalScore >= 90) return "A";
-  if (totalScore >= 80) return "B";
-  if (totalScore >= 70) return "C";
-  if (totalScore >= 60) return "D";
-  return "F";
+export { scoreToGrade };
+
+interface SendGameplayTelemetryOptions {
+  preferBeacon?: boolean;
+}
+
+interface CompletionTelemetryOptions {
+  requirePersistenceAck?: boolean;
 }
 
 export function buildGameplayTelemetryPayload(
@@ -89,19 +92,56 @@ export function markCompletionTelemetrySent(sessionToken: string): void {
   }
 }
 
+function hasCompletionTelemetryPersistenceAck(sessionToken: string): boolean {
+  try {
+    return globalThis.sessionStorage?.getItem(`${COMPLETION_ACKED_KEY_PREFIX}${sessionToken}`) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function markCompletionTelemetryPersistenceAck(sessionToken: string): void {
+  try {
+    globalThis.sessionStorage?.setItem(`${COMPLETION_ACKED_KEY_PREFIX}${sessionToken}`, "1");
+  } catch {
+    // Ignore storage restrictions; duplicate protection is best-effort.
+  }
+}
+
+export function clearCompletionTelemetrySent(sessionToken: string): void {
+  try {
+    globalThis.sessionStorage?.removeItem(`${COMPLETION_SENT_KEY_PREFIX}${sessionToken}`);
+    globalThis.sessionStorage?.removeItem(`${COMPLETION_ACKED_KEY_PREFIX}${sessionToken}`);
+  } catch {
+    // Ignore storage restrictions; duplicate protection is best-effort.
+  }
+}
+
 export async function sendCompletionTelemetryIfNeeded(
   state: GameplayTelemetryStateSnapshot,
+  options: CompletionTelemetryOptions = {},
 ): Promise<boolean> {
   const sessionToken = state.sessionToken;
-  if (!sessionToken || hasCompletionTelemetryBeenSent(sessionToken)) {
+  const requirePersistenceAck = options.requirePersistenceAck === true;
+  if (!sessionToken) {
     return false;
+  }
+  if (requirePersistenceAck && hasCompletionTelemetryPersistenceAck(sessionToken)) {
+    return true;
+  }
+  if (!requirePersistenceAck && hasCompletionTelemetryBeenSent(sessionToken)) {
+    return true;
   }
 
   const delivered = await sendGameplayTelemetryEvent(
     buildGameplayTelemetryPayload(state, "completed"),
+    { preferBeacon: !requirePersistenceAck },
   );
   if (delivered) {
     markCompletionTelemetrySent(sessionToken);
+    if (requirePersistenceAck) {
+      markCompletionTelemetryPersistenceAck(sessionToken);
+    }
   }
 
   return delivered;
@@ -109,11 +149,17 @@ export async function sendCompletionTelemetryIfNeeded(
 
 export async function sendGameplayTelemetryEvent(
   payload: GameplayTelemetryEvent,
+  options: SendGameplayTelemetryOptions = {},
 ): Promise<boolean> {
   const body = JSON.stringify(payload);
+  const preferBeacon = options.preferBeacon ?? true;
 
   try {
-    if (typeof navigator !== "undefined" && typeof navigator.sendBeacon === "function") {
+    if (
+      preferBeacon &&
+      typeof navigator !== "undefined" &&
+      typeof navigator.sendBeacon === "function"
+    ) {
       const blob = new Blob([body], { type: "application/json" });
       const queued = navigator.sendBeacon("/api/gameplay", blob);
       if (queued) {

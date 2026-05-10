@@ -102,6 +102,73 @@ describe("JsonMetricsStore", () => {
     await expect(store.hasLifecycleEvent("session-2", "completed")).resolves.toBe(false);
   });
 
+  it("returns the latest gameplay record for a session token", async () => {
+    const store = new JsonMetricsStore();
+
+    await store.recordGameplay({
+      sessionToken: "session-latest",
+      lifecycleState: "started",
+      createdAt: new Date("2026-05-01T09:00:00Z"),
+    });
+    await store.recordGameplay({
+      sessionToken: "session-latest",
+      lifecycleState: "completed",
+      scoreTotal: 88,
+      createdAt: new Date("2026-05-01T10:00:00Z"),
+    });
+
+    await expect(store.getLatestBySessionToken("session-latest")).resolves.toMatchObject({
+      lifecycleState: "completed",
+      scoreTotal: 88,
+    });
+    await expect(store.getLatestBySessionToken("missing-session")).resolves.toBeNull();
+  });
+
+  it("prefers terminal lifecycle records over later started records for a session", async () => {
+    const store = new JsonMetricsStore();
+
+    await store.recordGameplay({
+      sessionToken: "session-terminal",
+      lifecycleState: "completed",
+      scoreTotal: 91,
+      createdAt: new Date("2026-05-01T09:00:00Z"),
+    });
+    await store.recordGameplay({
+      sessionToken: "session-terminal",
+      lifecycleState: "started",
+      createdAt: new Date("2026-05-01T10:00:00Z"),
+    });
+
+    await expect(store.getLatestBySessionToken("session-terminal")).resolves.toMatchObject({
+      lifecycleState: "completed",
+      scoreTotal: 91,
+    });
+  });
+
+  it("returns latest completed telemetry even when a later abandon exists", async () => {
+    const store = new JsonMetricsStore();
+
+    await store.recordGameplay({
+      sessionToken: "session-complete-priority",
+      lifecycleState: "completed",
+      scoreTotal: 77,
+      createdAt: new Date("2026-05-01T09:00:00Z"),
+    });
+    await store.recordGameplay({
+      sessionToken: "session-complete-priority",
+      lifecycleState: "abandoned",
+      createdAt: new Date("2026-05-01T10:00:00Z"),
+    });
+
+    await expect(
+      store.getLatestCompletedBySessionToken("session-complete-priority"),
+    ).resolves.toMatchObject({
+      lifecycleState: "completed",
+      scoreTotal: 77,
+    });
+    await expect(store.getLatestCompletedBySessionToken("missing-session")).resolves.toBeNull();
+  });
+
   it("ignores duplicate session and lifecycle pairs when recording gameplay", async () => {
     const store = new JsonMetricsStore();
 

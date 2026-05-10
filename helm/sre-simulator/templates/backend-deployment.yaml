@@ -16,6 +16,7 @@ spec:
     metadata:
       annotations:
         checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        checksum/ai-probe-secret: {{ include (print $.Template.BasePath "/ai-probe-secret.yaml") . | sha256sum }}
       labels:
         {{- include "sre-simulator.backend.selectorLabels" . | nindent 8 }}
     spec:
@@ -56,6 +57,14 @@ spec:
                 secretKeyRef:
                   name: {{ .Values.ai.azureOpenai.credentials.existingSecretName }}
                   key: {{ .Values.ai.azureOpenai.credentials.key }}
+            {{- end }}
+            {{- $probeToken := .Values.ai.liveProbeToken | default "" | trim }}
+            {{- if $probeToken }}
+            - name: AI_LIVE_PROBE_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "sre-simulator.fullname" . }}-ai-probe
+                  key: token
             {{- end }}
             {{- if .Values.ai.vertex.credentials.existingSecretName }}
             - name: GOOGLE_APPLICATION_CREDENTIALS

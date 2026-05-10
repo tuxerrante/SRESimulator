@@ -93,6 +93,36 @@ export class JsonMetricsStore implements IMetricsStore {
     );
   }
 
+  async getLatestBySessionToken(sessionToken: string): Promise<GameplayRecord | null> {
+    let latest: GameplayRecord | null = null;
+
+    for (const record of this.records) {
+      if (record.sessionToken !== sessionToken) {
+        continue;
+      }
+      latest = getPreferredAnalyticsRecord(latest ?? undefined, record);
+    }
+
+    return latest;
+  }
+
+  async getLatestCompletedBySessionToken(sessionToken: string): Promise<GameplayRecord | null> {
+    let latestCompleted: GameplayRecord | null = null;
+
+    for (const record of this.records) {
+      if (record.sessionToken !== sessionToken || record.lifecycleState !== "completed") {
+        continue;
+      }
+      const currentTime = latestCompleted?.createdAt?.getTime() ?? 0;
+      const candidateTime = record.createdAt?.getTime() ?? 0;
+      if (!latestCompleted || candidateTime >= currentTime) {
+        latestCompleted = record;
+      }
+    }
+
+    return latestCompleted;
+  }
+
   async getGameplayAnalytics(): Promise<GameplayAnalytics> {
     const latestBySession = new Map<string, GameplayRecord>();
 
