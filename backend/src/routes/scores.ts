@@ -1,6 +1,7 @@
 import { Router, type Request, type Response } from "express";
 import { getLeaderboardStore, getSessionStore } from "../lib/storage";
 import { isCleanNickname } from "../lib/profanity";
+import { captureBackendRouteError } from "../lib/telemetry/capture";
 import type { Difficulty } from "../../../shared/types/game";
 import type { LeaderboardEntry } from "../../../shared/types/leaderboard";
 
@@ -25,9 +26,8 @@ scoresRouter.get("/", async (req: Request, res: Response) => {
 
     res.json({ entries, hallOfFame });
   } catch (error) {
-    const message =
-      error instanceof Error ? error.message : "Failed to fetch leaderboard";
-    res.status(500).json({ error: message });
+    captureBackendRouteError(req, error);
+    res.status(500).json({ error: "Failed to fetch leaderboard" });
   }
 });
 
@@ -95,6 +95,7 @@ scoresRouter.post("/", async (req: Request, res: Response) => {
       identityKind: "github",
       githubUserId: session.githubUserId,
       githubLogin: session.githubLogin ?? undefined,
+      trafficSource: session.trafficSource,
       timestamp: Date.now(),
     };
 
@@ -105,8 +106,7 @@ scoresRouter.post("/", async (req: Request, res: Response) => {
       mode: "persistent",
     });
   } catch (error) {
-    const message =
-      error instanceof Error ? error.message : "Failed to save score";
-    res.status(500).json({ error: message });
+    captureBackendRouteError(req, error);
+    res.status(500).json({ error: "Failed to save score" });
   }
 });

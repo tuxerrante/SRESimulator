@@ -1,9 +1,50 @@
 "use client";
 
-import { useCallback } from "react";
+import { useCallback, useState } from "react";
 import { useGameStore } from "@/stores/gameStore";
 import { extractPhase, extractScoreMarkers, extractResolved } from "@/lib/chat-markers";
+import { buildTelemetryHeaders } from "@/lib/telemetry/request-context";
+import { captureFrontendError } from "@/lib/telemetry/capture";
+import {
+  ACTOR_REF_HEADER,
+  GAME_SESSION_REF_HEADER,
+  REQUEST_ID_HEADER,
+} from "@shared/telemetry/constants";
 import type { ChatMessage } from "@shared/types/chat";
+
+const TIMEOUT_ERROR_MESSAGE =
+  "The request timed out before the Dungeon Master could reply. Please try again.";
+
+class ChatRequestError extends Error {
+  readonly retryable: boolean;
+
+  constructor(message: string, retryable = false) {
+    super(message);
+    this.name = "ChatRequestError";
+    this.retryable = retryable;
+  }
+}
+
+function isGatewayTimeout(status: number | null, message: string): boolean {
+  return status === 504 || /\b504\b|gateway timeout/i.test(message);
+}
+
+function formatGenericChatError(message: string): string {
+  const normalized = message.trim().replace(/^Error:\s*/i, "").replace(/[.!?\s]+$/, "");
+  const safeMessage = normalized || "Something went wrong";
+  return `Error: ${safeMessage}. Please try again.`;
+}
+
+function toUserFacingChatError(error: unknown): ChatRequestError {
+  if (error instanceof ChatRequestError) return error;
+
+  const message = error instanceof Error ? error.message : "Unknown error";
+  if (isGatewayTimeout(null, message)) {
+    return new ChatRequestError(TIMEOUT_ERROR_MESSAGE, true);
+  }
+
+  return new ChatRequestError(formatGenericChatError(message));
+}
 
 function getNextSseEvent(buffer: string): { data: string; rest: string } | null {
   const normalizedBuffer = buffer.replace(/\r\n/g, "\n");
@@ -26,10 +67,12 @@ function getNextSseEvent(buffer: string): { data: string; rest: string } | null 
 }
 
 export function useChat() {
+  const [retryMessage, setRetryMessage] = useState<string | null>(null);
   const {
     messages,
     isStreaming,
     scenario,
+    sessionToken,
     currentPhase,
     addMessage,
     updateLastAssistantMessage,
@@ -41,35 +84,64 @@ export function useChat() {
   } = useGameStore();
 
   const sendMessage = useCallback(
-    async (content: string) => {
-      if (isStreaming || !content.trim()) return;
+    async (content: string, options?: { retry?: boolean }) => {
+      const trimmedContent = content.trim();
+      if (isStreaming || !trimmedContent) return;
 
-      const userMessage: ChatMessage = {
-        id: crypto.randomUUID(),
-        role: "user",
-        content: content.trim(),
-        timestamp: Date.now(),
-      };
-      addMessage(userMessage);
+      setRetryMessage(null);
 
-      const assistantMessage: ChatMessage = {
-        id: crypto.randomUUID(),
-        role: "assistant",
-        content: "",
-        timestamp: Date.now(),
-      };
-      addMessage(assistantMessage);
-      setStreaming(true);
+      const shouldReuseFailedTurn =
+        options?.retry === true &&
+        messages.length >= 2 &&
+        messages[messages.length - 1]?.role === "assistant" &&
+        messages[messages.length - 2]?.role === "user" &&
+        messages[messages.length - 2]?.content === trimmedContent;
 
-      try {
-        const chatMessages = [
-          ...messages.map((m) => ({ role: m.role, content: m.content })),
+      let chatMessages: Array<{ role: "user" | "assistant"; content: string }>;
+
+      if (shouldReuseFailedTurn) {
+        updateLastAssistantMessage("");
+        chatMessages = messages
+          .slice(0, -1)
+          .map((message) => ({ role: message.role, content: message.content }));
+      } else {
+        const userMessage: ChatMessage = {
+          id: crypto.randomUUID(),
+          role: "user",
+          content: trimmedContent,
+          timestamp: Date.now(),
+        };
+        addMessage(userMessage);
+
+        const assistantMessage: ChatMessage = {
+          id: crypto.randomUUID(),
+          role: "assistant",
+          content: "",
+          timestamp: Date.now(),
+        };
+        addMessage(assistantMessage);
+
+        chatMessages = [
+          ...messages.map((message) => ({
+            role: message.role,
+            content: message.content,
+          })),
           { role: userMessage.role, content: userMessage.content },
         ];
+      }
+      setStreaming(true);
+
+      let telemetryHeaders: Record<string, string> = {};
+
+      try {
+        telemetryHeaders = await buildTelemetryHeaders(sessionToken);
 
         const response = await fetch("/api/chat", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            ...telemetryHeaders,
+          },
           body: JSON.stringify({
             messages: chatMessages,
             scenario,
@@ -84,7 +156,10 @@ export function useChat() {
             const err = JSON.parse(raw);
             errorMessage = err.error || errorMessage;
           } catch {
-            errorMessage = `Server error (${response.status}): ${raw.slice(0, 120)}`;
+            errorMessage = `Server error (${response.status})`;
+          }
+          if (isGatewayTimeout(response.status, errorMessage)) {
+            throw new ChatRequestError(TIMEOUT_ERROR_MESSAGE, true);
           }
           throw new Error(errorMessage);
         }
@@ -152,12 +227,21 @@ export function useChat() {
         if (scoreEvents.length > 0) recalculateScore();
 
         if (extractResolved(accumulated)) endGame();
+        setRetryMessage(null);
       } catch (error) {
-        const errMsg =
-          error instanceof Error ? error.message : "Unknown error";
-        updateLastAssistantMessage(
-          `Error: ${errMsg}. Please try again.`
-        );
+        captureFrontendError(error, {
+          feature: "chat",
+          phase: currentPhase,
+          difficulty: scenario?.difficulty,
+          requestId: telemetryHeaders[REQUEST_ID_HEADER],
+          actorRef: telemetryHeaders[ACTOR_REF_HEADER],
+          gameSessionRef: telemetryHeaders[GAME_SESSION_REF_HEADER],
+        });
+        const chatError = toUserFacingChatError(error);
+        updateLastAssistantMessage(chatError.message);
+        if (chatError.retryable) {
+          setRetryMessage(trimmedContent);
+        }
       } finally {
         setStreaming(false);
       }
@@ -166,6 +250,7 @@ export function useChat() {
       messages,
       isStreaming,
       scenario,
+      sessionToken,
       currentPhase,
       addMessage,
       updateLastAssistantMessage,
@@ -177,5 +262,16 @@ export function useChat() {
     ]
   );
 
-  return { messages, isStreaming, sendMessage };
+  const retryLastMessage = useCallback(() => {
+    if (!retryMessage || isStreaming) return;
+    void sendMessage(retryMessage, { retry: true });
+  }, [retryMessage, isStreaming, sendMessage]);
+
+  return {
+    messages,
+    isStreaming,
+    sendMessage,
+    retryLastMessage,
+    canRetryLastMessage: Boolean(retryMessage) && !isStreaming,
+  };
 }

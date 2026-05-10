@@ -1,11 +1,17 @@
 import { Router, type Request, type Response } from "express";
+import rateLimit from "express-rate-limit";
 import { getMetricsStore, getSessionStore } from "../lib/storage";
-import { gameplayTelemetryRateLimit } from "../lib/rate-limit";
+import { getRateLimitKey, gameplayTelemetryRateLimit } from "../lib/rate-limit";
+import { matchesSharedSecret } from "../lib/shared-secret";
+import { captureBackendRouteError } from "../lib/telemetry/capture";
 import type { GameplayLifecycleState } from "../../../shared/types/gameplay";
 
 export const gameplayRouter = Router();
-gameplayRouter.use(gameplayTelemetryRateLimit);
 
+const GAMEPLAY_ADMIN_TOKEN_HEADER = "x-gameplay-admin-token";
+const GAMEPLAY_ADMIN_VARY_HEADERS = "Authorization, X-Gameplay-Admin-Token";
+const GAMEPLAY_ADMIN_AUTH_KEY = "auth";
+const GAMEPLAY_ADMIN_ANON_KEY = "anon";
 const MAX_COMMANDS = 50;
 const MAX_COMMAND_LENGTH = 200;
 const MAX_SCORING_EVENTS = 50;
@@ -104,7 +110,59 @@ function sanitizeMetadata(value: unknown): Record<string, unknown> {
   return sanitized;
 }
 
-gameplayRouter.post("/", async (req: Request, res: Response) => {
+function hasGameplayAdminAccess(req: Request): boolean {
+  const expectedToken = process.env.GAMEPLAY_ADMIN_TOKEN?.trim();
+  if (!expectedToken) {
+    return false;
+  }
+
+  const authorization = req.get("authorization")?.trim();
+  if (authorization) {
+    const [scheme, token, ...rest] = authorization.split(/\s+/);
+    if (scheme?.toLowerCase() === "bearer" && token && rest.length === 0) {
+      return matchesSharedSecret(token, expectedToken);
+    }
+  }
+
+  return matchesSharedSecret(req.get(GAMEPLAY_ADMIN_TOKEN_HEADER), expectedToken);
+}
+
+function applyAdminResponseHardening(res: Response): void {
+  res.set("Cache-Control", "no-store, private");
+  res.set("Vary", GAMEPLAY_ADMIN_VARY_HEADERS);
+}
+
+function hasPreparedGameplayAdminAccess(res: Response): boolean {
+  const value = res.locals.gameplayAdminAuthorized;
+  return value === true;
+}
+
+function prepareGameplayAdminRequest(req: Request, res: Response, next: () => void): void {
+  applyAdminResponseHardening(res);
+  res.locals.gameplayAdminAuthorized = hasGameplayAdminAccess(req);
+  next();
+}
+
+const gameplayAdminRateLimit = rateLimit({
+  windowMs: 60 * 1000,
+  limit: () => {
+    const parsed = Number.parseInt(process.env.GAMEPLAY_ADMIN_RATE_LIMIT_MAX ?? "15", 10);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : 15;
+  },
+  standardHeaders: "draft-7",
+  legacyHeaders: false,
+  message: {
+    error: "Too many gameplay admin requests. Please retry in a moment.",
+  },
+  keyGenerator: (req, res) => {
+    const bucket = hasPreparedGameplayAdminAccess(res)
+      ? GAMEPLAY_ADMIN_AUTH_KEY
+      : GAMEPLAY_ADMIN_ANON_KEY;
+    return `${bucket}:${getRateLimitKey(req)}`;
+  },
+});
+
+gameplayRouter.post("/", gameplayTelemetryRateLimit, async (req: Request, res: Response) => {
   try {
     const body: GameplayEventBody = req.body;
 
@@ -136,6 +194,7 @@ gameplayRouter.post("/", async (req: Request, res: Response) => {
 
     await getMetricsStore().recordGameplay({
       sessionToken: body.sessionToken,
+      trafficSource: session.trafficSource,
       nickname: sanitizeString(body.nickname, 20),
       difficulty: session.difficulty,
       scenarioTitle: session.scenarioTitle,
@@ -153,7 +212,31 @@ gameplayRouter.post("/", async (req: Request, res: Response) => {
 
     res.status(202).json({ ok: true });
   } catch (error) {
-    console.error("Failed to record gameplay event", { error });
+    captureBackendRouteError(req, error);
+    const errorName = error instanceof Error ? error.name : "UnknownError";
+    console.error("Failed to record gameplay event", { errorName });
     res.status(500).json({ error: "Failed to record gameplay event" });
   }
 });
+
+gameplayRouter.get(
+  "/admin",
+  prepareGameplayAdminRequest,
+  gameplayAdminRateLimit,
+  async (req: Request, res: Response) => {
+  try {
+    if (!hasPreparedGameplayAdminAccess(res)) {
+      res.status(401).json({ error: "Unauthorized" });
+      return;
+    }
+
+    const analytics = await getMetricsStore().getGameplayAnalytics();
+    res.json(analytics);
+  } catch (error) {
+    captureBackendRouteError(req, error);
+    const errorName = error instanceof Error ? error.name : "UnknownError";
+    console.error("Failed to read gameplay analytics", { errorName });
+    res.status(500).json({ error: "Failed to read gameplay analytics" });
+  }
+},
+);

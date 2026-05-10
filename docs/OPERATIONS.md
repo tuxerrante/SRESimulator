@@ -52,3 +52,20 @@ For production environment safety checks and sequencing:
 For release/tag policy and CI/CD gating:
 
 - [docs/RELEASES.md](RELEASES.md)
+
+### Public URL and DNS
+
+The canonical public URL for the AKS production path is
+`https://play.sresimulator.osadev.cloud`.
+
+- Exposure modes and the frontend-only public edge are described in
+  [docs/ARCHITECTURE.md](ARCHITECTURE.md) under "Cluster Exposure Model".
+- Gateway TLS, DNS zone, and certificate automation details are captured in
+  [docs/superpowers/specs/2026-04-24-aks-gateway-tls-design.md](superpowers/specs/2026-04-24-aks-gateway-tls-design.md).
+- After Terraform changes, use
+  [infra/POST_APPLY_CHECKLIST.md](../infra/POST_APPLY_CHECKLIST.md)
+  to sequence DNS verification, certificate checks, and the final deploy flow.
+
+For AKS, `publicService` remains the rollback exposure mode when operators need
+to temporarily expose only the frontend through a `LoadBalancer` service. ARO
+still uses the Route-based fallback described in the architecture doc.

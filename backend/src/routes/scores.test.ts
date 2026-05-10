@@ -265,4 +265,42 @@ describe("scores routes", () => {
       )
     ).toBe(false);
   });
+
+  it("GET /api/scores excludes automated GitHub-backed runs from the public leaderboard", async () => {
+    const token = await getSessionStore().create({
+      difficulty: "easy",
+      scenarioTitle: "Automated Regression",
+      trafficSource: "automated",
+      identityKind: "github",
+      githubUserId: "auto-gh-1",
+      githubLogin: "auto-gh-1",
+      anonymousClaimKey: null,
+      persistentScoreEligible: true,
+    });
+
+    const app = createApp();
+    const submit = await httpRequest(app, "POST", "/api/scores", {
+      sessionToken: token,
+      nickname: "autouser",
+      score: {
+        efficiency: 20,
+        safety: 20,
+        documentation: 20,
+        accuracy: 20,
+        total: 80,
+      },
+      grade: "A",
+      commandCount: 5,
+    });
+
+    expect(submit.status).toBe(201);
+
+    const leaderboard = await httpRequest(app, "GET", "/api/scores?difficulty=easy");
+    expect(leaderboard.status).toBe(200);
+    expect(
+      (leaderboard.body.entries as Array<Record<string, unknown>>).some(
+        (entry) => entry.nickname === "autouser",
+      ),
+    ).toBe(false);
+  });
 });

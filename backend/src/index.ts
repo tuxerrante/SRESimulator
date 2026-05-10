@@ -1,16 +1,7 @@
-import express from "express";
-import cors from "cors";
-import { chatRouter } from "./routes/chat";
-import { commandRouter } from "./routes/command";
-import { scenarioRouter } from "./routes/scenario";
-import { scoresRouter } from "./routes/scores";
-import { gameplayRouter } from "./routes/gameplay";
-import { healthRouter } from "./routes/health";
-import { aiRouter } from "./routes/ai";
-import { guideRouter } from "./routes/guide";
+import "./instrument";
 import { getAiReadiness } from "./lib/ai-config";
-import { aiRateLimit } from "./lib/rate-limit";
 import { initStorage, shutdownStorage, getStorageBackend } from "./lib/storage";
+import { createApp } from "./app";
 
 async function main() {
   const aiReadiness = getAiReadiness();
@@ -24,22 +15,8 @@ async function main() {
   await initStorage();
   console.log(`[startup] storage backend: ${getStorageBackend()}`);
 
-  const app = express();
+  const app = createApp();
   const PORT = parseInt(process.env.PORT || "8080", 10);
-
-  app.use(cors({
-    origin: process.env.CORS_ORIGIN || "http://localhost:3000",
-  }));
-  app.use(express.json());
-
-  app.use("/api/chat", aiRateLimit, chatRouter);
-  app.use("/api/command", aiRateLimit, commandRouter);
-  app.use("/api/scenario", aiRateLimit, scenarioRouter);
-  app.use("/api/scores", scoresRouter);
-  app.use("/api/gameplay", gameplayRouter);
-  app.use("/api/ai", aiRouter);
-  app.use("/api/guide", guideRouter);
-  app.use("/", healthRouter);
 
   const server = app.listen(PORT, "0.0.0.0", () => {
     console.log(`Backend listening on port ${PORT}`);

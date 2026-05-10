@@ -10,10 +10,25 @@ import { DifficultyGrid } from "@/components/home/DifficultyGrid";
 import { TurnstileWidget } from "@/components/home/TurnstileWidget";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
-import { APP_VERSION, HOME_FEATURE_HIGHLIGHTS } from "@/lib/release";
+import { APP_RELEASE_URL, APP_VERSION } from "@/lib/release";
 import { getAnonymousVerificationMessage } from "@/lib/auth/anonymous-verification";
 import { collectBrowserFingerprintHash } from "@/lib/auth/fingerprint";
 import { buildScenarioRequestBody } from "@/lib/auth/scenario-request";
+import { buildTelemetryHeaders } from "@/lib/telemetry/request-context";
+import { captureFrontendError } from "@/lib/telemetry/capture";
+import {
+  ACTOR_REF_HEADER,
+  GAME_SESSION_REF_HEADER,
+  REQUEST_ID_HEADER,
+} from "@shared/telemetry/constants";
+
+function buildSafeRequestId(): string | undefined {
+  try {
+    return crypto.randomUUID();
+  } catch {
+    return undefined;
+  }
+}
 
 export default function HomePage() {
   const router = useRouter();
@@ -26,7 +41,6 @@ export default function HomePage() {
   const clearViewer = useGameStore((s) => s.clearViewer);
   const [loading, setLoading] = useState<Difficulty | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [showReleaseNotes, setShowReleaseNotes] = useState(false);
   const [authConfigured, setAuthConfigured] = useState(false);
   const [sessionReady, setSessionReady] = useState(false);
   const [sessionLoadError, setSessionLoadError] = useState(false);
@@ -67,7 +81,11 @@ export default function HomePage() {
         } else {
           clearViewer();
         }
-      } catch {
+      } catch (error) {
+        captureFrontendError(error, {
+          feature: "auth-session",
+          requestId: buildSafeRequestId(),
+        });
         setSessionLoadError(true);
         setAuthConfigured(false);
         clearViewer();
@@ -134,10 +152,16 @@ export default function HomePage() {
     setLoading(difficulty);
     setError(null);
 
+    let telemetryHeaders: Record<string, string> = {};
+
     try {
+      telemetryHeaders = await buildTelemetryHeaders(useGameStore.getState().sessionToken);
       const response = await fetch("/api/scenario", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...telemetryHeaders,
+        },
         body: JSON.stringify(
           buildScenarioRequestBody({
             difficulty,
@@ -164,6 +188,13 @@ export default function HomePage() {
       startGame(scenario, sessionToken);
       router.push("/game");
     } catch (err) {
+      captureFrontendError(err, {
+        feature: "scenario",
+        difficulty,
+        requestId: telemetryHeaders[REQUEST_ID_HEADER],
+        actorRef: telemetryHeaders[ACTOR_REF_HEADER],
+        gameSessionRef: telemetryHeaders[GAME_SESSION_REF_HEADER],
+      });
       setError(err instanceof Error ? err.message : "Something went wrong");
     } finally {
       setLoading(null);
@@ -277,7 +308,7 @@ export default function HomePage() {
           )}
         </div>
 
-        {sessionReady && !sessionLoadError && !viewer && (
+        {!sessionLoadError && !viewer && (
           <div className="mb-6 w-full max-w-3xl rounded-xl border border-zinc-800 bg-zinc-900/70 p-4">
             <div className="mb-3 text-sm font-semibold text-zinc-100">
               Anonymous play
@@ -350,38 +381,20 @@ export default function HomePage() {
         <div className="text-zinc-500 text-xs text-center">
           ARO SRE Simulator &mdash; Investigation training powered by AI
           <span className="mx-2">&middot;</span>
-          <button
-            type="button"
-            onClick={() => setShowReleaseNotes((prev) => !prev)}
+          <a
+            aria-label={`View GitHub release ${APP_VERSION}`}
+            href={APP_RELEASE_URL}
+            target="_blank"
+            rel="noopener noreferrer"
             className="underline decoration-zinc-600 underline-offset-2 hover:text-zinc-200 hover:decoration-zinc-300 transition-colors"
-            aria-expanded={showReleaseNotes}
-            aria-controls="release-notes-panel"
-            aria-label={`${showReleaseNotes ? "Hide" : "Show"} release notes (${APP_VERSION})`}
           >
             {APP_VERSION}
-          </button>
+          </a>
           <span className="mx-2">&middot;</span>
           <Link href="/about" className="hover:text-zinc-200 transition-colors">
             About
           </Link>
         </div>
-        <section
-          id="release-notes-panel"
-          hidden={!showReleaseNotes}
-          aria-hidden={!showReleaseNotes}
-          className="w-full max-w-2xl rounded-xl border border-zinc-800 bg-zinc-900/70 p-4 text-left"
-        >
-          <h2 className="mb-2 text-sm font-semibold text-zinc-100">
-            Main feature updates
-          </h2>
-          <ul className="space-y-1 text-sm text-zinc-300">
-            {HOME_FEATURE_HIGHLIGHTS.map((feature) => (
-              <li key={feature} className="leading-relaxed">
-                - {feature}
-              </li>
-            ))}
-          </ul>
-        </section>
       </footer>
     </div>
   );

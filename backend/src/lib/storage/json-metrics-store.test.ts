@@ -119,4 +119,39 @@ describe("JsonMetricsStore", () => {
     const history = await store.getPlayerHistory("dedupe-player");
     expect(history).toHaveLength(1);
   });
+
+  it("prefers a terminal session state over a later started event in analytics", async () => {
+    const store = new JsonMetricsStore();
+
+    await store.recordGameplay({
+      sessionToken: "session-ordering",
+      difficulty: "hard",
+      scenarioTitle: "Etcd Quorum Loss",
+      lifecycleState: "completed",
+      createdAt: new Date("2026-05-08T09:00:00Z"),
+    });
+    await store.recordGameplay({
+      sessionToken: "session-ordering",
+      difficulty: "hard",
+      scenarioTitle: "Etcd Quorum Loss",
+      lifecycleState: "started",
+      createdAt: new Date("2026-05-08T09:05:00Z"),
+    });
+
+    const analytics = await store.getGameplayAnalytics();
+
+    expect(analytics.summary).toMatchObject({
+      totalSessions: 1,
+      completedSessions: 1,
+      abandonedSessions: 0,
+      inProgressSessions: 0,
+    });
+    expect(analytics.recentSessions).toEqual([
+      expect.objectContaining({
+        lifecycleState: "completed",
+        difficulty: "hard",
+        scenarioTitle: "Etcd Quorum Loss",
+      }),
+    ]);
+  });
 });

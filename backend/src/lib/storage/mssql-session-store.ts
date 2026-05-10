@@ -20,6 +20,7 @@ export class MssqlSessionStore implements ISessionStore {
         ? {
             difficulty: difficultyOrInput,
             scenarioTitle: scenarioTitle ?? "Unknown Scenario",
+            trafficSource: "player",
             identityKind: "anonymous",
             anonymousClaimKey: null,
             githubLogin: null,
@@ -33,6 +34,7 @@ export class MssqlSessionStore implements ISessionStore {
       .input("difficulty", input.difficulty)
       .input("scenarioTitle", input.scenarioTitle)
       .input("startTime", startTime)
+      .input("trafficSource", input.trafficSource ?? "player")
       .input("identityKind", input.identityKind)
       .input("githubUserId", input.githubUserId ?? null)
       .input("githubLogin", input.githubLogin ?? null)
@@ -44,6 +46,7 @@ export class MssqlSessionStore implements ISessionStore {
           difficulty,
           scenario_title,
           start_time,
+          traffic_source,
           identity_kind,
           github_user_id,
           github_login,
@@ -55,6 +58,7 @@ export class MssqlSessionStore implements ISessionStore {
           @difficulty,
           @scenarioTitle,
           @startTime,
+          @trafficSource,
           @identityKind,
           @githubUserId,
           @githubLogin,
@@ -85,6 +89,7 @@ export class MssqlSessionStore implements ISessionStore {
         scenario_title: string;
         start_time: number;
         used: boolean;
+        traffic_source: "player" | "automated";
         identity_kind: "github" | "anonymous";
         github_user_id: string | null;
         github_login: string | null;
@@ -97,6 +102,7 @@ export class MssqlSessionStore implements ISessionStore {
           scenario_title,
           start_time,
           used,
+          traffic_source,
           identity_kind,
           github_user_id,
           github_login,
@@ -116,6 +122,7 @@ export class MssqlSessionStore implements ISessionStore {
       scenarioTitle: row.scenario_title,
       startTime: Number(row.start_time),
       used: row.used,
+      trafficSource: row.traffic_source,
       identityKind: row.identity_kind,
       githubUserId: row.github_user_id,
       githubLogin: row.github_login,
@@ -139,6 +146,7 @@ export class MssqlSessionStore implements ISessionStore {
         scenario_title: string;
         start_time: number;
         used: boolean;
+        traffic_source: "player" | "automated";
         identity_kind: "github" | "anonymous";
         github_user_id: string | null;
         github_login: string | null;
@@ -153,6 +161,7 @@ export class MssqlSessionStore implements ISessionStore {
           INSERTED.scenario_title,
           INSERTED.start_time,
           INSERTED.used,
+          INSERTED.traffic_source,
           INSERTED.identity_kind,
           INSERTED.github_user_id,
           INSERTED.github_login,
@@ -172,6 +181,7 @@ export class MssqlSessionStore implements ISessionStore {
       scenarioTitle: row.scenario_title,
       startTime: Number(row.start_time),
       used: true,
+      trafficSource: row.traffic_source,
       identityKind: row.identity_kind,
       githubUserId: row.github_user_id,
       githubLogin: row.github_login,

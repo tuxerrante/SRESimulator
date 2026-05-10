@@ -5,6 +5,7 @@ import { getAiReadiness } from "../lib/ai-config";
 import { generateMockChatResponse } from "../lib/mock-ai";
 import { streamAiText, AiThrottledError, AiReasoningRetryEvent } from "../lib/ai-runtime";
 import { compactHistory, estimateTokens } from "../lib/context-compactor";
+import { captureBackendRouteError } from "../lib/telemetry/capture";
 import type { Scenario } from "../../../shared/types/game";
 import type { InvestigationPhase } from "../../../shared/types/chat";
 
@@ -100,9 +101,8 @@ chatRouter.post("/", async (req: Request, res: Response) => {
       res.write("data: [DONE]\n\n");
       res.end();
     } catch (error) {
-      const errMsg =
-        error instanceof Error ? error.message : "Stream error";
-      res.write(`data: ${JSON.stringify({ error: errMsg })}\n\n`);
+      captureBackendRouteError(req, error, "Chat stream failed");
+      res.write(`data: ${JSON.stringify({ error: "Chat stream failed" })}\n\n`);
       res.end();
     }
   } catch (error) {
@@ -110,8 +110,7 @@ chatRouter.post("/", async (req: Request, res: Response) => {
       res.status(429).json({ error: error.message });
       return;
     }
-    const message =
-      error instanceof Error ? error.message : "Internal server error";
-    res.status(500).json({ error: message });
+    captureBackendRouteError(req, error);
+    res.status(500).json({ error: "Chat request failed" });
   }
 });

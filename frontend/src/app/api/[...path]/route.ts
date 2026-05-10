@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { isIP } from "node:net";
 import {
   ANONYMOUS_PROOF_COOKIE,
   ANONYMOUS_PROOF_TTL_MS,
@@ -10,10 +11,45 @@ import {
   readAnonymousProofToken,
 } from "@shared/auth/anonymous-proof";
 import { createSignedClientIp } from "@shared/auth/client-ip";
+import { REQUEST_ID_HEADER } from "@shared/telemetry/constants";
 import { isSecureRequest, shouldTrustProxyHeaders } from "@/lib/auth/request-context";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+function assertTrustedProxySigningConfiguration(): void {
+  if (
+    shouldTrustProxyHeaders() &&
+    !process.env.ANTI_ABUSE_HMAC_SECRET?.trim()
+  ) {
+    throw new Error(
+      "TRUST_PROXY_HEADERS=true requires ANTI_ABUSE_HMAC_SECRET for signed client IP verification",
+    );
+  }
+}
+
+function readIpHeader(value: string | null): string | null {
+  const candidate = value?.trim();
+  if (!candidate || isIP(candidate) === 0) {
+    return null;
+  }
+  return candidate;
+}
+
+function readForwardedIps(value: string | null): string[] {
+  if (!value) {
+    return [];
+  }
+
+  const parts = value
+    .split(",")
+    .map((part) => part.trim())
+    .filter(Boolean);
+  if (parts.length === 0 || parts.some((part) => isIP(part) === 0)) {
+    return [];
+  }
+  return parts;
+}
 
 function getBackendBaseUrl(): string {
   const base = process.env.BACKEND_INTERNAL_BASE_URL || "http://127.0.0.1:8080";
@@ -25,12 +61,22 @@ function getTrustedClientIp(request: NextRequest): string | null {
     return null;
   }
 
-  const forwardedFor = request.headers.get("x-forwarded-for");
-  if (forwardedFor) {
-    return forwardedFor.split(",")[0]?.trim() || null;
+  const realIp = readIpHeader(request.headers.get("x-real-ip"));
+  if (!realIp) {
+    return null;
   }
 
-  return request.headers.get("x-real-ip")?.trim() || null;
+  const forwardedIps = readForwardedIps(request.headers.get("x-forwarded-for"));
+  if (forwardedIps.length === 0) {
+    return null;
+  }
+
+  const clientHop = forwardedIps[0];
+  if (!clientHop || clientHop !== realIp) {
+    return null;
+  }
+
+  return realIp;
 }
 
 function upsertCookieHeader(
@@ -52,21 +98,41 @@ function isScenarioProxyRequest(request: NextRequest): boolean {
   return request.method === "POST" && request.nextUrl.pathname === "/api/scenario";
 }
 
+function buildSafeRequestId(): string | undefined {
+  try {
+    return crypto.randomUUID();
+  } catch {
+    return undefined;
+  }
+}
+
 async function proxyRequest(request: NextRequest): Promise<NextResponse> {
   const backendPath = request.nextUrl.pathname || "/";
   const targetUrl = `${getBackendBaseUrl()}${backendPath}${request.nextUrl.search}`;
 
   const headers = new Headers(request.headers);
+  if (!headers.get(REQUEST_ID_HEADER)) {
+    const requestId = buildSafeRequestId();
+    if (requestId) {
+      headers.set(REQUEST_ID_HEADER, requestId);
+    }
+  }
   headers.delete("host");
   headers.delete("content-length");
   headers.delete("connection");
   headers.delete("x-forwarded-for");
   headers.delete("x-real-ip");
   headers.delete("forwarded");
+  headers.delete("x-sresim-client-ip");
+  headers.delete("x-sresim-client-ip-signature");
 
+  const trustProxyHeaders = shouldTrustProxyHeaders();
   const hasBody = request.method !== "GET" && request.method !== "HEAD";
   const antiAbuseSecret = process.env.ANTI_ABUSE_HMAC_SECRET;
   const clientIp = getTrustedClientIp(request);
+  if (trustProxyHeaders && isScenarioProxyRequest(request) && !clientIp) {
+    return NextResponse.json({ error: "Trusted proxy client IP verification failed" }, { status: 400 });
+  }
   if (clientIp && antiAbuseSecret) {
     headers.set("x-sresim-client-ip", clientIp);
     headers.set("x-sresim-client-ip-signature", createSignedClientIp(clientIp, antiAbuseSecret));
@@ -151,9 +217,8 @@ async function proxyRequest(request: NextRequest): Promise<NextResponse> {
       });
     }
     return response;
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Unknown proxy error";
-    return NextResponse.json({ error: `Backend proxy failed: ${message}` }, { status: 502 });
+  } catch {
+    return NextResponse.json({ error: "Backend proxy failed" }, { status: 502 });
   }
 }
 
@@ -164,3 +229,5 @@ export const PATCH = proxyRequest;
 export const DELETE = proxyRequest;
 export const OPTIONS = proxyRequest;
 export const HEAD = proxyRequest;
+
+assertTrustedProxySigningConfiguration();

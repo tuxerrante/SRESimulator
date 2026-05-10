@@ -19,6 +19,7 @@ interface LeaderboardRow {
   command_count: number;
   duration_ms: number;
   scenario_title: string;
+  traffic_source: "player" | "automated" | null;
   identity_kind: "github" | null;
   github_user_id: string | null;
   github_login: string | null;
@@ -41,6 +42,7 @@ function rowToEntry(row: LeaderboardRow): LeaderboardEntry {
     commandCount: row.command_count,
     durationMs: Number(row.duration_ms),
     scenarioTitle: row.scenario_title,
+    ...(row.traffic_source ? { trafficSource: row.traffic_source } : {}),
     ...(row.identity_kind ? { identityKind: row.identity_kind } : {}),
     ...(row.github_user_id ? { githubUserId: row.github_user_id } : {}),
     ...(row.github_login ? { githubLogin: row.github_login } : {}),
@@ -61,6 +63,7 @@ export class MssqlLeaderboardStore implements ILeaderboardStore {
       query = `
         SELECT TOP (@limit) * FROM leaderboard_entries
         WHERE difficulty = @difficulty
+          AND traffic_source = 'player'
           AND identity_kind = 'github'
           AND github_user_id IS NOT NULL
         ORDER BY score_total DESC, duration_ms ASC
@@ -68,7 +71,8 @@ export class MssqlLeaderboardStore implements ILeaderboardStore {
     } else {
       query = `
         SELECT TOP (@limit) * FROM leaderboard_entries
-        WHERE identity_kind = 'github'
+        WHERE traffic_source = 'player'
+          AND identity_kind = 'github'
           AND github_user_id IS NOT NULL
         ORDER BY score_total DESC, duration_ms ASC
       `;
@@ -99,7 +103,9 @@ export class MssqlLeaderboardStore implements ILeaderboardStore {
               ORDER BY created_at DESC, id DESC
             ) AS nickname_rank
           FROM leaderboard_entries
-          WHERE identity_kind = 'github' AND github_user_id IS NOT NULL
+          WHERE traffic_source = 'player'
+            AND identity_kind = 'github'
+            AND github_user_id IS NOT NULL
         ),
         aggregated_scores AS (
           SELECT
@@ -154,13 +160,21 @@ export class MssqlLeaderboardStore implements ILeaderboardStore {
       .input("commandCount", entry.commandCount)
       .input("durationMs", entry.durationMs)
       .input("scenarioTitle", entry.scenarioTitle)
+      .input("trafficSource", entry.trafficSource ?? "player")
       .input("identityKind", entry.identityKind)
       .input("githubUserId", entry.githubUserId)
       .input("githubLogin", entry.githubLogin ?? null)
       .query(`
         MERGE leaderboard_entries AS target
-        USING (SELECT @githubUserId AS github_user_id, @difficulty AS difficulty) AS source
-        ON target.github_user_id = source.github_user_id AND target.difficulty = source.difficulty
+        USING (
+          SELECT
+            @githubUserId AS github_user_id,
+            @difficulty AS difficulty,
+            @trafficSource AS traffic_source
+        ) AS source
+        ON target.github_user_id = source.github_user_id
+          AND target.difficulty = source.difficulty
+          AND target.traffic_source = source.traffic_source
         WHEN MATCHED AND (@scoreTotal > target.score_total OR (@scoreTotal = target.score_total AND @durationMs < target.duration_ms)) THEN
           UPDATE SET
             id = @id,
@@ -174,6 +188,7 @@ export class MssqlLeaderboardStore implements ILeaderboardStore {
             command_count = @commandCount,
             duration_ms = @durationMs,
             scenario_title = @scenarioTitle,
+            traffic_source = @trafficSource,
             identity_kind = @identityKind,
             github_user_id = @githubUserId,
             github_login = @githubLogin,
@@ -182,28 +197,34 @@ export class MssqlLeaderboardStore implements ILeaderboardStore {
           INSERT (id, nickname, difficulty, score_efficiency, score_safety,
                   score_documentation, score_accuracy, score_total,
                   grade, command_count, duration_ms, scenario_title,
-                  identity_kind, github_user_id, github_login)
+                  traffic_source, identity_kind, github_user_id, github_login)
           VALUES (@id, @nickname, @difficulty, @scoreEfficiency, @scoreSafety,
                   @scoreDocumentation, @scoreAccuracy, @scoreTotal,
                   @grade, @commandCount, @durationMs, @scenarioTitle,
-                  @identityKind, @githubUserId, @githubLogin);
+                  @trafficSource, @identityKind, @githubUserId, @githubLogin);
       `);
 
-    await this.trimPerDifficulty(entry.difficulty);
+    await this.trimPerDifficulty(entry.difficulty, entry.trafficSource ?? "player");
 
     return entry;
   }
 
-  private async trimPerDifficulty(difficulty: Difficulty): Promise<void> {
+  private async trimPerDifficulty(
+    difficulty: Difficulty,
+    trafficSource: LeaderboardEntry["trafficSource"],
+  ): Promise<void> {
     await this.pool.request()
       .input("difficulty", difficulty)
+      .input("trafficSource", trafficSource ?? "player")
       .input("keepCount", MAX_ENTRIES_PER_DIFFICULTY)
       .query(`
         DELETE FROM leaderboard_entries
         WHERE difficulty = @difficulty
+          AND traffic_source = @trafficSource
           AND id NOT IN (
             SELECT TOP (@keepCount) id FROM leaderboard_entries
             WHERE difficulty = @difficulty
+              AND traffic_source = @trafficSource
             ORDER BY score_total DESC, duration_ms ASC
           )
       `);

@@ -53,7 +53,7 @@ describe("useChat streaming", () => {
           'data: {"text":"Hello ',
           'world [PHASE:context] [SCORE:efficiency:+2:Fast] [RESOLVED]"}\n\n',
           "data: [DONE]\n\n",
-        ])
+        ]),
       ),
     });
 
@@ -66,7 +66,7 @@ describe("useChat streaming", () => {
     const state = useGameStore.getState();
     expect(state.messages).toHaveLength(2);
     expect(state.messages[1]?.content).toBe(
-      "Hello world [PHASE:context] [SCORE:efficiency:+2:Fast] [RESOLVED]"
+      "Hello world [PHASE:context] [SCORE:efficiency:+2:Fast] [RESOLVED]",
     );
     expect(state.currentPhase).toBe("context");
     expect(state.scoringEvents).toHaveLength(1);
@@ -88,7 +88,7 @@ describe("useChat streaming", () => {
         createStreamResponse([
           'data: {"text":"Hello"}\n\n',
           'data: {"text":not-json}\n\n',
-        ])
+        ]),
       ),
     });
 

@@ -92,16 +92,35 @@ Most customer-managed Azure resources remain in the main resource group. The
 only expected exception is the AKS-managed node resource group, which Azure
 creates automatically.
 
+Production Sentry rollout is wired through Helm values rather than image
+rebuilds. `frontend.sentry.*` populates deployed `NEXT_PUBLIC_SENTRY_*`
+container env. Browser Sentry initialization reads a runtime bootstrap script
+from the same-origin telemetry route and initializes once that config is
+available, keeping enablement runtime-driven without freezing config at build
+time. `backend.sentry.*` continues to drive the server-side `SENTRY_*` env
+directly. Keep both disabled until the production DSNs are available, and
+leave the frontend replay sample rates at `0` for launch unless production
+volume proves it is safe to raise them.
+
+Browser source-map upload is separate from runtime enablement: the frontend
+build uploads source maps only when `SENTRY_AUTH_TOKEN`, `SENTRY_ORG`, and
+`SENTRY_PROJECT` are present at build time. If you set `SENTRY_RELEASE`, treat
+it as a build-time release only: it must exactly match the uploaded artifact
+release, otherwise omit it entirely. Builds still succeed without these
+variables, but source-map upload stays disabled.
+
+Use generic test events only as ingest smoke checks; verify actor/session/
+request correlation with a request-driven chat or command failure through the
+deployed same-origin proxy path.
+
 ## Documentation
 
 - Product architecture: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 - Runtime internals: [docs/AI_RUNTIME.md](docs/AI_RUNTIME.md)
-- Setup, operations, and deployment:
-  [docs/OPERATIONS.md](docs/OPERATIONS.md)
+- Setup, production operations, and post-apply checklist:
+  [infra/POST_APPLY_CHECKLIST.md](infra/POST_APPLY_CHECKLIST.md)
 - Release and versioning policy:
   [docs/RELEASES.md](docs/RELEASES.md)
-- Infra post-apply checklist:
-  [infra/POST_APPLY_CHECKLIST.md](infra/POST_APPLY_CHECKLIST.md)
 - Original product design:
   [CLAUDE.md](CLAUDE.md)
 

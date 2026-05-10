@@ -1,108 +1,132 @@
-import { describe, expect, it, beforeEach, afterEach } from "vitest";
 import express from "express";
+import type { Server } from "node:http";
+import type { AddressInfo } from "node:net";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+const mocks = vi.hoisted(() => ({
+  captureBackendRouteError: vi.fn(),
+  loadKnowledgeSections: vi.fn(),
+  queryKnowledgeSections: vi.fn(),
+  buildSystemPrompt: vi.fn(),
+  getAiReadiness: vi.fn(),
+  generateMockChatResponse: vi.fn(),
+  streamAiText: vi.fn(),
+  compactHistory: vi.fn(),
+  estimateTokens: vi.fn(),
+}));
+
+vi.mock("../lib/knowledge", () => ({
+  loadKnowledgeSections: mocks.loadKnowledgeSections,
+  queryKnowledgeSections: mocks.queryKnowledgeSections,
+}));
+
+vi.mock("../lib/prompts/system", () => ({
+  buildSystemPrompt: mocks.buildSystemPrompt,
+}));
+
+vi.mock("../lib/ai-config", () => ({
+  getAiReadiness: mocks.getAiReadiness,
+}));
+
+vi.mock("../lib/mock-ai", () => ({
+  generateMockChatResponse: mocks.generateMockChatResponse,
+}));
+
+vi.mock("../lib/ai-runtime", async () => {
+  const actual = await vi.importActual<typeof import("../lib/ai-runtime")>("../lib/ai-runtime");
+  return {
+    ...actual,
+    streamAiText: mocks.streamAiText,
+  };
+});
+
+vi.mock("../lib/context-compactor", () => ({
+  compactHistory: mocks.compactHistory,
+  estimateTokens: mocks.estimateTokens,
+}));
+
+vi.mock("../lib/telemetry/capture", () => ({
+  captureBackendRouteError: mocks.captureBackendRouteError,
+}));
+
 import { chatRouter } from "./chat";
 
-function createApp() {
-  const app = express();
-  app.use(express.json());
-  app.use("/api/chat", chatRouter);
-  return app;
-}
-
-async function postSSE(
-  app: express.Express,
-  path: string,
-  body: unknown
-): Promise<{ status: number; rawBody: string }> {
-  const { request } = await import("http");
-  return new Promise((resolve, reject) => {
-    const server = app.listen(0, "127.0.0.1", () => {
-      const addr = server.address();
-      if (!addr || typeof addr === "string") {
-        server.close();
-        reject(new Error("Bad address"));
+async function close(server: Server): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    server.close((error) => {
+      if (error) {
+        reject(error);
         return;
       }
-      const payload = JSON.stringify(body);
-      const req = request(
-        {
-          hostname: "127.0.0.1",
-          port: addr.port,
-          path,
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "Content-Length": Buffer.byteLength(payload),
-          },
-        },
-        (res) => {
-          let data = "";
-          res.on("data", (chunk) => (data += chunk));
-          res.on("end", () => {
-            server.close();
-            resolve({
-              status: res.statusCode ?? 500,
-              rawBody: data,
-            });
-          });
-        }
-      );
-      req.on("error", (e) => {
-        server.close();
-        reject(e);
-      });
-      req.write(payload);
-      req.end();
+
+      resolve();
     });
   });
 }
 
-describe("POST /api/chat", () => {
-  const originalEnv: Record<string, string | undefined> = {};
-
+describe("chatRouter", () => {
   beforeEach(() => {
-    originalEnv.AI_MOCK_MODE = process.env.AI_MOCK_MODE;
-    process.env.AI_MOCK_MODE = "true";
+    vi.clearAllMocks();
+    mocks.getAiReadiness.mockReturnValue({ ready: true, mockMode: false });
+    mocks.loadKnowledgeSections.mockResolvedValue([]);
+    mocks.queryKnowledgeSections.mockReturnValue("");
+    mocks.buildSystemPrompt.mockReturnValue("system prompt");
+    mocks.estimateTokens.mockReturnValue(0);
+    mocks.compactHistory.mockReturnValue({
+      messages: [],
+      compacted: false,
+      compactedCount: 0,
+      originalCount: 1,
+      estimatedTokensBefore: 0,
+      estimatedTokensAfter: 0,
+    });
   });
 
   afterEach(() => {
-    if (originalEnv.AI_MOCK_MODE === undefined) {
-      delete process.env.AI_MOCK_MODE;
-    } else {
-      process.env.AI_MOCK_MODE = originalEnv.AI_MOCK_MODE;
+    vi.restoreAllMocks();
+  });
+
+  it("captures stream failures after SSE headers are sent", async () => {
+    const streamError = new Error("stream exploded");
+
+    const failingStream: AsyncIterable<string> = {
+      [Symbol.asyncIterator]() {
+        return {
+          next: async () => {
+            throw streamError;
+          },
+        };
+      },
+    };
+
+    mocks.streamAiText.mockReturnValue(failingStream);
+
+    const app = express();
+    app.use(express.json());
+    app.use("/api/chat", chatRouter);
+    const server = await new Promise<Server>((resolve) => {
+      const listeningServer = app.listen(0, "127.0.0.1", () => resolve(listeningServer));
+    });
+
+    try {
+      const { port } = server.address() as AddressInfo;
+      const response = await fetch(`http://127.0.0.1:${port}/api/chat`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          messages: [{ role: "user", content: "hello" }],
+          scenario: null,
+          currentPhase: "reading",
+        }),
+      });
+
+      expect(response.status).toBe(200);
+      await expect(response.text()).resolves.toContain('data: {"error":"Chat stream failed"}');
+      expect(mocks.captureBackendRouteError).toHaveBeenCalledTimes(1);
+      expect(mocks.captureBackendRouteError.mock.calls[0]?.[1]).toBe(streamError);
+      expect(mocks.captureBackendRouteError.mock.calls[0]?.[2]).toBe("Chat stream failed");
+    } finally {
+      await close(server);
     }
-  });
-
-  it("returns SSE stream with mock chat response", async () => {
-    const app = createApp();
-    const res = await postSSE(app, "/api/chat", {
-      messages: [{ role: "user", content: "hello" }],
-      scenario: null,
-      currentPhase: "reading",
-    });
-
-    expect(res.status).toBe(200);
-    expect(res.rawBody).toContain("data: ");
-    expect(res.rawBody).toContain("[DONE]");
-
-    const lines = res.rawBody
-      .split("\n")
-      .filter((l) => l.startsWith("data: ") && !l.includes("[DONE]"));
-    expect(lines.length).toBeGreaterThan(0);
-
-    const parsed = JSON.parse(lines[0].slice(6));
-    expect(parsed.text).toContain("Mock AI mode is enabled");
-    expect(parsed.text).toContain("[PHASE:reading]");
-  });
-
-  it("reflects the current phase in the response", async () => {
-    const app = createApp();
-    const res = await postSSE(app, "/api/chat", {
-      messages: [{ role: "user", content: "checking context" }],
-      scenario: null,
-      currentPhase: "context",
-    });
-
-    expect(res.rawBody).toContain("[PHASE:context]");
   });
 });

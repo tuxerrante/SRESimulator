@@ -25,15 +25,25 @@ async function postJson(
   app: express.Express,
   path: string,
   body: unknown,
-  headers: Record<string, string> = {}
+  headers: Record<string, string> = {},
+  options: { timeoutMs?: number } = {},
 ): Promise<{ status: number; body: Record<string, unknown> }> {
   const { request } = await import("http");
   return new Promise((resolve, reject) => {
+    let settled = false;
+    const finish = (callback: () => void) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      callback();
+    };
+
     const server = app.listen(0, "127.0.0.1", () => {
       const addr = server.address();
       if (!addr || typeof addr === "string") {
         server.close();
-        reject(new Error("Bad address"));
+        finish(() => reject(new Error("Bad address")));
         return;
       }
       const payload = JSON.stringify(body);
@@ -54,16 +64,23 @@ async function postJson(
           res.on("data", (chunk) => (data += chunk));
           res.on("end", () => {
             server.close();
-            resolve({
-              status: res.statusCode ?? 500,
-              body: JSON.parse(data),
-            });
+            finish(() =>
+              resolve({
+                status: res.statusCode ?? 500,
+                body: JSON.parse(data),
+              }),
+            );
           });
         }
       );
+      if (options.timeoutMs && options.timeoutMs > 0) {
+        req.setTimeout(options.timeoutMs, () => {
+          req.destroy(new Error(`Request timed out after ${options.timeoutMs}ms`));
+        });
+      }
       req.on("error", (e) => {
         server.close();
-        reject(e);
+        finish(() => reject(e));
       });
       req.write(payload);
       req.end();
@@ -74,6 +91,7 @@ async function postJson(
 describe("POST /api/scenario", () => {
   const originalEnv: Record<string, string | undefined> = {};
   let scenarioRouter: typeof import("./scenario").scenarioRouter;
+  let getSessionStore: typeof import("../lib/storage").getSessionStore;
   let tmpDir: string;
   const anonymousUserAgent = "scenario-test-agent";
 
@@ -115,6 +133,7 @@ describe("POST /api/scenario", () => {
 
     const storageModule = await import("../lib/storage");
     await storageModule.initStorage();
+    getSessionStore = storageModule.getSessionStore;
 
     const scenarioModule = await import("./scenario");
     scenarioRouter = scenarioModule.scenarioRouter;
@@ -182,6 +201,88 @@ describe("POST /api/scenario", () => {
     const scenario = res.body.scenario as Record<string, unknown>;
     expect(scenario.difficulty).toBe("easy");
     expect(scenario.id).toBe("scenario_mock_easy");
+  });
+
+  it("ignores an automated traffic header without the matching server token", async () => {
+    const authToken = createViewerSessionToken(
+      {
+        kind: "github",
+        githubUserId: "traffic-player",
+        githubLogin: "traffic-player",
+        displayName: "Traffic Player",
+        avatarUrl: null,
+        issuedAt: Date.now(),
+        expiresAt: Date.now() + 60_000,
+      },
+      "test-secret",
+    );
+    const app = createApp(scenarioRouter);
+    const res = await postJson(app, "/api/scenario", {
+      difficulty: "easy",
+    }, {
+      cookie: `${VIEWER_SESSION_COOKIE}=${authToken}`,
+      "x-traffic-source": "automated",
+    });
+
+    expect(res.status).toBe(200);
+    const session = await getSessionStore().get(String(res.body.sessionToken));
+    expect(session?.trafficSource).toBe("player");
+  });
+
+  it("stores automated traffic when the request presents the configured server token", async () => {
+    process.env.AUTOMATED_TRAFFIC_TOKEN = "test-traffic-token";
+    const authToken = createViewerSessionToken(
+      {
+        kind: "github",
+        githubUserId: "traffic-automation",
+        githubLogin: "traffic-automation",
+        displayName: "Traffic Automation",
+        avatarUrl: null,
+        issuedAt: Date.now(),
+        expiresAt: Date.now() + 60_000,
+      },
+      "test-secret",
+    );
+    const app = createApp(scenarioRouter);
+    const res = await postJson(app, "/api/scenario", {
+      difficulty: "easy",
+    }, {
+      cookie: `${VIEWER_SESSION_COOKIE}=${authToken}`,
+      "x-traffic-source": "automated",
+      "x-traffic-source-token": "test-traffic-token",
+    });
+
+    expect(res.status).toBe(200);
+    const session = await getSessionStore().get(String(res.body.sessionToken));
+    expect(session?.trafficSource).toBe("automated");
+  });
+
+  it("stores automated traffic when the configured token has surrounding whitespace", async () => {
+    process.env.AUTOMATED_TRAFFIC_TOKEN = "  test-traffic-token  ";
+    const authToken = createViewerSessionToken(
+      {
+        kind: "github",
+        githubUserId: "traffic-automation-trimmed",
+        githubLogin: "traffic-automation-trimmed",
+        displayName: "Traffic Automation Trimmed",
+        avatarUrl: null,
+        issuedAt: Date.now(),
+        expiresAt: Date.now() + 60_000,
+      },
+      "test-secret",
+    );
+    const app = createApp(scenarioRouter);
+    const res = await postJson(app, "/api/scenario", {
+      difficulty: "easy",
+    }, {
+      cookie: `${VIEWER_SESSION_COOKIE}=${authToken}`,
+      "x-traffic-source": " automated ",
+      "x-traffic-source-token": " test-traffic-token ",
+    });
+
+    expect(res.status).toBe(200);
+    const session = await getSessionStore().get(String(res.body.sessionToken));
+    expect(session?.trafficSource).toBe("automated");
   });
 
   it("rejects invalid difficulty", async () => {
@@ -274,5 +375,85 @@ describe("POST /api/scenario", () => {
 
     expect(res.status).toBe(403);
     expect(res.body.code).toBe("github_required");
+  });
+
+  it("returns the session token without waiting for started telemetry persistence", async () => {
+    process.env.AI_MOCK_MODE = "true";
+    process.env.AUTH_SESSION_SECRET = "test-secret";
+    process.env.ANTI_ABUSE_HMAC_SECRET = "test-hmac";
+
+    const authToken = createViewerSessionToken(
+      {
+        kind: "github",
+        githubUserId: "ordered-player",
+        githubLogin: "ordered-player",
+        displayName: "Ordered Player",
+        avatarUrl: null,
+        issuedAt: Date.now(),
+        expiresAt: Date.now() + 60_000,
+      },
+      "test-secret"
+    );
+
+    let resolveStartedWrite: (() => void) | undefined;
+    const startedWrite = new Promise<void>((resolve) => {
+      resolveStartedWrite = resolve;
+    });
+
+    const recordGameplay = vi.fn((data: { lifecycleState?: string }) => {
+      if (data.lifecycleState === "started") {
+        return startedWrite;
+      }
+      return Promise.resolve();
+    });
+
+    vi.resetModules();
+    const storageModule = await import("../lib/storage");
+    vi.spyOn(storageModule, "getMetricsStore").mockReturnValue({
+      recordGameplay,
+      hasLifecycleEvent: vi.fn(),
+      getPlayerHistory: vi.fn(),
+      getGameplayAnalytics: vi.fn(),
+    });
+    vi.spyOn(storageModule, "getPlayerStore").mockReturnValue({
+      upsertGithubViewer: vi.fn().mockResolvedValue({
+        githubUserId: "ordered-player",
+        githubLogin: "ordered-player",
+        displayName: "Ordered Player",
+        avatarUrl: null,
+      }),
+      getByGithubUserId: vi.fn(),
+    });
+    vi.spyOn(storageModule, "getSessionStore").mockReturnValue({
+      create: vi.fn().mockResolvedValue("session-ordered"),
+      get: vi.fn(),
+      validateAndConsume: vi.fn(),
+    });
+
+    const isolatedScenarioModule = await import("./scenario");
+    const app = createApp(isolatedScenarioModule.scenarioRouter);
+
+    const response = await postJson(app, "/api/scenario", {
+      difficulty: "easy",
+    }, {
+      cookie: `${VIEWER_SESSION_COOKIE}=${authToken}`,
+    }, {
+      timeoutMs: 2000,
+    });
+
+    expect(response.status).toBe(200);
+    expect(response.body.sessionToken).toBe("session-ordered");
+    expect(recordGameplay).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionToken: "session-ordered",
+        lifecycleState: "started",
+      })
+    );
+
+    resolveStartedWrite?.();
+    await startedWrite;
+
+    vi.restoreAllMocks();
+    vi.resetModules();
   });
 });

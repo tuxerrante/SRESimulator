@@ -32,6 +32,17 @@ spec:
               value: /data
             - name: CORS_ORIGIN
               value: {{ include "sre-simulator.publicOrigin" . | quote }}
+            - name: SENTRY_ENABLED
+              value: {{ ternary "true" "false" .Values.backend.sentry.enabled | quote }}
+            - name: SENTRY_DSN
+              value: {{ .Values.backend.sentry.dsn | quote }}
+            - name: SENTRY_ENVIRONMENT
+              value: {{ .Values.backend.sentry.environment | quote }}
+            {{- $sentryRelease := .Values.backend.sentry.release | default "" | trim }}
+            {{- if $sentryRelease }}
+            - name: SENTRY_RELEASE
+              value: {{ $sentryRelease | quote }}
+            {{- end }}
             {{- if .Values.ai.azureOpenai.endpointFromSecret.existingSecretName }}
             - name: AI_AZURE_OPENAI_ENDPOINT
               valueFrom:

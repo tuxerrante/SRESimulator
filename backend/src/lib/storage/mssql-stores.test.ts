@@ -174,7 +174,8 @@ describe("MssqlLeaderboardStore", () => {
     await store.getLeaderboard();
 
     const sql = req.query.mock.calls[0][0] as string;
-    expect(sql).toContain("WHERE identity_kind = 'github'");
+    expect(sql).toContain("traffic_source = 'player'");
+    expect(sql).toContain("identity_kind = 'github'");
     expect(sql).toContain("github_user_id IS NOT NULL");
   });
 
@@ -487,5 +488,83 @@ describe("MssqlMetricsStore", () => {
     const sql = req.query.mock.calls[0][0] as string;
     expect(sql).toContain("WHERE session_token = @sessionToken");
     expect(sql).toContain("AND lifecycle_state = @lifecycleState");
+  });
+
+  it("getGameplayAnalytics() coalesces empty summary counts to zero for playerless datasets", async () => {
+    const summaryRow = {
+      total_sessions: 0,
+      completed_sessions: null,
+      abandoned_sessions: null,
+      in_progress_sessions: null,
+      avg_completion_duration_ms: null,
+      avg_completion_command_count: null,
+      avg_completion_chat_message_count: null,
+      avg_completion_score_total: null,
+    };
+    const req = {
+      input: vi.fn().mockReturnThis(),
+      query: vi.fn().mockResolvedValue({
+        recordset: [summaryRow],
+        recordsets: [[summaryRow], [], [], []],
+      }),
+    };
+    const pool = {
+      request: vi.fn().mockReturnValue(req),
+    } as unknown as sql.ConnectionPool;
+    const store = new MssqlMetricsStore(pool);
+
+    const analytics = await store.getGameplayAnalytics();
+
+    expect(analytics.summary).toEqual({
+      totalSessions: 0,
+      completedSessions: 0,
+      abandonedSessions: 0,
+      inProgressSessions: 0,
+      completionRate: 0,
+      abandonmentRate: 0,
+      avgCompletionDurationMs: null,
+      avgCompletionCommandCount: null,
+      avgCompletionChatMessageCount: null,
+      avgCompletionScoreTotal: null,
+    });
+    const summarySql = req.query.mock.calls[0][0] as string;
+    expect(summarySql).toContain("COALESCE(SUM(CASE WHEN lifecycle_state = 'completed' THEN 1 ELSE 0 END), 0)");
+    expect(summarySql).toContain("COALESCE(SUM(CASE WHEN lifecycle_state = 'abandoned' THEN 1 ELSE 0 END), 0)");
+    expect(summarySql).toContain("COALESCE(SUM(CASE WHEN lifecycle_state = 'started' THEN 1 ELSE 0 END), 0)");
+  });
+
+  it("getGameplayAnalytics() ranks terminal states ahead of later started events", async () => {
+    const summaryRow = {
+      total_sessions: 0,
+      completed_sessions: 0,
+      abandoned_sessions: 0,
+      in_progress_sessions: 0,
+      avg_completion_duration_ms: null,
+      avg_completion_command_count: null,
+      avg_completion_chat_message_count: null,
+      avg_completion_score_total: null,
+    };
+    const req = {
+      input: vi.fn().mockReturnThis(),
+      query: vi.fn().mockResolvedValue({
+        recordset: [summaryRow],
+        recordsets: [[summaryRow], [], [], []],
+      }),
+    };
+    const pool = {
+      request: vi.fn().mockReturnValue(req),
+    } as unknown as sql.ConnectionPool;
+    const store = new MssqlMetricsStore(pool);
+
+    await store.getGameplayAnalytics();
+
+    const sql = req.query.mock.calls[0][0] as string;
+    expect(sql).toContain(
+      "CASE WHEN lifecycle_state IN ('completed', 'abandoned') THEN 1 ELSE 0 END DESC"
+    );
+    expect(sql).toContain("PARTITION BY session_token");
+    expect(sql).toContain("CREATE TABLE #latest_sessions");
+    expect(sql).toContain("INSERT INTO #latest_sessions");
+    expect(sql).toContain("DROP TABLE #latest_sessions");
   });
 });
