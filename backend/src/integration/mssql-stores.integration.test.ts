@@ -289,6 +289,8 @@ describe.skipIf(SKIP)("MssqlLeaderboardStore (real SQL)", () => {
     );
     const store = new MssqlLeaderboardStore(pool);
     const nick = trackNickname(shortId("mix"));
+    const automatedIdentity = githubIdentity(`${nick}-auto`);
+    const playerIdentity = githubIdentity(`${nick}-player`);
 
     await store.addEntry({
       id: crypto.randomUUID(),
@@ -306,6 +308,7 @@ describe.skipIf(SKIP)("MssqlLeaderboardStore (real SQL)", () => {
       durationMs: 30_000,
       scenarioTitle: "Etcd Quorum Loss",
       trafficSource: "automated",
+      ...automatedIdentity,
       timestamp: Date.now(),
     });
 
@@ -325,6 +328,7 @@ describe.skipIf(SKIP)("MssqlLeaderboardStore (real SQL)", () => {
       durationMs: 300_000,
       scenarioTitle: "Etcd Quorum Loss",
       trafficSource: "player",
+      ...playerIdentity,
       timestamp: Date.now(),
     });
 
