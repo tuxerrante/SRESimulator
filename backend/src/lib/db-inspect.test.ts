@@ -117,6 +117,7 @@ describe("db-inspect CLI", () => {
         DATABASE_URL: "Server=fake;Database=test;",
         NODE_PATH: fakeNodePath,
         MSSQL_FAKE_FAIL_CONNECT_ONCE: "1",
+        DB_INSPECT_RETRY_BASE_DELAY_MS: "0",
       },
     });
 

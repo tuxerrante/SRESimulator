@@ -23,11 +23,11 @@ END;
 
 IF NOT EXISTS (
   SELECT * FROM sys.check_constraints
-  WHERE name = 'ck_leaderboard_traffic_source'
+  WHERE name = 'ck_leaderboard_entries_traffic_source'
     AND parent_object_id = OBJECT_ID('leaderboard_entries')
 )
   EXEC('ALTER TABLE leaderboard_entries
-    ADD CONSTRAINT ck_leaderboard_traffic_source
+    ADD CONSTRAINT ck_leaderboard_entries_traffic_source
       CHECK (traffic_source IN (''player'', ''automated''))');
 
 IF COL_LENGTH('gameplay_metrics', 'traffic_source') IS NULL

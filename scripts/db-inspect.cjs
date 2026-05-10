@@ -4,6 +4,7 @@ const sql = require("mssql");
 
 const databaseUrl = process.env.DATABASE_URL;
 const limitRaw = process.env.LIMIT ?? "10";
+const retryBaseDelayRaw = process.env.DB_INSPECT_RETRY_BASE_DELAY_MS ?? "2000";
 const customSql = process.env.SQL?.trim() ?? "";
 const reportName = process.env.REPORT?.trim() ?? "";
 const customSqlUpper = customSql.replace(/^\s+/, "").toUpperCase();
@@ -11,8 +12,13 @@ const disallowedSqlPattern =
   /\b(INSERT|UPDATE|DELETE|MERGE|DROP|ALTER|CREATE|EXEC|EXECUTE|TRUNCATE|INTO)\b/;
 
 const limit = Number.parseInt(limitRaw, 10);
+const retryBaseDelayMs = Number.parseInt(retryBaseDelayRaw, 10);
 if (!Number.isInteger(limit) || limit <= 0 || limit > 200) {
   console.error("[db-inspect] LIMIT must be an integer between 1 and 200.");
+  process.exit(1);
+}
+if (!Number.isInteger(retryBaseDelayMs) || retryBaseDelayMs < 0 || retryBaseDelayMs > 60000) {
+  console.error("[db-inspect] DB_INSPECT_RETRY_BASE_DELAY_MS must be between 0 and 60000.");
   process.exit(1);
 }
 
@@ -115,7 +121,7 @@ async function connectWithRetry(pool, attempts = 3) {
         throw error;
       }
 
-      const delayMs = attempt * 2000;
+      const delayMs = attempt * retryBaseDelayMs;
       const message = error instanceof Error ? error.message : String(error);
       console.error(
         `[db-inspect] SQL connect attempt ${attempt}/${attempts} failed: ${message}. Retrying in ${delayMs}ms...`
