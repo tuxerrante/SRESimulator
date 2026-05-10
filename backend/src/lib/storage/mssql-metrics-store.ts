@@ -256,6 +256,31 @@ export class MssqlMetricsStore implements IMetricsStore {
 
     const analyticsResult = await this.pool.request().query<SummaryRow>(`
       ${latestSessionCte}
+      CREATE TABLE #latest_sessions (
+        lifecycle_state VARCHAR(16) NULL,
+        nickname NVARCHAR(20) NULL,
+        difficulty VARCHAR(10) NULL,
+        scenario_title NVARCHAR(255) NULL,
+        command_count INT NULL,
+        chat_message_count INT NULL,
+        duration_ms BIGINT NULL,
+        score_total INT NULL,
+        grade VARCHAR(5) NULL,
+        created_at DATETIMEOFFSET NOT NULL
+      );
+
+      INSERT INTO #latest_sessions (
+        lifecycle_state,
+        nickname,
+        difficulty,
+        scenario_title,
+        command_count,
+        chat_message_count,
+        duration_ms,
+        score_total,
+        grade,
+        created_at
+      )
       SELECT
         lifecycle_state,
         nickname,
@@ -267,7 +292,6 @@ export class MssqlMetricsStore implements IMetricsStore {
         score_total,
         grade,
         created_at
-      INTO #latest_sessions
       FROM latest
       ;
 

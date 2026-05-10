@@ -563,7 +563,8 @@ describe("MssqlMetricsStore", () => {
       "CASE WHEN lifecycle_state IN ('completed', 'abandoned') THEN 1 ELSE 0 END DESC"
     );
     expect(sql).toContain("PARTITION BY session_token");
-    expect(sql).toContain("INTO #latest_sessions");
+    expect(sql).toContain("CREATE TABLE #latest_sessions");
+    expect(sql).toContain("INSERT INTO #latest_sessions");
     expect(sql).toContain("DROP TABLE #latest_sessions");
   });
 });
