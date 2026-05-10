@@ -8,6 +8,7 @@ import {
   MAX_SCORE_PER_DIMENSION,
   MAX_TOTAL_SCORE,
   type Score,
+  scoreToGrade,
 } from "../../../shared/types/scoring";
 
 export const scoresRouter = Router();
@@ -72,14 +73,6 @@ function calculateScoreFromEvents(rawEvents: unknown): Score | null {
   }
 
   return score;
-}
-
-function scoreToGrade(totalScore: number): string {
-  if (totalScore >= 90) return "A";
-  if (totalScore >= 80) return "B";
-  if (totalScore >= 70) return "C";
-  if (totalScore >= 60) return "D";
-  return "F";
 }
 
 scoresRouter.get("/", async (req: Request, res: Response) => {

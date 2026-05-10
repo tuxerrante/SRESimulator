@@ -77,14 +77,7 @@ async function postJson(
         return;
       }
 
-      const normalizedBody = path === "/api/command" &&
-        body &&
-        typeof body === "object" &&
-        !Array.isArray(body) &&
-        !Object.prototype.hasOwnProperty.call(body, "sessionToken")
-        ? { ...(body as Record<string, unknown>), sessionToken: "session-123" }
-        : body;
-      const payload = JSON.stringify(normalizedBody);
+      const payload = JSON.stringify(body);
       const req = request(
         {
           hostname: "127.0.0.1",
@@ -183,6 +176,7 @@ describe("POST /api/command", () => {
   it("returns mock oc output in mock mode", async () => {
     const app = createApp();
     const res = await postJson(app, "/api/command", {
+      sessionToken: "session-123",
       command: "oc get nodes",
       type: "oc",
       scenario: null,
@@ -197,6 +191,7 @@ describe("POST /api/command", () => {
   it("returns mock kql output in mock mode", async () => {
     const app = createApp();
     const res = await postJson(app, "/api/command", {
+      sessionToken: "session-123",
       command: "ClusterLogs | take 10",
       type: "kql",
       scenario: null,
@@ -209,6 +204,7 @@ describe("POST /api/command", () => {
   it("returns mock geneva output in mock mode", async () => {
     const app = createApp();
     const res = await postJson(app, "/api/command", {
+      sessionToken: "session-123",
       command: "show dashboard",
       type: "geneva",
       scenario: null,
@@ -221,6 +217,7 @@ describe("POST /api/command", () => {
   it("rejects invalid command type", async () => {
     const app = createApp();
     const res = await postJson(app, "/api/command", {
+      sessionToken: "session-123",
       command: "test",
       type: "invalid",
       scenario: null,
@@ -230,9 +227,35 @@ describe("POST /api/command", () => {
     expect(res.body.error).toContain("Invalid command type");
   });
 
+  it("rejects requests missing session tokens", async () => {
+    const app = createApp();
+    const res = await postJson(app, "/api/command", {
+      command: "oc get nodes",
+      type: "oc",
+      scenario: null,
+    });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("Session token is required");
+  });
+
+  it("rejects malformed scenario payloads", async () => {
+    const app = createApp();
+    const res = await postJson(app, "/api/command", {
+      sessionToken: "session-123",
+      command: "oc get nodes",
+      type: "oc",
+      scenario: { title: "incomplete" },
+    });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("Invalid scenario payload");
+  });
+
   it("accepts commandHistory field without error", async () => {
     const app = createApp();
     const res = await postJson(app, "/api/command", {
+      sessionToken: "session-123",
       command: "oc get nodes",
       type: "oc",
       scenario: null,
@@ -248,6 +271,7 @@ describe("POST /api/command", () => {
   it("returns describe output for oc describe node in mock mode", async () => {
     const app = createApp();
     const res = await postJson(app, "/api/command", {
+      sessionToken: "session-123",
       command: "oc describe node master-0",
       type: "oc",
       scenario: null,
@@ -262,6 +286,7 @@ describe("POST /api/command", () => {
   it("returns delete confirmation for oc delete in mock mode", async () => {
     const app = createApp();
     const res = await postJson(app, "/api/command", {
+      sessionToken: "session-123",
       command: "oc delete machine aro-worker-0",
       type: "oc",
       scenario: null,
@@ -274,6 +299,7 @@ describe("POST /api/command", () => {
   it("handles commandHistory with null/malformed entries without crashing", async () => {
     const app = createApp();
     const res = await postJson(app, "/api/command", {
+      sessionToken: "session-123",
       command: "oc get nodes",
       type: "oc",
       scenario: null,
@@ -292,6 +318,7 @@ describe("POST /api/command", () => {
   it("handles commandHistory that is not an array", async () => {
     const app = createApp();
     const res = await postJson(app, "/api/command", {
+      sessionToken: "session-123",
       command: "oc get nodes",
       type: "oc",
       scenario: null,
@@ -309,6 +336,7 @@ describe("POST /api/command", () => {
 
     const app = createApp();
     const res = await postJson(app, "/api/command", {
+      sessionToken: "session-123",
       command: "oc get nodes",
       type: "oc",
       scenario: makeScenario(),
@@ -343,6 +371,7 @@ describe("POST /api/command", () => {
 
     const app = createApp();
     const res = await postJson(app, "/api/command", {
+      sessionToken: "session-123",
       command: "oc get machines -n openshift-machine-api",
       type: "oc",
       scenario: makeScenario(),
@@ -370,6 +399,7 @@ describe("POST /api/command", () => {
 
     const app = createApp();
     const res = await postJson(app, "/api/command", {
+      sessionToken: "session-123",
       command: "oc describe node master-0",
       type: "oc",
       scenario: null,
@@ -392,6 +422,7 @@ describe("POST /api/command", () => {
 
     const app = createApp();
     const res = await postJson(app, "/api/command", {
+      sessionToken: "session-123",
       command: "oc get nodes",
       type: "oc",
       scenario: makeScenario(),

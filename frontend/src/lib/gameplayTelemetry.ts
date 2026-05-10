@@ -1,7 +1,7 @@
 import type { InvestigationPhase } from "@shared/types/chat";
 import type { GameStatus, Scenario } from "@shared/types/game";
 import type { GameplayLifecycleState, GameplayTelemetryEvent } from "@shared/types/gameplay";
-import type { Score, ScoringEvent } from "@shared/types/scoring";
+import { scoreToGrade, type Score, type ScoringEvent } from "@shared/types/scoring";
 import type { TerminalEntry } from "@shared/types/terminal";
 
 export interface GameplayTelemetryStateSnapshot {
@@ -22,13 +22,7 @@ export interface GameplayTelemetryStateSnapshot {
 
 const COMPLETION_SENT_KEY_PREFIX = "gameplay-telemetry-completed:";
 
-export function scoreToGrade(totalScore: number): string {
-  if (totalScore >= 90) return "A";
-  if (totalScore >= 80) return "B";
-  if (totalScore >= 70) return "C";
-  if (totalScore >= 60) return "D";
-  return "F";
-}
+export { scoreToGrade };
 
 export function buildGameplayTelemetryPayload(
   state: GameplayTelemetryStateSnapshot,

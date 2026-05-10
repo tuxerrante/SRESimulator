@@ -134,4 +134,17 @@ describe("POST /api/chat mock mode", () => {
 
     expect(res.rawBody).toContain("[PHASE:context]");
   });
+
+  it("rejects malformed scenario payloads", async () => {
+    const app = createApp();
+    const res = await postSSE(app, "/api/chat", {
+      sessionToken: "session-123",
+      messages: [{ role: "user", content: "hello" }],
+      scenario: { title: "incomplete" },
+      currentPhase: "reading",
+    });
+
+    expect(res.status).toBe(400);
+    expect(res.rawBody).toContain("Invalid scenario payload");
+  });
 });

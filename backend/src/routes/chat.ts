@@ -7,6 +7,7 @@ import { streamAiText, AiThrottledError, AiReasoningRetryEvent } from "../lib/ai
 import { compactHistory, estimateTokens } from "../lib/context-compactor";
 import { captureBackendRouteError } from "../lib/telemetry/capture";
 import { getSessionStore } from "../lib/storage";
+import { isScenario } from "../lib/scenario-validation";
 import type { Scenario } from "../../../shared/types/game";
 import type { InvestigationPhase } from "../../../shared/types/chat";
 
@@ -47,7 +48,13 @@ chatRouter.post("/", async (req: Request, res: Response) => {
     }
 
     const body = req.body as unknown as ChatRequestBody;
-    const { messages, scenario, currentPhase } = body;
+    const { messages, currentPhase } = body;
+    const rawScenario = body.scenario;
+    if (rawScenario != null && !isScenario(rawScenario)) {
+      res.status(400).json({ error: "Invalid scenario payload" });
+      return;
+    }
+    const scenario = rawScenario ?? null;
     if (typeof body.sessionToken !== "string" || body.sessionToken.trim() === "") {
       res.status(400).json({ error: "Session token is required" });
       return;

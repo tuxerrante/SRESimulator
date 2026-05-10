@@ -9,6 +9,7 @@ import {
   type CommandHistoryEntry,
 } from "../lib/prompts/command";
 import { resolveAngleBracketPlaceholders } from "../lib/prompts/scenario-resources";
+import { isScenario } from "../lib/scenario-validation";
 import { captureBackendRouteError } from "../lib/telemetry/capture";
 import { getSessionStore } from "../lib/storage";
 import type { Scenario } from "../../../shared/types/game";
@@ -137,7 +138,13 @@ commandRouter.post("/", async (req: Request, res: Response) => {
     }
 
     const body = req.body as unknown as CommandRequestBody;
-    const { command, type, scenario, commandHistory } = body;
+    const { command, type, commandHistory } = body;
+    const rawScenario = body.scenario;
+    if (rawScenario != null && !isScenario(rawScenario)) {
+      res.status(400).json({ error: "Invalid scenario payload" });
+      return;
+    }
+    const scenario = rawScenario ?? null;
     if (typeof body.sessionToken !== "string" || body.sessionToken.trim() === "") {
       res.status(400).json({ error: "Session token is required" });
       return;
@@ -224,10 +231,19 @@ commandRouter.post("/", async (req: Request, res: Response) => {
       message.includes("did not include text content")
     ) {
       captureBackendRouteError(req, error);
-      const fallbackType = VALID_COMMAND_TYPES.includes(req.body.type)
-        ? req.body.type
+      const requestBody = isRecord(req.body) ? req.body : {};
+      const fallbackType = typeof requestBody.type === "string" &&
+          VALID_COMMAND_TYPES.includes(requestBody.type as (typeof VALID_COMMAND_TYPES)[number])
+        ? (requestBody.type as (typeof VALID_COMMAND_TYPES)[number])
         : "oc";
-      const fallbackCommand = resolveAngleBracketPlaceholders(req.body.command, req.body.scenario);
+      const fallbackCommandRaw = typeof requestBody.command === "string" ? requestBody.command : "";
+      const fallbackScenario = isScenario(requestBody.scenario)
+        ? requestBody.scenario
+        : null;
+      const fallbackCommand = resolveAngleBracketPlaceholders(
+        fallbackCommandRaw,
+        fallbackScenario,
+      );
       if (error instanceof CommandGenerationTimeoutError) {
         console.warn(
           `[command] timed out after ${getCommandTimeoutMs()}ms; returning mock fallback for ${fallbackType} command`,

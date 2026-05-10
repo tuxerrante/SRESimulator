@@ -58,7 +58,8 @@ spec:
                   name: {{ .Values.ai.azureOpenai.credentials.existingSecretName }}
                   key: {{ .Values.ai.azureOpenai.credentials.key }}
             {{- end }}
-            {{- if .Values.ai.liveProbeToken }}
+            {{- $probeToken := .Values.ai.liveProbeToken | default "" | trim }}
+            {{- if $probeToken }}
             - name: AI_LIVE_PROBE_TOKEN
               valueFrom:
                 secretKeyRef:
