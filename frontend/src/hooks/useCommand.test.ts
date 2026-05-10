@@ -114,6 +114,24 @@ describe("useCommand", () => {
     );
   });
 
+  it("does not leave execution locked when no session token is active", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { result } = renderHook(() => useCommand());
+
+    await act(async () => {
+      await result.current.executeCommand("oc get pods", "oc");
+    });
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(buildTelemetryHeaders).not.toHaveBeenCalled();
+    expect(useGameStore.getState().isExecuting).toBe(false);
+    expect(useGameStore.getState().terminalEntries.at(-1)?.output).toBe(
+      "Error: Start a scenario before running commands",
+    );
+  });
+
   it("captures safe telemetry when the command proxy returns a non-ok response", async () => {
     vi.stubGlobal(
       "fetch",

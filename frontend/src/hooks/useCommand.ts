@@ -21,9 +21,6 @@ export function useCommand() {
   const executeCommand = useCallback(
     async (command: string, type: "oc" | "kql" | "geneva") => {
       if (useGameStore.getState().isExecuting) return;
-      setExecuting(true);
-
-      // Scoring checks before execution
       const state = useGameStore.getState();
       const activeSessionToken = state.sessionToken;
 
@@ -39,6 +36,9 @@ export function useCommand() {
         return;
       }
 
+      setExecuting(true);
+
+      // Scoring checks before execution
       // Penalize running commands without checking dashboard first
       if (!state.checkedDashboard && state.commandCount === 0) {
         addScoringEvent({
