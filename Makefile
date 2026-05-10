@@ -1025,10 +1025,10 @@ db-inspect-live: ## Inspect DB rows from inside the deployed backend pod (bypass
 		env LIMIT="$$LIMIT" REPORT="$$REPORT_NAME" SQL="$$QUERY" node - < scripts/db-inspect.cjs
 
 db-admin-stats: ## Show player-only attempt/completion stats by difficulty
-	@REPORT=player-completion $(MAKE) db-inspect NS="$(NS)" RELEASE="$(RELEASE)" DEPLOY="$(DEPLOY)" LIMIT="$(LIMIT)"
+	@REPORT=player-completion SQL= $(MAKE) db-inspect NS="$(NS)" RELEASE="$(RELEASE)" DEPLOY="$(DEPLOY)" LIMIT="$(LIMIT)"
 
 db-admin-stats-live: ## Show player-only attempt/completion stats by difficulty inside backend pod
-	@REPORT=player-completion $(MAKE) db-inspect-live NS="$(NS)" RELEASE="$(RELEASE)" DEPLOY="$(DEPLOY)" LIMIT="$(LIMIT)"
+	@REPORT=player-completion SQL= $(MAKE) db-inspect-live NS="$(NS)" RELEASE="$(RELEASE)" DEPLOY="$(DEPLOY)" LIMIT="$(LIMIT)"
 
 prod-up-final: geneva-suppression-check env-check ## Deploy final env then run exposure + DB fallback checks
 	@set -e; \
