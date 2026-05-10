@@ -76,6 +76,10 @@ export function generateMockChatResponse(phase: InvestigationPhase): string {
 
 function mockOcOutput(command: string): string {
   const trimmed = command.replace(/^oc\s+/, "");
+  const commandTokens = command
+    .toLowerCase()
+    .split(/\s+/)
+    .filter((token) => token.length > 0);
 
   if (/^describe\s+node/i.test(trimmed)) {
     const nameMatch = trimmed.match(/^describe\s+node\s+(\S+)/i);
@@ -183,12 +187,12 @@ function mockOcOutput(command: string): string {
   }
 
   if (/^delete\s+/i.test(trimmed)) {
-    const parts = trimmed
-      .replace(/\s+--force/g, "")
-      .replace(/\s+--grace-period=\d+/g, "")
-      .match(/^delete\s+(\S+)\s+(\S+)/i);
-    const resource = parts?.[1] ?? "resource";
-    const name = parts?.[2] ?? "unknown";
+    const filtered = trimmed
+      .split(/\s+/)
+      .filter(Boolean)
+      .filter((token) => token !== "--force" && !token.startsWith("--grace-period="));
+    const resource = filtered[1] ?? "resource";
+    const name = filtered[2] ?? "unknown";
     return `${resource} "${name}" deleted`;
   }
 
@@ -202,7 +206,13 @@ function mockOcOutput(command: string): string {
     ].join("\n");
   }
 
-  if (/\s+-o\s+jsonpath/i.test(command)) {
+  if (
+    commandTokens.some(
+      (token, index) =>
+        token === "-o" &&
+        commandTokens[index + 1]?.startsWith("jsonpath"),
+    )
+  ) {
     return '{"status":"Ready","reason":"KubeletReady"}';
   }
 

@@ -2,9 +2,6 @@ import type { Scenario } from "../../../../shared/types/game";
 
 const MAX_IDENTIFIERS = 28;
 
-/** User-typed angle-bracket placeholders copied from docs (e.g. `<machine-name-for-worker-1>`). */
-const ANGLE_PLACEHOLDER = /<([^>\n]+)>/g;
-
 function scenarioTextBlob(scenario: Scenario): string {
   return [
     scenario.title,
@@ -91,6 +88,43 @@ function sortedWorkerLike(ids: string[]): string[] {
     .sort(compareResourceIdentifiers);
 }
 
+function replaceAngleBracketPlaceholders(
+  command: string,
+  resolver: (full: string, inner: string) => string,
+): string {
+  if (!command.includes("<")) {
+    return command;
+  }
+
+  let result = "";
+  for (let i = 0; i < command.length; i += 1) {
+    const char = command[i];
+    if (char !== "<") {
+      result += char;
+      continue;
+    }
+
+    const closing = command.indexOf(">", i + 1);
+    if (closing === -1) {
+      result += command.slice(i);
+      break;
+    }
+
+    const full = command.slice(i, closing + 1);
+    const inner = command.slice(i + 1, closing);
+    if (inner.length === 0 || inner.includes("\n")) {
+      result += full;
+      i = closing;
+      continue;
+    }
+
+    result += resolver(full, inner);
+    i = closing;
+  }
+
+  return result;
+}
+
 /**
  * Best-effort resolution of `<...>` placeholders in a user command using scenario-derived
  * names so the model receives a concrete command string.
@@ -108,7 +142,7 @@ export function resolveAngleBracketPlaceholders(
     .filter((id) => /master/i.test(id))
     .sort(compareResourceIdentifiers);
 
-  return command.replace(ANGLE_PLACEHOLDER, (full, inner: string) => {
+  return replaceAngleBracketPlaceholders(command, (full, inner) => {
     const key = inner.trim().toLowerCase();
 
     const workerNum = key.match(/worker\D*(\d+)/i);

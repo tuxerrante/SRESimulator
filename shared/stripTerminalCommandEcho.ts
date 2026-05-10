@@ -35,11 +35,13 @@ export function stripTerminalCommandEcho(output: string, command: string): strin
       continue;
     }
 
-    const dollar = line.match(/^\$\s*(.+)$/);
-    if (dollar && normalizeCommandLine(dollar[1]) === cmdNorm) {
-      lines.shift();
-      strippedEcho = true;
-      continue;
+    if (line.startsWith("$")) {
+      const candidate = line.slice(1).trimStart();
+      if (normalizeCommandLine(candidate) === cmdNorm) {
+        lines.shift();
+        strippedEcho = true;
+        continue;
+      }
     }
 
     if (normalizeCommandLine(line) === cmdNorm) {
