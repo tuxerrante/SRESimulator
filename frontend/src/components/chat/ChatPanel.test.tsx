@@ -62,7 +62,7 @@ describe("ChatPanel timeout handling", () => {
     expect(screen.queryByText(/Error:/i)).toBeNull();
   });
 
-  it("keeps the generic wrapper for non-timeout errors", async () => {
+  it("shows non-timeout errors without retry action", async () => {
     fetchMock.mockResolvedValueOnce(
       new Response(JSON.stringify({ error: "backend exploded" }), {
         status: 500,
@@ -79,9 +79,7 @@ describe("ChatPanel timeout handling", () => {
     fireEvent.click(screen.getByTitle("Send message"));
 
     await waitFor(() => {
-      expect(
-        screen.getByText("Error: backend exploded. Please try again."),
-      ).toBeTruthy();
+      expect(screen.getByText("backend exploded")).toBeTruthy();
     });
 
     expect(screen.queryByRole("button", { name: /retry last message/i })).toBeNull();
