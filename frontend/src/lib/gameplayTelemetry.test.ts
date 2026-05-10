@@ -316,6 +316,30 @@ describe("sendGameplayTelemetryEvent", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
+  it("does not trust beacon-only completion marker when persistence acknowledgment is required", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true });
+    const sendBeacon = vi.fn().mockReturnValue(true);
+    Object.defineProperty(globalThis, "fetch", {
+      value: fetchMock,
+      configurable: true,
+    });
+    Object.defineProperty(globalThis, "navigator", {
+      value: {
+        sendBeacon,
+      },
+      configurable: true,
+    });
+
+    markCompletionTelemetrySent("session-123");
+
+    await expect(
+      sendCompletionTelemetryIfNeeded(makeState(), { requirePersistenceAck: true }),
+    ).resolves.toBe(true);
+
+    expect(sendBeacon).not.toHaveBeenCalled();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it("returns true when completion telemetry was already delivered", async () => {
     markCompletionTelemetrySent("session-123");
     await expect(sendCompletionTelemetryIfNeeded(makeState())).resolves.toBe(true);

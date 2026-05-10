@@ -74,6 +74,59 @@ export function generateMockChatResponse(phase: InvestigationPhase): string {
   ].join("\n");
 }
 
+function extractDeleteTarget(trimmed: string): { resource: string; name: string } {
+  const tokens = trimmed.split(/\s+/).filter(Boolean);
+  const positional: string[] = [];
+
+  const longFlagWithValue = new Set([
+    "--namespace",
+    "--context",
+    "--kubeconfig",
+    "--output",
+    "--selector",
+    "--field-selector",
+    "--grace-period",
+    "--timeout",
+    "--cascade",
+    "--dry-run",
+    "--filename",
+    "--container",
+  ]);
+  const shortFlagWithValue = new Set(["-n", "-o", "-l", "-f", "-c"]);
+
+  for (let index = 1; index < tokens.length; index += 1) {
+    const token = tokens[index];
+    if (token === "--") {
+      positional.push(...tokens.slice(index + 1));
+      break;
+    }
+    if (!token) continue;
+
+    if (token.startsWith("--")) {
+      if (longFlagWithValue.has(token)) {
+        index += 1;
+        continue;
+      }
+      continue;
+    }
+
+    if (token.startsWith("-")) {
+      if (shortFlagWithValue.has(token)) {
+        index += 1;
+        continue;
+      }
+      continue;
+    }
+
+    positional.push(token);
+  }
+
+  return {
+    resource: positional[0] ?? "resource",
+    name: positional[1] ?? "unknown",
+  };
+}
+
 function mockOcOutput(command: string): string {
   const trimmed = command.replace(/^oc\s+/, "");
   const commandTokens = command
@@ -187,12 +240,7 @@ function mockOcOutput(command: string): string {
   }
 
   if (/^delete\s+/i.test(trimmed)) {
-    const filtered = trimmed
-      .split(/\s+/)
-      .filter(Boolean)
-      .filter((token) => token !== "--force" && !token.startsWith("--grace-period="));
-    const resource = filtered[1] ?? "resource";
-    const name = filtered[2] ?? "unknown";
+    const { resource, name } = extractDeleteTarget(trimmed);
     return `${resource} "${name}" deleted`;
   }
 

@@ -21,6 +21,7 @@ export interface GameplayTelemetryStateSnapshot {
 }
 
 const COMPLETION_SENT_KEY_PREFIX = "gameplay-telemetry-completed:";
+const COMPLETION_ACKED_KEY_PREFIX = "gameplay-telemetry-completed-ack:";
 
 export { scoreToGrade };
 
@@ -91,9 +92,26 @@ export function markCompletionTelemetrySent(sessionToken: string): void {
   }
 }
 
+function hasCompletionTelemetryPersistenceAck(sessionToken: string): boolean {
+  try {
+    return globalThis.sessionStorage?.getItem(`${COMPLETION_ACKED_KEY_PREFIX}${sessionToken}`) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function markCompletionTelemetryPersistenceAck(sessionToken: string): void {
+  try {
+    globalThis.sessionStorage?.setItem(`${COMPLETION_ACKED_KEY_PREFIX}${sessionToken}`, "1");
+  } catch {
+    // Ignore storage restrictions; duplicate protection is best-effort.
+  }
+}
+
 export function clearCompletionTelemetrySent(sessionToken: string): void {
   try {
     globalThis.sessionStorage?.removeItem(`${COMPLETION_SENT_KEY_PREFIX}${sessionToken}`);
+    globalThis.sessionStorage?.removeItem(`${COMPLETION_ACKED_KEY_PREFIX}${sessionToken}`);
   } catch {
     // Ignore storage restrictions; duplicate protection is best-effort.
   }
@@ -104,19 +122,26 @@ export async function sendCompletionTelemetryIfNeeded(
   options: CompletionTelemetryOptions = {},
 ): Promise<boolean> {
   const sessionToken = state.sessionToken;
+  const requirePersistenceAck = options.requirePersistenceAck === true;
   if (!sessionToken) {
     return false;
   }
-  if (hasCompletionTelemetryBeenSent(sessionToken)) {
+  if (requirePersistenceAck && hasCompletionTelemetryPersistenceAck(sessionToken)) {
+    return true;
+  }
+  if (!requirePersistenceAck && hasCompletionTelemetryBeenSent(sessionToken)) {
     return true;
   }
 
   const delivered = await sendGameplayTelemetryEvent(
     buildGameplayTelemetryPayload(state, "completed"),
-    { preferBeacon: !options.requirePersistenceAck },
+    { preferBeacon: !requirePersistenceAck },
   );
   if (delivered) {
     markCompletionTelemetrySent(sessionToken);
+    if (requirePersistenceAck) {
+      markCompletionTelemetryPersistenceAck(sessionToken);
+    }
   }
 
   return delivered;

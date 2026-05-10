@@ -128,6 +128,24 @@ describe("generateMockCommandOutput", () => {
     expect(output).toBe('machine "aro-worker-0" deleted');
   });
 
+  it("handles oc delete with namespace flags before target", () => {
+    const output = generateMockCommandOutput(
+      "oc delete -n openshift-machine-api pod monitor-abc12",
+      "oc",
+    );
+
+    expect(output).toBe('pod "monitor-abc12" deleted');
+  });
+
+  it("handles oc delete with long flags before target", () => {
+    const output = generateMockCommandOutput(
+      "oc delete --context dev --namespace openshift-monitoring deployment metrics-api",
+      "oc",
+    );
+
+    expect(output).toBe('deployment "metrics-api" deleted');
+  });
+
   it("returns log lines for oc logs", () => {
     const output = generateMockCommandOutput("oc logs my-pod -c main", "oc");
     expect(output).toContain("server.go");

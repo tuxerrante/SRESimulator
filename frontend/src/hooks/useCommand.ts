@@ -25,6 +25,19 @@ export function useCommand() {
 
       // Scoring checks before execution
       const state = useGameStore.getState();
+      const activeSessionToken = state.sessionToken;
+
+      if (!activeSessionToken) {
+        addTerminalEntry({
+          id: crypto.randomUUID(),
+          command,
+          output: "Error: Start a scenario before running commands",
+          timestamp: Date.now(),
+          exitCode: 1,
+          type,
+        });
+        return;
+      }
 
       // Penalize running commands without checking dashboard first
       if (!state.checkedDashboard && state.commandCount === 0) {
@@ -59,7 +72,6 @@ export function useCommand() {
       });
 
       try {
-        const activeSessionToken = useGameStore.getState().sessionToken;
         const entries = useGameStore.getState().terminalEntries;
         const commandHistory = entries.slice(-MAX_COMMAND_HISTORY).map((e) => ({
           command: e.command,
