@@ -1,6 +1,6 @@
 import type sql from "mssql";
 import type { Difficulty } from "../../../../shared/types/game";
-import type { CreateGameSessionInput, ISessionStore, GameSession } from "./types";
+import type { CreateGameSessionInput, ISessionStore, GameSession, TrafficSource } from "./types";
 
 const SESSION_TTL_MS = 24 * 60 * 60 * 1000;
 
@@ -9,9 +9,11 @@ export class MssqlSessionStore implements ISessionStore {
 
   async create(input: CreateGameSessionInput): Promise<string>;
   async create(difficulty: Difficulty, scenarioTitle: string): Promise<string>;
+  async create(difficulty: Difficulty, scenarioTitle: string, trafficSource: TrafficSource): Promise<string>;
   async create(
     difficultyOrInput: Difficulty | CreateGameSessionInput,
-    scenarioTitle?: string
+    scenarioTitle?: string,
+    trafficSource: TrafficSource = "player",
   ): Promise<string> {
     const token = crypto.randomUUID();
     const startTime = Date.now();
@@ -20,7 +22,7 @@ export class MssqlSessionStore implements ISessionStore {
         ? {
             difficulty: difficultyOrInput,
             scenarioTitle: scenarioTitle ?? "Unknown Scenario",
-            trafficSource: "player",
+            trafficSource,
             identityKind: "anonymous",
             anonymousClaimKey: null,
             githubLogin: null,

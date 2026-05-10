@@ -149,6 +149,7 @@ describe("full game flow: scenario -> chat -> command -> scores", () => {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
+        cookie: githubAuthCookie,
         ...getScenarioRequestHeaders(),
       },
       body: JSON.stringify({ difficulty: "easy" }),

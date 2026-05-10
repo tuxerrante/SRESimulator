@@ -272,6 +272,7 @@ describe("MssqlLeaderboardStore", () => {
       commandCount: 6,
       durationMs: 90000,
       scenarioTitle: "Master Down",
+      trafficSource: "automated" as const,
       identityKind: "github" as const,
       githubUserId: "12345",
       githubLogin: "octocat",
@@ -301,6 +302,9 @@ describe("MssqlLeaderboardStore", () => {
       durationMs: 90000,
       scenarioTitle: "Master Down",
       trafficSource: "automated" as const,
+      identityKind: "github" as const,
+      githubUserId: "12345",
+      githubLogin: "octocat",
       timestamp: Date.now(),
     };
     const { pool, req } = createMockPool();

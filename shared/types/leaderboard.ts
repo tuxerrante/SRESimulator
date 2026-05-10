@@ -17,7 +17,6 @@ export interface LeaderboardEntry {
   githubLogin?: string;
   trafficSource?: TrafficSource;
   timestamp: number;
-  trafficSource?: TrafficSource;
 }
 
 export interface HallOfFameEntry {

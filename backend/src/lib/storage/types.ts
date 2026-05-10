@@ -71,6 +71,7 @@ export interface GameplayRecord {
 export interface ISessionStore {
   create(input: CreateGameSessionInput): Promise<string>;
   create(difficulty: Difficulty, scenarioTitle: string): Promise<string>;
+  create(difficulty: Difficulty, scenarioTitle: string, trafficSource: TrafficSource): Promise<string>;
   get(token: string): Promise<GameSession | null>;
   validateAndConsume(token: string): Promise<GameSession | null>;
 }
