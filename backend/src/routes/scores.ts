@@ -42,7 +42,6 @@ function calculateScoreFromEvents(rawEvents: unknown): Score | null {
     accuracy: 0,
     total: 0,
   };
-  let hasValidScoringEvent = false;
 
   for (const rawEvent of rawEvents) {
     if (!isRecord(rawEvent)) {
@@ -60,16 +59,11 @@ function calculateScoreFromEvents(rawEvents: unknown): Score | null {
     ) {
       continue;
     }
-    hasValidScoringEvent = true;
     const delta = type === "bonus" ? points : -points;
     score[dimension] = Math.max(
       0,
       Math.min(MAX_SCORE_PER_DIMENSION, score[dimension] + delta),
     );
-  }
-
-  if (!hasValidScoringEvent) {
-    return null;
   }
 
   score.total =
@@ -160,7 +154,7 @@ scoresRouter.post("/", async (req: Request, res: Response) => {
 
     const score = calculateScoreFromEvents(gameplayRecord.scoringEvents);
     if (!score) {
-      res.status(409).json({ error: "Completion telemetry is missing scoring events" });
+      res.status(409).json({ error: "Completion telemetry has invalid scoring data" });
       return;
     }
     const commandCount = Number.isFinite(gameplayRecord.commandCount)
@@ -176,9 +170,7 @@ scoresRouter.post("/", async (req: Request, res: Response) => {
       return;
     }
 
-    const durationMs = Number.isFinite(gameplayRecord.durationMs)
-      ? Math.max(0, Math.trunc(gameplayRecord.durationMs ?? 0))
-      : Date.now() - session.startTime;
+    const durationMs = Math.max(0, Date.now() - session.startTime);
 
     if (!session.persistentScoreEligible || session.identityKind !== "github" || !session.githubUserId) {
       res.status(200).json({

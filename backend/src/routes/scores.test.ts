@@ -253,7 +253,7 @@ describe("scores routes", () => {
     expect(retry.status).toBe(201);
   });
 
-  it("POST /api/scores rejects completion telemetry without valid scoring events", async () => {
+  it("POST /api/scores accepts empty scoring events as a zero score", async () => {
     const token = await getSessionStore().create({
       difficulty: "easy",
       scenarioTitle: "No Scoring Scenario",
@@ -276,8 +276,9 @@ describe("scores routes", () => {
       nickname: "noscore",
     });
 
-    expect(res.status).toBe(409);
-    expect(res.body.error).toContain("missing scoring events");
+    expect(res.status).toBe(201);
+    expect((res.body.score as Record<string, unknown>).total).toBe(0);
+    expect(res.body.grade).toBe("F");
   });
 
   it("POST /api/scores rejects nickname over 20 chars", async () => {
