@@ -253,6 +253,33 @@ describe("scores routes", () => {
     expect(retry.status).toBe(201);
   });
 
+  it("POST /api/scores rejects completion telemetry without valid scoring events", async () => {
+    const token = await getSessionStore().create({
+      difficulty: "easy",
+      scenarioTitle: "No Scoring Scenario",
+      identityKind: "github",
+      githubUserId: "no-scoring-gh-1",
+      githubLogin: "no-scoring-gh-1",
+      anonymousClaimKey: null,
+      persistentScoreEligible: true,
+    });
+
+    await recordCompletedTelemetry(token, {
+      difficulty: "easy",
+      scenarioTitle: "No Scoring Scenario",
+      scoringEvents: [],
+    });
+
+    const app = createApp();
+    const res = await httpRequest(app, "POST", "/api/scores", {
+      sessionToken: token,
+      nickname: "noscore",
+    });
+
+    expect(res.status).toBe(409);
+    expect(res.body.error).toContain("missing scoring events");
+  });
+
   it("POST /api/scores rejects nickname over 20 chars", async () => {
     const token = await getSessionStore().create("easy", "Test");
 

@@ -42,6 +42,7 @@ function calculateScoreFromEvents(rawEvents: unknown): Score | null {
     accuracy: 0,
     total: 0,
   };
+  let hasValidScoringEvent = false;
 
   for (const rawEvent of rawEvents) {
     if (!isRecord(rawEvent)) {
@@ -59,11 +60,16 @@ function calculateScoreFromEvents(rawEvents: unknown): Score | null {
     ) {
       continue;
     }
+    hasValidScoringEvent = true;
     const delta = type === "bonus" ? points : -points;
     score[dimension] = Math.max(
       0,
       Math.min(MAX_SCORE_PER_DIMENSION, score[dimension] + delta),
     );
+  }
+
+  if (!hasValidScoringEvent) {
+    return null;
   }
 
   score.total =
