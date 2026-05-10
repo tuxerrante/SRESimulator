@@ -204,9 +204,12 @@ function validateScenarioPayload(payload: unknown, difficulty: Difficulty): Scen
     assertNonEmptyString(alert.message, `clusterContext.alerts[${index}].message`);
     const firingTime = assertIsoTimestamp(alert.firingTime, `clusterContext.alerts[${index}].firingTime`);
     const firingAgeMs = now - firingTime.getTime();
-    if (firingAgeMs < 0 || firingAgeMs > SEVEN_DAYS_MS) {
+    if (
+      firingAgeMs < -TIMESTAMP_GRACE_MS ||
+      firingAgeMs > SEVEN_DAYS_MS + TIMESTAMP_GRACE_MS
+    ) {
       throw new InvalidScenarioPayloadError(
-        `AI scenario field clusterContext.alerts[${index}].firingTime must be within the past 7 days`,
+        `AI scenario field clusterContext.alerts[${index}].firingTime must be within the past 7 days (allowing ${TIMESTAMP_GRACE_MS / (60 * 1000)} minutes of clock skew)`,
       );
     }
   }

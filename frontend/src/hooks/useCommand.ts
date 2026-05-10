@@ -83,7 +83,7 @@ export function useCommand() {
         try {
           data = JSON.parse(raw);
         } catch {
-          data = { error: `Server error (${response.status}): ${raw.slice(0, 120)}`, exitCode: 1 };
+          data = { error: `Server error (${response.status})`, exitCode: 1 };
         }
 
         if (!response.ok) {

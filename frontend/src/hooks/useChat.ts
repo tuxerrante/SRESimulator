@@ -156,7 +156,7 @@ export function useChat() {
             const err = JSON.parse(raw);
             errorMessage = err.error || errorMessage;
           } catch {
-            errorMessage = `Server error (${response.status}): ${raw.slice(0, 120)}`;
+            errorMessage = `Server error (${response.status})`;
           }
           if (isGatewayTimeout(response.status, errorMessage)) {
             throw new ChatRequestError(TIMEOUT_ERROR_MESSAGE, true);
