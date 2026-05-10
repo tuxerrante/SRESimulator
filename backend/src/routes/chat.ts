@@ -6,6 +6,7 @@ import { generateMockChatResponse } from "../lib/mock-ai";
 import { streamAiText, AiThrottledError, AiReasoningRetryEvent } from "../lib/ai-runtime";
 import { compactHistory, estimateTokens } from "../lib/context-compactor";
 import { captureBackendRouteError } from "../lib/telemetry/capture";
+import { getSessionStore } from "../lib/storage";
 import type { Scenario } from "../../../shared/types/game";
 import type { InvestigationPhase } from "../../../shared/types/chat";
 
@@ -19,17 +20,68 @@ const MAX_CHAT_TOKENS =
     : 16384;
 
 export const chatRouter = Router();
+const VALID_PHASES: InvestigationPhase[] = [
+  "reading",
+  "context",
+  "facts",
+  "theory",
+  "action",
+];
 
 interface ChatRequestBody {
+  sessionToken: string;
   messages: { role: "user" | "assistant"; content: string }[];
   scenario: Scenario | null;
   currentPhase: InvestigationPhase;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 chatRouter.post("/", async (req: Request, res: Response) => {
   try {
-    const body: ChatRequestBody = req.body;
+    if (!isRecord(req.body)) {
+      res.status(400).json({ error: "Invalid request body" });
+      return;
+    }
+
+    const body = req.body as unknown as ChatRequestBody;
     const { messages, scenario, currentPhase } = body;
+    if (typeof body.sessionToken !== "string" || body.sessionToken.trim() === "") {
+      res.status(400).json({ error: "Session token is required" });
+      return;
+    }
+    if (
+      !Array.isArray(messages) ||
+      messages.some(
+        (message) =>
+          !isRecord(message) ||
+          (message.role !== "user" && message.role !== "assistant") ||
+          typeof message.content !== "string",
+      )
+    ) {
+      res.status(400).json({ error: "Invalid chat messages payload" });
+      return;
+    }
+    if (!VALID_PHASES.includes(currentPhase)) {
+      res.status(400).json({ error: "Invalid investigation phase" });
+      return;
+    }
+
+    const session = await getSessionStore().get(body.sessionToken);
+    if (!session || session.used) {
+      res.status(403).json({ error: "Invalid or expired session token" });
+      return;
+    }
+    if (
+      scenario &&
+      (scenario.title !== session.scenarioTitle ||
+        scenario.difficulty !== session.difficulty)
+    ) {
+      res.status(409).json({ error: "Scenario does not match the active session" });
+      return;
+    }
 
     const readiness = getAiReadiness();
     if (readiness.mockMode) {

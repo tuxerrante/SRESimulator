@@ -13,6 +13,8 @@ const mocks = vi.hoisted(() => ({
   streamAiText: vi.fn(),
   compactHistory: vi.fn(),
   estimateTokens: vi.fn(),
+  getSessionStore: vi.fn(),
+  sessionGet: vi.fn(),
 }));
 
 vi.mock("../lib/knowledge", () => ({
@@ -49,6 +51,10 @@ vi.mock("../lib/telemetry/capture", () => ({
   captureBackendRouteError: mocks.captureBackendRouteError,
 }));
 
+vi.mock("../lib/storage", () => ({
+  getSessionStore: mocks.getSessionStore,
+}));
+
 import { chatRouter } from "./chat";
 
 async function close(server: Server): Promise<void> {
@@ -79,6 +85,22 @@ describe("chatRouter", () => {
       originalCount: 1,
       estimatedTokensBefore: 0,
       estimatedTokensAfter: 0,
+    });
+    mocks.getSessionStore.mockReturnValue({
+      get: mocks.sessionGet,
+    });
+    mocks.sessionGet.mockResolvedValue({
+      token: "session-123",
+      difficulty: "easy",
+      scenarioTitle: "Test Scenario",
+      startTime: Date.now(),
+      used: false,
+      trafficSource: "player",
+      identityKind: "anonymous",
+      githubUserId: null,
+      githubLogin: null,
+      anonymousClaimKey: null,
+      persistentScoreEligible: false,
     });
   });
 
@@ -114,6 +136,7 @@ describe("chatRouter", () => {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
+          sessionToken: "session-123",
           messages: [{ role: "user", content: "hello" }],
           scenario: null,
           currentPhase: "reading",

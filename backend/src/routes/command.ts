@@ -10,6 +10,7 @@ import {
 } from "../lib/prompts/command";
 import { resolveAngleBracketPlaceholders } from "../lib/prompts/scenario-resources";
 import { captureBackendRouteError } from "../lib/telemetry/capture";
+import { getSessionStore } from "../lib/storage";
 import type { Scenario } from "../../../shared/types/game";
 import { stripTerminalCommandEcho } from "../../../shared/stripTerminalCommandEcho";
 
@@ -17,6 +18,7 @@ export const commandRouter = Router();
 const VALID_COMMAND_TYPES = ["oc", "kql", "geneva"] as const;
 
 interface CommandRequestBody {
+  sessionToken: string;
   command: string;
   type: "oc" | "kql" | "geneva";
   scenario: Scenario | null;
@@ -31,6 +33,10 @@ type LooseHistoryEntry = {
 
 const DEFAULT_MAX_COMMAND_TOKENS = 8192;
 const DEFAULT_COMMAND_TIMEOUT_MS = 20000;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
 
 function parsePositiveIntEnv(raw: string | undefined, fallback: number): number {
   const parsed = Number.parseInt(raw ?? "", 10);
@@ -59,10 +65,17 @@ function isAbortError(error: unknown): boolean {
   );
 }
 
-function buildMockCommandResponse(command: string, type: "oc" | "kql" | "geneva") {
+function buildMockCommandResponse(
+  command: string,
+  type: "oc" | "kql" | "geneva",
+  options?: { degradedReason?: string },
+) {
+  const degradedReason = options?.degradedReason;
   return {
     output: stripTerminalCommandEcho(generateMockCommandOutput(command, type), command),
-    exitCode: 0,
+    exitCode: degradedReason ? 1 : 0,
+    mode: degradedReason ? "degraded" : "mock",
+    degradedReason,
   };
 }
 
@@ -118,17 +131,44 @@ export function resolveCommandHistoryPlaceholders(
 
 commandRouter.post("/", async (req: Request, res: Response) => {
   try {
-    const body: CommandRequestBody = req.body;
-    const { command, type, scenario, commandHistory } = body;
-    const commandResolved = resolveAngleBracketPlaceholders(command, scenario);
-    const commandHistoryResolved = resolveCommandHistoryPlaceholders(commandHistory, scenario);
+    if (!isRecord(req.body)) {
+      res.status(400).json({ error: "Invalid request body" });
+      return;
+    }
 
+    const body = req.body as unknown as CommandRequestBody;
+    const { command, type, scenario, commandHistory } = body;
+    if (typeof body.sessionToken !== "string" || body.sessionToken.trim() === "") {
+      res.status(400).json({ error: "Session token is required" });
+      return;
+    }
+    if (typeof command !== "string" || command.trim() === "") {
+      res.status(400).json({ error: "Command is required" });
+      return;
+    }
     if (!VALID_COMMAND_TYPES.includes(type)) {
       res.status(400).json({
         error: "Invalid command type. Must be oc, kql, or geneva.",
       });
       return;
     }
+
+    const session = await getSessionStore().get(body.sessionToken);
+    if (!session || session.used) {
+      res.status(403).json({ error: "Invalid or expired session token" });
+      return;
+    }
+    if (
+      scenario &&
+      (scenario.title !== session.scenarioTitle ||
+        scenario.difficulty !== session.difficulty)
+    ) {
+      res.status(409).json({ error: "Scenario does not match the active session" });
+      return;
+    }
+
+    const commandResolved = resolveAngleBracketPlaceholders(command, scenario);
+    const commandHistoryResolved = resolveCommandHistoryPlaceholders(commandHistory, scenario);
 
     const readiness = getAiReadiness();
     if (readiness.mockMode) {
@@ -193,7 +233,14 @@ commandRouter.post("/", async (req: Request, res: Response) => {
           `[command] timed out after ${getCommandTimeoutMs()}ms; returning mock fallback for ${fallbackType} command`,
         );
       }
-      res.json(buildMockCommandResponse(fallbackCommand, fallbackType));
+      res.json(
+        buildMockCommandResponse(fallbackCommand, fallbackType, {
+          degradedReason:
+            error instanceof CommandGenerationTimeoutError
+              ? "timeout"
+              : "missing_output",
+        }),
+      );
       return;
     }
 

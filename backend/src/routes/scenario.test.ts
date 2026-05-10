@@ -412,6 +412,7 @@ describe("POST /api/scenario", () => {
     vi.spyOn(storageModule, "getMetricsStore").mockReturnValue({
       recordGameplay,
       hasLifecycleEvent: vi.fn(),
+      getLatestBySessionToken: vi.fn(),
       getPlayerHistory: vi.fn(),
       getGameplayAnalytics: vi.fn(),
     });

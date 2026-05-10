@@ -4,7 +4,7 @@ import { useState } from "react";
 import { useGameStore } from "@/stores/gameStore";
 import { useRouter } from "next/navigation";
 import { cn } from "@/lib/utils";
-import { scoreToGrade } from "@/lib/gameplayTelemetry";
+import { scoreToGrade, sendCompletionTelemetryIfNeeded } from "@/lib/gameplayTelemetry";
 import { Trophy, Target, Shield, FileText, Crosshair, X, Check, Loader2 } from "lucide-react";
 
 const DIMENSIONS = [
@@ -41,15 +41,13 @@ export function ScoreBreakdown() {
     if (!nickname.trim() || submitState !== "idle") return;
     setSubmitState("submitting");
     try {
+      await sendCompletionTelemetryIfNeeded(useGameStore.getState());
       const response = await fetch("/api/scores", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           sessionToken,
           nickname: nickname.trim(),
-          score,
-          grade,
-          commandCount,
         }),
       });
       if (!response.ok) throw new Error("Submission failed");

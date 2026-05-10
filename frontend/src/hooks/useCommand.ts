@@ -59,6 +59,7 @@ export function useCommand() {
       });
 
       try {
+        const activeSessionToken = useGameStore.getState().sessionToken;
         const entries = useGameStore.getState().terminalEntries;
         const commandHistory = entries.slice(-MAX_COMMAND_HISTORY).map((e) => ({
           command: e.command,
@@ -67,7 +68,7 @@ export function useCommand() {
             : e.output,
           type: e.type,
         }));
-        telemetryHeaders = await buildTelemetryHeaders(useGameStore.getState().sessionToken);
+        telemetryHeaders = await buildTelemetryHeaders(activeSessionToken);
 
         const response = await fetch("/api/command", {
           method: "POST",
@@ -75,7 +76,13 @@ export function useCommand() {
             "Content-Type": "application/json",
             ...telemetryHeaders,
           },
-          body: JSON.stringify({ command, type, scenario, commandHistory }),
+          body: JSON.stringify({
+            sessionToken: activeSessionToken,
+            command,
+            type,
+            scenario,
+            commandHistory,
+          }),
         });
 
         const raw = await response.text();
@@ -89,6 +96,14 @@ export function useCommand() {
         if (!response.ok) {
           captureFrontendError(
             new Error(`Command proxy request failed (${response.status})`),
+            buildCommandTelemetryContext(),
+          );
+        }
+        if (data.mode === "degraded") {
+          captureFrontendError(
+            new Error(
+              `Command simulation degraded (${String(data.degradedReason || "unknown")})`,
+            ),
             buildCommandTelemetryContext(),
           );
         }

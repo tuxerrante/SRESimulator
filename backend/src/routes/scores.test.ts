@@ -3,6 +3,7 @@ import express from "express";
 import { mkdtemp, rm } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
+import type { ScoringEvent } from "../../../shared/types/scoring";
 
 async function httpRequest(
   app: express.Express,
@@ -62,6 +63,7 @@ describe("scores routes", () => {
 
   let scoresRouter: typeof import("./scores").scoresRouter;
   let getSessionStore: typeof import("../lib/storage").getSessionStore;
+  let getMetricsStore: typeof import("../lib/storage").getMetricsStore;
 
   beforeAll(async () => {
     tmpDir = await mkdtemp(join(tmpdir(), "scores-test-"));
@@ -75,6 +77,7 @@ describe("scores routes", () => {
     const storageModule = await import("../lib/storage");
     await storageModule.initStorage();
     getSessionStore = storageModule.getSessionStore;
+    getMetricsStore = storageModule.getMetricsStore;
 
     const scoresModule = await import("./scores");
     scoresRouter = scoresModule.scoresRouter;
@@ -99,6 +102,62 @@ describe("scores routes", () => {
     app.use(express.json());
     app.use("/api/scores", scoresRouter);
     return app;
+  }
+
+  async function recordCompletedTelemetry(
+    sessionToken: string,
+    overrides?: {
+      commandCount?: number;
+      durationMs?: number;
+      scoringEvents?: ScoringEvent[];
+      difficulty?: "easy" | "medium" | "hard";
+      scenarioTitle?: string;
+      lifecycleState?: "started" | "completed" | "abandoned";
+    },
+  ): Promise<void> {
+    const scoringEvents: ScoringEvent[] = overrides?.scoringEvents ?? [
+      {
+        type: "bonus",
+        dimension: "efficiency",
+        points: 20,
+        reason: "Efficient path",
+        timestamp: Date.now(),
+      },
+      {
+        type: "bonus",
+        dimension: "safety",
+        points: 20,
+        reason: "Safe execution",
+        timestamp: Date.now(),
+      },
+      {
+        type: "bonus",
+        dimension: "documentation",
+        points: 20,
+        reason: "Good methodology",
+        timestamp: Date.now(),
+      },
+      {
+        type: "bonus",
+        dimension: "accuracy",
+        points: 20,
+        reason: "Correct root cause",
+        timestamp: Date.now(),
+      },
+    ];
+
+    await getMetricsStore().recordGameplay({
+      sessionToken,
+      lifecycleState: overrides?.lifecycleState ?? "completed",
+      difficulty: overrides?.difficulty ?? "easy",
+      scenarioTitle: overrides?.scenarioTitle ?? "Test Scenario",
+      commandCount: overrides?.commandCount ?? 5,
+      durationMs: overrides?.durationMs ?? 120_000,
+      scoringEvents,
+      scoreTotal: 999,
+      grade: "A+",
+      completed: (overrides?.lifecycleState ?? "completed") === "completed",
+    });
   }
 
   it("GET /api/scores returns entries array and hallOfFame", async () => {
@@ -126,11 +185,18 @@ describe("scores routes", () => {
     const app = createApp();
     const res = await httpRequest(app, "POST", "/api/scores", {
       nickname: "testuser",
-      score: { total: 80 },
     });
 
     expect(res.status).toBe(400);
     expect(res.body.error).toContain("Session token is required");
+  });
+
+  it("POST /api/scores rejects non-object request bodies", async () => {
+    const app = createApp();
+    const res = await httpRequest(app, "POST", "/api/scores", []);
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain("Invalid request body");
   });
 
   it("POST /api/scores rejects invalid session token", async () => {
@@ -138,9 +204,6 @@ describe("scores routes", () => {
     const res = await httpRequest(app, "POST", "/api/scores", {
       sessionToken: "fake-token",
       nickname: "testuser",
-      score: { total: 80 },
-      grade: "A",
-      commandCount: 5,
     });
 
     expect(res.status).toBe(403);
@@ -154,13 +217,40 @@ describe("scores routes", () => {
     const res = await httpRequest(app, "POST", "/api/scores", {
       sessionToken: token,
       nickname: "",
-      score: { total: 80 },
-      grade: "A",
-      commandCount: 5,
     });
 
     expect(res.status).toBe(400);
     expect(res.body.error).toContain("Nickname is required");
+  });
+
+  it("POST /api/scores preserves token when completion telemetry is missing", async () => {
+    const token = await getSessionStore().create({
+      difficulty: "easy",
+      scenarioTitle: "Retry Scenario",
+      identityKind: "github",
+      githubUserId: "retry-gh-1",
+      githubLogin: "retry-gh-1",
+      anonymousClaimKey: null,
+      persistentScoreEligible: true,
+    });
+
+    const app = createApp();
+    const invalid = await httpRequest(app, "POST", "/api/scores", {
+      sessionToken: token,
+      nickname: "retryuser",
+    });
+    expect(invalid.status).toBe(409);
+
+    await recordCompletedTelemetry(token, {
+      difficulty: "easy",
+      scenarioTitle: "Retry Scenario",
+    });
+
+    const retry = await httpRequest(app, "POST", "/api/scores", {
+      sessionToken: token,
+      nickname: "retryuser",
+    });
+    expect(retry.status).toBe(201);
   });
 
   it("POST /api/scores rejects nickname over 20 chars", async () => {
@@ -170,9 +260,6 @@ describe("scores routes", () => {
     const res = await httpRequest(app, "POST", "/api/scores", {
       sessionToken: token,
       nickname: "a".repeat(21),
-      score: { total: 80 },
-      grade: "A",
-      commandCount: 5,
     });
 
     expect(res.status).toBe(400);
@@ -186,9 +273,6 @@ describe("scores routes", () => {
     const res = await httpRequest(app, "POST", "/api/scores", {
       sessionToken: token,
       nickname: "fuck",
-      score: { total: 80 },
-      grade: "A",
-      commandCount: 5,
     });
 
     expect(res.status).toBe(400);
@@ -205,26 +289,34 @@ describe("scores routes", () => {
       anonymousClaimKey: null,
       persistentScoreEligible: true,
     });
+    await recordCompletedTelemetry(token, {
+      difficulty: "easy",
+      scenarioTitle: "Test Scenario",
+      commandCount: 5,
+    });
 
     const app = createApp();
     const res = await httpRequest(app, "POST", "/api/scores", {
       sessionToken: token,
       nickname: "testuser",
       score: {
-        efficiency: 20,
-        safety: 20,
-        documentation: 20,
-        accuracy: 20,
-        total: 80,
+        efficiency: 25,
+        safety: 25,
+        documentation: 25,
+        accuracy: 25,
+        total: 100,
       },
-      grade: "A",
-      commandCount: 5,
+      grade: "A+",
+      commandCount: 0,
     });
 
     expect(res.status).toBe(201);
     expect(res.body.nickname).toBe("testuser");
     expect(res.body.difficulty).toBe("easy");
     expect(res.body.githubUserId).toBe("12345");
+    expect((res.body.score as Record<string, unknown>).total).toBe(80);
+    expect(res.body.grade).toBe("B");
+    expect(res.body.commandCount).toBe(5);
   });
 
   it("POST /api/scores keeps anonymous scores ephemeral", async () => {
@@ -237,20 +329,22 @@ describe("scores routes", () => {
       anonymousClaimKey: "claim-1",
       persistentScoreEligible: false,
     });
+    await recordCompletedTelemetry(token, {
+      difficulty: "easy",
+      scenarioTitle: "Anonymous Trial",
+      commandCount: 7,
+      scoringEvents: [
+        { type: "bonus", dimension: "efficiency", points: 18, reason: "eff", timestamp: Date.now() },
+        { type: "bonus", dimension: "safety", points: 19, reason: "safe", timestamp: Date.now() },
+        { type: "bonus", dimension: "documentation", points: 20, reason: "docs", timestamp: Date.now() },
+        { type: "bonus", dimension: "accuracy", points: 21, reason: "acc", timestamp: Date.now() },
+      ],
+    });
 
     const app = createApp();
     const res = await httpRequest(app, "POST", "/api/scores", {
       sessionToken: token,
       nickname: "anonplayer",
-      score: {
-        efficiency: 18,
-        safety: 19,
-        documentation: 20,
-        accuracy: 21,
-        total: 78,
-      },
-      grade: "B",
-      commandCount: 7,
     });
 
     expect(res.status).toBe(200);
@@ -277,20 +371,16 @@ describe("scores routes", () => {
       anonymousClaimKey: null,
       persistentScoreEligible: true,
     });
+    await recordCompletedTelemetry(token, {
+      difficulty: "easy",
+      scenarioTitle: "Automated Regression",
+      commandCount: 5,
+    });
 
     const app = createApp();
     const submit = await httpRequest(app, "POST", "/api/scores", {
       sessionToken: token,
       nickname: "autouser",
-      score: {
-        efficiency: 20,
-        safety: 20,
-        documentation: 20,
-        accuracy: 20,
-        total: 80,
-      },
-      grade: "A",
-      commandCount: 5,
     });
 
     expect(submit.status).toBe(201);
@@ -302,5 +392,30 @@ describe("scores routes", () => {
         (entry) => entry.nickname === "autouser",
       ),
     ).toBe(false);
+  });
+
+  it("POST /api/scores rejects telemetry/session mismatch", async () => {
+    const token = await getSessionStore().create({
+      difficulty: "easy",
+      scenarioTitle: "Expected Scenario",
+      identityKind: "github",
+      githubUserId: "mismatch-gh",
+      githubLogin: "mismatch-gh",
+      anonymousClaimKey: null,
+      persistentScoreEligible: true,
+    });
+    await recordCompletedTelemetry(token, {
+      difficulty: "hard",
+      scenarioTitle: "Wrong Scenario",
+    });
+
+    const app = createApp();
+    const res = await httpRequest(app, "POST", "/api/scores", {
+      sessionToken: token,
+      nickname: "mismatch",
+    });
+
+    expect(res.status).toBe(409);
+    expect(res.body.error).toContain("mismatch");
   });
 });

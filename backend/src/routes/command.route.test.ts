@@ -5,6 +5,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const { generateAiTextMock } = vi.hoisted(() => ({
   generateAiTextMock: vi.fn(),
 }));
+const storageMocks = vi.hoisted(() => ({
+  getSessionStore: vi.fn(),
+  sessionGet: vi.fn(),
+}));
 
 vi.mock("../lib/ai-runtime", async () => {
   const actual = await vi.importActual<typeof import("../lib/ai-runtime")>("../lib/ai-runtime");
@@ -13,6 +17,10 @@ vi.mock("../lib/ai-runtime", async () => {
     generateAiText: generateAiTextMock,
   };
 });
+
+vi.mock("../lib/storage", () => ({
+  getSessionStore: storageMocks.getSessionStore,
+}));
 
 import { commandRouter, resolveCommandHistoryPlaceholders } from "./command";
 
@@ -69,7 +77,14 @@ async function postJson(
         return;
       }
 
-      const payload = JSON.stringify(body);
+      const normalizedBody = path === "/api/command" &&
+        body &&
+        typeof body === "object" &&
+        !Array.isArray(body) &&
+        !Object.prototype.hasOwnProperty.call(body, "sessionToken")
+        ? { ...(body as Record<string, unknown>), sessionToken: "session-123" }
+        : body;
+      const payload = JSON.stringify(normalizedBody);
       const req = request(
         {
           hostname: "127.0.0.1",
@@ -128,6 +143,22 @@ describe("POST /api/command", () => {
     originalEnv.AI_COMMAND_TIMEOUT_MS = process.env.AI_COMMAND_TIMEOUT_MS;
     process.env.AI_MOCK_MODE = "true";
     generateAiTextMock.mockReset();
+    storageMocks.getSessionStore.mockReturnValue({
+      get: storageMocks.sessionGet,
+    });
+    storageMocks.sessionGet.mockResolvedValue({
+      token: "session-123",
+      difficulty: "easy",
+      scenarioTitle: "Worker Node NotReady",
+      startTime: Date.now(),
+      used: false,
+      trafficSource: "player",
+      identityKind: "anonymous",
+      githubUserId: null,
+      githubLogin: null,
+      anonymousClaimKey: null,
+      persistentScoreEligible: false,
+    });
   });
 
   afterEach(() => {
@@ -345,7 +376,9 @@ describe("POST /api/command", () => {
     });
 
     expect(res.status).toBe(200);
-    expect(res.body.exitCode).toBe(0);
+    expect(res.body.exitCode).toBe(1);
+    expect(res.body.mode).toBe("degraded");
+    expect(res.body.degradedReason).toBe("timeout");
     expect(res.body.output).toContain("Name:");
     expect(res.body.output).not.toContain("delayed synthetic response");
     expect(aborted).toBe(true);

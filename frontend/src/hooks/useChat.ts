@@ -141,6 +141,7 @@ export function useChat() {
             ...telemetryHeaders,
           },
           body: JSON.stringify({
+            sessionToken,
             messages: chatMessages,
             sessionToken,
             scenario,

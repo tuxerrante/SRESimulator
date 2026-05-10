@@ -66,6 +66,7 @@ async function createFullApp(): Promise<Express> {
   const { chatRouter } = await import("../routes/chat");
   const { commandRouter } = await import("../routes/command");
   const { scenarioRouter } = await import("../routes/scenario");
+  const { gameplayRouter } = await import("../routes/gameplay");
   const { scoresRouter } = await import("../routes/scores");
   const { healthRouter } = await import("../routes/health");
   const { guideRouter } = await import("../routes/guide");
@@ -76,6 +77,7 @@ async function createFullApp(): Promise<Express> {
   app.use("/api/chat", chatRouter);
   app.use("/api/command", commandRouter);
   app.use("/api/scenario", scenarioRouter);
+  app.use("/api/gameplay", gameplayRouter);
   app.use("/api/scores", scoresRouter);
   app.use("/api/guide", guideRouter);
   app.use("/", healthRouter);
@@ -169,6 +171,7 @@ describe("full game flow: scenario -> chat -> command -> scores", () => {
 
   it("POST /api/chat responds with SSE stream", async () => {
     const result = await postChatSSE(baseUrl, {
+      sessionToken,
       messages: [
         { role: "user", content: "What do I see in the incident ticket?" },
       ],
@@ -189,6 +192,7 @@ describe("full game flow: scenario -> chat -> command -> scores", () => {
 
   it("POST /api/chat with follow-up preserves conversation", async () => {
     const result = await postChatSSE(baseUrl, {
+      sessionToken,
       messages: [
         { role: "user", content: "What do I see in the incident ticket?" },
         {
@@ -212,6 +216,7 @@ describe("full game flow: scenario -> chat -> command -> scores", () => {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
+        sessionToken,
         command: "oc get nodes",
         type: "oc",
         scenario,
@@ -231,6 +236,7 @@ describe("full game flow: scenario -> chat -> command -> scores", () => {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
+        sessionToken,
         command:
           'ClusterAuditLogs | where Verb == "delete" | project TimeGenerated, User, ObjectRef',
         type: "kql",
@@ -254,21 +260,30 @@ describe("full game flow: scenario -> chat -> command -> scores", () => {
   });
 
   it("POST /api/scores submits score with valid session token", async () => {
+    const telemetryRes = await fetch(`${baseUrl}/api/gameplay`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        sessionToken,
+        lifecycleState: "completed",
+        commandCount: 8,
+        durationMs: 90_000,
+        scoringEvents: [
+          { type: "bonus", dimension: "efficiency", points: 20, reason: "eff", timestamp: Date.now() },
+          { type: "bonus", dimension: "safety", points: 22, reason: "safe", timestamp: Date.now() },
+          { type: "bonus", dimension: "documentation", points: 18, reason: "docs", timestamp: Date.now() },
+          { type: "bonus", dimension: "accuracy", points: 15, reason: "acc", timestamp: Date.now() },
+        ],
+      }),
+    });
+    expect(telemetryRes.status).toBe(202);
+
     const res = await fetch(`${baseUrl}/api/scores`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         sessionToken,
         nickname: "TestSRE",
-        score: {
-          efficiency: 20,
-          safety: 22,
-          documentation: 18,
-          accuracy: 15,
-          total: 75,
-        },
-        grade: "B",
-        commandCount: 8,
       }),
     });
     expect(res.status).toBe(201);
@@ -287,15 +302,6 @@ describe("full game flow: scenario -> chat -> command -> scores", () => {
       body: JSON.stringify({
         sessionToken,
         nickname: "CheatSRE",
-        score: {
-          efficiency: 25,
-          safety: 25,
-          documentation: 25,
-          accuracy: 25,
-          total: 100,
-        },
-        grade: "A+",
-        commandCount: 1,
       }),
     });
     expect(res.status).toBe(403);
@@ -340,6 +346,7 @@ describe("command validation", () => {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
+        sessionToken: "session-invalid",
         command: "something",
         type: "invalid",
         scenario: null,
