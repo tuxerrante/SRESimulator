@@ -281,6 +281,45 @@ describe("scores routes", () => {
     expect(res.body.grade).toBe("F");
   });
 
+  it("POST /api/scores uses completed telemetry when abandoned telemetry arrives later", async () => {
+    const token = await getSessionStore().create({
+      difficulty: "easy",
+      scenarioTitle: "Lifecycle Ordering",
+      identityKind: "github",
+      githubUserId: "lifecycle-gh-1",
+      githubLogin: "lifecycle-gh-1",
+      anonymousClaimKey: null,
+      persistentScoreEligible: true,
+    });
+
+    await recordCompletedTelemetry(token, {
+      difficulty: "easy",
+      scenarioTitle: "Lifecycle Ordering",
+      scoringEvents: [
+        { type: "bonus", dimension: "efficiency", points: 20, reason: "eff", timestamp: Date.now() },
+        { type: "bonus", dimension: "safety", points: 20, reason: "safe", timestamp: Date.now() },
+        { type: "bonus", dimension: "documentation", points: 20, reason: "docs", timestamp: Date.now() },
+        { type: "bonus", dimension: "accuracy", points: 20, reason: "acc", timestamp: Date.now() },
+      ],
+    });
+    await recordCompletedTelemetry(token, {
+      difficulty: "easy",
+      scenarioTitle: "Lifecycle Ordering",
+      lifecycleState: "abandoned",
+      scoringEvents: [],
+    });
+
+    const app = createApp();
+    const res = await httpRequest(app, "POST", "/api/scores", {
+      sessionToken: token,
+      nickname: "lifecycle",
+    });
+
+    expect(res.status).toBe(201);
+    expect((res.body.score as Record<string, unknown>).total).toBe(80);
+    expect(res.body.grade).toBe("B");
+  });
+
   it("POST /api/scores rejects nickname over 20 chars", async () => {
     const token = await getSessionStore().create("easy", "Test");
 

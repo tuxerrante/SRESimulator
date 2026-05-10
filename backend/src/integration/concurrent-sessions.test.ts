@@ -13,7 +13,15 @@ import {
 let baseUrl: string;
 let localServer: Server | null = null;
 const externalSessionToken = process.env.E2E_SESSION_TOKEN?.trim();
-let chatSessionToken = externalSessionToken ?? "session-token";
+const externalSessionTokens = (process.env.E2E_SESSION_TOKENS ?? "")
+  .split(",")
+  .map((token) => token.trim())
+  .filter((token) => token.length > 0);
+let chatSessionTokens: string[] = [];
+
+function sessionTokenFor(index: number): string {
+  return chatSessionTokens[index] ?? chatSessionTokens[0] ?? "session-token";
+}
 
 async function createLocalApp(withRateLimit: boolean) {
   process.env.AI_MOCK_MODE = "true";
@@ -43,11 +51,16 @@ async function createLocalApp(withRateLimit: boolean) {
 
 beforeAll(async () => {
   if (isExternalTarget()) {
-    if (!externalSessionToken) {
-      throw new Error("E2E_SESSION_TOKEN is required when E2E_BACKEND_URL is set.");
+    if (externalSessionTokens.length > 0) {
+      chatSessionTokens = externalSessionTokens;
+    } else if (externalSessionToken) {
+      chatSessionTokens = [externalSessionToken];
+    } else {
+      throw new Error(
+        "E2E_SESSION_TOKEN or E2E_SESSION_TOKENS is required when E2E_BACKEND_URL is set.",
+      );
     }
     baseUrl = getBackendUrl();
-    chatSessionToken = externalSessionToken;
     return;
   }
 
@@ -56,7 +69,12 @@ beforeAll(async () => {
   baseUrl = result.url;
   localServer = result.server;
   const { getSessionStore } = await import("../lib/storage");
-  chatSessionToken = await getSessionStore().create("easy", "Concurrent Chat");
+  const sessionStore = getSessionStore();
+  chatSessionTokens = await Promise.all(
+    Array.from({ length: 24 }, (_, index) =>
+      sessionStore.create("easy", `Concurrent Chat ${index + 1}`),
+    ),
+  );
 });
 
 afterAll(() => {
@@ -69,7 +87,7 @@ afterAll(() => {
 describe("SSE stream integrity under concurrent sessions", () => {
   it("each concurrent session receives a complete SSE stream with [DONE]", async () => {
     const bodies = Array.from({ length: 5 }, (_, i) =>
-      buildChatBody(2, i % 2 === 0 ? "reading" : "context", chatSessionToken),
+      buildChatBody(2, i % 2 === 0 ? "reading" : "context", sessionTokenFor(i)),
     );
 
     const results = await fireParallelChats(baseUrl, bodies);
@@ -106,9 +124,9 @@ describe("SSE stream integrity under concurrent sessions", () => {
 
   it("concurrent sessions do not interleave SSE data", async () => {
     const bodies = [
-      buildChatBody(2, "reading", chatSessionToken),
-      buildChatBody(2, "context", chatSessionToken),
-      buildChatBody(2, "facts", chatSessionToken),
+      buildChatBody(2, "reading", sessionTokenFor(0)),
+      buildChatBody(2, "context", sessionTokenFor(1)),
+      buildChatBody(2, "facts", sessionTokenFor(2)),
     ];
 
     const results = await fireParallelChats(baseUrl, bodies);
@@ -135,7 +153,9 @@ describe("SSE stream integrity under concurrent sessions", () => {
   });
 
   it("10 concurrent sessions all complete or are throttled gracefully", async () => {
-    const bodies = Array.from({ length: 10 }, () => buildChatBody(3, "reading", chatSessionToken));
+    const bodies = Array.from({ length: 10 }, (_, i) =>
+      buildChatBody(3, "reading", sessionTokenFor(i)),
+    );
     const results = await fireParallelChats(baseUrl, bodies);
 
     if (isExternalTarget()) {
@@ -155,7 +175,7 @@ describe("SSE stream integrity under concurrent sessions", () => {
 
 describe("independent session responses", () => {
   it("two sessions with different histories receive independent responses", async () => {
-    const sessionA = buildChatBody(2, "reading", chatSessionToken);
+    const sessionA = buildChatBody(2, "reading", sessionTokenFor(0));
     sessionA.messages = [
       { role: "user", content: "I think the root cause is etcd failure." },
       {
@@ -165,7 +185,7 @@ describe("independent session responses", () => {
       },
     ];
 
-    const sessionB = buildChatBody(2, "context", chatSessionToken);
+    const sessionB = buildChatBody(2, "context", sessionTokenFor(1));
     sessionB.messages = [
       { role: "user", content: "I suspect DNS is broken." },
       {
@@ -223,7 +243,9 @@ describe("token metrics under concurrent load", () => {
 
     expect(metricsBefore.status).toBe(200);
 
-    const bodies = Array.from({ length: 3 }, () => buildChatBody(2, "reading", chatSessionToken));
+    const bodies = Array.from({ length: 3 }, (_, i) =>
+      buildChatBody(2, "reading", sessionTokenFor(i)),
+    );
     await fireParallelChats(baseUrl, bodies);
 
     const metricsAfter = await getTokenMetrics(baseUrl);
@@ -256,13 +278,15 @@ describe("rate-limit behavior", { timeout: 120_000 }, () => {
   });
 
   it("allows requests within the rate limit window", async () => {
-    const result = await postChatSSE(rateLimitUrl, buildChatBody(1, "reading", chatSessionToken));
+    const result = await postChatSSE(rateLimitUrl, buildChatBody(1, "reading", sessionTokenFor(0)));
     expect(result.status).toBe(200);
   });
 
   it("returns 429 after exceeding per-IP rate limit", async () => {
     if (isExternalTarget()) {
-      const bodies = Array.from({ length: 20 }, () => buildChatBody(1, "reading", chatSessionToken));
+      const bodies = Array.from({ length: 20 }, (_, i) =>
+        buildChatBody(1, "reading", sessionTokenFor(i)),
+      );
       const results = await Promise.allSettled(
         bodies.map((b) => postChatSSE(rateLimitUrl, b)),
       );
@@ -284,7 +308,7 @@ describe("rate-limit behavior", { timeout: 120_000 }, () => {
     // Local: 15 req/min/IP limit. Fire 20 requests sequentially.
     const results: number[] = [];
     for (let i = 0; i < 20; i++) {
-      const r = await postChatSSE(rateLimitUrl, buildChatBody(1, "reading", chatSessionToken));
+      const r = await postChatSSE(rateLimitUrl, buildChatBody(1, "reading", sessionTokenFor(i)));
       results.push(r.status);
     }
 
@@ -299,7 +323,7 @@ describe("rate-limit behavior", { timeout: 120_000 }, () => {
 
     await new Promise((resolve) => setTimeout(resolve, 61_000));
 
-    const result = await postChatSSE(rateLimitUrl, buildChatBody(1, "reading", chatSessionToken));
+    const result = await postChatSSE(rateLimitUrl, buildChatBody(1, "reading", sessionTokenFor(0)));
     expect(result.status).toBe(200);
     expect(result.done).toBe(true);
   });

@@ -413,6 +413,7 @@ describe("POST /api/scenario", () => {
       recordGameplay,
       hasLifecycleEvent: vi.fn(),
       getLatestBySessionToken: vi.fn(),
+      getLatestCompletedBySessionToken: vi.fn(),
       getPlayerHistory: vi.fn(),
       getGameplayAnalytics: vi.fn(),
     });

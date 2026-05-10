@@ -132,8 +132,8 @@ scoresRouter.post("/", async (req: Request, res: Response) => {
       return;
     }
 
-    const gameplayRecord = await getMetricsStore().getLatestBySessionToken(sessionToken);
-    if (!gameplayRecord || gameplayRecord.lifecycleState !== "completed") {
+    const gameplayRecord = await getMetricsStore().getLatestCompletedBySessionToken(sessionToken);
+    if (!gameplayRecord) {
       res.status(409).json({ error: "Completion telemetry is required before submitting a score" });
       return;
     }
