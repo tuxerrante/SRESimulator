@@ -94,10 +94,16 @@ export class JsonMetricsStore implements IMetricsStore {
   }
 
   async getLatestBySessionToken(sessionToken: string): Promise<GameplayRecord | null> {
-    const records = this.records
-      .filter((record) => record.sessionToken === sessionToken)
-      .sort((a, b) => (b.createdAt?.getTime() ?? 0) - (a.createdAt?.getTime() ?? 0));
-    return records[0] ?? null;
+    let latest: GameplayRecord | null = null;
+
+    for (const record of this.records) {
+      if (record.sessionToken !== sessionToken) {
+        continue;
+      }
+      latest = getPreferredAnalyticsRecord(latest ?? undefined, record);
+    }
+
+    return latest;
   }
 
   async getGameplayAnalytics(): Promise<GameplayAnalytics> {

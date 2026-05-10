@@ -4,7 +4,11 @@ import { useState } from "react";
 import { useGameStore } from "@/stores/gameStore";
 import { useRouter } from "next/navigation";
 import { cn } from "@/lib/utils";
-import { scoreToGrade, sendCompletionTelemetryIfNeeded } from "@/lib/gameplayTelemetry";
+import {
+  clearCompletionTelemetrySent,
+  scoreToGrade,
+  sendCompletionTelemetryIfNeeded,
+} from "@/lib/gameplayTelemetry";
 import { Trophy, Target, Shield, FileText, Crosshair, X, Check, Loader2 } from "lucide-react";
 
 const DIMENSIONS = [
@@ -29,6 +33,7 @@ export function ScoreBreakdown() {
   const [nickname, setNickname] = useState(storedNickname ?? "");
   const [submitState, setSubmitState] = useState<"idle" | "submitting" | "submitted">("idle");
   const [submitMessage, setSubmitMessage] = useState("Submitted!");
+  const [submitError, setSubmitError] = useState<string | null>(null);
 
   const handleClose = () => {
     resetGame();
@@ -40,17 +45,44 @@ export function ScoreBreakdown() {
   const handleSubmit = async () => {
     if (!nickname.trim() || submitState !== "idle") return;
     setSubmitState("submitting");
+    setSubmitError(null);
     try {
-      await sendCompletionTelemetryIfNeeded(useGameStore.getState());
-      const response = await fetch("/api/scores", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          sessionToken,
-          nickname: nickname.trim(),
-        }),
-      });
-      if (!response.ok) throw new Error("Submission failed");
+      if (!sessionToken) {
+        throw new Error("Session expired. Restart the scenario and try again.");
+      }
+
+      const ensureCompletionTelemetry = async (): Promise<void> => {
+        const delivered = await sendCompletionTelemetryIfNeeded(useGameStore.getState(), {
+          requirePersistenceAck: true,
+        });
+        if (!delivered) {
+          throw new Error("Failed to sync completion telemetry. Please retry.");
+        }
+      };
+
+      const submitScore = async (): Promise<Response> =>
+        fetch("/api/scores", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            sessionToken,
+            nickname: nickname.trim(),
+          }),
+        });
+
+      await ensureCompletionTelemetry();
+      let response = await submitScore();
+      if (response.status === 409) {
+        clearCompletionTelemetrySent(sessionToken);
+        await ensureCompletionTelemetry();
+        response = await submitScore();
+      }
+
+      if (!response.ok) {
+        const payload = (await response.json().catch(() => ({}))) as { error?: string };
+        throw new Error(payload.error ?? "Submission failed");
+      }
+
       const payload = (await response.json()) as { mode?: "ephemeral" | "persistent" };
       updateNickname(nickname);
       setSubmitMessage(
@@ -59,7 +91,9 @@ export function ScoreBreakdown() {
           : "Persistent best score saved"
       );
       setSubmitState("submitted");
-    } catch {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Submission failed";
+      setSubmitError(message);
       setSubmitState("idle");
     }
   };
@@ -176,26 +210,31 @@ export function ScoreBreakdown() {
 
         <div className="px-5 py-4 border-t border-zinc-700 space-y-3">
           {submitState !== "submitted" ? (
-            <div className="flex gap-2">
-              <input
-                type="text"
-                value={nickname}
-                onChange={(e) => setNickname(e.target.value.slice(0, 20))}
-                placeholder="Your callsign"
-                maxLength={20}
-                disabled={submitState === "submitting"}
-                className="flex-1 px-3 py-2 rounded-lg bg-zinc-800 border border-zinc-700 text-sm text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-amber-600 disabled:opacity-50"
-              />
-              <button
-                onClick={handleSubmit}
-                disabled={!nickname.trim() || submitState === "submitting"}
-                className="px-4 py-2 rounded-lg bg-amber-600 text-white text-sm font-medium hover:bg-amber-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-              >
-                {submitState === "submitting" ? (
-                  <Loader2 size={14} className="animate-spin" />
-                ) : null}
-                {viewer ? "Save Best Score" : "Finish Trial Run"}
-              </button>
+            <div className="space-y-2">
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={nickname}
+                  onChange={(e) => setNickname(e.target.value.slice(0, 20))}
+                  placeholder="Your callsign"
+                  maxLength={20}
+                  disabled={submitState === "submitting"}
+                  className="flex-1 px-3 py-2 rounded-lg bg-zinc-800 border border-zinc-700 text-sm text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-amber-600 disabled:opacity-50"
+                />
+                <button
+                  onClick={handleSubmit}
+                  disabled={!nickname.trim() || submitState === "submitting"}
+                  className="px-4 py-2 rounded-lg bg-amber-600 text-white text-sm font-medium hover:bg-amber-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                >
+                  {submitState === "submitting" ? (
+                    <Loader2 size={14} className="animate-spin" />
+                  ) : null}
+                  {viewer ? "Save Best Score" : "Finish Trial Run"}
+                </button>
+              </div>
+              {submitError ? (
+                <div className="text-xs text-red-400">{submitError}</div>
+              ) : null}
             </div>
           ) : (
             <div className="flex items-center gap-2 text-emerald-400 text-sm justify-center py-2">

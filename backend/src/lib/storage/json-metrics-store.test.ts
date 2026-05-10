@@ -124,6 +124,27 @@ describe("JsonMetricsStore", () => {
     await expect(store.getLatestBySessionToken("missing-session")).resolves.toBeNull();
   });
 
+  it("prefers terminal lifecycle records over later started records for a session", async () => {
+    const store = new JsonMetricsStore();
+
+    await store.recordGameplay({
+      sessionToken: "session-terminal",
+      lifecycleState: "completed",
+      scoreTotal: 91,
+      createdAt: new Date("2026-05-01T09:00:00Z"),
+    });
+    await store.recordGameplay({
+      sessionToken: "session-terminal",
+      lifecycleState: "started",
+      createdAt: new Date("2026-05-01T10:00:00Z"),
+    });
+
+    await expect(store.getLatestBySessionToken("session-terminal")).resolves.toMatchObject({
+      lifecycleState: "completed",
+      scoreTotal: 91,
+    });
+  });
+
   it("ignores duplicate session and lifecycle pairs when recording gameplay", async () => {
     const store = new JsonMetricsStore();
 

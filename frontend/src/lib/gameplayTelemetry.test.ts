@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   buildGameplayTelemetryPayload,
+  clearCompletionTelemetrySent,
   hasCompletionTelemetryBeenSent,
   markCompletionTelemetrySent,
   scoreToGrade,
@@ -218,6 +219,32 @@ describe("sendGameplayTelemetryEvent", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it("uses fetch when persistence acknowledgment is required", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true });
+    const sendBeacon = vi.fn().mockReturnValue(true);
+    Object.defineProperty(globalThis, "fetch", {
+      value: fetchMock,
+      configurable: true,
+    });
+    Object.defineProperty(globalThis, "navigator", {
+      value: { sendBeacon },
+      configurable: true,
+    });
+
+    await expect(
+      sendGameplayTelemetryEvent(
+        {
+          sessionToken: "session-123",
+          lifecycleState: "completed",
+        },
+        { preferBeacon: false },
+      ),
+    ).resolves.toBe(true);
+
+    expect(sendBeacon).not.toHaveBeenCalled();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it("returns false when fallback fetch fails", async () => {
     const fetchMock = vi.fn().mockRejectedValue(new Error("network down"));
     Object.defineProperty(globalThis, "fetch", {
@@ -241,6 +268,8 @@ describe("sendGameplayTelemetryEvent", () => {
     expect(hasCompletionTelemetryBeenSent("session-123")).toBe(false);
     markCompletionTelemetrySent("session-123");
     expect(hasCompletionTelemetryBeenSent("session-123")).toBe(true);
+    clearCompletionTelemetrySent("session-123");
+    expect(hasCompletionTelemetryBeenSent("session-123")).toBe(false);
     expect(hasCompletionTelemetryBeenSent("session-456")).toBe(false);
   });
 
@@ -264,5 +293,31 @@ describe("sendGameplayTelemetryEvent", () => {
 
     await expect(sendCompletionTelemetryIfNeeded(makeState())).resolves.toBe(true);
     expect(hasCompletionTelemetryBeenSent("session-123")).toBe(true);
+  });
+
+  it("requires fetch acknowledgment when requested for completion telemetry", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true });
+    const sendBeacon = vi.fn().mockReturnValue(true);
+    Object.defineProperty(globalThis, "fetch", {
+      value: fetchMock,
+      configurable: true,
+    });
+    Object.defineProperty(globalThis, "navigator", {
+      value: {
+        sendBeacon,
+      },
+      configurable: true,
+    });
+
+    await expect(
+      sendCompletionTelemetryIfNeeded(makeState(), { requirePersistenceAck: true }),
+    ).resolves.toBe(true);
+    expect(sendBeacon).not.toHaveBeenCalled();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("returns true when completion telemetry was already delivered", async () => {
+    markCompletionTelemetrySent("session-123");
+    await expect(sendCompletionTelemetryIfNeeded(makeState())).resolves.toBe(true);
   });
 });

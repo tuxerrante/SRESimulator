@@ -205,7 +205,10 @@ export class MssqlMetricsStore implements IMetricsStore {
           created_at
         FROM gameplay_metrics
         WHERE session_token = @sessionToken
-        ORDER BY created_at DESC, id DESC
+        ORDER BY
+          CASE WHEN lifecycle_state IN ('completed', 'abandoned') THEN 1 ELSE 0 END DESC,
+          created_at DESC,
+          id DESC
       `);
 
     const row = result.recordset[0];

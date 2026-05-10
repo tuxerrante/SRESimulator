@@ -24,6 +24,14 @@ const COMPLETION_SENT_KEY_PREFIX = "gameplay-telemetry-completed:";
 
 export { scoreToGrade };
 
+interface SendGameplayTelemetryOptions {
+  preferBeacon?: boolean;
+}
+
+interface CompletionTelemetryOptions {
+  requirePersistenceAck?: boolean;
+}
+
 export function buildGameplayTelemetryPayload(
   state: GameplayTelemetryStateSnapshot,
   lifecycleState: GameplayLifecycleState,
@@ -83,16 +91,29 @@ export function markCompletionTelemetrySent(sessionToken: string): void {
   }
 }
 
+export function clearCompletionTelemetrySent(sessionToken: string): void {
+  try {
+    globalThis.sessionStorage?.removeItem(`${COMPLETION_SENT_KEY_PREFIX}${sessionToken}`);
+  } catch {
+    // Ignore storage restrictions; duplicate protection is best-effort.
+  }
+}
+
 export async function sendCompletionTelemetryIfNeeded(
   state: GameplayTelemetryStateSnapshot,
+  options: CompletionTelemetryOptions = {},
 ): Promise<boolean> {
   const sessionToken = state.sessionToken;
-  if (!sessionToken || hasCompletionTelemetryBeenSent(sessionToken)) {
+  if (!sessionToken) {
     return false;
+  }
+  if (hasCompletionTelemetryBeenSent(sessionToken)) {
+    return true;
   }
 
   const delivered = await sendGameplayTelemetryEvent(
     buildGameplayTelemetryPayload(state, "completed"),
+    { preferBeacon: !options.requirePersistenceAck },
   );
   if (delivered) {
     markCompletionTelemetrySent(sessionToken);
@@ -103,11 +124,17 @@ export async function sendCompletionTelemetryIfNeeded(
 
 export async function sendGameplayTelemetryEvent(
   payload: GameplayTelemetryEvent,
+  options: SendGameplayTelemetryOptions = {},
 ): Promise<boolean> {
   const body = JSON.stringify(payload);
+  const preferBeacon = options.preferBeacon ?? true;
 
   try {
-    if (typeof navigator !== "undefined" && typeof navigator.sendBeacon === "function") {
+    if (
+      preferBeacon &&
+      typeof navigator !== "undefined" &&
+      typeof navigator.sendBeacon === "function"
+    ) {
       const blob = new Blob([body], { type: "application/json" });
       const queued = navigator.sendBeacon("/api/gameplay", blob);
       if (queued) {

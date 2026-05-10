@@ -12,7 +12,8 @@ import {
 
 let baseUrl: string;
 let localServer: Server | null = null;
-let chatSessionToken = process.env.E2E_SESSION_TOKEN ?? "session-token";
+const externalSessionToken = process.env.E2E_SESSION_TOKEN?.trim();
+let chatSessionToken = externalSessionToken ?? "session-token";
 
 async function createLocalApp(withRateLimit: boolean) {
   process.env.AI_MOCK_MODE = "true";
@@ -42,7 +43,11 @@ async function createLocalApp(withRateLimit: boolean) {
 
 beforeAll(async () => {
   if (isExternalTarget()) {
+    if (!externalSessionToken) {
+      throw new Error("E2E_SESSION_TOKEN is required when E2E_BACKEND_URL is set.");
+    }
     baseUrl = getBackendUrl();
+    chatSessionToken = externalSessionToken;
     return;
   }
 

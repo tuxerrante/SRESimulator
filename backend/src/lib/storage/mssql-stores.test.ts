@@ -527,6 +527,9 @@ describe("MssqlMetricsStore", () => {
     expect((req.query.mock.calls[0][0] as string)).toContain(
       "WHERE session_token = @sessionToken",
     );
+    expect((req.query.mock.calls[0][0] as string)).toContain(
+      "CASE WHEN lifecycle_state IN ('completed', 'abandoned') THEN 1 ELSE 0 END DESC",
+    );
   });
 
   it("getGameplayAnalytics() coalesces empty summary counts to zero for playerless datasets", async () => {
