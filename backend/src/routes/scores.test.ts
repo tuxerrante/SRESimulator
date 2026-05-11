@@ -9,7 +9,8 @@ async function httpRequest(
   app: express.Express,
   method: "GET" | "POST",
   path: string,
-  body?: unknown
+  body?: unknown,
+  extraHeaders: Record<string, string> = {},
 ): Promise<{ status: number; body: Record<string, unknown> }> {
   const { request } = await import("http");
   return new Promise((resolve, reject) => {
@@ -26,6 +27,7 @@ async function httpRequest(
         headers["Content-Type"] = "application/json";
         headers["Content-Length"] = String(Buffer.byteLength(payload));
       }
+      Object.assign(headers, extraHeaders);
       const req = request(
         {
           hostname: "127.0.0.1",

@@ -4,6 +4,7 @@ import type { GameplayAnalytics, GameplayLifecycleState } from "../../../../shar
 import type { GithubViewer } from "../../../../shared/auth/viewer";
 
 export type SessionIdentityKind = "github" | "anonymous";
+export type { TrafficSource } from "../../../../shared/types/leaderboard";
 
 export interface GameSession {
   token: string;
@@ -70,6 +71,7 @@ export interface GameplayRecord {
 export interface ISessionStore {
   create(input: CreateGameSessionInput): Promise<string>;
   create(difficulty: Difficulty, scenarioTitle: string): Promise<string>;
+  create(difficulty: Difficulty, scenarioTitle: string, trafficSource: TrafficSource): Promise<string>;
   get(token: string): Promise<GameSession | null>;
   validateAndConsume(token: string): Promise<GameSession | null>;
 }

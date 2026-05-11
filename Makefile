@@ -4,7 +4,7 @@
        typecheck typecheck-backend validate \
        security audit lockfile-lint gitleaks grype \
        test test-shell test-integration test-mssql dev-db smoke-backend-mssql smoke-local-vertex release-prepare verify-release-version env-check aro-login aks-login e2e-azure-route e2e-azure-route-up e2e-azure-route-refresh e2e-azure-route-down \
-       prod-up prod-up-tag prod-down prod-status public-exposure-audit db-mode-check db-port-forward-check db-inspect db-inspect-live geneva-suppression-check prod-up-final \
+       prod-up prod-up-tag prod-down prod-status public-exposure-audit db-mode-check db-port-forward-check db-inspect db-inspect-live db-admin-stats db-admin-stats-live geneva-suppression-check prod-up-final \
        build dev start capture-readme-hero \
        docker-build-frontend docker-build-backend docker-build \
        pre-commit all \
@@ -952,6 +952,7 @@ db-inspect: install-backend ## Inspect DB rows from deployed backend (set SQL='.
 	DEPLOY="$${DEPLOY:-$$RELEASE-backend}"; \
 	LIMIT="$${LIMIT:-10}"; \
 	QUERY="$${SQL:-}"; \
+	REPORT_NAME="$${REPORT:-}"; \
 	ERR_FILE="$$(mktemp /tmp/sre-db-inspect-kube.err.XXXXXX)"; \
 	trap 'rm -f "$$ERR_FILE"' EXIT INT TERM; \
 	if ! "$$KUBE_CLI" -n "$$NS" get deployment "$$DEPLOY" >/dev/null 2>"$$ERR_FILE"; then \
@@ -985,6 +986,7 @@ db-inspect: install-backend ## Inspect DB rows from deployed backend (set SQL='.
 	NODE_PATH="$(CURDIR)/$(BACKEND_DIR)/node_modules" \
 	DATABASE_URL="$$DB_URL" \
 	LIMIT="$$LIMIT" \
+	REPORT="$$REPORT_NAME" \
 	SQL="$$QUERY" \
 	node scripts/db-inspect.cjs
 
@@ -996,6 +998,7 @@ db-inspect-live: ## Inspect DB rows from inside the deployed backend pod (bypass
 	DEPLOY="$${DEPLOY:-$$RELEASE-backend}"; \
 	LIMIT="$${LIMIT:-10}"; \
 	QUERY="$${SQL:-}"; \
+	REPORT_NAME="$${REPORT:-}"; \
 	DB_SECRET_NAME=""; \
 	DB_SECRET_KEY=""; \
 	ERR_FILE="$$(mktemp /tmp/sre-db-inspect-live-kube.err.XXXXXX)"; \
@@ -1019,7 +1022,13 @@ db-inspect-live: ## Inspect DB rows from inside the deployed backend pod (bypass
 	fi; \
 	echo "Inspecting DB live for $$NS/$$DEPLOY via in-cluster node (secret: $$DB_SECRET_NAME, key: $$DB_SECRET_KEY)"; \
 	"$$KUBE_CLI" -n "$$NS" exec -i "deploy/$$DEPLOY" -- \
-		env LIMIT="$$LIMIT" SQL="$$QUERY" node - < scripts/db-inspect.cjs
+		env LIMIT="$$LIMIT" REPORT="$$REPORT_NAME" SQL="$$QUERY" node - < scripts/db-inspect.cjs
+
+db-admin-stats: ## Show player-only attempt/completion stats by difficulty
+	@REPORT=player-completion SQL= $(MAKE) db-inspect NS="$(NS)" RELEASE="$(RELEASE)" DEPLOY="$(DEPLOY)" LIMIT="$(LIMIT)"
+
+db-admin-stats-live: ## Show player-only attempt/completion stats by difficulty inside backend pod
+	@REPORT=player-completion SQL= $(MAKE) db-inspect-live NS="$(NS)" RELEASE="$(RELEASE)" DEPLOY="$(DEPLOY)" LIMIT="$(LIMIT)"
 
 prod-up-final: geneva-suppression-check env-check ## Deploy final env then run exposure + DB fallback checks
 	@set -e; \

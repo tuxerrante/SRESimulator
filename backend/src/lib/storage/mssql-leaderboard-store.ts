@@ -146,6 +146,7 @@ export class MssqlLeaderboardStore implements ILeaderboardStore {
     if (!entry.githubUserId || entry.identityKind !== "github") {
       throw new Error("Persistent leaderboard entries require a GitHub-backed identity");
     }
+    const trafficSource = entry.trafficSource ?? "player";
 
     await this.pool.request()
       .input("id", entry.id)
@@ -160,7 +161,7 @@ export class MssqlLeaderboardStore implements ILeaderboardStore {
       .input("commandCount", entry.commandCount)
       .input("durationMs", entry.durationMs)
       .input("scenarioTitle", entry.scenarioTitle)
-      .input("trafficSource", entry.trafficSource ?? "player")
+      .input("trafficSource", trafficSource)
       .input("identityKind", entry.identityKind)
       .input("githubUserId", entry.githubUserId)
       .input("githubLogin", entry.githubLogin ?? null)
@@ -204,18 +205,15 @@ export class MssqlLeaderboardStore implements ILeaderboardStore {
                   @trafficSource, @identityKind, @githubUserId, @githubLogin);
       `);
 
-    await this.trimPerDifficulty(entry.difficulty, entry.trafficSource ?? "player");
+    await this.trimPerDifficulty(entry.difficulty, trafficSource);
 
     return entry;
   }
 
-  private async trimPerDifficulty(
-    difficulty: Difficulty,
-    trafficSource: LeaderboardEntry["trafficSource"],
-  ): Promise<void> {
+  private async trimPerDifficulty(difficulty: Difficulty, trafficSource: NonNullable<LeaderboardEntry["trafficSource"]>): Promise<void> {
     await this.pool.request()
       .input("difficulty", difficulty)
-      .input("trafficSource", trafficSource ?? "player")
+      .input("trafficSource", trafficSource)
       .input("keepCount", MAX_ENTRIES_PER_DIFFICULTY)
       .query(`
         DELETE FROM leaderboard_entries

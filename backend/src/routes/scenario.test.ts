@@ -123,6 +123,7 @@ describe("POST /api/scenario", () => {
     originalEnv.TURNSTILE_SECRET_KEY = process.env.TURNSTILE_SECRET_KEY;
     originalEnv.AUTH_SESSION_SECRET = process.env.AUTH_SESSION_SECRET;
     originalEnv.ANTI_ABUSE_HMAC_SECRET = process.env.ANTI_ABUSE_HMAC_SECRET;
+    originalEnv.AUTOMATED_TRAFFIC_TOKEN = process.env.AUTOMATED_TRAFFIC_TOKEN;
     process.env.AI_MOCK_MODE = "true";
     process.env.DATA_DIR = tmpDir;
     process.env.TURNSTILE_SECRET_KEY = "test-secret";
@@ -144,6 +145,7 @@ describe("POST /api/scenario", () => {
     process.env.TURNSTILE_SECRET_KEY = "test-secret";
     process.env.AUTH_SESSION_SECRET = "test-secret";
     process.env.ANTI_ABUSE_HMAC_SECRET = "test-hmac";
+    delete process.env.AUTOMATED_TRAFFIC_TOKEN;
   });
 
   afterAll(async () => {
@@ -171,6 +173,11 @@ describe("POST /api/scenario", () => {
       delete process.env.ANTI_ABUSE_HMAC_SECRET;
     } else {
       process.env.ANTI_ABUSE_HMAC_SECRET = originalEnv.ANTI_ABUSE_HMAC_SECRET;
+    }
+    if (originalEnv.AUTOMATED_TRAFFIC_TOKEN === undefined) {
+      delete process.env.AUTOMATED_TRAFFIC_TOKEN;
+    } else {
+      process.env.AUTOMATED_TRAFFIC_TOKEN = originalEnv.AUTOMATED_TRAFFIC_TOKEN;
     }
     await rm(tmpDir, { recursive: true, force: true });
   });

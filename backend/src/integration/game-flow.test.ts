@@ -10,6 +10,8 @@ import {
   isExternalTarget,
   startLocalServer,
   postChatSSE,
+  getExpectedScenarioTrafficSource,
+  getScenarioRequestHeaders,
 } from "./helpers";
 
 interface ScenarioResponse {
@@ -148,6 +150,7 @@ describe("full game flow: scenario -> chat -> command -> scores", () => {
       headers: {
         "Content-Type": "application/json",
         cookie: githubAuthCookie,
+        ...getScenarioRequestHeaders(),
       },
       body: JSON.stringify({ difficulty: "easy" }),
     });
@@ -293,6 +296,7 @@ describe("full game flow: scenario -> chat -> command -> scores", () => {
     expect(body.nickname).toBe("TestSRE");
     expect(body.difficulty).toBe("easy");
     expect(body.score.total).toBe(75);
+    expect(body.trafficSource).toBe(getExpectedScenarioTrafficSource());
   });
 
   it("POST /api/scores rejects reuse of consumed session token", async () => {

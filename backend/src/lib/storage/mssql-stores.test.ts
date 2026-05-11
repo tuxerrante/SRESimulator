@@ -43,6 +43,7 @@ describe("MssqlSessionStore", () => {
     expect(req.input).toHaveBeenCalledWith("token", token);
     expect(req.input).toHaveBeenCalledWith("difficulty", "easy");
     expect(req.input).toHaveBeenCalledWith("scenarioTitle", "Test Scenario");
+    expect(req.input).toHaveBeenCalledWith("trafficSource", "player");
     expect(req.query).toHaveBeenCalled();
     const sql = req.query.mock.calls[0][0] as string;
     expect(sql).toContain("INSERT INTO sessions");
@@ -271,6 +272,7 @@ describe("MssqlLeaderboardStore", () => {
       commandCount: 6,
       durationMs: 90000,
       scenarioTitle: "Master Down",
+      trafficSource: "automated" as const,
       identityKind: "github" as const,
       githubUserId: "12345",
       githubLogin: "octocat",
@@ -282,10 +284,40 @@ describe("MssqlLeaderboardStore", () => {
     const result = await store.addEntry(entry);
 
     expect(result).toBe(entry);
+    expect(req.input).toHaveBeenCalledWith("trafficSource", "automated");
     const queries = req.query.mock.calls.map((c: unknown[]) => c[0] as string);
     expect(queries.some((q: string) => q.includes("MERGE"))).toBe(true);
     expect(req.input).toHaveBeenCalledWith("githubUserId", "12345");
     expect(queries.some((q: string) => q.includes("DELETE FROM leaderboard_entries"))).toBe(true);
+  });
+
+  it("addEntry() trims only the entry traffic source", async () => {
+    const entry = {
+      id: "e3",
+      nickname: "player",
+      difficulty: "hard" as const,
+      score: { efficiency: 20, safety: 20, documentation: 20, accuracy: 20, total: 80 },
+      grade: "B",
+      commandCount: 6,
+      durationMs: 90000,
+      scenarioTitle: "Master Down",
+      trafficSource: "automated" as const,
+      identityKind: "github" as const,
+      githubUserId: "12345",
+      githubLogin: "octocat",
+      timestamp: Date.now(),
+    };
+    const { pool, req } = createMockPool();
+    const store = new MssqlLeaderboardStore(pool);
+
+    await store.addEntry(entry);
+
+    const trimQueries = req.query.mock.calls
+      .map((c: unknown[]) => c[0] as string)
+      .filter((sql: string) => sql.includes("DELETE FROM leaderboard_entries"));
+
+    expect(trimQueries).toHaveLength(1);
+    expect(req.input).toHaveBeenCalledWith("trafficSource", "automated");
   });
 });
 
@@ -364,6 +396,7 @@ describe("MssqlMetricsStore", () => {
       scoreTotal: 88,
       grade: "B",
       completed: true,
+      trafficSource: "automated",
       metadata: { version: "1.0" },
     });
 
@@ -458,6 +491,7 @@ describe("MssqlMetricsStore", () => {
       score_total: 70,
       grade: "C",
       completed: true,
+      traffic_source: "automated",
       metadata: '{"v":2}',
       created_at: new Date("2025-06-01T12:00:00Z"),
     };
