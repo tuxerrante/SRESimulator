@@ -57,15 +57,20 @@ class ChatStreamTimeoutError extends Error {
   }
 }
 
-function parseSessionScenario(sessionPayload: string | null): Scenario | null {
-  if (!sessionPayload) {
-    return null;
+interface ParsedSessionScenario {
+  scenario: Scenario | null;
+  hasPayload: boolean;
+}
+
+function parseSessionScenario(sessionPayload: string | null): ParsedSessionScenario {
+  if (!sessionPayload || sessionPayload.trim() === "") {
+    return { scenario: null, hasPayload: false };
   }
   try {
     const parsed = JSON.parse(sessionPayload);
-    return isScenario(parsed) ? parsed : null;
+    return { scenario: isScenario(parsed) ? parsed : null, hasPayload: true };
   } catch {
-    return null;
+    return { scenario: null, hasPayload: true };
   }
 }
 
@@ -109,8 +114,13 @@ chatRouter.post("/", async (req: Request, res: Response) => {
       res.status(403).json({ error: "Invalid or expired session token" });
       return;
     }
-    const storedScenario = parseSessionScenario(session.scenarioPayload);
+    const parsedSessionScenario = parseSessionScenario(session.scenarioPayload);
+    const storedScenario = parsedSessionScenario.scenario;
     let scenario: Scenario | null = storedScenario;
+    if (parsedSessionScenario.hasPayload && !storedScenario) {
+      res.status(409).json({ error: "Session scenario context is unavailable" });
+      return;
+    }
     if (storedScenario) {
       if (
         storedScenario.title !== session.scenarioTitle ||
@@ -131,7 +141,11 @@ chatRouter.post("/", async (req: Request, res: Response) => {
       }
     } else {
       scenario = rawScenario ?? null;
-      if (scenario && scenario.difficulty !== session.difficulty) {
+      if (
+        scenario &&
+        (scenario.difficulty !== session.difficulty ||
+          scenario.title !== session.scenarioTitle)
+      ) {
         res.status(409).json({ error: "Scenario does not match the active session" });
         return;
       }

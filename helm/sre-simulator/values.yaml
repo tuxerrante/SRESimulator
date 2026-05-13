@@ -36,7 +36,7 @@ frontend:
     githubClientIdKey: github-client-id
     githubClientSecretKey: github-client-secret
     authSessionSecretKey: auth-session-secret
-  trustProxyHeaders: true
+  trustProxyHeaders: false
   adminAnalyticsEnabled: false
 
 backend:
@@ -64,7 +64,7 @@ backend:
     dsn: ""
     environment: production
     release: ""
-  trustProxyHeaders: true
+  trustProxyHeaders: false
   persistentLeaderboardEnabled: false
   aiChatTimeoutMs: 30000
   aiScenarioTimeoutMs: 30000

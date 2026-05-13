@@ -163,4 +163,51 @@ describe("commandRouter", () => {
     }
   });
 
+  it("rejects invalid stored session scenario payloads", async () => {
+    mocks.sessionGet.mockResolvedValueOnce({
+      token: "session-123",
+      difficulty: "easy",
+      scenarioId: "scenario_test_easy",
+      scenarioTitle: "Test Scenario",
+      scenarioPayload: "{",
+      startTime: Date.now(),
+      used: false,
+      trafficSource: "player",
+      identityKind: "anonymous",
+      githubUserId: null,
+      githubLogin: null,
+      anonymousClaimKey: null,
+      persistentScoreEligible: false,
+    });
+
+    const app = express();
+    app.use(express.json());
+    app.use("/api/command", commandRouter);
+    const server = await new Promise<Server>((resolve) => {
+      const listeningServer = app.listen(0, "127.0.0.1", () => resolve(listeningServer));
+    });
+
+    try {
+      const { port } = server.address() as AddressInfo;
+      const response = await fetch(`http://127.0.0.1:${port}/api/command`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          sessionToken: "session-123",
+          command: "oc get pods",
+          type: "oc",
+          scenario: null,
+          commandHistory: [],
+        }),
+      });
+
+      expect(response.status).toBe(409);
+      await expect(response.json()).resolves.toEqual({
+        error: "Session scenario context is unavailable",
+      });
+    } finally {
+      await close(server);
+    }
+  });
+
 });
