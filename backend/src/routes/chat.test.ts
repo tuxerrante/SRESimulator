@@ -72,6 +72,32 @@ async function close(server: Server): Promise<void> {
 
 describe("chatRouter", () => {
   beforeEach(() => {
+    const sessionScenario = {
+      id: "scenario_test_easy",
+      title: "Test Scenario",
+      difficulty: "easy",
+      description: "Test scenario description",
+      incidentTicket: {
+        id: "IcM-TEST",
+        severity: "Sev3",
+        title: "Ticket title",
+        description: "Ticket description",
+        customerImpact: "Low",
+        reportedTime: "2026-05-01T10:00:00.000Z",
+        clusterName: "cluster-test",
+        region: "eastus",
+      },
+      clusterContext: {
+        name: "cluster-test",
+        version: "4.19.0",
+        region: "eastus",
+        nodeCount: 3,
+        status: "Degraded",
+        recentEvents: [],
+        alerts: [],
+        upgradeHistory: [],
+      },
+    };
     vi.clearAllMocks();
     mocks.getAiReadiness.mockReturnValue({ ready: true, mockMode: false });
     mocks.loadKnowledgeSections.mockResolvedValue([]);
@@ -92,7 +118,9 @@ describe("chatRouter", () => {
     mocks.sessionGet.mockResolvedValue({
       token: "session-123",
       difficulty: "easy",
+      scenarioId: "scenario_test_easy",
       scenarioTitle: "Test Scenario",
+      scenarioPayload: JSON.stringify(sessionScenario),
       startTime: Date.now(),
       used: false,
       trafficSource: "player",
@@ -152,4 +180,5 @@ describe("chatRouter", () => {
       await close(server);
     }
   });
+
 });

@@ -139,10 +139,13 @@ describe("POST /api/command", () => {
     storageMocks.getSessionStore.mockReturnValue({
       get: storageMocks.sessionGet,
     });
+    const storedScenario = makeScenario();
     storageMocks.sessionGet.mockResolvedValue({
       token: "session-123",
       difficulty: "easy",
+      scenarioId: storedScenario.id,
       scenarioTitle: "Worker Node NotReady",
+      scenarioPayload: JSON.stringify(storedScenario),
       startTime: Date.now(),
       used: false,
       trafficSource: "player",

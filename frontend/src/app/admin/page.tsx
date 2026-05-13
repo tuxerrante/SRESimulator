@@ -243,7 +243,7 @@ export default function AdminAnalyticsPage() {
                   <tbody>
                     {analytics.recentSessions.map((session: RecentGameplaySession) => (
                       <tr
-                        key={`${session.sessionToken ?? session.createdAt}-${session.lifecycleState}`}
+                        key={`${session.createdAt}-${session.lifecycleState}-${session.scenarioTitle ?? "unknown"}`}
                         className="border-b border-zinc-800/50 text-sm last:border-b-0"
                       >
                         <td className="px-3 py-3 text-zinc-400">

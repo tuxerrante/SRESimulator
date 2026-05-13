@@ -34,3 +34,7 @@ data:
   {{- end }}
   {{- end }}
   AI_AZURE_OPENAI_API_VERSION: "{{ .Values.ai.azureOpenai.apiVersion }}"
+  TRUST_PROXY_HEADERS: "{{ ternary "true" "false" .Values.backend.trustProxyHeaders }}"
+  PERSISTENT_LEADERBOARD_ENABLED: "{{ ternary "true" "false" .Values.backend.persistentLeaderboardEnabled }}"
+  AI_CHAT_TIMEOUT_MS: "{{ .Values.backend.aiChatTimeoutMs }}"
+  AI_SCENARIO_TIMEOUT_MS: "{{ .Values.backend.aiScenarioTimeoutMs }}"

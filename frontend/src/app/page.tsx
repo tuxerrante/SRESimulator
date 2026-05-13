@@ -41,6 +41,7 @@ export default function HomePage() {
   const clearViewer = useGameStore((s) => s.clearViewer);
   const [loading, setLoading] = useState<Difficulty | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const adminAnalyticsEnabled = process.env.NEXT_PUBLIC_ADMIN_ANALYTICS_ENABLED === "true";
   const [authConfigured, setAuthConfigured] = useState(false);
   const [sessionReady, setSessionReady] = useState(false);
   const [sessionLoadError, setSessionLoadError] = useState(false);
@@ -390,10 +391,14 @@ export default function HomePage() {
           >
             {APP_VERSION}
           </a>
-          <span className="mx-2">&middot;</span>
-          <Link href="/admin" className="hover:text-zinc-200 transition-colors">
-            Admin Analytics
-          </Link>
+          {adminAnalyticsEnabled ? (
+            <>
+              <span className="mx-2">&middot;</span>
+              <Link href="/admin" className="hover:text-zinc-200 transition-colors">
+                Admin Analytics
+              </Link>
+            </>
+          ) : null}
           <span className="mx-2">&middot;</span>
           <Link href="/about" className="hover:text-zinc-200 transition-colors">
             About

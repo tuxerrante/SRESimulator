@@ -39,6 +39,18 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function parseSessionScenario(sessionPayload: string | null): Scenario | null {
+  if (!sessionPayload) {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(sessionPayload);
+    return isScenario(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
 function parsePositiveIntEnv(raw: string | undefined, fallback: number): number {
   const parsed = Number.parseInt(raw ?? "", 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
@@ -144,7 +156,6 @@ commandRouter.post("/", async (req: Request, res: Response) => {
       res.status(400).json({ error: "Invalid scenario payload" });
       return;
     }
-    const scenario = rawScenario ?? null;
     if (typeof body.sessionToken !== "string" || body.sessionToken.trim() === "") {
       res.status(400).json({ error: "Session token is required" });
       return;
@@ -165,13 +176,32 @@ commandRouter.post("/", async (req: Request, res: Response) => {
       res.status(403).json({ error: "Invalid or expired session token" });
       return;
     }
-    if (
-      scenario &&
-      (scenario.title !== session.scenarioTitle ||
-        scenario.difficulty !== session.difficulty)
-    ) {
-      res.status(409).json({ error: "Scenario does not match the active session" });
-      return;
+    const storedScenario = parseSessionScenario(session.scenarioPayload);
+    let scenario: Scenario | null = storedScenario;
+    if (storedScenario) {
+      if (
+        storedScenario.title !== session.scenarioTitle ||
+        storedScenario.difficulty !== session.difficulty ||
+        (session.scenarioId && storedScenario.id !== session.scenarioId)
+      ) {
+        res.status(409).json({ error: "Scenario does not match the active session" });
+        return;
+      }
+      if (
+        rawScenario &&
+        (rawScenario.id !== storedScenario.id ||
+          rawScenario.title !== storedScenario.title ||
+          rawScenario.difficulty !== storedScenario.difficulty)
+      ) {
+        res.status(409).json({ error: "Scenario payload integrity check failed" });
+        return;
+      }
+    } else {
+      scenario = rawScenario ?? null;
+      if (scenario && scenario.difficulty !== session.difficulty) {
+        res.status(409).json({ error: "Scenario does not match the active session" });
+        return;
+      }
     }
 
     const commandResolved = resolveAngleBracketPlaceholders(command, scenario);
