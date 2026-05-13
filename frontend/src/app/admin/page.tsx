@@ -72,12 +72,41 @@ export default function AdminAnalyticsPage() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    const loadStoredToken = (): string | null => {
+      if (typeof window === "undefined") {
+        return null;
+      }
+      const token = window.localStorage.getItem("gameplayAdminToken");
+      return token && token.trim() ? token.trim() : null;
+    };
+
+    const storeToken = (token: string): void => {
+      if (typeof window === "undefined") {
+        return;
+      }
+      window.localStorage.setItem("gameplayAdminToken", token);
+    };
+
     const fetchAnalytics = async () => {
       setLoading(true);
       setError(null);
 
       try {
-        const response = await fetch("/api/gameplay/admin");
+        let token = loadStoredToken();
+        let response = await fetch("/api/gameplay/admin", {
+          headers: token ? { "x-gameplay-admin-token": token } : undefined,
+        });
+        if (response.status === 401 && typeof window !== "undefined") {
+          const promptedToken = window.prompt("Enter gameplay admin token");
+          if (promptedToken && promptedToken.trim()) {
+            token = promptedToken.trim();
+            storeToken(token);
+            response = await fetch("/api/gameplay/admin", {
+              headers: { "x-gameplay-admin-token": token },
+            });
+          }
+        }
+
         const raw = await response.text();
         const parsed = JSON.parse(raw) as GameplayAnalytics | { error?: string };
         if (!response.ok) {

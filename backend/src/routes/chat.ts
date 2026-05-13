@@ -144,7 +144,8 @@ chatRouter.post("/", async (req: Request, res: Response) => {
       if (
         scenario &&
         (scenario.difficulty !== session.difficulty ||
-          scenario.title !== session.scenarioTitle)
+          scenario.title !== session.scenarioTitle ||
+          (session.scenarioId && scenario.id !== session.scenarioId))
       ) {
         res.status(409).json({ error: "Scenario does not match the active session" });
         return;
