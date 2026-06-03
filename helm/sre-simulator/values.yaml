@@ -30,6 +30,12 @@ frontend:
     environment: production
     replaySessionSampleRate: "0"
     replayOnErrorSampleRate: "0"
+  auth:
+    # Existing Secret used by Next.js auth routes.
+    existingSecretName: ""
+    githubClientIdKey: github-client-id
+    githubClientSecretKey: github-client-secret
+    authSessionSecretKey: auth-session-secret
 
 backend:
   image:

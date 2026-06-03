@@ -429,6 +429,7 @@ helm_deploy_sre() {
   fi
 
   local db_flags=()
+  local auth_flags=()
   local image_pull_flags=()
   local aoai_route_flags=()
   local image_pull_policy
@@ -439,6 +440,10 @@ helm_deploy_sre() {
 
   if [ -n "${GHCR_IMAGE_PULL_SECRET:-}" ]; then
     image_pull_flags+=(--set "imagePullSecrets[0]=${GHCR_IMAGE_PULL_SECRET}")
+  fi
+
+  if [ -n "${GITHUB_AUTH_SECRET_NAME:-}" ]; then
+    auth_flags+=(--set-string "frontend.auth.existingSecretName=${GITHUB_AUTH_SECRET_NAME}")
   fi
 
   if [ -n "${DB_SECRET_NAME:-}" ]; then
@@ -496,6 +501,7 @@ helm_deploy_sre() {
     --set "ai.liveProbeToken=${probe_token}" \
     "${aoai_route_flags[@]}" \
     "${image_pull_flags[@]}" \
+    "${auth_flags[@]}" \
     "${db_flags[@]}" \
     --wait --timeout 15m >/dev/null; then
     rm -f "$exposure_values_file"

@@ -27,6 +27,27 @@ spec:
           env:
             - name: BACKEND_INTERNAL_BASE_URL
               value: "http://{{ include "sre-simulator.fullname" . }}-backend:{{ .Values.backend.port }}"
+            {{- $authSecretName := .Values.frontend.auth.existingSecretName | default "" | trim }}
+            {{- if $authSecretName }}
+            {{- $githubClientIdKey := required "frontend.auth.githubClientIdKey is required when frontend.auth.existingSecretName is set" (.Values.frontend.auth.githubClientIdKey | default "" | trim) }}
+            {{- $githubClientSecretKey := required "frontend.auth.githubClientSecretKey is required when frontend.auth.existingSecretName is set" (.Values.frontend.auth.githubClientSecretKey | default "" | trim) }}
+            {{- $authSessionSecretKey := required "frontend.auth.authSessionSecretKey is required when frontend.auth.existingSecretName is set" (.Values.frontend.auth.authSessionSecretKey | default "" | trim) }}
+            - name: GITHUB_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $authSecretName | quote }}
+                  key: {{ $githubClientIdKey | quote }}
+            - name: GITHUB_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $authSecretName | quote }}
+                  key: {{ $githubClientSecretKey | quote }}
+            - name: AUTH_SESSION_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $authSecretName | quote }}
+                  key: {{ $authSessionSecretKey | quote }}
+            {{- end }}
             - name: NEXT_PUBLIC_SENTRY_ENABLED
               value: {{ ternary "true" "false" .Values.frontend.sentry.enabled | quote }}
             - name: NEXT_PUBLIC_SENTRY_DSN
