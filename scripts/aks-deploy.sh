@@ -443,7 +443,7 @@ helm_deploy_sre() {
   fi
 
   if [ -n "${GITHUB_AUTH_SECRET_NAME:-}" ]; then
-    auth_flags+=(--set "frontend.auth.existingSecretName=${GITHUB_AUTH_SECRET_NAME}")
+    auth_flags+=(--set-string "frontend.auth.existingSecretName=${GITHUB_AUTH_SECRET_NAME}")
   fi
 
   if [ -n "${DB_SECRET_NAME:-}" ]; then

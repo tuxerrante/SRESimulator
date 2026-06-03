@@ -51,8 +51,20 @@ grep -Eq 'name: GITHUB_CLIENT_SECRET' "${auth_render}" || \
 grep -Eq 'name: AUTH_SESSION_SECRET' "${auth_render}" || \
   fail "Frontend auth should expose AUTH_SESSION_SECRET when auth secret is configured."
 
-grep -Eq 'name: sre-auth-secrets' "${auth_render}" || \
+grep -Eq 'name: "?sre-auth-secrets"?' "${auth_render}" || \
   fail "Frontend auth env vars should reference the configured auth secret."
+
+grep -Eq 'secretKeyRef:' "${auth_render}" || \
+  fail "Frontend auth env vars should be populated via secretKeyRef."
+
+grep -Eq 'key: "github-client-id"' "${auth_render}" || \
+  fail "Frontend auth should reference the configured github client id key."
+
+grep -Eq 'key: "github-client-secret"' "${auth_render}" || \
+  fail "Frontend auth should reference the configured github client secret key."
+
+grep -Eq 'key: "auth-session-secret"' "${auth_render}" || \
+  fail "Frontend auth should reference the configured auth session secret key."
 
 helm template sre-simulator "${CHART_DIR}" \
   --set exposure.mode=publicService \

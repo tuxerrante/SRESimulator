@@ -12,12 +12,12 @@ fail() {
 
 assert_contains() {
   local needle=$1 file=$2
-  grep -Fq "$needle" "$file" || fail "expected '$needle' in $file"
+  grep -Fq -- "$needle" "$file" || fail "expected '$needle' in $file"
 }
 
 assert_not_contains() {
   local needle=$1 file=$2
-  if grep -Fq "$needle" "$file"; then
+  if grep -Fq -- "$needle" "$file"; then
     fail "did not expect '$needle' in $file"
   fi
 }
@@ -592,6 +592,7 @@ run_frontend_auth_secret_flag_check() {
     fail "helm_deploy_sre should pass frontend auth secret settings when configured"
   fi
 
+  assert_contains "--set-string" "$TMP_DIR/helm-args.txt"
   assert_contains "frontend.auth.existingSecretName=sre-auth-secrets" "$TMP_DIR/helm-args.txt"
 }
 
