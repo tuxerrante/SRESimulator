@@ -5,6 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CHART_DIR="${ROOT_DIR}/helm/sre-simulator"
 
 route_render="$(mktemp)"
+auth_render="$(mktemp)"
 lb_render="$(mktemp)"
 lb_no_db_render="$(mktemp)"
 ingress_render="$(mktemp)"
@@ -16,7 +17,7 @@ gw_missing_host_err="$(mktemp)"
 gw_route_host_bypass_err="$(mktemp)"
 gw_ingress_host_bypass_err="$(mktemp)"
 gw_whitespace_host_err="$(mktemp)"
-trap 'rm -f "${route_render}" "${lb_render}" "${lb_no_db_render}" "${ingress_render}" "${gw_render}" "${hostless_render}" "${legacy_kv_render}" "${gw_bad_scheme_err}" "${gw_missing_host_err}" "${gw_route_host_bypass_err}" "${gw_ingress_host_bypass_err}" "${gw_whitespace_host_err}"' EXIT
+trap 'rm -f "${route_render}" "${auth_render}" "${lb_render}" "${lb_no_db_render}" "${ingress_render}" "${gw_render}" "${hostless_render}" "${legacy_kv_render}" "${gw_bad_scheme_err}" "${gw_missing_host_err}" "${gw_route_host_bypass_err}" "${gw_ingress_host_bypass_err}" "${gw_whitespace_host_err}"' EXIT
 
 fail() {
   echo "FAIL: $*" >&2
@@ -35,6 +36,23 @@ grep -Eq 'host: route\.example\.com' "${route_render}" || \
 
 grep -Eq 'value: "https://route\.example\.com"' "${route_render}" || \
   fail "Route mode should derive backend CORS origin from the public route host."
+
+helm template sre-simulator "${CHART_DIR}" \
+  --set exposure.mode=route \
+  --set exposure.host=route.example.com \
+  --set frontend.auth.existingSecretName=sre-auth-secrets >"${auth_render}"
+
+grep -Eq 'name: GITHUB_CLIENT_ID' "${auth_render}" || \
+  fail "Frontend auth should expose GITHUB_CLIENT_ID when auth secret is configured."
+
+grep -Eq 'name: GITHUB_CLIENT_SECRET' "${auth_render}" || \
+  fail "Frontend auth should expose GITHUB_CLIENT_SECRET when auth secret is configured."
+
+grep -Eq 'name: AUTH_SESSION_SECRET' "${auth_render}" || \
+  fail "Frontend auth should expose AUTH_SESSION_SECRET when auth secret is configured."
+
+grep -Eq 'name: sre-auth-secrets' "${auth_render}" || \
+  fail "Frontend auth env vars should reference the configured auth secret."
 
 helm template sre-simulator "${CHART_DIR}" \
   --set exposure.mode=publicService \

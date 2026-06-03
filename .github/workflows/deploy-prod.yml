@@ -184,6 +184,7 @@ jobs:
       AOAI_DEPLOYMENT_COMMAND: ${{ secrets.AOAI_DEPLOYMENT_COMMAND }}
       AOAI_DEPLOYMENT_SCENARIO: ${{ secrets.AOAI_DEPLOYMENT_SCENARIO }}
       AOAI_DEPLOYMENT_PROBE: ${{ secrets.AOAI_DEPLOYMENT_PROBE }}
+      GITHUB_AUTH_SECRET_NAME: ${{ secrets.GITHUB_AUTH_SECRET_NAME }}
       DB_SECRET_NAME: ${{ secrets.DB_SECRET_NAME }}
       PROD_NAMESPACE: ${{ secrets.PROD_NAMESPACE }}
       E2E_RELEASE: sre-simulator
@@ -244,6 +245,7 @@ jobs:
           for name in \
             AZURE_SUBSCRIPTION_ID \
             AOAI_RG AOAI_ACCOUNT AOAI_DEPLOYMENT \
+            GITHUB_AUTH_SECRET_NAME \
             DB_SECRET_NAME; do
             if [[ -z "${!name:-}" ]]; then
               missing+=("$name")

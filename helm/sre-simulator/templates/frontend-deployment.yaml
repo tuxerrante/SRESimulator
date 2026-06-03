@@ -27,6 +27,24 @@ spec:
           env:
             - name: BACKEND_INTERNAL_BASE_URL
               value: "http://{{ include "sre-simulator.fullname" . }}-backend:{{ .Values.backend.port }}"
+            {{- $authSecretName := .Values.frontend.auth.existingSecretName | default "" | trim }}
+            {{- if $authSecretName }}
+            - name: GITHUB_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $authSecretName }}
+                  key: {{ .Values.frontend.auth.githubClientIdKey }}
+            - name: GITHUB_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $authSecretName }}
+                  key: {{ .Values.frontend.auth.githubClientSecretKey }}
+            - name: AUTH_SESSION_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $authSecretName }}
+                  key: {{ .Values.frontend.auth.authSessionSecretKey }}
+            {{- end }}
             - name: NEXT_PUBLIC_SENTRY_ENABLED
               value: {{ ternary "true" "false" .Values.frontend.sentry.enabled | quote }}
             - name: NEXT_PUBLIC_SENTRY_DSN
