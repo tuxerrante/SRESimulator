@@ -327,12 +327,12 @@ minutes (it only updates the rate limit on the existing deployment).
 See [Azure OpenAI Quotas and Limits](https://learn.microsoft.com/en-us/azure/ai-foundry/openai/quotas-limits)
 for the full reference. Quota tiers auto-upgrade with usage.
 
-## 9. Go-live readiness gate (issues-driven)
+## 8. Go-live readiness gate (issues-driven)
 
 Run this gate before announcing public availability. It complements the infra,
 DNS, and deployment checks above by explicitly covering open product risks.
 
-### 9.1 Review open issues and classify blockers
+### 8.1 Review open issues and classify blockers
 
 Capture the current open issue list and classify each as:
 
@@ -342,10 +342,10 @@ Capture the current open issue list and classify each as:
 Suggested command:
 
 ```bash
-gh issue list --state open --limit 100
+gh issue list --repo tuxerrante/SRESimulator --state open --limit 100
 ```
 
-### 9.2 Blocker evidence checklist
+### 8.2 Blocker evidence checklist
 
 The following open issues are expected to be treated as blockers for a public
 launch unless you record an explicit waiver:
@@ -365,7 +365,7 @@ explicitly includes them:
 | [#5 Helm portability baseline](https://github.com/tuxerrante/SRESimulator/issues/5) | Track as platform-expansion work; keep AKS/ARO deployment docs accurate meanwhile. |
 | [#3 Anti-cheating jailbreak detection](https://github.com/tuxerrante/SRESimulator/issues/3) | Track as gameplay-hardening follow-up with measurable false-positive guardrails. |
 
-### 9.3 Auth and paid-vs-free control checks
+### 8.3 Auth and paid-vs-free control checks
 
 If launch assumes authenticated users and differentiated access, verify:
 
@@ -380,7 +380,7 @@ curl -fsS https://play.sresimulator.osadev.cloud/api/auth/session
 Also verify that anonymous users remain constrained (captcha + daily limit) and
 that medium/hard scenarios are gated for authenticated users only.
 
-### 9.4 Launch decision record
+### 8.4 Launch decision record
 
 Record one launch decision note that includes:
 
@@ -389,7 +389,7 @@ Record one launch decision note that includes:
 3. Evidence links for DNS/auth/firewall/release-path checks
 4. Rollback contact and rollback command (`make prod-down`) ownership
 
-## 10. Tear Down (when done)
+## 9. Tear Down (when done)
 
 ```bash
 CLUSTER_FLAVOR=aks make tf-destroy
