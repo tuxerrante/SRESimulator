@@ -327,7 +327,69 @@ minutes (it only updates the rate limit on the existing deployment).
 See [Azure OpenAI Quotas and Limits](https://learn.microsoft.com/en-us/azure/ai-foundry/openai/quotas-limits)
 for the full reference. Quota tiers auto-upgrade with usage.
 
-## 8. Tear Down (when done)
+## 9. Go-live readiness gate (issues-driven)
+
+Run this gate before announcing public availability. It complements the infra,
+DNS, and deployment checks above by explicitly covering open product risks.
+
+### 9.1 Review open issues and classify blockers
+
+Capture the current open issue list and classify each as:
+
+- **blocker**: must be resolved or explicitly waived for launch
+- **post-launch**: acceptable for launch with a follow-up owner/date
+
+Suggested command:
+
+```bash
+gh issue list --state open --limit 100
+```
+
+### 9.2 Blocker evidence checklist
+
+The following open issues are expected to be treated as blockers for a public
+launch unless you record an explicit waiver:
+
+| Issue | Required evidence before go-live |
+| --- | --- |
+| [#96 504 errors are not managed](https://github.com/tuxerrante/SRESimulator/issues/96) | Confirm API timeout/504 paths return a user-friendly retry experience and do not leave the UI in a broken state. |
+| [#91 DNS registration](https://github.com/tuxerrante/SRESimulator/issues/91) | Confirm the canonical domain is registered, active, and points to the production edge (`play.sresimulator.osadev.cloud`). |
+| [#44 Add a firewall for unexpected regions](https://github.com/tuxerrante/SRESimulator/issues/44) | Confirm geo/rate controls are active (or document compensating controls such as Turnstile + strict anonymous limits + budget alerts). |
+| [#9 ARO deployment workflow and release profile](https://github.com/tuxerrante/SRESimulator/issues/9) | Confirm release path is reproducible from CI/CD and that tag-based production rollout steps are documented and tested. |
+
+The following open issues are typically **post-launch** unless launch scope
+explicitly includes them:
+
+| Issue | Post-launch expectation |
+| --- | --- |
+| [#5 Helm portability baseline](https://github.com/tuxerrante/SRESimulator/issues/5) | Track as platform-expansion work; keep AKS/ARO deployment docs accurate meanwhile. |
+| [#3 Anti-cheating jailbreak detection](https://github.com/tuxerrante/SRESimulator/issues/3) | Track as gameplay-hardening follow-up with measurable false-positive guardrails. |
+
+### 9.3 Auth and paid-vs-free control checks
+
+If launch assumes authenticated users and differentiated access, verify:
+
+```bash
+# should be 302 redirect to GitHub OAuth (not 404)
+curl -i https://play.sresimulator.osadev.cloud/api/auth/github/login
+
+# authConfigured should be true in response body
+curl -fsS https://play.sresimulator.osadev.cloud/api/auth/session
+```
+
+Also verify that anonymous users remain constrained (captcha + daily limit) and
+that medium/hard scenarios are gated for authenticated users only.
+
+### 9.4 Launch decision record
+
+Record one launch decision note that includes:
+
+1. Open issues reviewed (with blocker/post-launch classification)
+2. Explicit waivers for unresolved blockers (owner + expiry date)
+3. Evidence links for DNS/auth/firewall/release-path checks
+4. Rollback contact and rollback command (`make prod-down`) ownership
+
+## 10. Tear Down (when done)
 
 ```bash
 CLUSTER_FLAVOR=aks make tf-destroy
