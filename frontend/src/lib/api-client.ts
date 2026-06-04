@@ -5,7 +5,7 @@ function serverErrorFromRaw(status: number, raw: string): Error {
 export function parseJsonObject(raw: string): Record<string, unknown> {
   const trimmed = raw.trim();
   if (!trimmed) {
-    return {};
+    throw new Error("Response body is empty");
   }
   const parsed = JSON.parse(trimmed);
   if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
@@ -24,7 +24,11 @@ export async function fetchJsonObject(
   let parsed: Record<string, unknown>;
   try {
     parsed = parseJsonObject(raw);
-  } catch {
+  } catch (error) {
+    if (response.ok) {
+      const reason = error instanceof Error ? error.message : "Invalid JSON response";
+      throw new Error(`${fallbackErrorMessage}: ${reason}`);
+    }
     throw serverErrorFromRaw(response.status, raw);
   }
   if (!response.ok) {
