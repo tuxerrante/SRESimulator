@@ -12,6 +12,9 @@ import { resolveAngleBracketPlaceholders } from "../lib/prompts/scenario-resourc
 import { isScenario } from "../lib/scenario-validation";
 import { captureBackendRouteError } from "../lib/telemetry/capture";
 import { getSessionStore } from "../lib/storage";
+import { parsePositiveIntEnv } from "../lib/env";
+import { validateSessionScenario } from "../lib/session-scenario";
+import { withAbortTimeout } from "../lib/timeout";
 import type { Scenario } from "../../../shared/types/game";
 import { stripTerminalCommandEcho } from "../../../shared/stripTerminalCommandEcho";
 
@@ -39,28 +42,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-interface ParsedSessionScenario {
-  scenario: Scenario | null;
-  hasPayload: boolean;
-}
-
-function parseSessionScenario(sessionPayload: string | null): ParsedSessionScenario {
-  if (!sessionPayload || sessionPayload.trim() === "") {
-    return { scenario: null, hasPayload: false };
-  }
-  try {
-    const parsed = JSON.parse(sessionPayload);
-    return { scenario: isScenario(parsed) ? parsed : null, hasPayload: true };
-  } catch {
-    return { scenario: null, hasPayload: true };
-  }
-}
-
-function parsePositiveIntEnv(raw: string | undefined, fallback: number): number {
-  const parsed = Number.parseInt(raw ?? "", 10);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
-}
-
 function getMaxCommandTokens(): number {
   return parsePositiveIntEnv(process.env.AI_MAX_COMMAND_TOKENS, DEFAULT_MAX_COMMAND_TOKENS);
 }
@@ -76,13 +57,6 @@ class CommandGenerationTimeoutError extends Error {
   }
 }
 
-function isAbortError(error: unknown): boolean {
-  return (
-    error instanceof Error &&
-    (error.name === "AbortError" || error.name === "TimeoutError")
-  );
-}
-
 function buildMockCommandResponse(
   command: string,
   type: "oc" | "kql" | "geneva",
@@ -95,33 +69,6 @@ function buildMockCommandResponse(
     mode: degradedReason ? "degraded" : "mock",
     degradedReason,
   };
-}
-
-async function withTimeout<T>(
-  run: (signal: AbortSignal) => Promise<T>,
-  timeoutMs: number,
-): Promise<T> {
-  return new Promise((resolve, reject) => {
-    const controller = new AbortController();
-    let timedOut = false;
-    const timer = setTimeout(() => {
-      timedOut = true;
-      controller.abort(new CommandGenerationTimeoutError(timeoutMs));
-      reject(new CommandGenerationTimeoutError(timeoutMs));
-    }, timeoutMs);
-
-    run(controller.signal).then(
-      (value) => {
-        clearTimeout(timer);
-        if (!timedOut) resolve(value);
-      },
-      (error) => {
-        clearTimeout(timer);
-        if (timedOut && isAbortError(error)) return;
-        reject(error);
-      },
-    );
-  });
 }
 
 export function resolveCommandHistoryPlaceholders(
@@ -182,43 +129,12 @@ commandRouter.post("/", async (req: Request, res: Response) => {
       res.status(403).json({ error: "Invalid or expired session token" });
       return;
     }
-    const parsedSessionScenario = parseSessionScenario(session.scenarioPayload);
-    const storedScenario = parsedSessionScenario.scenario;
-    let scenario: Scenario | null = storedScenario;
-    if (parsedSessionScenario.hasPayload && !storedScenario) {
-      res.status(409).json({ error: "Session scenario context is unavailable" });
+    const scenarioResult = validateSessionScenario(session, rawScenario);
+    if (!scenarioResult.ok) {
+      res.status(409).json({ error: scenarioResult.error });
       return;
     }
-    if (storedScenario) {
-      if (
-        storedScenario.title !== session.scenarioTitle ||
-        storedScenario.difficulty !== session.difficulty ||
-        (session.scenarioId && storedScenario.id !== session.scenarioId)
-      ) {
-        res.status(409).json({ error: "Scenario does not match the active session" });
-        return;
-      }
-      if (
-        rawScenario &&
-        (rawScenario.id !== storedScenario.id ||
-          rawScenario.title !== storedScenario.title ||
-          rawScenario.difficulty !== storedScenario.difficulty)
-      ) {
-        res.status(409).json({ error: "Scenario payload integrity check failed" });
-        return;
-      }
-    } else {
-      scenario = rawScenario ?? null;
-      if (
-        scenario &&
-        (scenario.difficulty !== session.difficulty ||
-          scenario.title !== session.scenarioTitle ||
-          (session.scenarioId && scenario.id !== session.scenarioId))
-      ) {
-        res.status(409).json({ error: "Scenario does not match the active session" });
-        return;
-      }
-    }
+    const scenario = scenarioResult.scenario;
     requestScenario = scenario;
 
     const commandResolved = resolveAngleBracketPlaceholders(command, scenario);
@@ -246,7 +162,7 @@ commandRouter.post("/", async (req: Request, res: Response) => {
       commandHistoryResolved,
     );
 
-    const responseText = await withTimeout(
+    const responseText = await withAbortTimeout(
       (signal) =>
         generateAiText({
           maxTokens: getMaxCommandTokens(),
@@ -261,6 +177,8 @@ commandRouter.post("/", async (req: Request, res: Response) => {
           signal,
         }),
       getCommandTimeoutMs(),
+      (timeoutMs) => new CommandGenerationTimeoutError(timeoutMs),
+      { suppressAbortErrorAfterTimeout: true },
     );
 
     let output = responseText;
