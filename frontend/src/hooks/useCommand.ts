@@ -14,6 +14,12 @@ import type { TerminalEntry } from "@shared/types/terminal";
 
 const MAX_COMMAND_HISTORY = 24;
 const MAX_ENTRY_OUTPUT_CHARS = 800;
+const COMMAND_TIMEOUT_ERROR_MESSAGE =
+  "Error: Command request timed out (504). Please try running the command again.";
+
+function isGatewayTimeout(status: number | null, message: string): boolean {
+  return status === 504 || /\b504\b|gateway timeout/i.test(message);
+}
 
 export function useCommand() {
   const { scenario, addTerminalEntry, addScoringEvent, recalculateScore, setExecuting } =
@@ -103,10 +109,21 @@ export function useCommand() {
         try {
           data = parseJsonObject(raw);
         } catch {
-          data = { error: `Server error (${response.status})`, exitCode: 1 };
+          data = {
+            error: isGatewayTimeout(response.status, raw)
+              ? COMMAND_TIMEOUT_ERROR_MESSAGE
+              : `Server error (${response.status})`,
+            exitCode: 1,
+          };
         }
 
         if (!response.ok) {
+          if (
+            typeof data.error === "string" &&
+            isGatewayTimeout(response.status, data.error)
+          ) {
+            data.error = COMMAND_TIMEOUT_ERROR_MESSAGE;
+          }
           captureFrontendError(
             new Error(`Command proxy request failed (${response.status})`),
             buildCommandTelemetryContext(),
@@ -147,10 +164,14 @@ export function useCommand() {
         recalculateScore();
       } catch (error) {
         captureFrontendError(error, buildCommandTelemetryContext());
+        const output =
+          isGatewayTimeout(null, error instanceof Error ? error.message : "")
+            ? COMMAND_TIMEOUT_ERROR_MESSAGE
+            : "Error: Failed to simulate command execution";
         const entry: TerminalEntry = {
           id: crypto.randomUUID(),
           command,
-          output: "Error: Failed to simulate command execution",
+          output,
           timestamp: Date.now(),
           exitCode: 1,
           type,
