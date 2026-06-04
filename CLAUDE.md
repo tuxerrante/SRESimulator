@@ -14,7 +14,7 @@ For explicit deploy/operator tasks, also use `docs/OPERATIONS.md`.
 
 To gamify the Azure Red Hat OpenShift (ARO) reliability engineering experience. The system uses an AI Agent to "break" a cluster based on real-world incidents and guides a human user through the investigation using natural language, translating their intent into simulated technical commands (`oc`, `KQL`).
 
-KQL and Geneva commands will be only shown and simulated, since they cannot be run from the local machine.
+KQL and Geneva commands will only be shown and simulated because they cannot be run from the local machine.
 
 **Core Pedagogical Principle:**
 The game enforces the "Scientific Method of Investigation" as defined in the ARO Investigation Techniques guide. Users are scored not just on fixing the issue, but on following the proper phases: **Reading -> Context Gathering -> Facts Gathering -> Theory Building -> Action**.
@@ -36,7 +36,7 @@ The game enforces the "Scientific Method of Investigation" as defined in the ARO
 
 - **Local Server:** Node.js + Express.
 - **Integrations:**
-  - **AI Runtime:** Supports Vertex AI and Azure OpenAI/Foundry, plus `AI_MOCK_MODE` for local simulation.
+  - **AI Runtime:** Supports Vertex AI and Azure OpenAI, plus `AI_MOCK_MODE` for local simulation.
   - **Command Simulation:** Gameplay commands are generated and simulated by the backend during normal play.
   - **Scenario Manager:** Loads JSON scenario catalogs from `./scenarios`.
   - **Storage:** Uses JSON/in-memory locally and can use Azure SQL in deployed environments.
@@ -63,7 +63,7 @@ The game enforces the "Scientific Method of Investigation" as defined in the ARO
 ## 4. Public-Only Safety Boundary
 
 - Do not imply access to internal Red Hat or Azure systems unless a user explicitly provides that access in the current session.
-- Treat Geneva, KQL, and cluster investigation outputs in this project as simulated unless the current task is explicitly about deployment/operator workflows.
+- Treat Geneva and KQL outputs in this project as simulated. Only real `oc`/cluster interactions should be considered during explicit deployment/operator workflows.
 - Use repository-local docs and public sources by default; label simulation-like behavior clearly.
 - Never reveal secrets from local env files or infrastructure config. Redact sensitive values by default.
 
