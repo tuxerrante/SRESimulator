@@ -24,6 +24,8 @@ import { buildAnonymousClaimKeys } from "../lib/anonymous-claim";
 import { evaluateScenarioAccess } from "../lib/scenario-access";
 import { matchesSharedSecret } from "../lib/shared-secret";
 import { captureBackendRouteError } from "../lib/telemetry/capture";
+import { parsePositiveIntEnv } from "../lib/env";
+import { withAbortTimeout } from "../lib/timeout";
 import { verifySignedClientIp } from "../../../shared/auth/client-ip";
 import type { Difficulty, Scenario } from "../../../shared/types/game";
 import type { TrafficSource } from "../../../shared/types/leaderboard";
@@ -65,38 +67,8 @@ class ScenarioGenerationTimeoutError extends Error {
   }
 }
 
-function parsePositiveIntEnv(raw: string | undefined, fallback: number): number {
-  const parsed = Number.parseInt(raw ?? "", 10);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
-}
-
 function getScenarioTimeoutMs(): number {
   return parsePositiveIntEnv(process.env.AI_SCENARIO_TIMEOUT_MS, DEFAULT_SCENARIO_TIMEOUT_MS);
-}
-
-async function withTimeout<T>(
-  run: (signal: AbortSignal) => Promise<T>,
-  timeoutMs: number,
-): Promise<T> {
-  return new Promise((resolve, reject) => {
-    const controller = new AbortController();
-    const timer = setTimeout(() => {
-      const timeoutError = new ScenarioGenerationTimeoutError(timeoutMs);
-      controller.abort(timeoutError);
-      reject(timeoutError);
-    }, timeoutMs);
-
-    run(controller.signal).then(
-      (value) => {
-        clearTimeout(timer);
-        resolve(value);
-      },
-      (error) => {
-        clearTimeout(timer);
-        reject(error);
-      },
-    );
-  });
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -553,7 +525,7 @@ scenarioRouter.post("/", async (req: Request, res: Response) => {
 
     const currentDate = utcNow();
 
-    const responseText = await withTimeout(
+    const responseText = await withAbortTimeout(
       (signal) =>
         generateAiText({
           maxTokens: 1024,
@@ -610,6 +582,7 @@ ${scenarioContext}`,
           ],
         }),
       getScenarioTimeoutMs(),
+      (timeoutMs) => new ScenarioGenerationTimeoutError(timeoutMs),
     );
 
     let text = responseText;

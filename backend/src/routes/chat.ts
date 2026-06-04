@@ -7,6 +7,8 @@ import { streamAiText, AiThrottledError, AiReasoningRetryEvent } from "../lib/ai
 import { compactHistory, estimateTokens } from "../lib/context-compactor";
 import { captureBackendRouteError } from "../lib/telemetry/capture";
 import { getSessionStore } from "../lib/storage";
+import { parsePositiveIntEnv } from "../lib/env";
+import { validateSessionScenario } from "../lib/session-scenario";
 import { isScenario } from "../lib/scenario-validation";
 import type { Scenario } from "../../../shared/types/game";
 import type { InvestigationPhase } from "../../../shared/types/chat";
@@ -41,11 +43,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function parsePositiveIntEnv(raw: string | undefined, fallback: number): number {
-  const parsed = Number.parseInt(raw ?? "", 10);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
-}
-
 function getChatTimeoutMs(): number {
   return parsePositiveIntEnv(process.env.AI_CHAT_TIMEOUT_MS, DEFAULT_CHAT_TIMEOUT_MS);
 }
@@ -67,23 +64,6 @@ function isTimedOutChatError(
     (error instanceof Error &&
       error.name === "AbortError" &&
       signal.reason instanceof ChatStreamTimeoutError);
-}
-
-interface ParsedSessionScenario {
-  scenario: Scenario | null;
-  hasPayload: boolean;
-}
-
-function parseSessionScenario(sessionPayload: string | null): ParsedSessionScenario {
-  if (!sessionPayload || sessionPayload.trim() === "") {
-    return { scenario: null, hasPayload: false };
-  }
-  try {
-    const parsed = JSON.parse(sessionPayload);
-    return { scenario: isScenario(parsed) ? parsed : null, hasPayload: true };
-  } catch {
-    return { scenario: null, hasPayload: true };
-  }
 }
 
 chatRouter.post("/", async (req: Request, res: Response) => {
@@ -126,43 +106,12 @@ chatRouter.post("/", async (req: Request, res: Response) => {
       res.status(403).json({ error: "Invalid or expired session token" });
       return;
     }
-    const parsedSessionScenario = parseSessionScenario(session.scenarioPayload);
-    const storedScenario = parsedSessionScenario.scenario;
-    let scenario: Scenario | null = storedScenario;
-    if (parsedSessionScenario.hasPayload && !storedScenario) {
-      res.status(409).json({ error: "Session scenario context is unavailable" });
+    const scenarioResult = validateSessionScenario(session, rawScenario);
+    if (!scenarioResult.ok) {
+      res.status(409).json({ error: scenarioResult.error });
       return;
     }
-    if (storedScenario) {
-      if (
-        storedScenario.title !== session.scenarioTitle ||
-        storedScenario.difficulty !== session.difficulty ||
-        (session.scenarioId && storedScenario.id !== session.scenarioId)
-      ) {
-        res.status(409).json({ error: "Scenario does not match the active session" });
-        return;
-      }
-      if (
-        rawScenario &&
-        (rawScenario.id !== storedScenario.id ||
-          rawScenario.title !== storedScenario.title ||
-          rawScenario.difficulty !== storedScenario.difficulty)
-      ) {
-        res.status(409).json({ error: "Scenario payload integrity check failed" });
-        return;
-      }
-    } else {
-      scenario = rawScenario ?? null;
-      if (
-        scenario &&
-        (scenario.difficulty !== session.difficulty ||
-          scenario.title !== session.scenarioTitle ||
-          (session.scenarioId && scenario.id !== session.scenarioId))
-      ) {
-        res.status(409).json({ error: "Scenario does not match the active session" });
-        return;
-      }
-    }
+    const scenario = scenarioResult.scenario;
 
     const readiness = getAiReadiness();
     if (readiness.mockMode) {
