@@ -4,11 +4,6 @@ name: Helm Integration Test
 "on":
   push:
     branches: [main]
-    paths:
-      - "helm/**"
-      - "backend/**"
-      - "frontend/**"
-      - ".github/workflows/helm-integration.yml"
   schedule:
     - cron: "0 4 * * 1-5"
   workflow_dispatch: {}
@@ -24,7 +19,7 @@ jobs:
       - name: Harden runner
         # v2.18.0
         uses: >-
-          step-security/harden-runner@6c3c2f2c1c457b00c10c4848d6f5491db3b629df
+          step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411
         with:
           egress-policy: audit
 
@@ -42,17 +37,7 @@ jobs:
           azure/setup-helm@dda3372f752e03dde6b3237bc9431cdc2f7a02a2
 
       - name: Helm template (AKS Gateway mode)
-        run: |
-          set -euo pipefail
-          helm template sre-simulator ./helm/sre-simulator \
-            --values ./helm/sre-simulator/values.yaml \
-            --set exposure.mode=gateway \
-            --set exposure.host=play.sresimulator.osadev.cloud \
-            --set exposure.scheme=https \
-            --set gateway.className=eg \
-            --set gateway.tls.secretName=sre-simulator-gateway-tls \
-            --set gateway.certManager.clusterIssuer=letsencrypt-azuredns-prod \
-            --set gateway.envoyProxy.name=sre-simulator-public-edge
+        run: bash scripts/helm-render-gateway.sh
 
       # Keep the Kind runtime path lightweight here.
       # Gateway-specific behavior is covered by this render check plus
@@ -116,11 +101,12 @@ jobs:
             pod -l "${SELECTOR}=frontend" --timeout=120s
 
       - name: Run helm test
-        run: helm test sre-simulator --timeout 4m
+        run: helm test sre-simulator --logs --timeout 4m
 
       - name: Show test pod logs on failure
         if: failure()
         run: |
+          kubectl get pods
           kubectl logs sre-simulator-test || true
           kubectl describe pod sre-simulator-test || true
           echo "--- Backend logs ---"

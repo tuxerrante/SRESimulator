@@ -12,12 +12,12 @@ fail() {
 
 assert_contains() {
   local needle=$1 file=$2
-  grep -Fq "$needle" "$file" || fail "expected '$needle' in $file"
+  grep -Fq -- "$needle" "$file" || fail "expected '$needle' in $file"
 }
 
 assert_not_contains() {
   local needle=$1 file=$2
-  if grep -Fq "$needle" "$file"; then
+  if grep -Fq -- "$needle" "$file"; then
     fail "did not expect '$needle' in $file"
   fi
 }
@@ -570,6 +570,30 @@ run_immutable_tag_check() {
   assert_contains "frontend.image.pullPolicy=IfNotPresent" "$TMP_DIR/helm-args.txt"
   assert_contains "backend.image.pullPolicy=IfNotPresent" "$TMP_DIR/helm-args.txt"
   assert_contains "ai.model=gpt-4.1" "$TMP_DIR/helm-args.txt"
+}
+
+run_frontend_auth_secret_flag_check() {
+  # shellcheck disable=SC1091
+  source "$ROOT_DIR/scripts/aks-deploy.sh"
+  stub_cluster_helpers
+  capture_helm_invocation
+
+  unset AKS_GATEWAY_HOST AKS_GATEWAY_CLASS_NAME \
+    AKS_CLUSTER_ISSUER_NAME AKS_GATEWAY_TLS_SECRET_NAME || true
+  E2E_RELEASE="sre-simulator"
+  AKS_RG="example-aks-rg"
+  AKS_CLUSTER="example-aks"
+  AKS_EXPOSURE_MODE="publicService"
+  AOAI_DEPLOYMENT="gpt-4o-mini"
+  GITHUB_AUTH_SECRET_NAME="sre-auth-secrets"
+
+  if ! helm_deploy_sre "sre-simulator" "latest" "probe-token" >"$TMP_DIR/auth-secret.txt" 2>&1; then
+    cat "$TMP_DIR/auth-secret.txt" >&2 || true
+    fail "helm_deploy_sre should pass frontend auth secret settings when configured"
+  fi
+
+  assert_contains "--set-string" "$TMP_DIR/helm-args.txt"
+  assert_contains "frontend.auth.existingSecretName=sre-auth-secrets" "$TMP_DIR/helm-args.txt"
 }
 
 run_clusterissuer_manifest_check() {
@@ -1393,6 +1417,7 @@ main() {
   run_none_values_check
   run_none_deploy_path_check
   run_immutable_tag_check
+  run_frontend_auth_secret_flag_check
   run_clusterissuer_manifest_check
   run_clusterissuer_manifest_requires_email_check
   run_gatewayclass_manifest_check

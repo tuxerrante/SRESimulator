@@ -14,21 +14,14 @@ import { APP_RELEASE_URL, APP_VERSION } from "@/lib/release";
 import { getAnonymousVerificationMessage } from "@/lib/auth/anonymous-verification";
 import { collectBrowserFingerprintHash } from "@/lib/auth/fingerprint";
 import { buildScenarioRequestBody } from "@/lib/auth/scenario-request";
-import { buildTelemetryHeaders } from "@/lib/telemetry/request-context";
+import { fetchJsonObject } from "@/lib/api-client";
+import { buildSafeRequestId, buildTelemetryHeaders } from "@/lib/telemetry/request-context";
 import { captureFrontendError } from "@/lib/telemetry/capture";
 import {
   ACTOR_REF_HEADER,
   GAME_SESSION_REF_HEADER,
   REQUEST_ID_HEADER,
 } from "@shared/telemetry/constants";
-
-function buildSafeRequestId(): string | undefined {
-  try {
-    return crypto.randomUUID();
-  } catch {
-    return undefined;
-  }
-}
 
 export default function HomePage() {
   const router = useRouter();
@@ -41,6 +34,7 @@ export default function HomePage() {
   const clearViewer = useGameStore((s) => s.clearViewer);
   const [loading, setLoading] = useState<Difficulty | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [adminAnalyticsEnabled, setAdminAnalyticsEnabled] = useState(false);
   const [authConfigured, setAuthConfigured] = useState(false);
   const [sessionReady, setSessionReady] = useState(false);
   const [sessionLoadError, setSessionLoadError] = useState(false);
@@ -58,12 +52,11 @@ export default function HomePage() {
 
     void (async () => {
       try {
-        const response = await fetch("/api/auth/session", { cache: "no-store" });
-        if (!response.ok) {
-          throw new Error("Failed to load player session");
-        }
-
-        const data = (await response.json()) as {
+        const data = (await fetchJsonObject(
+          "/api/auth/session",
+          { cache: "no-store" },
+          "Failed to load player session",
+        )) as {
           viewer: {
             kind: "github";
             githubUserId: string;
@@ -72,10 +65,12 @@ export default function HomePage() {
             avatarUrl: string | null;
           } | null;
           authConfigured: boolean;
+          adminAnalyticsEnabled?: boolean;
         };
 
         setSessionLoadError(false);
         setAuthConfigured(data.authConfigured);
+        setAdminAnalyticsEnabled(Boolean(data.adminAnalyticsEnabled));
         if (data.viewer) {
           setViewer(data.viewer);
         } else {
@@ -88,6 +83,7 @@ export default function HomePage() {
         });
         setSessionLoadError(true);
         setAuthConfigured(false);
+        setAdminAnalyticsEnabled(false);
         clearViewer();
       } finally {
         setSessionReady(true);
@@ -156,33 +152,25 @@ export default function HomePage() {
 
     try {
       telemetryHeaders = await buildTelemetryHeaders(useGameStore.getState().sessionToken);
-      const response = await fetch("/api/scenario", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...telemetryHeaders,
+      const parsed = await fetchJsonObject(
+        "/api/scenario",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            ...telemetryHeaders,
+          },
+          body: JSON.stringify(
+            buildScenarioRequestBody({
+              difficulty,
+              viewer,
+              fingerprintHash,
+              turnstileToken,
+            })
+          ),
         },
-        body: JSON.stringify(
-          buildScenarioRequestBody({
-            difficulty,
-            viewer,
-            fingerprintHash,
-            turnstileToken,
-          })
-        ),
-      });
-
-      const raw = await response.text();
-      let parsed: Record<string, unknown>;
-      try {
-        parsed = JSON.parse(raw);
-      } catch {
-        throw new Error(`Server error (${response.status}): ${raw.slice(0, 120)}`);
-      }
-
-      if (!response.ok) {
-        throw new Error((parsed.error as string) || "Failed to generate scenario");
-      }
+        "Failed to generate scenario",
+      );
 
       const { scenario, sessionToken } = parsed as unknown as { scenario: Scenario; sessionToken: string };
       startGame(scenario, sessionToken);
@@ -390,6 +378,14 @@ export default function HomePage() {
           >
             {APP_VERSION}
           </a>
+          {adminAnalyticsEnabled ? (
+            <>
+              <span className="mx-2">&middot;</span>
+              <Link href="/admin" className="hover:text-zinc-200 transition-colors">
+                Admin Analytics
+              </Link>
+            </>
+          ) : null}
           <span className="mx-2">&middot;</span>
           <Link href="/about" className="hover:text-zinc-200 transition-colors">
             About

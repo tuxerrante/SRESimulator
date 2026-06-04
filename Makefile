@@ -270,6 +270,7 @@ test-shell: ## Run shell regression tests
 	bash scripts/aro-login.test.sh
 	bash scripts/aks-deploy.test.sh
 	bash scripts/cleanup-old-worktrees.test.sh
+	bash scripts/helm-integration-trigger.test.sh
 	bash scripts/helm-platform.test.sh
 	bash scripts/install-worktree-cleanup-launchd.test.sh
 	bash scripts/prod-db-guard.test.sh
