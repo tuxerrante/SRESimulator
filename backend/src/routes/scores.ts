@@ -12,6 +12,7 @@ import {
 } from "../../../shared/types/scoring";
 
 export const scoresRouter = Router();
+const PERSISTENT_LEADERBOARD_ENABLED = process.env.PERSISTENT_LEADERBOARD_ENABLED === "true";
 
 const VALID_DIFFICULTIES: Difficulty[] = ["easy", "medium", "hard"];
 const SCORE_DIMENSIONS = [
@@ -172,7 +173,12 @@ scoresRouter.post("/", async (req: Request, res: Response) => {
 
     const durationMs = Math.max(0, Date.now() - session.startTime);
 
-    if (!session.persistentScoreEligible || session.identityKind !== "github" || !session.githubUserId) {
+    if (
+      !PERSISTENT_LEADERBOARD_ENABLED ||
+      !session.persistentScoreEligible ||
+      session.identityKind !== "github" ||
+      !session.githubUserId
+    ) {
       res.status(200).json({
         saved: false,
         mode: "ephemeral",

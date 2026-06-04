@@ -34,7 +34,9 @@ export class MssqlSessionStore implements ISessionStore {
     await this.pool.request()
       .input("token", token)
       .input("difficulty", input.difficulty)
+      .input("scenarioId", input.scenarioId ?? null)
       .input("scenarioTitle", input.scenarioTitle)
+      .input("scenarioPayload", input.scenarioPayload ?? null)
       .input("startTime", startTime)
       .input("trafficSource", input.trafficSource ?? "player")
       .input("identityKind", input.identityKind)
@@ -46,7 +48,9 @@ export class MssqlSessionStore implements ISessionStore {
         INSERT INTO sessions (
           token,
           difficulty,
+          scenario_id,
           scenario_title,
+          scenario_payload,
           start_time,
           traffic_source,
           identity_kind,
@@ -58,7 +62,9 @@ export class MssqlSessionStore implements ISessionStore {
         VALUES (
           @token,
           @difficulty,
+          @scenarioId,
           @scenarioTitle,
+          @scenarioPayload,
           @startTime,
           @trafficSource,
           @identityKind,
@@ -88,7 +94,9 @@ export class MssqlSessionStore implements ISessionStore {
       .query<{
         token: string;
         difficulty: Difficulty;
+        scenario_id: string | null;
         scenario_title: string;
+        scenario_payload: string | null;
         start_time: number;
         used: boolean;
         traffic_source: "player" | "automated";
@@ -101,7 +109,9 @@ export class MssqlSessionStore implements ISessionStore {
         SELECT
           token,
           difficulty,
+          scenario_id,
           scenario_title,
+          scenario_payload,
           start_time,
           used,
           traffic_source,
@@ -121,7 +131,9 @@ export class MssqlSessionStore implements ISessionStore {
     return {
       token: row.token,
       difficulty: row.difficulty,
+      scenarioId: row.scenario_id,
       scenarioTitle: row.scenario_title,
+      scenarioPayload: row.scenario_payload,
       startTime: Number(row.start_time),
       used: row.used,
       trafficSource: row.traffic_source,
@@ -145,7 +157,9 @@ export class MssqlSessionStore implements ISessionStore {
       .query<{
         token: string;
         difficulty: Difficulty;
+        scenario_id: string | null;
         scenario_title: string;
+        scenario_payload: string | null;
         start_time: number;
         used: boolean;
         traffic_source: "player" | "automated";
@@ -160,7 +174,9 @@ export class MssqlSessionStore implements ISessionStore {
         OUTPUT
           INSERTED.token,
           INSERTED.difficulty,
+          INSERTED.scenario_id,
           INSERTED.scenario_title,
+          INSERTED.scenario_payload,
           INSERTED.start_time,
           INSERTED.used,
           INSERTED.traffic_source,
@@ -180,7 +196,9 @@ export class MssqlSessionStore implements ISessionStore {
     return {
       token: row.token,
       difficulty: row.difficulty,
+      scenarioId: row.scenario_id,
       scenarioTitle: row.scenario_title,
+      scenarioPayload: row.scenario_payload,
       startTime: Number(row.start_time),
       used: true,
       trafficSource: row.traffic_source,

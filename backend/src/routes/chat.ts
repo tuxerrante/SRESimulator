@@ -7,6 +7,8 @@ import { streamAiText, AiThrottledError, AiReasoningRetryEvent } from "../lib/ai
 import { compactHistory, estimateTokens } from "../lib/context-compactor";
 import { captureBackendRouteError } from "../lib/telemetry/capture";
 import { getSessionStore } from "../lib/storage";
+import { parsePositiveIntEnv } from "../lib/env";
+import { validateSessionScenario } from "../lib/session-scenario";
 import { isScenario } from "../lib/scenario-validation";
 import type { Scenario } from "../../../shared/types/game";
 import type { InvestigationPhase } from "../../../shared/types/chat";
@@ -19,6 +21,7 @@ const MAX_CHAT_TOKENS =
   Number.isFinite(MAX_CHAT_TOKENS_RAW) && MAX_CHAT_TOKENS_RAW > 0
     ? MAX_CHAT_TOKENS_RAW
     : 16384;
+const DEFAULT_CHAT_TIMEOUT_MS = 30000;
 
 export const chatRouter = Router();
 const VALID_PHASES: InvestigationPhase[] = [
@@ -40,6 +43,29 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function getChatTimeoutMs(): number {
+  return parsePositiveIntEnv(process.env.AI_CHAT_TIMEOUT_MS, DEFAULT_CHAT_TIMEOUT_MS);
+}
+
+class ChatStreamTimeoutError extends Error {
+  constructor(timeoutMs: number) {
+    super(`Chat streaming timed out after ${timeoutMs}ms`);
+    this.name = "ChatStreamTimeoutError";
+  }
+}
+
+function isTimedOutChatError(
+  error: unknown,
+  signal: AbortSignal,
+  timedOut: boolean,
+): boolean {
+  return timedOut ||
+    error instanceof ChatStreamTimeoutError ||
+    (error instanceof Error &&
+      error.name === "AbortError" &&
+      signal.reason instanceof ChatStreamTimeoutError);
+}
+
 chatRouter.post("/", async (req: Request, res: Response) => {
   try {
     if (!isRecord(req.body)) {
@@ -54,7 +80,6 @@ chatRouter.post("/", async (req: Request, res: Response) => {
       res.status(400).json({ error: "Invalid scenario payload" });
       return;
     }
-    const scenario = rawScenario ?? null;
     if (typeof body.sessionToken !== "string" || body.sessionToken.trim() === "") {
       res.status(400).json({ error: "Session token is required" });
       return;
@@ -81,14 +106,12 @@ chatRouter.post("/", async (req: Request, res: Response) => {
       res.status(403).json({ error: "Invalid or expired session token" });
       return;
     }
-    if (
-      scenario &&
-      (scenario.title !== session.scenarioTitle ||
-        scenario.difficulty !== session.difficulty)
-    ) {
-      res.status(409).json({ error: "Scenario does not match the active session" });
+    const scenarioResult = validateSessionScenario(session, rawScenario);
+    if (!scenarioResult.ok) {
+      res.status(409).json({ error: scenarioResult.error });
       return;
     }
+    const scenario = scenarioResult.scenario;
 
     const readiness = getAiReadiness();
     if (readiness.mockMode) {
@@ -131,12 +154,25 @@ chatRouter.post("/", async (req: Request, res: Response) => {
       );
     }
 
+    const streamController = new AbortController();
+    const streamTimeoutMs = getChatTimeoutMs();
+    let timedOut = false;
+    const streamTimeout = setTimeout(() => {
+      timedOut = true;
+      streamController.abort(new ChatStreamTimeoutError(streamTimeoutMs));
+    }, streamTimeoutMs);
+    const onClientClose = () => {
+      streamController.abort(new Error("Chat client disconnected"));
+    };
+    req.on("close", onClientClose);
+
     const stream = streamAiText({
       maxTokens: MAX_CHAT_TOKENS,
       system: systemPrompt,
       messages: compaction.messages,
       route: "chat",
       cacheKey: scenario?.title ?? "no-scenario",
+      signal: streamController.signal,
       compactionMeta: {
         compacted: compaction.compacted,
         compactedMessageCount: compaction.compactedCount,
@@ -161,10 +197,23 @@ chatRouter.post("/", async (req: Request, res: Response) => {
       res.end();
     } catch (error) {
       captureBackendRouteError(req, error, "Chat stream failed");
-      res.write(`data: ${JSON.stringify({ error: "Chat stream failed" })}\n\n`);
+      if (res.writableEnded || res.destroyed) {
+        return;
+      }
+      const errorMessage = isTimedOutChatError(error, streamController.signal, timedOut)
+        ? "Chat stream timed out. Please retry."
+        : "Chat stream failed";
+      res.write(`data: ${JSON.stringify({ error: errorMessage })}\n\n`);
       res.end();
+    } finally {
+      clearTimeout(streamTimeout);
+      req.off("close", onClientClose);
     }
   } catch (error) {
+    if (error instanceof ChatStreamTimeoutError || (error instanceof Error && error.name === "AbortError")) {
+      res.status(504).json({ error: "Chat stream timed out. Please retry." });
+      return;
+    }
     if (error instanceof AiThrottledError) {
       res.status(429).json({ error: error.message });
       return;

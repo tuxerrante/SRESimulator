@@ -74,13 +74,41 @@ describe("POST /api/chat mock mode", () => {
 
   beforeEach(() => {
     process.env.AI_MOCK_MODE = "true";
+    const sessionScenario = {
+      id: "scenario_mock_easy",
+      title: "Test Scenario",
+      difficulty: "easy",
+      description: "Mock scenario",
+      incidentTicket: {
+        id: "IcM-MOCK",
+        severity: "Sev3",
+        title: "Mock ticket",
+        description: "Mock description",
+        customerImpact: "Low",
+        reportedTime: "2026-05-01T10:00:00.000Z",
+        clusterName: "cluster-test",
+        region: "eastus",
+      },
+      clusterContext: {
+        name: "cluster-test",
+        version: "4.19.0",
+        region: "eastus",
+        nodeCount: 3,
+        status: "Healthy",
+        recentEvents: [],
+        alerts: [],
+        upgradeHistory: [],
+      },
+    };
     mocks.getSessionStore.mockReturnValue({
       get: mocks.sessionGet,
     });
     mocks.sessionGet.mockResolvedValue({
       token: "session-123",
       difficulty: "easy",
+      scenarioId: "scenario_mock_easy",
       scenarioTitle: "Test Scenario",
+      scenarioPayload: JSON.stringify(sessionScenario),
       startTime: Date.now(),
       used: false,
       trafficSource: "player",
