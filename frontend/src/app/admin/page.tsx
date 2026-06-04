@@ -126,7 +126,14 @@ export default function AdminAnalyticsPage() {
         }
 
         const raw = await response.text();
-        const parsed = JSON.parse(raw) as GameplayAnalytics | { error?: string };
+        let parsed: GameplayAnalytics | { error?: string } = {};
+        if (raw.trim()) {
+          try {
+            parsed = JSON.parse(raw) as GameplayAnalytics | { error?: string };
+          } catch {
+            throw new Error("Failed to load gameplay analytics");
+          }
+        }
         if (!response.ok) {
           throw new Error("error" in parsed ? parsed.error : "Failed to load gameplay analytics");
         }
