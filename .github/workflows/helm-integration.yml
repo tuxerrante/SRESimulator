@@ -37,17 +37,7 @@ jobs:
           azure/setup-helm@dda3372f752e03dde6b3237bc9431cdc2f7a02a2
 
       - name: Helm template (AKS Gateway mode)
-        run: |
-          set -euo pipefail
-          helm template sre-simulator ./helm/sre-simulator \
-            --values ./helm/sre-simulator/values.yaml \
-            --set exposure.mode=gateway \
-            --set exposure.host=play.sresimulator.osadev.cloud \
-            --set exposure.scheme=https \
-            --set gateway.className=eg \
-            --set gateway.tls.secretName=sre-simulator-gateway-tls \
-            --set gateway.certManager.clusterIssuer=letsencrypt-azuredns-prod \
-            --set gateway.envoyProxy.name=sre-simulator-public-edge
+        run: bash scripts/helm-render-gateway.sh
 
       # Keep the Kind runtime path lightweight here.
       # Gateway-specific behavior is covered by this render check plus
