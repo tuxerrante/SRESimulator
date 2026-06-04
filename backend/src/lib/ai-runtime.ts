@@ -62,6 +62,34 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   });
 }
 
+function raceWithAbort<T>(operation: PromiseLike<T> | T, signal?: AbortSignal): Promise<T> {
+  const operationPromise = Promise.resolve(operation);
+  if (!signal) {
+    return operationPromise;
+  }
+  if (signal.aborted) {
+    return Promise.reject(toAbortError(signal.reason));
+  }
+
+  return new Promise((resolve, reject) => {
+    const onAbort = () => {
+      reject(toAbortError(signal.reason));
+    };
+
+    signal.addEventListener("abort", onAbort, { once: true });
+    operationPromise.then(
+      (value) => {
+        signal.removeEventListener("abort", onAbort);
+        resolve(value);
+      },
+      (error) => {
+        signal.removeEventListener("abort", onAbort);
+        reject(error);
+      },
+    );
+  });
+}
+
 export interface AiTextMessage {
   role: "user" | "assistant";
   content: string;
@@ -165,12 +193,15 @@ async function generateVertexText(request: AiTextRequest): Promise<string> {
   const model = getConfiguredModel();
   const start = Date.now();
 
-  const response = await client.messages.create({
-    model,
-    max_tokens: request.maxTokens,
-    system: request.system,
-    messages: request.messages,
-  });
+  const response = await raceWithAbort(
+    client.messages.create({
+      model,
+      max_tokens: request.maxTokens,
+      system: request.system,
+      messages: request.messages,
+    }),
+    request.signal,
+  );
 
   const textParts: string[] = [];
   for (const part of response.content) {
@@ -202,38 +233,60 @@ async function generateVertexText(request: AiTextRequest): Promise<string> {
 async function* streamVertexText(
   request: AiTextRequest
 ): AsyncGenerator<string, void, void> {
+  throwIfAborted(request.signal);
   const client = getVertexClient();
   const model = getConfiguredModel();
   const start = Date.now();
 
-  const stream = await client.messages.stream({
-    model,
-    max_tokens: request.maxTokens,
-    system: request.system,
-    messages: request.messages,
-  });
-
-  for await (const event of stream) {
-    if (event.type === "content_block_delta" && event.delta.type === "text_delta") {
-      yield event.delta.text;
-    }
-  }
-
-  const finalMessage = await stream.finalMessage();
-  if (request.route) {
-    logTokenUsage({
-      route: request.route,
+  const stream = await raceWithAbort(
+    client.messages.stream({
       model,
-      promptTokens: finalMessage.usage?.input_tokens ?? 0,
-      completionTokens: finalMessage.usage?.output_tokens ?? 0,
-      reasoningTokens: 0,
-      cachedTokens: 0,
-      totalTokens: (finalMessage.usage?.input_tokens ?? 0) + (finalMessage.usage?.output_tokens ?? 0),
-      latencyMs: Date.now() - start,
-      timestamp: Date.now(),
-      compacted: request.compactionMeta?.compacted ?? false,
-      compactedMessageCount: request.compactionMeta?.compactedMessageCount ?? 0,
-    });
+      max_tokens: request.maxTokens,
+      system: request.system,
+      messages: request.messages,
+    }),
+    request.signal,
+  );
+  const streamWithAbort = stream as unknown as {
+    abort?: () => void;
+    controller?: { abort?: () => void };
+  };
+  const onAbort = () => {
+    streamWithAbort.abort?.();
+    streamWithAbort.controller?.abort?.();
+  };
+  request.signal?.addEventListener("abort", onAbort, { once: true });
+
+  try {
+    for await (const event of stream) {
+      throwIfAborted(request.signal);
+      if (
+        event.type === "content_block_delta" &&
+        event.delta?.type === "text_delta" &&
+        typeof event.delta.text === "string"
+      ) {
+        yield event.delta.text;
+      }
+    }
+
+    const finalMessage = await raceWithAbort(stream.finalMessage(), request.signal);
+    if (request.route) {
+      logTokenUsage({
+        route: request.route,
+        model,
+        promptTokens: finalMessage.usage?.input_tokens ?? 0,
+        completionTokens: finalMessage.usage?.output_tokens ?? 0,
+        reasoningTokens: 0,
+        cachedTokens: 0,
+        totalTokens: (finalMessage.usage?.input_tokens ?? 0) + (finalMessage.usage?.output_tokens ?? 0),
+        latencyMs: Date.now() - start,
+        timestamp: Date.now(),
+        compacted: request.compactionMeta?.compacted ?? false,
+        compactedMessageCount: request.compactionMeta?.compactedMessageCount ?? 0,
+      });
+    }
+  } finally {
+    request.signal?.removeEventListener("abort", onAbort);
   }
 }
 

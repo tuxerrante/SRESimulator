@@ -48,8 +48,14 @@ spec:
                   name: {{ $authSecretName | quote }}
                   key: {{ $authSessionSecretKey | quote }}
             {{- end }}
+            - name: PUBLIC_APP_ORIGIN
+              value: {{ include "sre-simulator.publicOrigin" . | quote }}
+            - name: TRUST_PROXY_HEADERS
+              value: {{ ternary "true" "false" .Values.frontend.trustProxyHeaders | quote }}
             - name: NEXT_PUBLIC_SENTRY_ENABLED
               value: {{ ternary "true" "false" .Values.frontend.sentry.enabled | quote }}
+            - name: NEXT_PUBLIC_ADMIN_ANALYTICS_ENABLED
+              value: {{ ternary "true" "false" .Values.frontend.adminAnalyticsEnabled | quote }}
             - name: NEXT_PUBLIC_SENTRY_DSN
               value: {{ .Values.frontend.sentry.dsn | quote }}
             - name: NEXT_PUBLIC_SENTRY_ENVIRONMENT

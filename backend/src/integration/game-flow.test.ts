@@ -39,6 +39,7 @@ let savedMockMode: string | undefined;
 let savedTurnstileSecret: string | undefined;
 let savedAuthSecret: string | undefined;
 let savedAntiAbuseSecret: string | undefined;
+let savedPersistentLeaderboardEnabled: string | undefined;
 const githubAuthCookie = `${VIEWER_SESSION_COOKIE}=${createViewerSessionToken(
   {
     kind: "github",
@@ -57,10 +58,12 @@ async function createFullApp(): Promise<Express> {
   savedTurnstileSecret = process.env.TURNSTILE_SECRET_KEY;
   savedAuthSecret = process.env.AUTH_SESSION_SECRET;
   savedAntiAbuseSecret = process.env.ANTI_ABUSE_HMAC_SECRET;
+  savedPersistentLeaderboardEnabled = process.env.PERSISTENT_LEADERBOARD_ENABLED;
   process.env.AI_MOCK_MODE = "true";
   process.env.TURNSTILE_SECRET_KEY = "test-secret";
   process.env.AUTH_SESSION_SECRET = "test-secret";
   process.env.ANTI_ABUSE_HMAC_SECRET = "test-hmac";
+  process.env.PERSISTENT_LEADERBOARD_ENABLED = "true";
   const { initStorage } = await import("../lib/storage");
   await initStorage();
   const { default: express } = await import("express");
@@ -121,6 +124,11 @@ afterAll(() => {
     delete process.env.ANTI_ABUSE_HMAC_SECRET;
   } else {
     process.env.ANTI_ABUSE_HMAC_SECRET = savedAntiAbuseSecret;
+  }
+  if (savedPersistentLeaderboardEnabled === undefined) {
+    delete process.env.PERSISTENT_LEADERBOARD_ENABLED;
+  } else {
+    process.env.PERSISTENT_LEADERBOARD_ENABLED = savedPersistentLeaderboardEnabled;
   }
 });
 

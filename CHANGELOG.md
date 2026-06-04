@@ -5,6 +5,23 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] - 2026-05-12
+
+### Added (0.2.0)
+
+- Added gameplay lifecycle analytics surfaces, including admin session summaries and difficulty/scenario breakdown views, with dedicated admin endpoint protection.
+- Added server-owned scenario context binding to sessions so chat/command AI paths use trusted stored scenario payloads instead of mutable client context.
+
+### Changed (0.2.0)
+
+- Hardened runtime reliability with bounded timeout/cancellation behavior for scenario generation and chat streaming paths.
+- Updated deployment wiring for secure proxy-aware origin handling and configurable admin analytics visibility in frontend and Helm values.
+- Updated release/deploy gates so production deployment checks require successful Helm runtime integration checks.
+
+### Security (0.2.0)
+
+- Disabled persistent leaderboard writes by default behind `PERSISTENT_LEADERBOARD_ENABLED` to prevent forged client-submitted scoring from becoming persistent records.
+
 ## [0.1.2] - 2026-04-18
 
 ### Release Hardening

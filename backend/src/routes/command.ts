@@ -12,6 +12,9 @@ import { resolveAngleBracketPlaceholders } from "../lib/prompts/scenario-resourc
 import { isScenario } from "../lib/scenario-validation";
 import { captureBackendRouteError } from "../lib/telemetry/capture";
 import { getSessionStore } from "../lib/storage";
+import { parsePositiveIntEnv } from "../lib/env";
+import { validateSessionScenario } from "../lib/session-scenario";
+import { withAbortTimeout } from "../lib/timeout";
 import type { Scenario } from "../../../shared/types/game";
 import { stripTerminalCommandEcho } from "../../../shared/stripTerminalCommandEcho";
 
@@ -39,11 +42,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function parsePositiveIntEnv(raw: string | undefined, fallback: number): number {
-  const parsed = Number.parseInt(raw ?? "", 10);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
-}
-
 function getMaxCommandTokens(): number {
   return parsePositiveIntEnv(process.env.AI_MAX_COMMAND_TOKENS, DEFAULT_MAX_COMMAND_TOKENS);
 }
@@ -59,13 +57,6 @@ class CommandGenerationTimeoutError extends Error {
   }
 }
 
-function isAbortError(error: unknown): boolean {
-  return (
-    error instanceof Error &&
-    (error.name === "AbortError" || error.name === "TimeoutError")
-  );
-}
-
 function buildMockCommandResponse(
   command: string,
   type: "oc" | "kql" | "geneva",
@@ -78,33 +69,6 @@ function buildMockCommandResponse(
     mode: degradedReason ? "degraded" : "mock",
     degradedReason,
   };
-}
-
-async function withTimeout<T>(
-  run: (signal: AbortSignal) => Promise<T>,
-  timeoutMs: number,
-): Promise<T> {
-  return new Promise((resolve, reject) => {
-    const controller = new AbortController();
-    let timedOut = false;
-    const timer = setTimeout(() => {
-      timedOut = true;
-      controller.abort(new CommandGenerationTimeoutError(timeoutMs));
-      reject(new CommandGenerationTimeoutError(timeoutMs));
-    }, timeoutMs);
-
-    run(controller.signal).then(
-      (value) => {
-        clearTimeout(timer);
-        if (!timedOut) resolve(value);
-      },
-      (error) => {
-        clearTimeout(timer);
-        if (timedOut && isAbortError(error)) return;
-        reject(error);
-      },
-    );
-  });
 }
 
 export function resolveCommandHistoryPlaceholders(
@@ -131,6 +95,7 @@ export function resolveCommandHistoryPlaceholders(
 }
 
 commandRouter.post("/", async (req: Request, res: Response) => {
+  let requestScenario: Scenario | null = null;
   try {
     if (!isRecord(req.body)) {
       res.status(400).json({ error: "Invalid request body" });
@@ -144,7 +109,6 @@ commandRouter.post("/", async (req: Request, res: Response) => {
       res.status(400).json({ error: "Invalid scenario payload" });
       return;
     }
-    const scenario = rawScenario ?? null;
     if (typeof body.sessionToken !== "string" || body.sessionToken.trim() === "") {
       res.status(400).json({ error: "Session token is required" });
       return;
@@ -165,14 +129,13 @@ commandRouter.post("/", async (req: Request, res: Response) => {
       res.status(403).json({ error: "Invalid or expired session token" });
       return;
     }
-    if (
-      scenario &&
-      (scenario.title !== session.scenarioTitle ||
-        scenario.difficulty !== session.difficulty)
-    ) {
-      res.status(409).json({ error: "Scenario does not match the active session" });
+    const scenarioResult = validateSessionScenario(session, rawScenario);
+    if (!scenarioResult.ok) {
+      res.status(409).json({ error: scenarioResult.error });
       return;
     }
+    const scenario = scenarioResult.scenario;
+    requestScenario = scenario;
 
     const commandResolved = resolveAngleBracketPlaceholders(command, scenario);
     const commandHistoryResolved = resolveCommandHistoryPlaceholders(commandHistory, scenario);
@@ -199,7 +162,7 @@ commandRouter.post("/", async (req: Request, res: Response) => {
       commandHistoryResolved,
     );
 
-    const responseText = await withTimeout(
+    const responseText = await withAbortTimeout(
       (signal) =>
         generateAiText({
           maxTokens: getMaxCommandTokens(),
@@ -214,6 +177,8 @@ commandRouter.post("/", async (req: Request, res: Response) => {
           signal,
         }),
       getCommandTimeoutMs(),
+      (timeoutMs) => new CommandGenerationTimeoutError(timeoutMs),
+      { suppressAbortErrorAfterTimeout: true },
     );
 
     let output = responseText;
@@ -237,9 +202,9 @@ commandRouter.post("/", async (req: Request, res: Response) => {
         ? (requestBody.type as (typeof VALID_COMMAND_TYPES)[number])
         : "oc";
       const fallbackCommandRaw = typeof requestBody.command === "string" ? requestBody.command : "";
-      const fallbackScenario = isScenario(requestBody.scenario)
+      const fallbackScenario = requestScenario ?? (isScenario(requestBody.scenario)
         ? requestBody.scenario
-        : null;
+        : null);
       const fallbackCommand = resolveAngleBracketPlaceholders(
         fallbackCommandRaw,
         fallbackScenario,
