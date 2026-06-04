@@ -7,6 +7,8 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET(request: NextRequest): Promise<NextResponse> {
+  const adminAnalyticsEnabled =
+    process.env.NEXT_PUBLIC_ADMIN_ANALYTICS_ENABLED === "true";
   const secret = process.env.AUTH_SESSION_SECRET;
   if (!secret) {
     return NextResponse.json(
@@ -14,6 +16,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         viewer: null,
         accessPolicy: getViewerAccessPolicy(null),
         authConfigured: false,
+        adminAnalyticsEnabled,
       },
       { status: 200 }
     );
@@ -35,5 +38,6 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     viewer,
     accessPolicy: getViewerAccessPolicy(viewer),
     authConfigured: Boolean(process.env.GITHUB_CLIENT_ID && process.env.GITHUB_CLIENT_SECRET),
+    adminAnalyticsEnabled,
   });
 }

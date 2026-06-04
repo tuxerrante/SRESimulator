@@ -62,6 +62,7 @@ describe("scores routes", () => {
   let tmpDir: string;
   let origDataDir: string | undefined;
   let origMockMode: string | undefined;
+  let origPersistentLeaderboardEnabled: string | undefined;
 
   let scoresRouter: typeof import("./scores").scoresRouter;
   let getSessionStore: typeof import("../lib/storage").getSessionStore;
@@ -71,8 +72,10 @@ describe("scores routes", () => {
     tmpDir = await mkdtemp(join(tmpdir(), "scores-test-"));
     origDataDir = process.env.DATA_DIR;
     origMockMode = process.env.AI_MOCK_MODE;
+    origPersistentLeaderboardEnabled = process.env.PERSISTENT_LEADERBOARD_ENABLED;
     process.env.DATA_DIR = tmpDir;
     process.env.AI_MOCK_MODE = "true";
+    process.env.PERSISTENT_LEADERBOARD_ENABLED = "true";
 
     vi.resetModules();
 
@@ -95,6 +98,11 @@ describe("scores routes", () => {
       delete process.env.AI_MOCK_MODE;
     } else {
       process.env.AI_MOCK_MODE = origMockMode;
+    }
+    if (origPersistentLeaderboardEnabled === undefined) {
+      delete process.env.PERSISTENT_LEADERBOARD_ENABLED;
+    } else {
+      process.env.PERSISTENT_LEADERBOARD_ENABLED = origPersistentLeaderboardEnabled;
     }
     await rm(tmpDir, { recursive: true, force: true });
   });

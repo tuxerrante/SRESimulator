@@ -9,7 +9,9 @@ export type { TrafficSource } from "../../../../shared/types/leaderboard";
 export interface GameSession {
   token: string;
   difficulty: Difficulty;
+  scenarioId: string | null;
   scenarioTitle: string;
+  scenarioPayload: string | null;
   startTime: number;
   used: boolean;
   trafficSource: TrafficSource;
@@ -22,7 +24,9 @@ export interface GameSession {
 
 export interface CreateGameSessionInput {
   difficulty: Difficulty;
+  scenarioId?: string | null;
   scenarioTitle: string;
+  scenarioPayload?: string | null;
   trafficSource?: TrafficSource;
   identityKind: SessionIdentityKind;
   githubUserId?: string | null;

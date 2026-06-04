@@ -24,6 +24,8 @@ import { buildAnonymousClaimKeys } from "../lib/anonymous-claim";
 import { evaluateScenarioAccess } from "../lib/scenario-access";
 import { matchesSharedSecret } from "../lib/shared-secret";
 import { captureBackendRouteError } from "../lib/telemetry/capture";
+import { parsePositiveIntEnv } from "../lib/env";
+import { withAbortTimeout } from "../lib/timeout";
 import { verifySignedClientIp } from "../../../shared/auth/client-ip";
 import type { Difficulty, Scenario } from "../../../shared/types/game";
 import type { TrafficSource } from "../../../shared/types/leaderboard";
@@ -47,6 +49,7 @@ const ISO_8601_UTC_TIMESTAMP_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 const SEVEN_DAYS_MS = 7 * ONE_DAY_MS;
 const TIMESTAMP_GRACE_MS = 5 * 60 * 1000;
+const DEFAULT_SCENARIO_TIMEOUT_MS = 30000;
 
 class InvalidScenarioPayloadError extends Error {
   readonly clientMessage = "Scenario generation returned an invalid payload.";
@@ -55,6 +58,17 @@ class InvalidScenarioPayloadError extends Error {
     super(message);
     this.name = "InvalidScenarioPayloadError";
   }
+}
+
+class ScenarioGenerationTimeoutError extends Error {
+  constructor(timeoutMs: number) {
+    super(`Scenario generation timed out after ${timeoutMs}ms`);
+    this.name = "ScenarioGenerationTimeoutError";
+  }
+}
+
+function getScenarioTimeoutMs(): number {
+  return parsePositiveIntEnv(process.env.AI_SCENARIO_TIMEOUT_MS, DEFAULT_SCENARIO_TIMEOUT_MS);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -419,7 +433,7 @@ scenarioRouter.post("/", async (req: Request, res: Response) => {
     };
 
     const createSessionForScenario = async (
-      scenarioTitle: string,
+      scenario: Scenario,
       source = "scenario",
     ): Promise<{
       sessionToken: string;
@@ -428,7 +442,9 @@ scenarioRouter.post("/", async (req: Request, res: Response) => {
       const trafficSource = getTrafficSource(req);
       const sessionToken = await getSessionStore().create({
         difficulty,
-        scenarioTitle,
+        scenarioId: scenario.id,
+        scenarioTitle: scenario.title,
+        scenarioPayload: JSON.stringify(scenario),
         trafficSource,
         identityKind: accessDecision.sessionIdentityKind,
         githubUserId: viewer?.githubUserId ?? null,
@@ -440,7 +456,7 @@ scenarioRouter.post("/", async (req: Request, res: Response) => {
       void recordStartedTelemetry(
         sessionToken,
         difficulty,
-        scenarioTitle,
+        scenario.title,
         trafficSource,
         source,
       );
@@ -454,10 +470,7 @@ scenarioRouter.post("/", async (req: Request, res: Response) => {
     if (isCatalogScenarioSource()) {
       reservedClaimKeys = await reserveAnonymousClaimKeys();
       const catalogScenario = await getCatalogScenario(difficulty);
-      const session = await createSessionForScenario(
-        catalogScenario.title,
-        "scenario-catalog"
-      );
+      const session = await createSessionForScenario(catalogScenario, "scenario-catalog");
       res.json({
         scenario: catalogScenario,
         sessionToken: session.sessionToken,
@@ -470,7 +483,7 @@ scenarioRouter.post("/", async (req: Request, res: Response) => {
     if (readiness.mockMode) {
       reservedClaimKeys = await reserveAnonymousClaimKeys();
       const scenario = generateMockScenario(difficulty);
-      const session = await createSessionForScenario(scenario.title);
+      const session = await createSessionForScenario(scenario);
       res.json({ scenario, sessionToken: session.sessionToken, identityKind: session.identityKind });
       return;
     }
@@ -512,10 +525,13 @@ scenarioRouter.post("/", async (req: Request, res: Response) => {
 
     const currentDate = utcNow();
 
-    const responseText = await generateAiText({
-      maxTokens: 1024,
-      route: "scenario",
-      system: `You are a scenario generator for an ARO (Azure Red Hat OpenShift) SRE training simulator.
+    const responseText = await withAbortTimeout(
+      (signal) =>
+        generateAiText({
+          maxTokens: 1024,
+          route: "scenario",
+          signal,
+          system: `You are a scenario generator for an ARO (Azure Red Hat OpenShift) SRE training simulator.
 Generate a realistic incident scenario. Be concise.
 The scenario should be appropriate for the "${difficulty}" difficulty level.
 
@@ -558,13 +574,16 @@ IMPORTANT: Respond with ONLY valid JSON matching this exact structure (no markdo
 
 Reference incidents and alerts:
 ${scenarioContext}`,
-      messages: [
-        {
-          role: "user",
-          content: `Generate a ${difficulty} difficulty ARO incident scenario.`,
-        },
-      ],
-    });
+          messages: [
+            {
+              role: "user",
+              content: `Generate a ${difficulty} difficulty ARO incident scenario.`,
+            },
+          ],
+        }),
+      getScenarioTimeoutMs(),
+      (timeoutMs) => new ScenarioGenerationTimeoutError(timeoutMs),
+    );
 
     let text = responseText;
 
@@ -579,7 +598,7 @@ ${scenarioContext}`,
     }
     const scenario = validateScenarioPayload(rawScenario, difficulty);
 
-    const session = await createSessionForScenario(scenario.title);
+    const session = await createSessionForScenario(scenario);
 
     res.json({ scenario, sessionToken: session.sessionToken, identityKind: session.identityKind });
   } catch (error) {
@@ -591,6 +610,10 @@ ${scenarioContext}`,
     }
     if (error instanceof AiThrottledError) {
       res.status(429).json({ error: error.message });
+      return;
+    }
+    if (error instanceof ScenarioGenerationTimeoutError) {
+      res.status(504).json({ error: "Scenario generation timed out. Please retry." });
       return;
     }
     if (error instanceof InvalidScenarioPayloadError) {

@@ -72,6 +72,32 @@ async function close(server: Server): Promise<void> {
 
 describe("chatRouter", () => {
   beforeEach(() => {
+    const sessionScenario = {
+      id: "scenario_test_easy",
+      title: "Test Scenario",
+      difficulty: "easy",
+      description: "Test scenario description",
+      incidentTicket: {
+        id: "IcM-TEST",
+        severity: "Sev3",
+        title: "Ticket title",
+        description: "Ticket description",
+        customerImpact: "Low",
+        reportedTime: "2026-05-01T10:00:00.000Z",
+        clusterName: "cluster-test",
+        region: "eastus",
+      },
+      clusterContext: {
+        name: "cluster-test",
+        version: "4.19.0",
+        region: "eastus",
+        nodeCount: 3,
+        status: "Degraded",
+        recentEvents: [],
+        alerts: [],
+        upgradeHistory: [],
+      },
+    };
     vi.clearAllMocks();
     mocks.getAiReadiness.mockReturnValue({ ready: true, mockMode: false });
     mocks.loadKnowledgeSections.mockResolvedValue([]);
@@ -92,7 +118,9 @@ describe("chatRouter", () => {
     mocks.sessionGet.mockResolvedValue({
       token: "session-123",
       difficulty: "easy",
+      scenarioId: "scenario_test_easy",
       scenarioTitle: "Test Scenario",
+      scenarioPayload: JSON.stringify(sessionScenario),
       startTime: Date.now(),
       used: false,
       trafficSource: "player",
@@ -152,4 +180,51 @@ describe("chatRouter", () => {
       await close(server);
     }
   });
+
+  it("rejects invalid stored session scenario payloads", async () => {
+    mocks.sessionGet.mockResolvedValueOnce({
+      token: "session-123",
+      difficulty: "easy",
+      scenarioId: "scenario_test_easy",
+      scenarioTitle: "Test Scenario",
+      scenarioPayload: "{",
+      startTime: Date.now(),
+      used: false,
+      trafficSource: "player",
+      identityKind: "anonymous",
+      githubUserId: null,
+      githubLogin: null,
+      anonymousClaimKey: null,
+      persistentScoreEligible: false,
+    });
+
+    const app = express();
+    app.use(express.json());
+    app.use("/api/chat", chatRouter);
+    const server = await new Promise<Server>((resolve) => {
+      const listeningServer = app.listen(0, "127.0.0.1", () => resolve(listeningServer));
+    });
+
+    try {
+      const { port } = server.address() as AddressInfo;
+      const response = await fetch(`http://127.0.0.1:${port}/api/chat`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          sessionToken: "session-123",
+          messages: [{ role: "user", content: "hello" }],
+          scenario: null,
+          currentPhase: "reading",
+        }),
+      });
+
+      expect(response.status).toBe(409);
+      await expect(response.json()).resolves.toEqual({
+        error: "Session scenario context is unavailable",
+      });
+    } finally {
+      await close(server);
+    }
+  });
+
 });
