@@ -164,8 +164,9 @@ export function useCommand() {
         recalculateScore();
       } catch (error) {
         captureFrontendError(error, buildCommandTelemetryContext());
+        const errorMessage = error instanceof Error ? error.message : String(error ?? "");
         const output =
-          isGatewayTimeout(null, error instanceof Error ? error.message : "")
+          isGatewayTimeout(null, errorMessage)
             ? COMMAND_TIMEOUT_ERROR_MESSAGE
             : "Error: Failed to simulate command execution";
         const entry: TerminalEntry = {

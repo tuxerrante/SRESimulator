@@ -67,7 +67,7 @@ describe("useCommand 504 handling", () => {
 
   afterEach(() => {
     cleanup();
-    vi.restoreAllMocks();
+    vi.clearAllMocks();
     vi.unstubAllGlobals();
     useGameStore.getState().resetGame();
   });
@@ -79,6 +79,30 @@ describe("useCommand 504 handling", () => {
         ok: false,
         status: 504,
         text: async () => "<html>gateway timeout</html>",
+      } as Response),
+    );
+
+    render(<Harness />);
+    fireEvent.click(screen.getByRole("button", { name: "Run command" }));
+
+    await waitFor(() => {
+      expect(useGameStore.getState().terminalEntries.length).toBe(1);
+    });
+
+    const [entry] = useGameStore.getState().terminalEntries;
+    expect(entry.exitCode).toBe(1);
+    expect(entry.output).toBe(
+      "Error: Command request timed out (504). Please try running the command again.",
+    );
+  });
+
+  it("shows the same friendly retry message for JSON 504 responses", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: false,
+        status: 504,
+        text: async () => '{"error":"Gateway Timeout"}',
       } as Response),
     );
 
