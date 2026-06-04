@@ -13,17 +13,17 @@ if [[ ! -f "${WORKFLOW_FILE}" ]]; then
   fail "Expected workflow file at ${WORKFLOW_FILE}"
 fi
 
-if ! rg -q '^[[:space:]]+push:[[:space:]]*$' "${WORKFLOW_FILE}"; then
+if ! grep -Eq '^[[:space:]]+push:[[:space:]]*$' "${WORKFLOW_FILE}"; then
   fail "Helm integration workflow must define a push trigger."
 fi
 
-if ! rg -q '^[[:space:]]+branches:[[:space:]]*\[main\][[:space:]]*$' "${WORKFLOW_FILE}"; then
+if ! grep -Eq '^[[:space:]]+branches:[[:space:]]*\[main\][[:space:]]*$' "${WORKFLOW_FILE}"; then
   fail "Helm integration workflow push trigger must target main."
 fi
 
 # If a paths filter is ever added back, it must include scripts/**
-if rg -q '^[[:space:]]+paths:[[:space:]]*$' "${WORKFLOW_FILE}"; then
-  if ! rg -q '^[[:space:]]+-[[:space:]]+"?scripts/\*\*"?[[:space:]]*$' "${WORKFLOW_FILE}"; then
+if grep -Eq '^[[:space:]]+paths:[[:space:]]*$' "${WORKFLOW_FILE}"; then
+  if ! grep -Eq '^[[:space:]]+-[[:space:]]+"?scripts/\*\*"?[[:space:]]*$' "${WORKFLOW_FILE}"; then
     fail "When push.paths is configured, scripts/** must be included."
   fi
 fi
