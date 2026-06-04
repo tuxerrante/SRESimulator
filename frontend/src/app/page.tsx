@@ -41,7 +41,7 @@ export default function HomePage() {
   const clearViewer = useGameStore((s) => s.clearViewer);
   const [loading, setLoading] = useState<Difficulty | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const adminAnalyticsEnabled = process.env.NEXT_PUBLIC_ADMIN_ANALYTICS_ENABLED === "true";
+  const [adminAnalyticsEnabled, setAdminAnalyticsEnabled] = useState(false);
   const [authConfigured, setAuthConfigured] = useState(false);
   const [sessionReady, setSessionReady] = useState(false);
   const [sessionLoadError, setSessionLoadError] = useState(false);
@@ -73,10 +73,12 @@ export default function HomePage() {
             avatarUrl: string | null;
           } | null;
           authConfigured: boolean;
+          adminAnalyticsEnabled?: boolean;
         };
 
         setSessionLoadError(false);
         setAuthConfigured(data.authConfigured);
+        setAdminAnalyticsEnabled(Boolean(data.adminAnalyticsEnabled));
         if (data.viewer) {
           setViewer(data.viewer);
         } else {
@@ -89,6 +91,7 @@ export default function HomePage() {
         });
         setSessionLoadError(true);
         setAuthConfigured(false);
+        setAdminAnalyticsEnabled(false);
         clearViewer();
       } finally {
         setSessionReady(true);

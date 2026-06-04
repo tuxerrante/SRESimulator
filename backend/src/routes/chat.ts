@@ -197,6 +197,9 @@ chatRouter.post("/", async (req: Request, res: Response) => {
       res.end();
     } catch (error) {
       captureBackendRouteError(req, error, "Chat stream failed");
+      if (res.writableEnded || res.destroyed) {
+        return;
+      }
       const errorMessage = isTimedOutChatError(error, streamController.signal, timedOut)
         ? "Chat stream timed out. Please retry."
         : "Chat stream failed";

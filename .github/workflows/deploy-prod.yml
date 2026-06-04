@@ -278,11 +278,14 @@ jobs:
             gh api \
               "repos/${GITHUB_REPOSITORY}/commits/${RELEASE_SHA}/check-runs" \
               --jq '
-                .check_runs[] |
-                select(.name == "ci-gate") |
-                .conclusion
-              ' | \
-              head -n 1
+                [
+                  .check_runs[] |
+                  select(.name == "ci-gate")
+                ] |
+                sort_by(.started_at // .completed_at // "") |
+                last |
+                .conclusion // ""
+              '
           )"
           if [[ "${ci_gate_conclusion}" != "success" ]]; then
             echo "CI gate check did not pass for ${RELEASE_TAG}."
@@ -294,11 +297,14 @@ jobs:
             gh api \
               "repos/${GITHUB_REPOSITORY}/commits/${RELEASE_SHA}/check-runs" \
               --jq '
-                .check_runs[] |
-                select(.name == "helm-test") |
-                .conclusion
-              ' | \
-              head -n 1
+                [
+                  .check_runs[] |
+                  select(.name == "helm-test")
+                ] |
+                sort_by(.started_at // .completed_at // "") |
+                last |
+                .conclusion // ""
+              '
           )"
           if [[ "${helm_integration_conclusion}" != "success" ]]; then
             echo "Helm integration check did not pass for ${RELEASE_TAG}."
