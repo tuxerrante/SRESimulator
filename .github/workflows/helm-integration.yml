@@ -4,11 +4,6 @@ name: Helm Integration Test
 "on":
   push:
     branches: [main]
-    paths:
-      - "helm/**"
-      - "backend/**"
-      - "frontend/**"
-      - ".github/workflows/helm-integration.yml"
   schedule:
     - cron: "0 4 * * 1-5"
   workflow_dispatch: {}

@@ -57,6 +57,18 @@ class ChatStreamTimeoutError extends Error {
   }
 }
 
+function isTimedOutChatError(
+  error: unknown,
+  signal: AbortSignal,
+  timedOut: boolean,
+): boolean {
+  return timedOut ||
+    error instanceof ChatStreamTimeoutError ||
+    (error instanceof Error &&
+      error.name === "AbortError" &&
+      signal.reason instanceof ChatStreamTimeoutError);
+}
+
 interface ParsedSessionScenario {
   scenario: Scenario | null;
   hasPayload: boolean;
@@ -195,7 +207,9 @@ chatRouter.post("/", async (req: Request, res: Response) => {
 
     const streamController = new AbortController();
     const streamTimeoutMs = getChatTimeoutMs();
+    let timedOut = false;
     const streamTimeout = setTimeout(() => {
+      timedOut = true;
       streamController.abort(new ChatStreamTimeoutError(streamTimeoutMs));
     }, streamTimeoutMs);
     const onClientClose = () => {
@@ -234,7 +248,7 @@ chatRouter.post("/", async (req: Request, res: Response) => {
       res.end();
     } catch (error) {
       captureBackendRouteError(req, error, "Chat stream failed");
-      const errorMessage = error instanceof ChatStreamTimeoutError
+      const errorMessage = isTimedOutChatError(error, streamController.signal, timedOut)
         ? "Chat stream timed out. Please retry."
         : "Chat stream failed";
       res.write(`data: ${JSON.stringify({ error: errorMessage })}\n\n`);
@@ -244,7 +258,7 @@ chatRouter.post("/", async (req: Request, res: Response) => {
       req.off("close", onClientClose);
     }
   } catch (error) {
-    if (error instanceof ChatStreamTimeoutError) {
+    if (error instanceof ChatStreamTimeoutError || (error instanceof Error && error.name === "AbortError")) {
       res.status(504).json({ error: "Chat stream timed out. Please retry." });
       return;
     }

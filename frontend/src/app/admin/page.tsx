@@ -72,11 +72,13 @@ export default function AdminAnalyticsPage() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    const storageKey = "gameplayAdminToken";
+
     const loadStoredToken = (): string | null => {
       if (typeof window === "undefined") {
         return null;
       }
-      const token = window.localStorage.getItem("gameplayAdminToken");
+      const token = window.sessionStorage.getItem(storageKey);
       return token && token.trim() ? token.trim() : null;
     };
 
@@ -84,7 +86,14 @@ export default function AdminAnalyticsPage() {
       if (typeof window === "undefined") {
         return;
       }
-      window.localStorage.setItem("gameplayAdminToken", token);
+      window.sessionStorage.setItem(storageKey, token);
+    };
+
+    const clearStoredToken = (): void => {
+      if (typeof window === "undefined") {
+        return;
+      }
+      window.sessionStorage.removeItem(storageKey);
     };
 
     const fetchAnalytics = async () => {
@@ -93,18 +102,27 @@ export default function AdminAnalyticsPage() {
 
       try {
         let token = loadStoredToken();
+        let didPromptToken = false;
         let response = await fetch("/api/gameplay/admin", {
           headers: token ? { "x-gameplay-admin-token": token } : undefined,
         });
+        if (response.status === 401 && token) {
+          clearStoredToken();
+        }
         if (response.status === 401 && typeof window !== "undefined") {
-          const promptedToken = window.prompt("Enter gameplay admin token");
-          if (promptedToken && promptedToken.trim()) {
-            token = promptedToken.trim();
-            storeToken(token);
+          const promptedValue = window.prompt("Enter gameplay admin token");
+          if (promptedValue?.trim()) {
+            token = promptedValue.trim();
+            didPromptToken = true;
             response = await fetch("/api/gameplay/admin", {
               headers: { "x-gameplay-admin-token": token },
             });
           }
+        }
+        if (didPromptToken && token && response.ok) {
+          storeToken(token);
+        } else if (response.status === 401) {
+          clearStoredToken();
         }
 
         const raw = await response.text();
