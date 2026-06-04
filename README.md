@@ -121,6 +121,8 @@ deployed same-origin proxy path.
   [infra/POST_APPLY_CHECKLIST.md](infra/POST_APPLY_CHECKLIST.md)
 - Release and versioning policy:
   [docs/RELEASES.md](docs/RELEASES.md)
+- Helm chart profiles and platform-specific values:
+  [helm/sre-simulator/README.md](helm/sre-simulator/README.md)
 - Original product design:
   [CLAUDE.md](CLAUDE.md)
 
