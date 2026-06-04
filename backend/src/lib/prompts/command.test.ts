@@ -105,6 +105,12 @@ describe("buildScenarioContext", () => {
     const ctx = buildScenarioContext(makeScenario());
     expect(ctx).toContain("A worker node has gone NotReady due to DiskPressure");
   });
+
+  it("includes named resources when identifiers can be derived from the scenario", () => {
+    const ctx = buildScenarioContext(makeScenario());
+    expect(ctx).toContain("Named resources");
+    expect(ctx).toContain("worker-eastus2-2");
+  });
 });
 
 describe("buildSimNow", () => {
@@ -164,6 +170,11 @@ describe("buildCommandSystemPrompt", () => {
     expect(prompt).toContain("Scenario Context:\nTitle: Test (easy)");
   });
 
+  it("instructs the model not to echo angle-bracket placeholders in output", () => {
+    const prompt = buildCommandSystemPrompt("oc", "ctx", "now");
+    expect(prompt).toContain("PLACEHOLDER RESOLUTION");
+  });
+
   it("labels oc commands as OpenShift CLI", () => {
     const prompt = buildCommandSystemPrompt("oc", "ctx", "now");
     expect(prompt).toContain("OpenShift CLI (oc)");
@@ -190,8 +201,40 @@ describe("buildCommandSystemPrompt", () => {
     expect(prompt).toContain("master-0 Ready");
   });
 
+  it("preserves a deeper recent command history window for larger investigations", () => {
+    const history = Array.from({ length: 20 }, (_, index) => ({
+      command: `oc get pods -n ns-${index}`,
+      output: `pod-${index} Running`,
+      type: "oc" as const,
+    }));
+
+    const prompt = buildCommandSystemPrompt("oc", "ctx", "now", history);
+
+    expect(prompt).toContain("$ oc get pods -n ns-0");
+    expect(prompt).toContain("$ oc get pods -n ns-19");
+  });
+
+  it("preserves the newest commands when history overflows the prompt budget", () => {
+    const history = Array.from({ length: 24 }, (_, index) => ({
+      command: `oc get machines -n openshift-machine-api batch-${index}`,
+      output: `machine-${index} ${"x".repeat(780)}`,
+      type: "oc" as const,
+    }));
+
+    const prompt = buildCommandSystemPrompt("oc", "ctx", "now", history);
+
+    expect(prompt).toContain("$ oc get machines -n openshift-machine-api batch-23");
+    expect(prompt).not.toContain("$ oc get machines -n openshift-machine-api batch-0");
+  });
+
   it("omits history section when no history provided", () => {
     const prompt = buildCommandSystemPrompt("oc", "ctx", "now");
     expect(prompt).not.toContain("Previously Executed Commands");
+  });
+
+  it("instructs the model not to echo the command or prompt lines", () => {
+    const prompt = buildCommandSystemPrompt("oc", "ctx", "now");
+    expect(prompt).toContain("Do not echo the command line");
+    expect(prompt).toContain('"[oc]"');
   });
 });

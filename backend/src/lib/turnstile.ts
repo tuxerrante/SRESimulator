@@ -1,0 +1,47 @@
+export async function verifyTurnstileToken(
+  token: string | undefined,
+  remoteIp: string | undefined
+): Promise<boolean> {
+  const secret = process.env.TURNSTILE_SECRET_KEY;
+  const expectedHostname = process.env.TURNSTILE_EXPECTED_HOSTNAME?.trim();
+  if (!secret || !token) {
+    return false;
+  }
+
+  if (process.env.NODE_ENV === "test" && secret === "test-secret") {
+    return token === "pass";
+  }
+
+  const body = new URLSearchParams({
+    secret,
+    response: token,
+  });
+  if (remoteIp) {
+    body.set("remoteip", remoteIp);
+  }
+
+  const response = await fetch("https://challenges.cloudflare.com/turnstile/v0/siteverify", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
+    },
+    body: body.toString(),
+    cache: "no-store",
+    signal: AbortSignal.timeout(5000),
+  });
+
+  if (!response.ok) {
+    return false;
+  }
+
+  const payload = (await response.json()) as { success?: boolean; hostname?: string };
+  if (payload.success !== true) {
+    return false;
+  }
+
+  if (expectedHostname && payload.hostname !== expectedHostname) {
+    return false;
+  }
+
+  return true;
+}

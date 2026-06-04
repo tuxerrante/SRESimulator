@@ -6,15 +6,20 @@ metadata:
     {{- include "sre-simulator.labels" . | nindent 4 }}
     {{- include "sre-simulator.frontend.selectorLabels" . | nindent 4 }}
 spec:
+  {{- if not .Values.frontend.autoscaling.enabled }}
   replicas: {{ .Values.frontend.replicas }}
+  {{- end }}
   selector:
     matchLabels:
       {{- include "sre-simulator.frontend.selectorLabels" . | nindent 6 }}
   template:
     metadata:
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
       labels:
         {{- include "sre-simulator.frontend.selectorLabels" . | nindent 8 }}
     spec:
+      {{- include "sre-simulator.imagePullSecrets" . | nindent 6 }}
       containers:
         - name: frontend
           image: "{{ .Values.frontend.image.repository }}:{{ .Values.frontend.image.tag }}"
@@ -22,6 +27,43 @@ spec:
           env:
             - name: BACKEND_INTERNAL_BASE_URL
               value: "http://{{ include "sre-simulator.fullname" . }}-backend:{{ .Values.backend.port }}"
+            {{- $authSecretName := .Values.frontend.auth.existingSecretName | default "" | trim }}
+            {{- if $authSecretName }}
+            {{- $githubClientIdKey := required "frontend.auth.githubClientIdKey is required when frontend.auth.existingSecretName is set" (.Values.frontend.auth.githubClientIdKey | default "" | trim) }}
+            {{- $githubClientSecretKey := required "frontend.auth.githubClientSecretKey is required when frontend.auth.existingSecretName is set" (.Values.frontend.auth.githubClientSecretKey | default "" | trim) }}
+            {{- $authSessionSecretKey := required "frontend.auth.authSessionSecretKey is required when frontend.auth.existingSecretName is set" (.Values.frontend.auth.authSessionSecretKey | default "" | trim) }}
+            - name: GITHUB_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $authSecretName | quote }}
+                  key: {{ $githubClientIdKey | quote }}
+            - name: GITHUB_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $authSecretName | quote }}
+                  key: {{ $githubClientSecretKey | quote }}
+            - name: AUTH_SESSION_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $authSecretName | quote }}
+                  key: {{ $authSessionSecretKey | quote }}
+            {{- end }}
+            - name: PUBLIC_APP_ORIGIN
+              value: {{ include "sre-simulator.publicOrigin" . | quote }}
+            - name: TRUST_PROXY_HEADERS
+              value: {{ ternary "true" "false" .Values.frontend.trustProxyHeaders | quote }}
+            - name: NEXT_PUBLIC_SENTRY_ENABLED
+              value: {{ ternary "true" "false" .Values.frontend.sentry.enabled | quote }}
+            - name: NEXT_PUBLIC_ADMIN_ANALYTICS_ENABLED
+              value: {{ ternary "true" "false" .Values.frontend.adminAnalyticsEnabled | quote }}
+            - name: NEXT_PUBLIC_SENTRY_DSN
+              value: {{ .Values.frontend.sentry.dsn | quote }}
+            - name: NEXT_PUBLIC_SENTRY_ENVIRONMENT
+              value: {{ .Values.frontend.sentry.environment | quote }}
+            - name: NEXT_PUBLIC_SENTRY_REPLAY_SESSION_SAMPLE_RATE
+              value: {{ .Values.frontend.sentry.replaySessionSampleRate | quote }}
+            - name: NEXT_PUBLIC_SENTRY_REPLAY_ON_ERROR_SAMPLE_RATE
+              value: {{ .Values.frontend.sentry.replayOnErrorSampleRate | quote }}
           ports:
             - containerPort: {{ .Values.frontend.port }}
               protocol: TCP

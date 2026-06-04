@@ -1,3 +1,6 @@
+{{- $publicService := .Values.frontend.service.public -}}
+{{- $publicServiceEnabled := eq (include "sre-simulator.exposureMode" .) "publicService" -}}
+{{- $frontendServicePort := ternary 80 .Values.frontend.port $publicServiceEnabled -}}
 apiVersion: v1
 kind: Service
 metadata:
@@ -5,10 +8,17 @@ metadata:
   labels:
     {{- include "sre-simulator.labels" . | nindent 4 }}
     {{- include "sre-simulator.frontend.selectorLabels" . | nindent 4 }}
+  {{- with (and $publicServiceEnabled $publicService.annotations) }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
 spec:
-  type: ClusterIP
+  type: {{ ternary "LoadBalancer" "ClusterIP" $publicServiceEnabled }}
+  {{- if and $publicServiceEnabled $publicService.loadBalancerIP }}
+  loadBalancerIP: {{ $publicService.loadBalancerIP | quote }}
+  {{- end }}
   ports:
-    - port: {{ .Values.frontend.port }}
+    - port: {{ $frontendServicePort }}
       targetPort: {{ .Values.frontend.port }}
       protocol: TCP
   selector:

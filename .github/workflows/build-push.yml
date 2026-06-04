@@ -2,15 +2,84 @@
 name: Build and Push Images
 
 "on":
-  push:
-    branches: [main]
+  workflow_run:
+    workflows: ["CI"]
+    types:
+      - completed
 
 permissions:
   contents: read
   packages: write
 
 jobs:
+  resolve-release-tag:
+    if: github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    outputs:
+      should_publish: ${{ steps.resolve.outputs.should_publish }}
+      release_tag: ${{ steps.resolve.outputs.release_tag }}
+      is_latest: ${{ steps.resolve.outputs.is_latest }}
+    steps:
+      - name: Harden runner
+        # v2.18.0
+        uses: >-
+          step-security/harden-runner@6c3c2f2c1c457b00c10c4848d6f5491db3b629df
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        # v6.0.2
+        uses: >-
+          actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 0
+
+      - name: Resolve release tag for CI SHA
+        id: resolve
+        env:
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          git fetch --tags --force
+
+          mapfile -t semver_tags < <(
+            git tag --points-at "$HEAD_SHA" | \
+              awk '/^v[0-9]+\.[0-9]+\.[0-9]+$/ {print}' | \
+              sort -V
+          )
+
+          if [[ "${#semver_tags[@]}" -eq 0 ]]; then
+            echo "No semver release tag found for this CI run."
+            echo "Skipping image publish."
+            echo "should_publish=false" >> "$GITHUB_OUTPUT"
+            echo "release_tag=" >> "$GITHUB_OUTPUT"
+            echo "is_latest=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          release_tag="${semver_tags[${#semver_tags[@]}-1]}"
+
+          mapfile -t all_semver_tags < <(
+            git tag | \
+              awk '/^v[0-9]+\.[0-9]+\.[0-9]+$/ {print}' | \
+              sort -V
+          )
+          latest_semver_tag="${all_semver_tags[${#all_semver_tags[@]}-1]}"
+          is_latest=false
+          if [[ "$release_tag" == "$latest_semver_tag" ]]; then
+            is_latest=true
+          fi
+
+          echo "Resolved release tag: ${release_tag} (latest=${is_latest})"
+          echo "should_publish=true" >> "$GITHUB_OUTPUT"
+          echo "release_tag=${release_tag}" >> "$GITHUB_OUTPUT"
+          echo "is_latest=${is_latest}" >> "$GITHUB_OUTPUT"
+
   build-push:
+    needs:
+      - resolve-release-tag
+    if: needs.resolve-release-tag.outputs.should_publish == 'true'
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -23,11 +92,13 @@ jobs:
             dockerfile: backend/Dockerfile
     env:
       REGISTRY: ghcr.io
+      RELEASE_TAG: ${{ needs.resolve-release-tag.outputs.release_tag }}
+      IS_LATEST: ${{ needs.resolve-release-tag.outputs.is_latest }}
     steps:
       - name: Harden runner
-        # v2.16.0
+        # v2.18.0
         uses: >-
-          step-security/harden-runner@fa2e9d605c4eeb9fcad4c99c224cee0c6c7f3594
+          step-security/harden-runner@6c3c2f2c1c457b00c10c4848d6f5491db3b629df
         with:
           egress-policy: audit
 
@@ -35,11 +106,13 @@ jobs:
         # v6.0.2
         uses: >-
           actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
 
       - name: Login to GHCR
-        # v4.0.0
+        # v4.1.0
         uses: >-
-          docker/login-action@b45d80f862d83dbcd57f89517bcf500b2ab88fb2
+          docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -48,15 +121,25 @@ jobs:
       - name: Set image name
         id: meta
         run: |
-          OWNER="${GITHUB_REPOSITORY_OWNER}"
+          OWNER="$(
+            echo "${GITHUB_REPOSITORY_OWNER}" | tr '[:upper:]' '[:lower:]'
+          )"
           NAME="sre-simulator-${{ matrix.component }}"
-          TAG="${REGISTRY}/${OWNER}/${NAME}:latest"
-          echo "tags=${TAG}" >> "${GITHUB_OUTPUT}"
+          release_image_tag="${REGISTRY}/${OWNER}/${NAME}:${RELEASE_TAG}"
+          latest_image_tag="${REGISTRY}/${OWNER}/${NAME}:latest"
+          if [[ "${IS_LATEST}" == "true" ]]; then
+            tags="${release_image_tag}"$'\n'"${latest_image_tag}"
+          else
+            tags="${release_image_tag}"
+          fi
+          echo "tags<<EOF" >> "${GITHUB_OUTPUT}"
+          echo "${tags}" >> "${GITHUB_OUTPUT}"
+          echo "EOF" >> "${GITHUB_OUTPUT}"
 
       - name: Build and push
-        # v7.0.0
+        # v7.1.0
         uses: >-
-          docker/build-push-action@d08e5c354a6adb9ed34480a06d141179aa583294
+          docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f
         with:
           context: ${{ matrix.context }}
           file: ${{ matrix.dockerfile }}

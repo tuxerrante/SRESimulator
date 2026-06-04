@@ -3,6 +3,8 @@ import type sql from "mssql";
 import { MssqlSessionStore } from "./mssql-session-store";
 import { MssqlLeaderboardStore } from "./mssql-leaderboard-store";
 import { MssqlMetricsStore } from "./mssql-metrics-store";
+import { MssqlPlayerStore } from "./mssql-player-store";
+import { MssqlAnonymousTrialStore } from "./mssql-anonymous-trial-store";
 
 function createMockRequest(recordset: unknown[] = []) {
   const req = {
@@ -41,9 +43,27 @@ describe("MssqlSessionStore", () => {
     expect(req.input).toHaveBeenCalledWith("token", token);
     expect(req.input).toHaveBeenCalledWith("difficulty", "easy");
     expect(req.input).toHaveBeenCalledWith("scenarioTitle", "Test Scenario");
+    expect(req.input).toHaveBeenCalledWith("trafficSource", "player");
     expect(req.query).toHaveBeenCalled();
     const sql = req.query.mock.calls[0][0] as string;
     expect(sql).toContain("INSERT INTO sessions");
+  });
+
+  it("create() stores identity columns for GitHub-backed sessions", async () => {
+    await store.create({
+      difficulty: "hard",
+      scenarioTitle: "Etcd Quorum Loss",
+      identityKind: "github",
+      githubUserId: "12345",
+      githubLogin: "octocat",
+      anonymousClaimKey: null,
+      persistentScoreEligible: true,
+    });
+
+    expect(req.input).toHaveBeenCalledWith("identityKind", "github");
+    expect(req.input).toHaveBeenCalledWith("githubUserId", "12345");
+    expect(req.input).toHaveBeenCalledWith("githubLogin", "octocat");
+    expect(req.input).toHaveBeenCalledWith("persistentScoreEligible", 1);
   });
 
   it("validateAndConsume() returns mapped session on match", async () => {
@@ -51,9 +71,17 @@ describe("MssqlSessionStore", () => {
     const row = {
       token: validUuid,
       difficulty: "hard" as const,
+      scenario_id: "scenario_hard_001",
       scenario_title: "Etcd Quorum Loss",
+      scenario_payload: '{"id":"scenario_hard_001"}',
       start_time: 1700000000000,
       used: true,
+      traffic_source: "player" as const,
+      identity_kind: "github" as const,
+      github_user_id: "12345",
+      github_login: "octocat",
+      anonymous_claim_key: null,
+      persistent_score_eligible: true,
     };
     const mock = createMockPool([row]);
     store = new MssqlSessionStore(mock.pool);
@@ -63,9 +91,56 @@ describe("MssqlSessionStore", () => {
     expect(result).toEqual({
       token: validUuid,
       difficulty: "hard",
+      scenarioId: "scenario_hard_001",
       scenarioTitle: "Etcd Quorum Loss",
+      scenarioPayload: '{"id":"scenario_hard_001"}',
       startTime: 1700000000000,
       used: true,
+      trafficSource: "player",
+      identityKind: "github",
+      githubUserId: "12345",
+      githubLogin: "octocat",
+      anonymousClaimKey: null,
+      persistentScoreEligible: true,
+    });
+  });
+
+  it("get() returns mapped session without consuming it", async () => {
+    const validUuid = "a1b2c3d4-e5f6-7890-abcd-ef1234567890";
+    const row = {
+      token: validUuid,
+      difficulty: "medium" as const,
+      scenario_id: "scenario_medium_001",
+      scenario_title: "Bad Egress",
+      scenario_payload: '{"id":"scenario_medium_001"}',
+      start_time: 1700000000500,
+      used: false,
+      traffic_source: "player" as const,
+      identity_kind: "anonymous" as const,
+      github_user_id: null,
+      github_login: null,
+      anonymous_claim_key: "claim-123",
+      persistent_score_eligible: false,
+    };
+    const mock = createMockPool([row]);
+    store = new MssqlSessionStore(mock.pool);
+
+    const result = await store.get(validUuid);
+
+    expect(result).toEqual({
+      token: validUuid,
+      difficulty: "medium",
+      scenarioId: "scenario_medium_001",
+      scenarioTitle: "Bad Egress",
+      scenarioPayload: '{"id":"scenario_medium_001"}',
+      startTime: 1700000000500,
+      used: false,
+      trafficSource: "player",
+      identityKind: "anonymous",
+      githubUserId: null,
+      githubLogin: null,
+      anonymousClaimKey: "claim-123",
+      persistentScoreEligible: false,
     });
   });
 
@@ -101,6 +176,20 @@ describe("MssqlLeaderboardStore", () => {
     expect(req.input).toHaveBeenCalledWith("difficulty", "medium");
     const sql = req.query.mock.calls[0][0] as string;
     expect(sql).toContain("WHERE difficulty = @difficulty");
+    expect(sql).toContain("identity_kind = 'github'");
+    expect(sql).toContain("github_user_id IS NOT NULL");
+  });
+
+  it("getLeaderboard() without difficulty still filters to GitHub-backed rows", async () => {
+    const { pool, req } = createMockPool([]);
+    const store = new MssqlLeaderboardStore(pool);
+
+    await store.getLeaderboard();
+
+    const sql = req.query.mock.calls[0][0] as string;
+    expect(sql).toContain("traffic_source = 'player'");
+    expect(sql).toContain("identity_kind = 'github'");
+    expect(sql).toContain("github_user_id IS NOT NULL");
   });
 
   it("getLeaderboard() maps rows to LeaderboardEntry", async () => {
@@ -117,6 +206,9 @@ describe("MssqlLeaderboardStore", () => {
       command_count: 4,
       duration_ms: 120000,
       scenario_title: "The Sleeping Cluster",
+      identity_kind: "github" as const,
+      github_user_id: "12345",
+      github_login: "octocat",
       created_at: new Date("2025-01-15T10:00:00Z"),
     };
     const { pool } = createMockPool([row]);
@@ -140,6 +232,9 @@ describe("MssqlLeaderboardStore", () => {
       commandCount: 4,
       durationMs: 120000,
       scenarioTitle: "The Sleeping Cluster",
+      identityKind: "github",
+      githubUserId: "12345",
+      githubLogin: "octocat",
       timestamp: new Date("2025-01-15T10:00:00Z").getTime(),
     });
   });
@@ -166,6 +261,19 @@ describe("MssqlLeaderboardStore", () => {
     ]);
   });
 
+  it("getHallOfFame() picks the nickname from the latest row instead of MAX(nickname)", async () => {
+    const { pool, req } = createMockPool([]);
+    const store = new MssqlLeaderboardStore(pool);
+
+    await store.getHallOfFame();
+
+    const sql = req.query.mock.calls[0][0] as string;
+    expect(sql).toContain("ROW_NUMBER()");
+    expect(sql).not.toContain("MAX(nickname)");
+    expect(sql).toContain("ORDER BY created_at DESC, id DESC");
+    expect(sql).not.toContain("timestamp_ts");
+  });
+
   it("addEntry() uses MERGE for upsert and trims", async () => {
     const entry = {
       id: "e1",
@@ -176,6 +284,10 @@ describe("MssqlLeaderboardStore", () => {
       commandCount: 6,
       durationMs: 90000,
       scenarioTitle: "Master Down",
+      trafficSource: "automated" as const,
+      identityKind: "github" as const,
+      githubUserId: "12345",
+      githubLogin: "octocat",
       timestamp: Date.now(),
     };
     const { pool, req } = createMockPool();
@@ -184,9 +296,94 @@ describe("MssqlLeaderboardStore", () => {
     const result = await store.addEntry(entry);
 
     expect(result).toBe(entry);
+    expect(req.input).toHaveBeenCalledWith("trafficSource", "automated");
     const queries = req.query.mock.calls.map((c: unknown[]) => c[0] as string);
     expect(queries.some((q: string) => q.includes("MERGE"))).toBe(true);
+    expect(req.input).toHaveBeenCalledWith("githubUserId", "12345");
     expect(queries.some((q: string) => q.includes("DELETE FROM leaderboard_entries"))).toBe(true);
+  });
+
+  it("addEntry() trims only the entry traffic source", async () => {
+    const entry = {
+      id: "e3",
+      nickname: "player",
+      difficulty: "hard" as const,
+      score: { efficiency: 20, safety: 20, documentation: 20, accuracy: 20, total: 80 },
+      grade: "B",
+      commandCount: 6,
+      durationMs: 90000,
+      scenarioTitle: "Master Down",
+      trafficSource: "automated" as const,
+      identityKind: "github" as const,
+      githubUserId: "12345",
+      githubLogin: "octocat",
+      timestamp: Date.now(),
+    };
+    const { pool, req } = createMockPool();
+    const store = new MssqlLeaderboardStore(pool);
+
+    await store.addEntry(entry);
+
+    const trimQueries = req.query.mock.calls
+      .map((c: unknown[]) => c[0] as string)
+      .filter((sql: string) => sql.includes("DELETE FROM leaderboard_entries"));
+
+    expect(trimQueries).toHaveLength(1);
+    expect(req.input).toHaveBeenCalledWith("trafficSource", "automated");
+  });
+});
+
+describe("MssqlPlayerStore", () => {
+  it("upsertGithubViewer() uses MERGE and returns the normalized player", async () => {
+    const { pool, req } = createMockPool();
+    const store = new MssqlPlayerStore(pool);
+
+    const result = await store.upsertGithubViewer({
+      kind: "github",
+      githubUserId: "12345",
+      githubLogin: "octocat",
+      displayName: "The Octocat",
+      avatarUrl: null,
+    });
+
+    expect(result.githubUserId).toBe("12345");
+    expect(req.input).toHaveBeenCalledWith("githubUserId", "12345");
+    expect((req.query.mock.calls[0][0] as string)).toContain("MERGE players");
+  });
+});
+
+describe("MssqlAnonymousTrialStore", () => {
+  it("hasActiveClaim() checks for an unexpired claim", async () => {
+    const { pool, req } = createMockPool([{ active_count: 1 }]);
+    const store = new MssqlAnonymousTrialStore(pool);
+
+    const result = await store.hasActiveClaim("claim-1", 1000);
+
+    expect(result).toBe(true);
+    expect(req.input).toHaveBeenCalledWith("claimKey", "claim-1");
+  });
+
+  it("createOrRefreshClaim() uses MERGE to upsert a claim", async () => {
+    const { pool, req } = createMockPool();
+    const store = new MssqlAnonymousTrialStore(pool);
+
+    await store.createOrRefreshClaim({
+      claimKey: "claim-1",
+      createdAt: 1000,
+      expiresAt: 2000,
+    });
+
+    expect(req.input).toHaveBeenCalledWith("claimKey", "claim-1");
+    expect((req.query.mock.calls[0][0] as string)).toContain("MERGE anonymous_trial_claims");
+  });
+
+  it("releaseClaimKeys() deletes all supplied claim keys", async () => {
+    const { pool, req } = createMockPool();
+    const store = new MssqlAnonymousTrialStore(pool);
+
+    await store.releaseClaimKeys(["claim-1", "claim-2"]);
+
+    expect((req.query.mock.calls[0][0] as string)).toContain("DELETE FROM anonymous_trial_claims");
   });
 });
 
@@ -200,18 +397,27 @@ describe("MssqlMetricsStore", () => {
       nickname: "tester",
       difficulty: "hard",
       scenarioTitle: "Cosmos DB Flood",
+      lifecycleState: "completed",
+      commandCount: 1,
       commandsExecuted: ["oc get pods"],
       scoringEvents: [{ type: "safety", points: 5 }],
       chatMessageCount: 12,
       aiPromptTokens: 5000,
       aiCompletionTokens: 2000,
       durationMs: 300000,
+      scoreTotal: 88,
+      grade: "B",
       completed: true,
+      trafficSource: "automated",
       metadata: { version: "1.0" },
     });
 
     expect(req.input).toHaveBeenCalledWith("sessionToken", "tok-1");
     expect(req.input).toHaveBeenCalledWith("nickname", "tester");
+    expect(req.input).toHaveBeenCalledWith("lifecycleState", "completed");
+    expect(req.input).toHaveBeenCalledWith("commandCount", 1);
+    expect(req.input).toHaveBeenCalledWith("scoreTotal", 88);
+    expect(req.input).toHaveBeenCalledWith("grade", "B");
     expect(req.input).toHaveBeenCalledWith(
       "commandsExecuted",
       JSON.stringify(["oc get pods"])
@@ -232,8 +438,51 @@ describe("MssqlMetricsStore", () => {
 
     expect(req.input).toHaveBeenCalledWith("sessionToken", null);
     expect(req.input).toHaveBeenCalledWith("nickname", null);
+    expect(req.input).toHaveBeenCalledWith("lifecycleState", "completed");
+    expect(req.input).toHaveBeenCalledWith("commandCount", 0);
+    expect(req.input).toHaveBeenCalledWith("completed", true);
     expect(req.input).toHaveBeenCalledWith("commandsExecuted", "[]");
     expect(req.input).toHaveBeenCalledWith("metadata", "{}");
+  });
+
+  it("recordGameplay() treats duplicate lifecycle inserts as idempotent", async () => {
+    const duplicateError = Object.assign(
+      new Error("Cannot insert duplicate key row with unique index 'ux_gameplay_metrics_session_lifecycle'"),
+      { number: 2601 }
+    );
+    const req = {
+      input: vi.fn().mockReturnThis(),
+      query: vi.fn().mockRejectedValue(duplicateError),
+    };
+    const pool = {
+      request: vi.fn().mockReturnValue(req),
+    } as unknown as sql.ConnectionPool;
+    const store = new MssqlMetricsStore(pool);
+
+    await expect(store.recordGameplay({
+      sessionToken: "tok-1",
+      lifecycleState: "completed",
+    })).resolves.toBeUndefined();
+  });
+
+  it("recordGameplay() rethrows unrelated unique constraint violations", async () => {
+    const duplicateError = Object.assign(
+      new Error("Cannot insert duplicate key row with unique index 'ux_gameplay_metrics_other_constraint'"),
+      { number: 2601 }
+    );
+    const req = {
+      input: vi.fn().mockReturnThis(),
+      query: vi.fn().mockRejectedValue(duplicateError),
+    };
+    const pool = {
+      request: vi.fn().mockReturnValue(req),
+    } as unknown as sql.ConnectionPool;
+    const store = new MssqlMetricsStore(pool);
+
+    await expect(store.recordGameplay({
+      sessionToken: "tok-1",
+      lifecycleState: "completed",
+    })).rejects.toThrow("ux_gameplay_metrics_other_constraint");
   });
 
   it("getPlayerHistory() maps JSON string columns back to objects", async () => {
@@ -243,13 +492,18 @@ describe("MssqlMetricsStore", () => {
       nickname: "tester",
       difficulty: "easy",
       scenario_title: "Master Down",
+      lifecycle_state: "abandoned",
+      command_count: 2,
       commands_executed: '["oc get nodes"]',
       scoring_events: '[{"type":"accuracy","points":10}]',
       chat_message_count: 5,
       ai_prompt_tokens: 3000,
       ai_completion_tokens: 1500,
       duration_ms: 60000,
+      score_total: 70,
+      grade: "C",
       completed: true,
+      traffic_source: "automated",
       metadata: '{"v":2}',
       created_at: new Date("2025-06-01T12:00:00Z"),
     };
@@ -262,6 +516,181 @@ describe("MssqlMetricsStore", () => {
     expect(history[0].commandsExecuted).toEqual(["oc get nodes"]);
     expect(history[0].scoringEvents).toEqual([{ type: "accuracy", points: 10 }]);
     expect(history[0].metadata).toEqual({ v: 2 });
+    expect(history[0].lifecycleState).toBe("abandoned");
+    expect(history[0].commandCount).toBe(2);
     expect(history[0].durationMs).toBe(60000);
+    expect(history[0].scoreTotal).toBe(70);
+    expect(history[0].grade).toBe("C");
+  });
+
+  it("hasLifecycleEvent() checks for a matching session token and lifecycle state", async () => {
+    const { pool, req } = createMockPool([{ matched: 1 }]);
+    const store = new MssqlMetricsStore(pool);
+
+    await expect(store.hasLifecycleEvent("tok-1", "completed")).resolves.toBe(true);
+
+    expect(req.input).toHaveBeenCalledWith("sessionToken", "tok-1");
+    expect(req.input).toHaveBeenCalledWith("lifecycleState", "completed");
+    const sql = req.query.mock.calls[0][0] as string;
+    expect(sql).toContain("WHERE session_token = @sessionToken");
+    expect(sql).toContain("AND lifecycle_state = @lifecycleState");
+  });
+
+  it("getLatestBySessionToken() returns the newest record for a session", async () => {
+    const row = {
+      id: "latest-1",
+      session_token: "tok-latest",
+      traffic_source: "player",
+      nickname: "tester",
+      difficulty: "easy",
+      scenario_title: "Master Down",
+      lifecycle_state: "completed",
+      command_count: 3,
+      commands_executed: '["oc get nodes"]',
+      scoring_events: '[{"type":"bonus","dimension":"accuracy","points":10}]',
+      chat_message_count: 4,
+      ai_prompt_tokens: 100,
+      ai_completion_tokens: 50,
+      duration_ms: 45000,
+      score_total: 80,
+      grade: "B",
+      completed: true,
+      metadata: '{"k":"v"}',
+      created_at: new Date("2026-05-02T09:00:00Z"),
+    };
+    const { pool, req } = createMockPool([row]);
+    const store = new MssqlMetricsStore(pool);
+
+    const result = await store.getLatestBySessionToken("tok-latest");
+
+    expect(result).toMatchObject({
+      sessionToken: "tok-latest",
+      lifecycleState: "completed",
+      scoreTotal: 80,
+      grade: "B",
+    });
+    expect(req.input).toHaveBeenCalledWith("sessionToken", "tok-latest");
+    expect((req.query.mock.calls[0][0] as string)).toContain(
+      "WHERE session_token = @sessionToken",
+    );
+    expect((req.query.mock.calls[0][0] as string)).toContain(
+      "CASE WHEN lifecycle_state IN ('completed', 'abandoned') THEN 1 ELSE 0 END DESC",
+    );
+  });
+
+  it("getLatestCompletedBySessionToken() only selects completed lifecycle rows", async () => {
+    const row = {
+      id: "latest-completed-1",
+      session_token: "tok-latest",
+      traffic_source: "player",
+      nickname: "tester",
+      difficulty: "easy",
+      scenario_title: "Master Down",
+      lifecycle_state: "completed",
+      command_count: 3,
+      commands_executed: '["oc get nodes"]',
+      scoring_events: '[{"type":"bonus","dimension":"accuracy","points":10}]',
+      chat_message_count: 4,
+      ai_prompt_tokens: 100,
+      ai_completion_tokens: 50,
+      duration_ms: 45000,
+      score_total: 80,
+      grade: "B",
+      completed: true,
+      metadata: '{"k":"v"}',
+      created_at: new Date("2026-05-02T09:00:00Z"),
+    };
+    const { pool, req } = createMockPool([row]);
+    const store = new MssqlMetricsStore(pool);
+
+    const result = await store.getLatestCompletedBySessionToken("tok-latest");
+
+    expect(result).toMatchObject({
+      sessionToken: "tok-latest",
+      lifecycleState: "completed",
+      scoreTotal: 80,
+      grade: "B",
+    });
+    const sql = req.query.mock.calls[0][0] as string;
+    expect(sql).toContain("WHERE session_token = @sessionToken");
+    expect(sql).toContain("AND lifecycle_state = 'completed'");
+  });
+
+  it("getGameplayAnalytics() coalesces empty summary counts to zero for playerless datasets", async () => {
+    const summaryRow = {
+      total_sessions: 0,
+      completed_sessions: null,
+      abandoned_sessions: null,
+      in_progress_sessions: null,
+      avg_completion_duration_ms: null,
+      avg_completion_command_count: null,
+      avg_completion_chat_message_count: null,
+      avg_completion_score_total: null,
+    };
+    const req = {
+      input: vi.fn().mockReturnThis(),
+      query: vi.fn().mockResolvedValue({
+        recordset: [summaryRow],
+        recordsets: [[summaryRow], [], [], []],
+      }),
+    };
+    const pool = {
+      request: vi.fn().mockReturnValue(req),
+    } as unknown as sql.ConnectionPool;
+    const store = new MssqlMetricsStore(pool);
+
+    const analytics = await store.getGameplayAnalytics();
+
+    expect(analytics.summary).toEqual({
+      totalSessions: 0,
+      completedSessions: 0,
+      abandonedSessions: 0,
+      inProgressSessions: 0,
+      completionRate: 0,
+      abandonmentRate: 0,
+      avgCompletionDurationMs: null,
+      avgCompletionCommandCount: null,
+      avgCompletionChatMessageCount: null,
+      avgCompletionScoreTotal: null,
+    });
+    const summarySql = req.query.mock.calls[0][0] as string;
+    expect(summarySql).toContain("COALESCE(SUM(CASE WHEN lifecycle_state = 'completed' THEN 1 ELSE 0 END), 0)");
+    expect(summarySql).toContain("COALESCE(SUM(CASE WHEN lifecycle_state = 'abandoned' THEN 1 ELSE 0 END), 0)");
+    expect(summarySql).toContain("COALESCE(SUM(CASE WHEN lifecycle_state = 'started' THEN 1 ELSE 0 END), 0)");
+  });
+
+  it("getGameplayAnalytics() ranks terminal states ahead of later started events", async () => {
+    const summaryRow = {
+      total_sessions: 0,
+      completed_sessions: 0,
+      abandoned_sessions: 0,
+      in_progress_sessions: 0,
+      avg_completion_duration_ms: null,
+      avg_completion_command_count: null,
+      avg_completion_chat_message_count: null,
+      avg_completion_score_total: null,
+    };
+    const req = {
+      input: vi.fn().mockReturnThis(),
+      query: vi.fn().mockResolvedValue({
+        recordset: [summaryRow],
+        recordsets: [[summaryRow], [], [], []],
+      }),
+    };
+    const pool = {
+      request: vi.fn().mockReturnValue(req),
+    } as unknown as sql.ConnectionPool;
+    const store = new MssqlMetricsStore(pool);
+
+    await store.getGameplayAnalytics();
+
+    const sql = req.query.mock.calls[0][0] as string;
+    expect(sql).toContain(
+      "CASE WHEN lifecycle_state IN ('completed', 'abandoned') THEN 1 ELSE 0 END DESC"
+    );
+    expect(sql).toContain("PARTITION BY session_token");
+    expect(sql).toContain("CREATE TABLE #latest_sessions");
+    expect(sql).toContain("INSERT INTO #latest_sessions");
+    expect(sql).toContain("DROP TABLE #latest_sessions");
   });
 });

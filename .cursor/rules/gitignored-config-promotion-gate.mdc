@@ -1,0 +1,31 @@
+---
+description: Require manual approval before promoting gitignored config deltas
+alwaysApply: true
+---
+
+# Gitignored Config Promotion Gate
+
+When working in a task worktree, proactively check whether gitignored local config changes imply updates that should be promoted to tracked templates in `main` (for example `*.example` files or docs).
+
+## Candidate sources (gitignored/sensitive)
+
+- `backend/.env.local`, `infra/.tf-backend.env`, `infra/terraform.tfvars`
+- `data/*.env` and other local runtime config files ignored by git
+
+## Promotion targets (tracked/safe)
+
+- `backend/.env.local.example`
+- `infra/*.example` files and relevant docs
+
+## Mandatory approval protocol
+
+1. Produce a **redacted diff summary** (keys/structure only, never secret values).
+2. Show exact target file(s) that would be updated.
+3. Ask for explicit one-time approval: `yes` or `no`.
+4. Only apply edits after `yes`; if the requested edit set changes, ask again.
+
+## Safety requirements
+
+- Never commit raw gitignored secret files.
+- Never print full secrets in chat, command output, or diffs.
+- If uncertain whether a value is sensitive, treat it as sensitive and redact.

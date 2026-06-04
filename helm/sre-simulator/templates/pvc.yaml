@@ -1,3 +1,4 @@
+{{- if and (not .Values.database.enabled) .Values.storage.enabled }}
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
@@ -11,3 +12,4 @@ spec:
   resources:
     requests:
       storage: {{ .Values.storage.size }}
+{{- end }}

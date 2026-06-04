@@ -33,13 +33,14 @@ describe("generateMockScenario", () => {
   });
 
   it("generates reportedTime within the past 1-7 days", () => {
+    const before = Date.now();
     const scenario = generateMockScenario("easy");
+    const after = Date.now();
     const reported = new Date(scenario.incidentTicket.reportedTime).getTime();
-    const now = Date.now();
     const oneDayMs = 86_400_000;
 
-    expect(reported).toBeLessThanOrEqual(now - oneDayMs);
-    expect(reported).toBeGreaterThanOrEqual(now - 7 * oneDayMs);
+    expect(reported).toBeLessThanOrEqual(after - oneDayMs);
+    expect(reported).toBeGreaterThanOrEqual(before - 7 * oneDayMs);
   });
 
   it("uses critical severity alert for hard difficulty", () => {
@@ -98,6 +99,22 @@ describe("generateMockCommandOutput", () => {
     expect(output).toContain("api-svc");
   });
 
+  it("returns machine describe for oc describe machine -n openshift-machine-api NAME", () => {
+    const output = generateMockCommandOutput(
+      "oc describe machine -n openshift-machine-api aro-mock-worker-1",
+      "oc"
+    );
+    expect(output).toContain("Name:");
+    expect(output).toContain("aro-mock-worker-1");
+    expect(output).toContain("openshift-machine-api");
+  });
+
+  it("returns machine describe for oc describe machine NAME without -n", () => {
+    const output = generateMockCommandOutput("oc describe machine my-worker-machine", "oc");
+    expect(output).toContain("Name:");
+    expect(output).toContain("my-worker-machine");
+  });
+
   it("returns delete confirmation for oc delete", () => {
     const output = generateMockCommandOutput("oc delete machine aro-worker-0", "oc");
     expect(output).toBe('machine "aro-worker-0" deleted');
@@ -109,6 +126,24 @@ describe("generateMockCommandOutput", () => {
       "oc"
     );
     expect(output).toBe('machine "aro-worker-0" deleted');
+  });
+
+  it("handles oc delete with namespace flags before target", () => {
+    const output = generateMockCommandOutput(
+      "oc delete -n openshift-machine-api pod monitor-abc12",
+      "oc",
+    );
+
+    expect(output).toBe('pod "monitor-abc12" deleted');
+  });
+
+  it("handles oc delete with long flags before target", () => {
+    const output = generateMockCommandOutput(
+      "oc delete --context dev --namespace openshift-monitoring deployment metrics-api",
+      "oc",
+    );
+
+    expect(output).toBe('deployment "metrics-api" deleted');
   });
 
   it("returns log lines for oc logs", () => {
@@ -132,6 +167,16 @@ describe("generateMockCommandOutput", () => {
     expect(output).toContain("PHASE");
     expect(output).toContain("Running");
     expect(output).toContain("aro-mock-master-0");
+  });
+
+  it("keeps the mock machine list aligned with the mock scenario region", () => {
+    const scenario = generateMockScenario("medium");
+    const output = generateMockCommandOutput("oc get machines -A", "oc");
+    const region = scenario.incidentTicket.region;
+
+    expect(scenario.clusterContext.region).toBe(region);
+    expect(output).toContain(region);
+    expect(output).not.toContain("eastus");
   });
 
   it("returns events for oc get events", () => {

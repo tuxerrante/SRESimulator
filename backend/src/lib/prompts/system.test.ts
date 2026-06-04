@@ -141,6 +141,12 @@ describe("buildSystemPrompt", () => {
       expect(prompt).toContain("NodeHasDiskPressure");
     });
 
+    it("includes named resources when identifiers are derived from the scenario", () => {
+      const prompt = buildSystemPrompt("kb", makeScenario(), "reading");
+      expect(prompt).toContain("**Named resources:**");
+      expect(prompt).toContain("worker-eastus2-2");
+    });
+
     it("omits scenario context when scenario is null", () => {
       const prompt = buildSystemPrompt("kb", null, "reading");
       expect(prompt).not.toContain("## Active Scenario");

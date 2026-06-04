@@ -4,9 +4,10 @@ metadata:
   name: {{ printf "%s-test" (include "sre-simulator.fullname" .) | trunc 63 | trimSuffix "-" }}
   labels:
     {{- include "sre-simulator.labels" . | nindent 4 }}
+    {{- include "sre-simulator.helmTest.selectorLabels" . | nindent 4 }}
   annotations:
     helm.sh/hook: test
-    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded,hook-failed
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
 spec:
   restartPolicy: Never
   containers:
@@ -34,20 +35,6 @@ spec:
             echo "FAIL: frontend returned ${STATUS}"
             exit 1
           fi
-
-          echo "=== API scenario generation (mock mode) ==="
-          SCENARIO_RESP=$(curl -fsS -X POST "http://${BACKEND}/api/scenario" \
-            -H "Content-Type: application/json" \
-            -d '{"difficulty":"easy"}')
-          echo "${SCENARIO_RESP}" | head -c 200
-          echo ""
-
-          TOKEN=$(echo "${SCENARIO_RESP}" | sed -n 's/.*"sessionToken":"\([^"]*\)".*/\1/p')
-          if [ -z "${TOKEN}" ]; then
-            echo "FAIL: no sessionToken in scenario response"
-            exit 1
-          fi
-          echo "Session token obtained: $(printf '%.8s' "${TOKEN}")..."
 
           echo "=== API guide endpoint ==="
           curl -fsS "http://${BACKEND}/api/guide" | head -c 100

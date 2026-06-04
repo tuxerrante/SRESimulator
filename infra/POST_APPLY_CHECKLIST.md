@@ -7,18 +7,27 @@ Before `terraform apply`, run the preflight gates for the final environment:
 ```bash
 make tf-preflight \
   OWNER_ALIAS=aaffinit \
+  CLUSTER_FLAVOR=aks \
   TF_STATE_ACCOUNT=<state-account> \
   LOCATION=westeurope \
   TF_STATE_KEY=aaffinit-test-sre-simulator.tfstate \
-  SQL_SERVER_NAME=aaffinit-test-sql-20260403 \
-  GENEVA_SUPPRESSION_ACCESS_CONFIRMED=true
+  SQL_SERVER_NAME=aaffinit-test-sql-20260403
+```
+
+If you are using the ARO fallback path instead of AKS, add:
+
+```bash
+GENEVA_SUPPRESSION_ACCESS_CONFIRMED=true
 ```
 
 If this is your first run and the backend does not exist yet, preflight will
 ask to create the state resource group/storage account/container and persist
 backend defaults to `infra/.tf-backend.env`.
 
-## 1. Silence Cluster in Geneva Health
+## 1. ARO-only: Silence Cluster in Geneva Health
+
+Skip this section for AKS. Geneva suppression is only required for ARO
+deployments.
 
 To avoid production alert noise from this test cluster, create a suppression
 rule in Geneva Health and confirm it is active before any break/fix traffic:
@@ -36,7 +45,7 @@ rule in Geneva Health and confirm it is active before any break/fix traffic:
 > **Why?** Without suppression, the test cluster's incidents (synthetic ones are only simulated)
 > will fire real alerts and page the on-call team.
 
-For guarded final deployment targets, export:
+For ARO final deployment targets, export:
 
 ```bash
 export GENEVA_SUPPRESSION_RULE_ACTIVE=true
@@ -45,7 +54,7 @@ export GENEVA_SUPPRESSION_RULE_ACTIVE=true
 ## 2. Extract Kubeconfig
 
 ```bash
-make tf-kubeconfig
+make tf-kubeconfig CLUSTER_FLAVOR=aks
 # or
 export KUBECONFIG=~/.kube/<owner_alias>-test
 ```
@@ -84,12 +93,13 @@ az cognitiveservices account keys list \
 
 ## 4. Namespace Model (Shared Cluster + Shared AOAI)
 
-The ARO cluster and Azure OpenAI deployment are **shared** between the
-stable ("production") namespace and ephemeral e2e namespaces:
+The selected cluster (`CLUSTER_FLAVOR=aks` by default, `aro` as fallback) and
+Azure OpenAI deployment are **shared** between the stable ("production")
+namespace and ephemeral e2e namespaces:
 
 ```text
 ┌─────────────────────────────────────────────┐
-│  ARO Cluster (<alias>-test)                 │
+│  Selected Cluster (<alias>-test)            │
 │                                             │
 │  ┌─────────────────────┐  ┌──────────────┐  │
 │  │ sre-simulator (prod)│  │ sre-manual-  │  │
@@ -105,53 +115,177 @@ stable ("production") namespace and ephemeral e2e namespaces:
 ### Deploy to production namespace
 
 ```bash
-make prod-up
+CLUSTER_FLAVOR=aks make prod-up
 ```
 
 For the final environment run (DB enabled + mandatory checks), use:
 
 ```bash
 DB_SECRET_NAME=sre-sql-creds \
-GENEVA_SUPPRESSION_RULE_ACTIVE=true \
+CLUSTER_FLAVOR=aks \
 make prod-up-final
 ```
 
 ### Check production status
 
 ```bash
-make prod-status
+CLUSTER_FLAVOR=aks make prod-status
 ```
 
 ### Delete production namespace (requires typing namespace name)
 
 ```bash
-make prod-down
+CLUSTER_FLAVOR=aks make prod-down
 ```
 
 ### Deploy ephemeral e2e (disposable, no confirmation needed)
 
 ```bash
-make e2e-azure-route-up    # creates timestamped namespace
-make e2e-azure-route-down  # deletes it (refuses if it matches prod namespace)
+CLUSTER_FLAVOR=aks make e2e-azure-route-up    # creates timestamped namespace
+CLUSTER_FLAVOR=aks make e2e-azure-route-down  # deletes it (refuses if it matches prod namespace)
 ```
 
-## 5. Validate exposure and DB connectivity
+## 5. Validate exposure, TLS, and DB connectivity
 
 Run these checks after each final deployment:
 
 ```bash
-# Frontend route exists; backend remains private ClusterIP and non-routable
-make public-exposure-audit NS=sre-simulator
+# Snapshot pods plus Gateway/HTTPRoute/certificate state
+CLUSTER_FLAVOR=aks make prod-status
 
-# Fallback DB check when GH pipelines are unavailable
-make db-port-forward-check NS=sre-simulator
+# Frontend public edge exists; backend remains private ClusterIP and non-routable
+CLUSTER_FLAVOR=aks make public-exposure-audit NS=sre-simulator
 ```
 
-`db-port-forward-check` calls `/api/scores?difficulty=easy` through a local
-`oc port-forward` tunnel to the backend service. A `200` response confirms the
-backend can serve DB-backed queries.
+### Confirm the custom DNS record
 
-## 6. AOAI Capacity & Scaling Notes
+```bash
+terraform -chdir=infra output -raw aks_gateway_public_host
+terraform -chdir=infra output -raw aks_frontend_public_ip_address
+terraform -chdir=infra output -raw aks_frontend_public_fqdn
+
+dig +short play.sresimulator.osadev.cloud
+dig +short "$(terraform -chdir=infra output -raw aks_frontend_public_fqdn)"
+```
+
+`play.sresimulator.osadev.cloud` should resolve to the same public IP returned
+by `aks_frontend_public_ip_address`. Use the Azure-generated hostname from
+`aks_frontend_public_fqdn` only as an operator fallback while the custom DNS
+record propagates or during DNS troubleshooting.
+
+### Confirm Gateway and certificate readiness
+
+```bash
+kubectl -n sre-simulator get gateway,httproute,certificate
+
+kubectl -n sre-simulator wait \
+  --for=jsonpath='{.status.conditions[?(@.type=="Programmed")].status}'=True \
+  gateway/sre-simulator --timeout=5m
+
+CERT_NAME="$(kubectl -n sre-simulator get certificate -o jsonpath='{range .items[*]}{.metadata.name}{\"|\"}{.spec.secretName}{\"\\n\"}{end}' | awk -F'|' '$2 == \"sre-simulator-gateway-tls\" {print $1; exit}')"
+kubectl -n sre-simulator wait \
+  --for=jsonpath='{.status.conditions[?(@.type=="Ready")].status}'=True \
+  "certificate/${CERT_NAME}" --timeout=10m
+```
+
+If `CERT_NAME` is empty, the gateway shim did not create a certificate for
+`sre-simulator-gateway-tls`, so investigate the `Gateway` annotation,
+cert-manager controllers, and DNS solver identity before continuing.
+
+### Verify HTTPS on the customer-facing host
+
+```bash
+curl -fsS -o /dev/null -w '%{http_code}\n' https://play.sresimulator.osadev.cloud/
+curl -I https://play.sresimulator.osadev.cloud/
+```
+
+Expect the custom host to present a valid certificate and return the normal
+frontend response for the deployed release.
+
+### Fallback DB check when GitHub pipelines are unavailable
+
+```bash
+CLUSTER_FLAVOR=aks make db-mode-check NS=sre-simulator
+CLUSTER_FLAVOR=aks make db-port-forward-check NS=sre-simulator
+```
+
+Use `db-mode-check` as the primary proof that the deployed backend is wired for
+Azure SQL mode: it verifies `STORAGE_BACKEND=mssql` plus the `DATABASE_URL`
+secret reference on the backend deployment.
+
+`db-port-forward-check` is an additional reachability smoke test. It calls
+`/api/scores?difficulty=easy` through a local `kubectl port-forward` or
+`oc port-forward` tunnel to the backend service and confirms that this path
+responds with `200`.
+
+## 6. Sentry rollout verification
+
+Control the production Sentry rollout through the Helm chart values:
+
+```yaml
+frontend:
+  sentry:
+    enabled: false
+    dsn: ""
+    environment: production
+    replaySessionSampleRate: "0"
+    replayOnErrorSampleRate: "0"
+
+backend:
+  sentry:
+    enabled: false
+    dsn: ""
+    environment: production
+    release: ""
+```
+
+The chart maps these values to:
+
+- Frontend: `NEXT_PUBLIC_SENTRY_ENABLED`, `NEXT_PUBLIC_SENTRY_DSN`,
+  `NEXT_PUBLIC_SENTRY_ENVIRONMENT`,
+  `NEXT_PUBLIC_SENTRY_REPLAY_SESSION_SAMPLE_RATE`, and
+  `NEXT_PUBLIC_SENTRY_REPLAY_ON_ERROR_SAMPLE_RATE`
+- Backend: `SENTRY_ENABLED`, `SENTRY_DSN`, `SENTRY_ENVIRONMENT`, and
+  `SENTRY_RELEASE`
+
+For the browser path, the deployed frontend container env is read through a
+same-origin runtime bootstrap script, and browser Sentry initializes when that
+runtime config becomes available. This keeps browser Sentry enablement
+runtime-driven from Helm/container env rather than frozen into the browser
+bundle at build time. Backend Sentry still reads `SENTRY_*` directly from the
+backend process env.
+
+Readable browser stack traces also require build-time source-map upload
+credentials on the frontend build:
+
+- `SENTRY_AUTH_TOKEN`
+- `SENTRY_ORG`
+- `SENTRY_PROJECT`
+- optional `SENTRY_RELEASE` when you need an explicit upload release name
+
+If those build-time variables are absent, the frontend build still succeeds,
+but Sentry source-map upload remains disabled. If you do set
+`SENTRY_RELEASE`, it must exactly match the uploaded artifact release; if it
+could drift, omit it instead of trying to carry a separate runtime frontend
+release value.
+
+Keep frontend and backend Sentry disabled unless the production DSNs are set.
+For launch, leave both replay sample rates at `0` unless production traffic
+volume proves it is safe to increase them.
+
+After deployment:
+
+1. Send one backend test event to confirm server-side ingest.
+2. Optionally send one generic frontend test event only as a browser ingest
+   smoke check.
+3. For correlation verification, trigger a request-driven failure through the
+   deployed chat or command proxy path; generic test events do not prove
+   actor/session/request tagging.
+4. Confirm the resulting captured events carry the expected pseudonymous
+   actor/session/request correlation tags and that no nickname, token, or
+   transcript content appears in the payload.
+
+## 7. AOAI Capacity & Scaling Notes
 
 The Azure OpenAI deployment is provisioned with a **Standard (pay-as-you-go)**
 SKU. Key things to know:
@@ -193,10 +327,72 @@ minutes (it only updates the rate limit on the existing deployment).
 See [Azure OpenAI Quotas and Limits](https://learn.microsoft.com/en-us/azure/ai-foundry/openai/quotas-limits)
 for the full reference. Quota tiers auto-upgrade with usage.
 
-## 7. Tear Down (when done)
+## 8. Go-live readiness gate (issues-driven)
+
+Run this gate before announcing public availability. It complements the infra,
+DNS, and deployment checks above by explicitly covering open product risks.
+
+### 8.1 Review open issues and classify blockers
+
+Capture the current open issue list and classify each as:
+
+- **blocker**: must be resolved or explicitly waived for launch
+- **post-launch**: acceptable for launch with a follow-up owner/date
+
+Suggested command:
 
 ```bash
-make tf-destroy
+gh issue list --repo tuxerrante/SRESimulator --state open --limit 100
+```
+
+### 8.2 Blocker evidence checklist
+
+The following open issues are expected to be treated as blockers for a public
+launch unless you record an explicit waiver:
+
+| Issue | Required evidence before go-live |
+| --- | --- |
+| [#96 504 errors are not managed](https://github.com/tuxerrante/SRESimulator/issues/96) | Confirm API timeout/504 paths return a user-friendly retry experience and do not leave the UI in a broken state. |
+| [#91 DNS registration](https://github.com/tuxerrante/SRESimulator/issues/91) | Confirm the canonical domain is registered, active, and points to the production edge (`play.sresimulator.osadev.cloud`). |
+| [#44 Add a firewall for unexpected regions](https://github.com/tuxerrante/SRESimulator/issues/44) | Confirm geo/rate controls are active (or document compensating controls such as Turnstile + strict anonymous limits + budget alerts). |
+| [#9 ARO deployment workflow and release profile](https://github.com/tuxerrante/SRESimulator/issues/9) | Confirm release path is reproducible from CI/CD and that tag-based production rollout steps are documented and tested. |
+
+The following open issues are typically **post-launch** unless launch scope
+explicitly includes them:
+
+| Issue | Post-launch expectation |
+| --- | --- |
+| [#5 Helm portability baseline](https://github.com/tuxerrante/SRESimulator/issues/5) | Track as platform-expansion work; keep AKS/ARO deployment docs accurate meanwhile. |
+| [#3 Anti-cheating jailbreak detection](https://github.com/tuxerrante/SRESimulator/issues/3) | Track as gameplay-hardening follow-up with measurable false-positive guardrails. |
+
+### 8.3 Auth and paid-vs-free control checks
+
+If launch assumes authenticated users and differentiated access, verify:
+
+```bash
+# should be 302 redirect to GitHub OAuth (not 404)
+curl -i https://play.sresimulator.osadev.cloud/api/auth/github/login
+
+# authConfigured should be true in response body
+curl -fsS https://play.sresimulator.osadev.cloud/api/auth/session
+```
+
+Also verify that anonymous users remain constrained (captcha + daily limit) and
+that medium/hard scenarios are gated for authenticated users only.
+
+### 8.4 Launch decision record
+
+Record one launch decision note that includes:
+
+1. Open issues reviewed (with blocker/post-launch classification)
+2. Explicit waivers for unresolved blockers (owner + expiry date)
+3. Evidence links for DNS/auth/firewall/release-path checks
+4. Rollback contact and rollback command (`make prod-down`) ownership
+
+## 9. Tear Down (when done)
+
+```bash
+CLUSTER_FLAVOR=aks make tf-destroy
 ```
 
 Most customer-managed resources are in a single resource group, so you can also run:
@@ -206,5 +402,19 @@ az group delete --name <owner_alias>-test-rg --yes --no-wait
 ```
 
 > **Note:** `tf-destroy` / `az group delete` removes the cluster and AOAI
-> account in the customer-managed RG. The ARO RP-managed cluster RG is cleaned
-> up by the provider when cluster deletion completes.
+> account in the customer-managed RG. AKS still has an Azure-managed node
+> resource group, and ARO still has an RP-managed cluster resource group; both
+> are cleaned up by the provider when cluster deletion completes.
+>
+> **Tagging caveat:** Managed cluster resource groups can be protected by Azure
+> deny assignments. In that case, even Owner/Contributor principals cannot
+> write tags on that RG, and `persist=true` cannot be enforced there via
+> Terraform.
+>
+> **Workaround for locked-down subscriptions:** Disable the cluster RG tag overlay
+> by setting `enable_cluster_rg_tag_overlay=false` for plan/apply. Example:
+>
+> ```bash
+> terraform -chdir=infra plan -var="enable_cluster_rg_tag_overlay=false"
+> terraform -chdir=infra apply -var="enable_cluster_rg_tag_overlay=false"
+> ```

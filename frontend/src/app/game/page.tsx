@@ -10,11 +10,18 @@ import { ScoreBreakdown } from "@/components/scoring/ScoreBreakdown";
 import { IncidentTicket } from "@/components/shared/IncidentTicket";
 import { OnboardingTour, resetOnboardingTour, hasSeenOnboardingTour } from "@/components/onboarding/OnboardingTour";
 import { useCommand } from "@/hooks/useCommand";
+import {
+  buildGameplayTelemetryPayload,
+  sendCompletionTelemetryIfNeeded,
+  sendGameplayTelemetryEvent,
+  shouldSendAbandonmentEvent,
+} from "@/lib/gameplayTelemetry";
 
 export default function GamePage() {
   const router = useRouter();
   const scenario = useGameStore((s) => s.scenario);
   const status = useGameStore((s) => s.status);
+  const sessionToken = useGameStore((s) => s.sessionToken);
   const { executeCommand } = useCommand();
 
   const [activeTab, setActiveTab] = useState<RightPanelTab>("terminal");
@@ -25,6 +32,27 @@ export default function GamePage() {
       router.push("/");
     }
   }, [scenario, status, router]);
+
+  useEffect(() => {
+    if (status !== "completed" || !sessionToken) return;
+    void sendCompletionTelemetryIfNeeded(useGameStore.getState());
+  }, [sessionToken, status]);
+
+  useEffect(() => {
+    const handlePageHide = () => {
+      const state = useGameStore.getState();
+      if (!shouldSendAbandonmentEvent(state)) return;
+
+      sendGameplayTelemetryEvent(
+        buildGameplayTelemetryPayload(state, "abandoned"),
+      );
+    };
+
+    window.addEventListener("pagehide", handlePageHide);
+    return () => {
+      window.removeEventListener("pagehide", handlePageHide);
+    };
+  }, []);
 
   const handleTourComplete = useCallback(({ completed }: { completed: boolean }) => {
     setShowTour(false);

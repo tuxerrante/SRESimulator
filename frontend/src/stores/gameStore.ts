@@ -3,6 +3,8 @@ import type { ChatMessage, InvestigationPhase } from "@shared/types/chat";
 import type { Scenario, GameStatus } from "@shared/types/game";
 import type { TerminalEntry } from "@shared/types/terminal";
 import type { Score, ScoringEvent } from "@shared/types/scoring";
+import { getViewerAccessPolicy } from "@shared/auth/access";
+import type { GithubViewer, ViewerAccessPolicy } from "@shared/auth/viewer";
 
 const NICKNAME_KEY = "sre-nickname";
 
@@ -19,6 +21,12 @@ interface GameState {
   nickname: string | null;
   setNickname: (name: string) => void;
   hydrateNickname: () => void;
+
+  // Authenticated viewer
+  viewer: GithubViewer | null;
+  accessPolicy: ViewerAccessPolicy;
+  setViewer: (viewer: GithubViewer) => void;
+  clearViewer: () => void;
 
   // Session
   status: GameStatus;
@@ -94,6 +102,18 @@ export const useGameStore = create<GameState>((set) => ({
     } catch { /* SSR / restricted storage */ }
     set({ nickname: normalized === "" ? null : normalized });
   },
+  viewer: null,
+  accessPolicy: getViewerAccessPolicy(null),
+  setViewer: (viewer) =>
+    set({
+      viewer,
+      accessPolicy: getViewerAccessPolicy(viewer),
+    }),
+  clearViewer: () =>
+    set({
+      viewer: null,
+      accessPolicy: getViewerAccessPolicy(null),
+    }),
 
   status: "idle",
   scenario: null,

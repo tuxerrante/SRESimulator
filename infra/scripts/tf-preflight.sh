@@ -3,6 +3,7 @@ set -euo pipefail
 
 OWNER_ALIAS="${OWNER_ALIAS:-}"
 LOCATION="${LOCATION:-eastus}"
+CLUSTER_FLAVOR="${CLUSTER_FLAVOR:-aks}"
 TF_STATE_KEY="${TF_STATE_KEY:-sre-simulator.tfstate}"
 GENEVA_SUPPRESSION_ACCESS_CONFIRMED="${GENEVA_SUPPRESSION_ACCESS_CONFIRMED:-false}"
 SQL_SERVER_NAME="${SQL_SERVER_NAME:-}"
@@ -14,6 +15,7 @@ AOAI_MODEL_NAME="${AOAI_MODEL_NAME:-gpt-4o-mini}"
 AOAI_MODEL_VERSION="${AOAI_MODEL_VERSION:-2024-07-18}"
 AOAI_SKU_NAME="${AOAI_SKU_NAME:-GlobalStandard}"
 ENABLE_SQL_FREE_TIER="${ENABLE_SQL_FREE_TIER:-false}"
+AKS_NODE_RESOURCE_GROUP_NAME="${AKS_NODE_RESOURCE_GROUP_NAME:-}"
 
 failures=()
 warnings=()
@@ -155,9 +157,10 @@ ensure_state_backend_exists() {
   fi
 }
 
-echo "== ARO final infra preflight =="
+echo "== Kubernetes final infra preflight =="
 echo "Owner alias: ${OWNER_ALIAS:-<missing>}"
 echo "Location: ${LOCATION}"
+echo "Cluster flavor: ${CLUSTER_FLAVOR}"
 echo "State key: ${TF_STATE_KEY}"
 echo "State account: ${TF_STATE_ACCOUNT:-<missing>}"
 echo "State resource group: ${TF_STATE_RG}"
@@ -167,12 +170,19 @@ echo "SQL server name: ${SQL_SERVER_NAME:-<default from alias>}"
 echo "AOAI model/version: ${AOAI_MODEL_NAME}/${AOAI_MODEL_VERSION}"
 echo "AOAI deployment sku: ${AOAI_SKU_NAME}"
 echo "Enable SQL free tier: ${ENABLE_SQL_FREE_TIER}"
+if [[ "$CLUSTER_FLAVOR" == "aks" ]]; then
+  echo "AKS node resource group override: ${AKS_NODE_RESOURCE_GROUP_NAME:-<default>}"
+fi
 echo
 
 if [[ -z "$OWNER_ALIAS" ]]; then
   add_failure "OWNER_ALIAS is required (expected aaffinit for final environment)."
 elif [[ ! "$OWNER_ALIAS" =~ ^[a-z][a-z0-9]{2,15}$ ]]; then
   add_failure "OWNER_ALIAS must match ^[a-z][a-z0-9]{2,15}$."
+fi
+
+if [[ "$CLUSTER_FLAVOR" != "aks" && "$CLUSTER_FLAVOR" != "aro" ]]; then
+  add_failure "CLUSTER_FLAVOR must be either aks or aro."
 fi
 
 if [[ "$OWNER_ALIAS" != "aaffinit" ]]; then
@@ -228,12 +238,19 @@ if ((${#failures[@]} == 0)); then
     fi
   fi
 
-  for provider in \
-    Microsoft.RedHatOpenShift \
-    Microsoft.Compute \
-    Microsoft.Network \
-    Microsoft.Sql \
-    Microsoft.CognitiveServices; do
+  providers=(
+    Microsoft.Compute
+    Microsoft.Network
+    Microsoft.Sql
+    Microsoft.CognitiveServices
+  )
+  if [[ "$CLUSTER_FLAVOR" == "aro" ]]; then
+    providers+=(Microsoft.RedHatOpenShift)
+  else
+    providers+=(Microsoft.ContainerService)
+  fi
+
+  for provider in "${providers[@]}"; do
     state="$(az provider show --namespace "$provider" --query registrationState -o tsv 2>/dev/null || true)"
     if [[ "$state" != "Registered" ]]; then
       add_failure "Resource provider ${provider} is not Registered (state=${state:-unknown})."
@@ -241,7 +258,11 @@ if ((${#failures[@]} == 0)); then
   done
 
   app_rg="${OWNER_ALIAS}-test-rg"
-  cluster_rg="${OWNER_ALIAS}-test-cluster-rg"
+  if [[ "$CLUSTER_FLAVOR" == "aro" ]]; then
+    managed_rg="${OWNER_ALIAS}-test-cluster-rg"
+  else
+    managed_rg="${AKS_NODE_RESOURCE_GROUP_NAME:-${OWNER_ALIAS}-test-aks-nodes-rg}"
+  fi
   sql_server_name="${SQL_SERVER_NAME:-${OWNER_ALIAS}-test-sql}"
 
   app_rg_exists="$(az group exists --name "$app_rg" 2>/dev/null || echo false)"
@@ -249,9 +270,13 @@ if ((${#failures[@]} == 0)); then
     add_failure "Resource group ${app_rg} already exists. This risks side effects on existing resources."
   fi
 
-  cluster_rg_exists="$(az group exists --name "$cluster_rg" 2>/dev/null || echo false)"
-  if [[ "$cluster_rg_exists" == "true" ]]; then
-    add_failure "Cluster resource group ${cluster_rg} already exists. Clean up or choose a different alias/suffix."
+  managed_rg_exists="$(az group exists --name "$managed_rg" 2>/dev/null || echo false)"
+  if [[ "$managed_rg_exists" == "true" ]]; then
+    if [[ "$CLUSTER_FLAVOR" == "aro" ]]; then
+      add_failure "Cluster resource group ${managed_rg} already exists. Clean up or choose a different alias/suffix."
+    else
+      add_failure "AKS node resource group ${managed_rg} already exists. Clean up or choose a different alias/suffix."
+    fi
   fi
 
   sql_name_check="$(az rest \
@@ -272,22 +297,35 @@ if ((${#failures[@]} == 0)); then
     fi
   fi
 
-  latest_aro_version="$(az aro get-versions --location "$LOCATION" --query "[-1]" -o tsv 2>/dev/null || true)"
-  if [[ -z "$latest_aro_version" ]]; then
-    add_warning "Could not resolve latest ARO version. Verify az aro extension and region support."
-  else
-    echo "Latest reported ARO version in ${LOCATION}: ${latest_aro_version}"
-  fi
+  if [[ "$CLUSTER_FLAVOR" == "aro" ]]; then
+    latest_aro_version="$(az aro get-versions --location "$LOCATION" --query "[-1]" -o tsv 2>/dev/null || true)"
+    if [[ -z "$latest_aro_version" ]]; then
+      add_warning "Could not resolve latest ARO version. Verify az aro extension and region support."
+    else
+      echo "Latest reported ARO version in ${LOCATION}: ${latest_aro_version}"
+    fi
 
-  dsv3_quota="$(az vm list-usage --location "$LOCATION" \
-    --query "[?contains(name.localizedValue, 'DSv3') || contains(name.value, 'DSv3')].[name.localizedValue, currentValue, limit]" \
-    -o tsv 2>/dev/null || true)"
-  if [[ -z "$dsv3_quota" ]]; then
-    add_warning "Could not resolve DSv3 quota usage for ${LOCATION}. Check compute quotas manually."
+    dsv3_quota="$(az vm list-usage --location "$LOCATION" \
+      --query "[?contains(name.localizedValue, 'DSv3') || contains(name.value, 'DSv3')].[name.localizedValue, currentValue, limit]" \
+      -o tsv 2>/dev/null || true)"
+    if [[ -z "$dsv3_quota" ]]; then
+      add_warning "Could not resolve DSv3 quota usage for ${LOCATION}. Check compute quotas manually."
+    else
+      echo
+      echo "DSv3 quota usage (name current limit):"
+      echo "$dsv3_quota"
+    fi
   else
-    echo
-    echo "DSv3 quota usage (name current limit):"
-    echo "$dsv3_quota"
+    bseries_quota="$(az vm list-usage --location "$LOCATION" \
+      --query "[?contains(name.localizedValue, 'B-Series') || contains(name.value, 'BS')].[name.localizedValue, currentValue, limit]" \
+      -o tsv 2>/dev/null || true)"
+    if [[ -z "$bseries_quota" ]]; then
+      add_warning "Could not resolve B-series quota usage for ${LOCATION}. Check compute quotas manually."
+    else
+      echo
+      echo "B-series quota usage (name current limit):"
+      echo "$bseries_quota"
+    fi
   fi
 
   aoai_skus="$(az cognitiveservices model list \
@@ -305,17 +343,28 @@ if ((${#failures[@]} == 0)); then
   fi
 fi
 
-if [[ "$GENEVA_SUPPRESSION_ACCESS_CONFIRMED" != "true" ]]; then
-  add_failure "Geneva suppression access was not confirmed. Set GENEVA_SUPPRESSION_ACCESS_CONFIRMED=true after validating access."
+if [[ "$CLUSTER_FLAVOR" == "aro" && "$GENEVA_SUPPRESSION_ACCESS_CONFIRMED" != "true" ]]; then
+  add_failure "Geneva suppression access was not confirmed for the ARO path. Set GENEVA_SUPPRESSION_ACCESS_CONFIRMED=true after validating access."
 fi
 
 echo
 echo "Recommended terraform values:"
 echo "  owner_alias = \"aaffinit\""
-echo "  master_vm_size = \"Standard_D8s_v3\""
-echo "  worker_vm_size = \"Standard_D4s_v3\""
-echo "  worker_count = 2"
-echo "  aro_version = \"${latest_aro_version:-<pin-latest-compatible>}\""
+echo "  cluster_flavor = \"${CLUSTER_FLAVOR}\""
+if [[ "$CLUSTER_FLAVOR" == "aro" ]]; then
+  echo "  master_vm_size = \"Standard_D8s_v3\""
+  echo "  worker_vm_size = \"Standard_D4s_v3\""
+  echo "  worker_count = 2"
+  echo "  aro_version = \"${latest_aro_version:-<pin-latest-compatible>}\""
+else
+  echo "  aks_node_vm_size = \"Standard_B2s\""
+  echo "  aks_node_count_min = 1"
+  echo "  aks_node_count_max = 3"
+  echo "  aks_public_ip_dns_label = \"aaffinit-test\""
+  if [[ -n "$AKS_NODE_RESOURCE_GROUP_NAME" ]]; then
+    echo "  aks_node_resource_group_name = \"${AKS_NODE_RESOURCE_GROUP_NAME}\""
+  fi
+fi
 echo "  aoai_model_name = \"${AOAI_MODEL_NAME}\""
 echo "  aoai_model_version = \"${AOAI_MODEL_VERSION}\""
 echo "  aoai_sku_name = \"${AOAI_SKU_NAME}\""

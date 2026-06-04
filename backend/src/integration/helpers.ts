@@ -14,9 +14,36 @@ export interface ChatMessage {
 }
 
 export interface ChatRequestBody {
+  sessionToken: string;
   messages: ChatMessage[];
   scenario: unknown | null;
   currentPhase: string;
+}
+
+export function getAutomatedTrafficHeaders(): Record<string, string> {
+  const token = process.env.AUTOMATED_TRAFFIC_TOKEN?.trim() ?? "";
+  if (!token) return {};
+
+  return {
+    "x-traffic-source": "automated",
+    "x-traffic-source-token": token,
+  };
+}
+
+export function getScenarioRequestHeaders(): Record<string, string> {
+  if (isExternalTarget()) {
+    return {};
+  }
+
+  return getAutomatedTrafficHeaders();
+}
+
+export function getExpectedScenarioTrafficSource(): "player" | "automated" {
+  if (isExternalTarget()) {
+    return "player";
+  }
+
+  return process.env.AUTOMATED_TRAFFIC_TOKEN?.trim() ? "automated" : "player";
 }
 
 /**
@@ -129,6 +156,7 @@ export async function getTokenMetrics(
 export function buildChatBody(
   messageCount: number,
   phase: string = "reading",
+  sessionToken: string = "session-token",
 ): ChatRequestBody {
   const messages: ChatMessage[] = [];
   for (let i = 0; i < messageCount; i++) {
@@ -137,5 +165,5 @@ export function buildChatBody(
       content: `Turn ${i}: ${"x".repeat(200)}`,
     });
   }
-  return { messages, scenario: null, currentPhase: phase };
+  return { sessionToken, messages, scenario: null, currentPhase: phase };
 }

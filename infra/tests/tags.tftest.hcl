@@ -1,9 +1,25 @@
-mock_provider "azurerm" {}
+mock_provider "azurerm" {
+  mock_data "azurerm_client_config" {
+    defaults = {
+      client_id       = "00000000-0000-0000-0000-000000000001"
+      object_id       = "00000000-0000-0000-0000-000000000002"
+      subscription_id = "00000000-0000-0000-0000-000000000003"
+      tenant_id       = "00000000-0000-0000-0000-000000000004"
+    }
+  }
+}
 mock_provider "azapi" {}
-mock_provider "azuread" {}
+mock_provider "azuread" {
+  mock_data "azuread_service_principal" {
+    defaults = {
+      object_id = "00000000-0000-0000-0000-000000000005"
+    }
+  }
+}
 
 variables {
-  owner_alias = "jdoe"
+  owner_alias    = "jdoe"
+  cluster_flavor = "aro"
 }
 
 # ---------------------------------------------------------------------------
@@ -32,19 +48,29 @@ run "resource_group_has_required_tags" {
     condition     = azurerm_resource_group.main.tags["auto-delete"] == "safe-to-delete"
     error_message = "Resource group must have auto-delete=safe-to-delete tag."
   }
+
+  assert {
+    condition     = azurerm_resource_group.main.tags["persist"] == "true"
+    error_message = "Resource group must have persist=true tag."
+  }
 }
 
 run "vnet_has_required_tags" {
   command = plan
 
   assert {
-    condition     = azurerm_virtual_network.aro.tags["environment"] == "test"
+    condition     = azurerm_virtual_network.aro[0].tags["environment"] == "test"
     error_message = "VNet must have environment=test tag."
   }
 
   assert {
-    condition     = azurerm_virtual_network.aro.tags["owner"] == "jdoe"
+    condition     = azurerm_virtual_network.aro[0].tags["owner"] == "jdoe"
     error_message = "VNet must have owner tag matching owner_alias."
+  }
+
+  assert {
+    condition     = azurerm_virtual_network.aro[0].tags["persist"] == "true"
+    error_message = "VNet must have persist=true tag."
   }
 }
 
@@ -60,6 +86,11 @@ run "aoai_has_required_tags" {
     condition     = azurerm_cognitive_account.openai.tags["owner"] == "jdoe"
     error_message = "Azure OpenAI account must have owner tag matching owner_alias."
   }
+
+  assert {
+    condition     = azurerm_cognitive_account.openai.tags["persist"] == "true"
+    error_message = "Azure OpenAI account must have persist=true tag."
+  }
 }
 
 run "extra_tags_merge" {
@@ -68,7 +99,7 @@ run "extra_tags_merge" {
   variables {
     owner_alias = "jdoe"
     extra_tags = {
-      team       = "platform"
+      team        = "platform"
       cost-center = "eng-42"
     }
   }

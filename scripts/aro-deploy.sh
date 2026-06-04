@@ -1,12 +1,15 @@
 #!/usr/bin/env bash
-# Shared functions for ARO deployment Makefile targets.
-# Sourced (not executed) by Make recipes; expects these environment
-# variables exported from the Makefile:
-#   AZURE_SUBSCRIPTION_ID, ARO_RG, ARO_CLUSTER
-#   AOAI_RG, AOAI_ACCOUNT, AOAI_DEPLOYMENT
-#   E2E_RELEASE, NPM_VERSION
+# ARO-specific deployment helpers. Sourced (not executed) by Make recipes.
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+KUBE_CLI=oc
+# shellcheck disable=SC1091
+source "${SCRIPT_DIR}/kube-deploy-common.sh"
 
 aro_login() {
+  require_cli az
+  require_cli oc
+  ensure_azure_login
   az account set -s "$AZURE_SUBSCRIPTION_ID" >/dev/null
   local api pass
   api=$(az aro show -g "$ARO_RG" -n "$ARO_CLUSTER" \
@@ -17,13 +20,24 @@ aro_login() {
     --insecure-skip-tls-verify=true >/dev/null
 }
 
-aoai_fetch_creds() {
-  AOAI_ENDPOINT=$(az cognitiveservices account show \
-    -g "$AOAI_RG" -n "$AOAI_ACCOUNT" \
-    --query properties.endpoint -o tsv | sed 's:/*$::')
-  AOAI_KEY=$(az cognitiveservices account keys list \
-    -g "$AOAI_RG" -n "$AOAI_ACCOUNT" \
-    --query key1 -o tsv)
+print_aro_login_summary() {
+  local account_name account_id oc_user oc_server
+  account_name=$(az account show --query name -o tsv)
+  account_id=$(az account show --query id -o tsv)
+  oc_user=$(oc whoami)
+  oc_server=$(oc whoami --show-server)
+
+  echo "Azure subscription: $account_name ($account_id)"
+  echo "OpenShift user: $oc_user"
+  echo "OpenShift server: $oc_server"
+}
+
+cluster_login() {
+  aro_login
+}
+
+print_cluster_login_summary() {
+  print_aro_login_summary
 }
 
 # Usage: patch_bc_strategy <namespace> <bc-name> <dockerfile-path>
@@ -49,9 +63,8 @@ oc_build_timed() {
   archive="$(mktemp "${TMPDIR:-/tmp}/oc-build-XXXXXX").tar.gz"
   local tar_extra_flags=()
   # BSD tar on macOS embeds PAX headers (xattrs, resource forks) that
-  # OpenShift builder pods cannot extract.  Probe whether the local tar
-  # accepts --no-mac-metadata by creating a throwaway archive (--help
-  # on newer bsdtar no longer lists the flag).
+  # OpenShift builder pods cannot extract. Probe whether the local tar accepts
+  # --no-mac-metadata by creating a throwaway archive.
   if tar cf /dev/null --no-mac-metadata /dev/null 2>/dev/null; then
     tar_extra_flags+=(--no-mac-metadata --no-xattrs --no-fflags)
   fi
@@ -96,14 +109,40 @@ oc_build_timed() {
   echo "  $name build completed in $(( t1 - t0 ))s (attempt $attempt/$max_retries)"
 }
 
+prepare_release_images() {
+  local ns=$1 tag=$2
+  ensure_namespace "$ns"
+
+  if ! oc -n "$ns" get bc/sre-simulator-frontend >/dev/null 2>&1; then
+    oc -n "$ns" new-build --name=sre-simulator-frontend --binary=true --strategy=docker --to=sre-simulator-frontend:"$tag" >/dev/null
+  fi
+  if ! oc -n "$ns" get bc/sre-simulator-backend >/dev/null 2>&1; then
+    oc -n "$ns" new-build --name=sre-simulator-backend --binary=true --strategy=docker --to=sre-simulator-backend:"$tag" >/dev/null
+  fi
+
+  oc -n "$ns" patch bc/sre-simulator-frontend --type=merge \
+    -p "{\"spec\":{\"output\":{\"to\":{\"kind\":\"ImageStreamTag\",\"name\":\"sre-simulator-frontend:$tag\"}}}}" >/dev/null
+  patch_bc_strategy "$ns" sre-simulator-frontend frontend/Dockerfile
+
+  oc -n "$ns" patch bc/sre-simulator-backend --type=merge \
+    -p "{\"spec\":{\"output\":{\"to\":{\"kind\":\"ImageStreamTag\",\"name\":\"sre-simulator-backend:$tag\"}}}}" >/dev/null
+  patch_bc_strategy "$ns" sre-simulator-backend backend/Dockerfile
+
+  oc_build_timed "$ns" sre-simulator-frontend
+  oc_build_timed "$ns" sre-simulator-backend
+}
+
 # Usage: helm_deploy_sre <namespace> <tag> <probe-token>
 # Sets DEPLOY_HOST for use by caller.
 # Optional env: DB_SECRET_NAME — when set, enables Azure SQL persistence
-#   via database.enabled=true and database.existingSecretName.
+#   via database.enabled=true and database.existingSecretName. Callers should
+#   run ensure_db_secret_for_e2e_namespace <namespace> first so the secret exists
+#   in that namespace when reusing credentials from elsewhere.
 helm_deploy_sre() {
   local ns=$1 tag=$2 probe_token=$3
   DEPLOY_DOMAIN=$(oc get ingresses.config/cluster -o jsonpath='{.spec.domain}')
   DEPLOY_HOST="${ns}.${DEPLOY_DOMAIN}"
+  DEPLOY_SCHEME="https"
 
   local db_flags=()
   local aoai_route_flags=()
@@ -126,7 +165,8 @@ helm_deploy_sre() {
   fi
 
   helm upgrade --install "$E2E_RELEASE" ./helm/sre-simulator -n "$ns" \
-    --set route.host="$DEPLOY_HOST" \
+    --set-string exposure.mode=route \
+    --set-string "exposure.host=$DEPLOY_HOST" \
     --set frontend.image.repository="image-registry.openshift-image-registry.svc:5000/$ns/sre-simulator-frontend" \
     --set frontend.image.tag="$tag" \
     --set frontend.image.pullPolicy=Always \
@@ -147,33 +187,4 @@ helm_deploy_sre() {
     "${aoai_route_flags[@]}" \
     "${db_flags[@]}" \
     --wait --timeout 15m >/dev/null
-}
-
-# Usage: wait_for_rollout <namespace>
-wait_for_rollout() {
-  local ns=$1
-  oc -n "$ns" rollout status "deployment/${E2E_RELEASE}-frontend" --timeout=6m >/dev/null
-  oc -n "$ns" rollout status "deployment/${E2E_RELEASE}-backend" --timeout=6m >/dev/null
-}
-
-# Usage: probe_readiness <host> <probe-token>
-# Returns non-zero on failure.
-probe_readiness() {
-  local host=$1 probe_token=$2
-  local code="" i=0
-  while [ "$i" -lt 10 ]; do
-    code=$(curl -ksS -H "x-ai-probe-token: $probe_token" \
-      -o /dev/null -w '%{http_code}' \
-      "https://$host/api/ai/probe?live=true" || true)
-    if [ "$code" = "200" ]; then break; fi
-    i=$((i + 1))
-    sleep 2
-  done
-  if [ "$code" != "200" ]; then
-    echo "Probe failed with status $code"
-    curl -ksS -H "x-ai-probe-token: $probe_token" \
-      "https://$host/api/ai/probe?live=true" || true
-    echo
-    return 1
-  fi
 }

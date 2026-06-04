@@ -2,7 +2,7 @@ import type { InvestigationPhase } from "../../../shared/types/chat";
 import type { Difficulty, Scenario } from "../../../shared/types/game";
 import { utcOffsetMinutes, utcDaysAgo } from "./sim-clock";
 
-const REGION = "eastus";
+const REGION = "westus3";
 
 function severityForDifficulty(difficulty: Difficulty): "Sev2" | "Sev3" | "Sev4" {
   if (difficulty === "hard") return "Sev2";
@@ -74,8 +74,65 @@ export function generateMockChatResponse(phase: InvestigationPhase): string {
   ].join("\n");
 }
 
+function extractDeleteTarget(trimmed: string): { resource: string; name: string } {
+  const tokens = trimmed.split(/\s+/).filter(Boolean);
+  const positional: string[] = [];
+
+  const longFlagWithValue = new Set([
+    "--namespace",
+    "--context",
+    "--kubeconfig",
+    "--output",
+    "--selector",
+    "--field-selector",
+    "--grace-period",
+    "--timeout",
+    "--cascade",
+    "--dry-run",
+    "--filename",
+    "--container",
+  ]);
+  const shortFlagWithValue = new Set(["-n", "-o", "-l", "-f", "-c"]);
+
+  for (let index = 1; index < tokens.length; index += 1) {
+    const token = tokens[index];
+    if (token === "--") {
+      positional.push(...tokens.slice(index + 1));
+      break;
+    }
+    if (!token) continue;
+
+    if (token.startsWith("--")) {
+      if (longFlagWithValue.has(token)) {
+        index += 1;
+        continue;
+      }
+      continue;
+    }
+
+    if (token.startsWith("-")) {
+      if (shortFlagWithValue.has(token)) {
+        index += 1;
+        continue;
+      }
+      continue;
+    }
+
+    positional.push(token);
+  }
+
+  return {
+    resource: positional[0] ?? "resource",
+    name: positional[1] ?? "unknown",
+  };
+}
+
 function mockOcOutput(command: string): string {
   const trimmed = command.replace(/^oc\s+/, "");
+  const commandTokens = command
+    .toLowerCase()
+    .split(/\s+/)
+    .filter((token) => token.length > 0);
 
   if (/^describe\s+node/i.test(trimmed)) {
     const nameMatch = trimmed.match(/^describe\s+node\s+(\S+)/i);
@@ -112,6 +169,34 @@ function mockOcOutput(command: string): string {
       `  Type    Reason    Age    From     Message`,
       `  ----    ------    ----   ----     -------`,
       `  Normal  Starting  90d    kubelet  Starting kubelet.`,
+    ].join("\n");
+  }
+
+  if (/^describe\s+machine\b/i.test(trimmed)) {
+    const withNs = trimmed.match(/^describe\s+machine\s+-n\s+\S+\s+(\S+)/i);
+    let name = withNs?.[1];
+    if (!name) {
+      const simple = trimmed.match(/^describe\s+machine\s+(\S+)/i);
+      const token = simple?.[1];
+      if (token && token !== "-n" && token !== "--namespace") {
+        name = token;
+      }
+    }
+    name ??= "machine-mock-0";
+    return [
+      `Name:         ${name}`,
+      `Namespace:    openshift-machine-api`,
+      `Labels:       machine.openshift.io/cluster-api-cluster=mock`,
+      `Annotations:  <none>`,
+      `API Version:  machine.openshift.io/v1beta1`,
+      `Kind:         Machine`,
+      `Phase:        Running`,
+      `Provider ID:  azure:///subscriptions/mock/resourceGroups/mock/providers/Microsoft.Compute/virtualMachines/${name}`,
+      `Conditions:`,
+      `  Type     Status  Reason`,
+      `  ----     ------  ------`,
+      `  Ready    True    MachineReady`,
+      `Events:       <none>`,
     ].join("\n");
   }
 
@@ -155,12 +240,7 @@ function mockOcOutput(command: string): string {
   }
 
   if (/^delete\s+/i.test(trimmed)) {
-    const parts = trimmed
-      .replace(/\s+--force/g, "")
-      .replace(/\s+--grace-period=\d+/g, "")
-      .match(/^delete\s+(\S+)\s+(\S+)/i);
-    const resource = parts?.[1] ?? "resource";
-    const name = parts?.[2] ?? "unknown";
+    const { resource, name } = extractDeleteTarget(trimmed);
     return `${resource} "${name}" deleted`;
   }
 
@@ -174,18 +254,24 @@ function mockOcOutput(command: string): string {
     ].join("\n");
   }
 
-  if (/\s+-o\s+jsonpath/i.test(command)) {
+  if (
+    commandTokens.some(
+      (token, index) =>
+        token === "-o" &&
+        commandTokens[index + 1]?.startsWith("jsonpath"),
+    )
+  ) {
     return '{"status":"Ready","reason":"KubeletReady"}';
   }
 
   if (/^get\s+machine/i.test(trimmed)) {
     return [
       "NAME                                   PHASE         TYPE              REGION    ZONE   AGE",
-      "aro-mock-master-0                      Running       Standard_D8s_v3   eastus    1      90d",
-      "aro-mock-master-1                      Running       Standard_D8s_v3   eastus    2      90d",
-      "aro-mock-master-2                      Running       Standard_D8s_v3   eastus    3      90d",
-      "aro-mock-worker-0                      Running       Standard_D4s_v3   eastus    1      90d",
-      "aro-mock-worker-1                      Running       Standard_D4s_v3   eastus    2      90d",
+      `aro-mock-master-0                      Running       Standard_D8s_v3   ${REGION}    1      90d`,
+      `aro-mock-master-1                      Running       Standard_D8s_v3   ${REGION}    2      90d`,
+      `aro-mock-master-2                      Running       Standard_D8s_v3   ${REGION}    3      90d`,
+      `aro-mock-worker-0                      Running       Standard_D4s_v3   ${REGION}    1      90d`,
+      `aro-mock-worker-1                      Running       Standard_D4s_v3   ${REGION}    2      90d`,
     ].join("\n");
   }
 

@@ -1,73 +1,132 @@
-import { describe, expect, it } from "vitest";
-import { extractPhase, extractScoreMarkers, extractResolved } from "@/lib/chat-markers";
-import type { InvestigationPhase } from "@shared/types/chat";
+import { act, renderHook } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  ACTOR_REF_HEADER,
+  GAME_SESSION_REF_HEADER,
+  REQUEST_ID_HEADER,
+} from "@shared/telemetry/constants";
+import type { Scenario } from "@shared/types/game";
+import { useGameStore } from "@/stores/gameStore";
+import { buildTelemetryHeaders } from "@/lib/telemetry/request-context";
+import { captureFrontendError } from "@/lib/telemetry/capture";
+import { useChat } from "./useChat";
 
-const VALID_PHASES: InvestigationPhase[] = [
-  "reading",
-  "context",
-  "facts",
-  "theory",
-  "action",
-];
+vi.mock("@/lib/telemetry/request-context", () => ({
+  buildTelemetryHeaders: vi.fn(),
+}));
 
-describe("extractPhase", () => {
-  it("extracts a valid phase marker", () => {
-    expect(extractPhase("Some text [PHASE:context] more text")).toBe("context");
+vi.mock("@/lib/telemetry/capture", () => ({
+  captureFrontendError: vi.fn(),
+}));
+
+const storage = new Map<string, string>();
+
+const localStorageMock: Storage = {
+  getItem(key: string) {
+    return storage.get(key) ?? null;
+  },
+  setItem(key: string, value: string) {
+    storage.set(key, value);
+  },
+  removeItem(key: string) {
+    storage.delete(key);
+  },
+  clear() {
+    storage.clear();
+  },
+  key(index: number) {
+    return [...storage.keys()][index] ?? null;
+  },
+  get length() {
+    return storage.size;
+  },
+};
+
+function createScenario(): Scenario {
+  return {
+    id: "scenario-1",
+    title: "Test scenario",
+    difficulty: "easy",
+    description: "Test description",
+    incidentTicket: {
+      id: "INC-1",
+      severity: "Sev2",
+      title: "Broken cluster",
+      description: "Test incident",
+      customerImpact: "Users impacted",
+      reportedTime: "2026-05-08T12:00:00Z",
+      clusterName: "cluster-a",
+      region: "westeurope",
+    },
+    clusterContext: {
+      name: "cluster-a",
+      version: "4.18",
+      region: "westeurope",
+      nodeCount: 3,
+      status: "Degraded",
+      recentEvents: [],
+      alerts: [],
+      upgradeHistory: [],
+    },
+  };
+}
+
+describe("useChat", () => {
+  beforeEach(() => {
+    Object.defineProperty(globalThis, "localStorage", {
+      value: localStorageMock,
+      writable: true,
+      configurable: true,
+    });
+    localStorageMock.clear();
+    useGameStore.getState().resetGame();
+    vi.restoreAllMocks();
+    vi.mocked(buildTelemetryHeaders).mockResolvedValue({
+      [REQUEST_ID_HEADER]: "req-123",
+      [ACTOR_REF_HEADER]: "actor-123",
+      [GAME_SESSION_REF_HEADER]: "gsr-123",
+    });
   });
 
-  it("returns null when no phase marker exists", () => {
-    expect(extractPhase("No phase here")).toBeNull();
+  it("captures safe telemetry when the chat request fails", async () => {
+    const networkError = new Error("network down");
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(networkError));
+
+    useGameStore.getState().startGame(createScenario(), "session-raw-token");
+
+    const { result } = renderHook(() => useChat());
+
+    await act(async () => {
+      await result.current.sendMessage("check the cluster");
+    });
+
+    expect(captureFrontendError).toHaveBeenCalledWith(networkError, {
+      feature: "chat",
+      phase: "reading",
+      difficulty: "easy",
+      requestId: "req-123",
+      actorRef: "actor-123",
+      gameSessionRef: "gsr-123",
+    });
+    expect(useGameStore.getState().messages.at(-1)?.content).toBe(
+      "Error: network down. Please try again.",
+    );
   });
 
-  it("returns null for invalid phase value", () => {
-    expect(extractPhase("[PHASE:invalid]")).toBeNull();
-  });
+  it("falls back to a generic chat error when upstream message normalizes empty", async () => {
+    const noisyError = new Error("...  !!!");
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(noisyError));
 
-  it.each(VALID_PHASES)("recognizes phase: %s", (phase) => {
-    expect(extractPhase(`[PHASE:${phase}]`)).toBe(phase);
-  });
-});
+    useGameStore.getState().startGame(createScenario(), "session-raw-token");
 
-describe("extractScoreMarkers", () => {
-  it("extracts bonus score events", () => {
-    const events = extractScoreMarkers("[SCORE:efficiency:+5:Good work]");
-    expect(events).toHaveLength(1);
-    expect(events[0].type).toBe("bonus");
-    expect(events[0].dimension).toBe("efficiency");
-    expect(events[0].points).toBe(5);
-    expect(events[0].reason).toBe("Good work");
-  });
+    const { result } = renderHook(() => useChat());
 
-  it("extracts penalty score events", () => {
-    const events = extractScoreMarkers("[SCORE:safety:-3:Unsafe action]");
-    expect(events).toHaveLength(1);
-    expect(events[0].type).toBe("penalty");
-    expect(events[0].points).toBe(3);
-  });
+    await act(async () => {
+      await result.current.sendMessage("check the cluster");
+    });
 
-  it("extracts multiple score events", () => {
-    const content =
-      "[SCORE:efficiency:+2:Fast] some text [SCORE:safety:-1:Risky]";
-    const events = extractScoreMarkers(content);
-    expect(events).toHaveLength(2);
-  });
-
-  it("ignores invalid dimension names", () => {
-    const events = extractScoreMarkers("[SCORE:bogus:+5:Nope]");
-    expect(events).toHaveLength(0);
-  });
-
-  it("returns empty array when no markers exist", () => {
-    expect(extractScoreMarkers("No markers here")).toEqual([]);
-  });
-});
-
-describe("extractResolved", () => {
-  it("returns true when [RESOLVED] marker present", () => {
-    expect(extractResolved("The issue is [RESOLVED] now")).toBe(true);
-  });
-
-  it("returns false when no marker present", () => {
-    expect(extractResolved("Still investigating")).toBe(false);
+    expect(useGameStore.getState().messages.at(-1)?.content).toBe(
+      "Error: Something went wrong. Please try again.",
+    );
   });
 });

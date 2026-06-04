@@ -3,11 +3,15 @@ import type { Server } from "http";
 import type { Express } from "express";
 import type { Scenario } from "../../../shared/types/game";
 import type { LeaderboardEntry } from "../../../shared/types/leaderboard";
+import { VIEWER_SESSION_COOKIE } from "../../../shared/auth/constants";
+import { createViewerSessionToken } from "../../../shared/auth/session";
 import {
   getBackendUrl,
   isExternalTarget,
   startLocalServer,
   postChatSSE,
+  getExpectedScenarioTrafficSource,
+  getScenarioRequestHeaders,
 } from "./helpers";
 
 interface ScenarioResponse {
@@ -32,10 +36,34 @@ interface ErrorResponse {
 let baseUrl: string;
 let localServer: Server | null = null;
 let savedMockMode: string | undefined;
+let savedTurnstileSecret: string | undefined;
+let savedAuthSecret: string | undefined;
+let savedAntiAbuseSecret: string | undefined;
+let savedPersistentLeaderboardEnabled: string | undefined;
+const githubAuthCookie = `${VIEWER_SESSION_COOKIE}=${createViewerSessionToken(
+  {
+    kind: "github",
+    githubUserId: "12345",
+    githubLogin: "octocat",
+    displayName: "The Octocat",
+    avatarUrl: null,
+    issuedAt: Date.now(),
+    expiresAt: Date.now() + 60_000,
+  },
+  "test-secret"
+)}`;
 
 async function createFullApp(): Promise<Express> {
   savedMockMode = process.env.AI_MOCK_MODE;
+  savedTurnstileSecret = process.env.TURNSTILE_SECRET_KEY;
+  savedAuthSecret = process.env.AUTH_SESSION_SECRET;
+  savedAntiAbuseSecret = process.env.ANTI_ABUSE_HMAC_SECRET;
+  savedPersistentLeaderboardEnabled = process.env.PERSISTENT_LEADERBOARD_ENABLED;
   process.env.AI_MOCK_MODE = "true";
+  process.env.TURNSTILE_SECRET_KEY = "test-secret";
+  process.env.AUTH_SESSION_SECRET = "test-secret";
+  process.env.ANTI_ABUSE_HMAC_SECRET = "test-hmac";
+  process.env.PERSISTENT_LEADERBOARD_ENABLED = "true";
   const { initStorage } = await import("../lib/storage");
   await initStorage();
   const { default: express } = await import("express");
@@ -43,6 +71,7 @@ async function createFullApp(): Promise<Express> {
   const { chatRouter } = await import("../routes/chat");
   const { commandRouter } = await import("../routes/command");
   const { scenarioRouter } = await import("../routes/scenario");
+  const { gameplayRouter } = await import("../routes/gameplay");
   const { scoresRouter } = await import("../routes/scores");
   const { healthRouter } = await import("../routes/health");
   const { guideRouter } = await import("../routes/guide");
@@ -53,6 +82,7 @@ async function createFullApp(): Promise<Express> {
   app.use("/api/chat", chatRouter);
   app.use("/api/command", commandRouter);
   app.use("/api/scenario", scenarioRouter);
+  app.use("/api/gameplay", gameplayRouter);
   app.use("/api/scores", scoresRouter);
   app.use("/api/guide", guideRouter);
   app.use("/", healthRouter);
@@ -80,6 +110,26 @@ afterAll(() => {
   } else {
     process.env.AI_MOCK_MODE = savedMockMode;
   }
+  if (savedTurnstileSecret === undefined) {
+    delete process.env.TURNSTILE_SECRET_KEY;
+  } else {
+    process.env.TURNSTILE_SECRET_KEY = savedTurnstileSecret;
+  }
+  if (savedAuthSecret === undefined) {
+    delete process.env.AUTH_SESSION_SECRET;
+  } else {
+    process.env.AUTH_SESSION_SECRET = savedAuthSecret;
+  }
+  if (savedAntiAbuseSecret === undefined) {
+    delete process.env.ANTI_ABUSE_HMAC_SECRET;
+  } else {
+    process.env.ANTI_ABUSE_HMAC_SECRET = savedAntiAbuseSecret;
+  }
+  if (savedPersistentLeaderboardEnabled === undefined) {
+    delete process.env.PERSISTENT_LEADERBOARD_ENABLED;
+  } else {
+    process.env.PERSISTENT_LEADERBOARD_ENABLED = savedPersistentLeaderboardEnabled;
+  }
 });
 
 describe("health endpoints", () => {
@@ -105,7 +155,11 @@ describe("full game flow: scenario -> chat -> command -> scores", () => {
   it("POST /api/scenario creates a scenario and session token", async () => {
     const res = await fetch(`${baseUrl}/api/scenario`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        cookie: githubAuthCookie,
+        ...getScenarioRequestHeaders(),
+      },
       body: JSON.stringify({ difficulty: "easy" }),
     });
     expect(res.status).toBe(200);
@@ -128,6 +182,7 @@ describe("full game flow: scenario -> chat -> command -> scores", () => {
 
   it("POST /api/chat responds with SSE stream", async () => {
     const result = await postChatSSE(baseUrl, {
+      sessionToken,
       messages: [
         { role: "user", content: "What do I see in the incident ticket?" },
       ],
@@ -148,6 +203,7 @@ describe("full game flow: scenario -> chat -> command -> scores", () => {
 
   it("POST /api/chat with follow-up preserves conversation", async () => {
     const result = await postChatSSE(baseUrl, {
+      sessionToken,
       messages: [
         { role: "user", content: "What do I see in the incident ticket?" },
         {
@@ -171,6 +227,7 @@ describe("full game flow: scenario -> chat -> command -> scores", () => {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
+        sessionToken,
         command: "oc get nodes",
         type: "oc",
         scenario,
@@ -190,6 +247,7 @@ describe("full game flow: scenario -> chat -> command -> scores", () => {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
+        sessionToken,
         command:
           'ClusterAuditLogs | where Verb == "delete" | project TimeGenerated, User, ObjectRef',
         type: "kql",
@@ -213,21 +271,30 @@ describe("full game flow: scenario -> chat -> command -> scores", () => {
   });
 
   it("POST /api/scores submits score with valid session token", async () => {
+    const telemetryRes = await fetch(`${baseUrl}/api/gameplay`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        sessionToken,
+        lifecycleState: "completed",
+        commandCount: 8,
+        durationMs: 90_000,
+        scoringEvents: [
+          { type: "bonus", dimension: "efficiency", points: 20, reason: "eff", timestamp: Date.now() },
+          { type: "bonus", dimension: "safety", points: 22, reason: "safe", timestamp: Date.now() },
+          { type: "bonus", dimension: "documentation", points: 18, reason: "docs", timestamp: Date.now() },
+          { type: "bonus", dimension: "accuracy", points: 15, reason: "acc", timestamp: Date.now() },
+        ],
+      }),
+    });
+    expect(telemetryRes.status).toBe(202);
+
     const res = await fetch(`${baseUrl}/api/scores`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         sessionToken,
         nickname: "TestSRE",
-        score: {
-          efficiency: 20,
-          safety: 22,
-          documentation: 18,
-          accuracy: 15,
-          total: 75,
-        },
-        grade: "B",
-        commandCount: 8,
       }),
     });
     expect(res.status).toBe(201);
@@ -237,6 +304,7 @@ describe("full game flow: scenario -> chat -> command -> scores", () => {
     expect(body.nickname).toBe("TestSRE");
     expect(body.difficulty).toBe("easy");
     expect(body.score.total).toBe(75);
+    expect(body.trafficSource).toBe(getExpectedScenarioTrafficSource());
   });
 
   it("POST /api/scores rejects reuse of consumed session token", async () => {
@@ -246,15 +314,6 @@ describe("full game flow: scenario -> chat -> command -> scores", () => {
       body: JSON.stringify({
         sessionToken,
         nickname: "CheatSRE",
-        score: {
-          efficiency: 25,
-          safety: 25,
-          documentation: 25,
-          accuracy: 25,
-          total: 100,
-        },
-        grade: "A+",
-        commandCount: 1,
       }),
     });
     expect(res.status).toBe(403);
@@ -278,7 +337,10 @@ describe("scenario validation", () => {
     it(`generates ${difficulty} scenario`, async () => {
       const res = await fetch(`${baseUrl}/api/scenario`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          cookie: githubAuthCookie,
+        },
         body: JSON.stringify({ difficulty }),
       });
       expect(res.status).toBe(200);
@@ -296,6 +358,7 @@ describe("command validation", () => {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
+        sessionToken: "session-invalid",
         command: "something",
         type: "invalid",
         scenario: null,

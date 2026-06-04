@@ -6,6 +6,9 @@ import { Trophy, ArrowLeft, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { Difficulty } from "@shared/types/game";
 import type { LeaderboardEntry, HallOfFameEntry } from "@shared/types/leaderboard";
+import { fetchJsonObject } from "@/lib/api-client";
+import { captureFrontendError } from "@/lib/telemetry/capture";
+import { buildSafeRequestId } from "@/lib/telemetry/request-context";
 
 type Tab = "all" | Difficulty;
 
@@ -73,18 +76,19 @@ export default function LeaderboardPage() {
       setLoading(true);
       try {
         const param = activeTab === "all" ? "" : `?difficulty=${activeTab}`;
-        const res = await fetch(`/api/scores${param}`);
-        const raw = await res.text();
-        let data: Record<string, unknown>;
-        try {
-          data = JSON.parse(raw);
-        } catch {
-          throw new Error(`Server error (${res.status}): ${raw.slice(0, 120)}`);
-        }
-        if (!res.ok) throw new Error((data.error as string) || "Failed to load scores");
+        const data = await fetchJsonObject(
+          `/api/scores${param}`,
+          undefined,
+          "Failed to load scores",
+        );
         setEntries(data.entries as LeaderboardEntry[]);
         setHallOfFame(data.hallOfFame as HallOfFameEntry[]);
-      } catch {
+      } catch (error) {
+        captureFrontendError(error, {
+          feature: "scores",
+          difficulty: activeTab === "all" ? undefined : activeTab,
+          requestId: buildSafeRequestId(),
+        });
         setEntries([]);
         setHallOfFame([]);
       } finally {

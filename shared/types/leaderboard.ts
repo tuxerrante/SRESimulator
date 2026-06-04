@@ -1,6 +1,8 @@
 import type { Difficulty } from "./game";
 import type { Score } from "./scoring";
 
+export type TrafficSource = "player" | "automated";
+
 export interface LeaderboardEntry {
   id: string;
   nickname: string;
@@ -10,6 +12,10 @@ export interface LeaderboardEntry {
   commandCount: number;
   durationMs: number;
   scenarioTitle: string;
+  identityKind?: "github";
+  githubUserId?: string;
+  githubLogin?: string;
+  trafficSource?: TrafficSource;
   timestamp: number;
 }
 

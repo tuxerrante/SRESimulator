@@ -4,6 +4,8 @@ name: CI
 "on":
   push:
     branches: [main]
+    tags:
+      - "v*.*.*"
   pull_request:
     branches: [main]
 
@@ -16,9 +18,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Harden runner
-        # v2.16.0
+        # v2.18.0
         uses: >-
-          step-security/harden-runner@fa2e9d605c4eeb9fcad4c99c224cee0c6c7f3594
+          step-security/harden-runner@6c3c2f2c1c457b00c10c4848d6f5491db3b629df
         with:
           egress-policy: audit
 
@@ -30,13 +32,161 @@ jobs:
           echo "::warning::Direct push to main detected — use a PR instead."
           echo "Pushed by: ${ACTOR} (${SHA})"
 
+  tag-mainline-check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Harden runner
+        # v2.18.0
+        uses: >-
+          step-security/harden-runner@6c3c2f2c1c457b00c10c4848d6f5491db3b629df
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        # v6.0.2
+        uses: >-
+          actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+        # v6.3.0
+        uses: >-
+          actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
+        with:
+          node-version: 24
+
+      - name: Verify semver tag ancestry
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          if [[ "${EVENT_NAME}" != "push" ]]; then
+            echo "Not a push event; skipping tag ancestry check."
+            exit 0
+          fi
+          if [[ ! "${REF}" =~ ^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Not a semver tag push; skipping tag ancestry check."
+            exit 0
+          fi
+
+          git fetch origin main --depth=1
+          if ! git merge-base --is-ancestor "${SHA}" "origin/main"; then
+            echo "Tag ${REF} points to ${SHA}, outside main history."
+            echo "Release tags must be created from main."
+            exit 1
+          fi
+          echo "Tag commit is on main history."
+
+      - name: Verify semver surfaces for tag
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          node scripts/release-version-sync.mjs verify --tag "${RELEASE_TAG}"
+
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      docs_only: ${{ steps.detect.outputs.docs_only }}
+      run_integration: ${{ steps.detect.outputs.run_integration }}
+    steps:
+      - name: Harden runner
+        # v2.18.0
+        uses: >-
+          step-security/harden-runner@6c3c2f2c1c457b00c10c4848d6f5491db3b629df
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        # v6.0.2
+        uses: >-
+          actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 0
+
+      - name: Detect docs-only changes
+        id: detect
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PUSH_BASE_SHA: ${{ github.event.before }}
+          PUSH_HEAD_SHA: ${{ github.sha }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+
+          if [[ "${EVENT_NAME}" == "pull_request" ]]; then
+            base_sha="${PR_BASE_SHA}"
+            head_sha="${PR_HEAD_SHA}"
+          else
+            base_sha="${PUSH_BASE_SHA}"
+            head_sha="${PUSH_HEAD_SHA}"
+          fi
+
+          # Fall back to running integration if diff endpoints are unavailable.
+          if [[ -z "${base_sha}" ]] || [[ "${base_sha}" =~ ^0+$ ]]; then
+            echo "docs_only=false" >> "$GITHUB_OUTPUT"
+            echo "run_integration=true" >> "$GITHUB_OUTPUT"
+            echo "Unable to determine diff base; running integration tests." \
+              >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          if [[ "${EVENT_NAME}" == "pull_request" ]]; then
+            # Use merge-base diff for PRs to ignore unrelated base-only commits.
+            mapfile -t changed_files < <(
+              git diff --name-only "${base_sha}...${head_sha}"
+            )
+          else
+            mapfile -t changed_files < <(
+              git diff --name-only "${base_sha}" "${head_sha}"
+            )
+          fi
+
+          if [[ "${#changed_files[@]}" -eq 0 ]]; then
+            echo "docs_only=false" >> "$GITHUB_OUTPUT"
+            echo "run_integration=true" >> "$GITHUB_OUTPUT"
+            echo "No changed files detected; running integration tests." \
+              >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          docs_only=true
+          for file in "${changed_files[@]}"; do
+            case "$file" in
+              *.md|*.mdx|docs/*)
+                ;;
+              *)
+                docs_only=false
+                break
+                ;;
+            esac
+          done
+
+          if [[ "${docs_only}" == "true" ]]; then
+            echo "docs_only=true" >> "$GITHUB_OUTPUT"
+            echo "run_integration=false" >> "$GITHUB_OUTPUT"
+            echo "Docs-only change detected; integration suites skipped." \
+              >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "docs_only=false" >> "$GITHUB_OUTPUT"
+            echo "run_integration=true" >> "$GITHUB_OUTPUT"
+            echo "Code-related change detected; integration suites enabled." \
+              >> "$GITHUB_STEP_SUMMARY"
+          fi
+
   lint-typecheck:
     runs-on: ubuntu-latest
     steps:
       - name: Harden runner
-        # v2.16.0
+        # v2.18.0
         uses: >-
-          step-security/harden-runner@fa2e9d605c4eeb9fcad4c99c224cee0c6c7f3594
+          step-security/harden-runner@6c3c2f2c1c457b00c10c4848d6f5491db3b629df
         with:
           egress-policy: audit
 
@@ -51,7 +201,7 @@ jobs:
       - name: Setup Node.js
         # v6.3.0
         uses: >-
-          actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f
+          actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
         with:
           node-version: 24
           cache: npm
@@ -65,7 +215,7 @@ jobs:
       - name: Ensure SHA-pinned actions
         # v5.0.3
         uses: >-
-          zgosalvez/github-actions-ensure-sha-pinned-actions@471d5ace1f08e3c4df1c4c2f7e6341aa75da434a
+          zgosalvez/github-actions-ensure-sha-pinned-actions@ca46236c6ce584ae24bc6283ba8dcf4b3ec8a066
 
       - name: Install dependencies
         run: make install
@@ -81,9 +231,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Harden runner
-        # v2.16.0
+        # v2.18.0
         uses: >-
-          step-security/harden-runner@fa2e9d605c4eeb9fcad4c99c224cee0c6c7f3594
+          step-security/harden-runner@6c3c2f2c1c457b00c10c4848d6f5491db3b629df
         with:
           egress-policy: audit
 
@@ -98,7 +248,7 @@ jobs:
       - name: Setup Node.js
         # v6.3.0
         uses: >-
-          actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f
+          actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
         with:
           node-version: 24
           cache: npm
@@ -146,12 +296,15 @@ jobs:
           echo "$summary_line" >> "$GITHUB_STEP_SUMMARY"
 
   integration-test:
+    needs:
+      - changes
+    if: needs.changes.outputs.run_integration == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Harden runner
-        # v2.16.0
+        # v2.18.0
         uses: >-
-          step-security/harden-runner@fa2e9d605c4eeb9fcad4c99c224cee0c6c7f3594
+          step-security/harden-runner@6c3c2f2c1c457b00c10c4848d6f5491db3b629df
         with:
           egress-policy: audit
 
@@ -166,7 +319,7 @@ jobs:
       - name: Setup Node.js
         # v6.3.0
         uses: >-
-          actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f
+          actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
         with:
           node-version: 24
           cache: npm
@@ -180,17 +333,27 @@ jobs:
       - name: Install backend dependencies
         run: make install-backend
 
+      - name: Setup Helm
+        # v5.0.0
+        uses: >-
+          azure/setup-helm@dda3372f752e03dde6b3237bc9431cdc2f7a02a2
+
       - name: Run integration tests (mock mode)
         run: make test-integration
 
   integration-test-mssql:
+    needs:
+      - changes
+    if: needs.changes.outputs.run_integration == 'true'
     runs-on: ubuntu-latest
+    env:
+      MSSQL_SA_PASSWORD: ${{ format('CiRun{0}!aA', github.run_id) }}
     services:
       sqlserver:
         image: mcr.microsoft.com/azure-sql-edge:latest
         env:
           ACCEPT_EULA: "Y"
-          MSSQL_SA_PASSWORD: "CI_Pass@123!"
+          MSSQL_SA_PASSWORD: ${{ env.MSSQL_SA_PASSWORD }}
         ports:
           - 1433:1433
         options: >-
@@ -202,9 +365,9 @@ jobs:
           --health-retries 10
     steps:
       - name: Harden runner
-        # v2.16.0
+        # v2.18.0
         uses: >-
-          step-security/harden-runner@fa2e9d605c4eeb9fcad4c99c224cee0c6c7f3594
+          step-security/harden-runner@6c3c2f2c1c457b00c10c4848d6f5491db3b629df
         with:
           egress-policy: audit
 
@@ -219,7 +382,7 @@ jobs:
       - name: Setup Node.js
         # v6.3.0
         uses: >-
-          actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f
+          actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
         with:
           node-version: 24
           cache: npm
@@ -233,12 +396,17 @@ jobs:
       - name: Install backend dependencies
         run: make install-backend
 
+      - name: Setup Helm
+        # v5.0.0
+        uses: >-
+          azure/setup-helm@dda3372f752e03dde6b3237bc9431cdc2f7a02a2
+
       - name: Create sresimulator database
         working-directory: backend
         env:
           DB_CONN: >-
             Server=localhost;User Id=sa;
-            Password=CI_Pass@123!;
+            Password=${{ env.MSSQL_SA_PASSWORD }};
             TrustServerCertificate=true
         run: |
           node -e "
@@ -263,14 +431,14 @@ jobs:
           STORAGE_BACKEND: mssql
           DATABASE_URL: >-
             Server=localhost;Database=sresimulator;User Id=sa;
-            Password=CI_Pass@123!;TrustServerCertificate=true
+            Password=${{ env.MSSQL_SA_PASSWORD }};TrustServerCertificate=true
         run: make test-integration
 
       - name: Smoke startup with MSSQL backend
         env:
           MSSQL_DATABASE_URL: >-
             Server=localhost;Database=sresimulator;User Id=sa;
-            Password=CI_Pass@123!;TrustServerCertificate=true
+            Password=${{ env.MSSQL_SA_PASSWORD }};TrustServerCertificate=true
         run: make smoke-backend-mssql
 
   security:
@@ -279,9 +447,9 @@ jobs:
       SECURITY_FAIL_LEVEL: high
     steps:
       - name: Harden runner
-        # v2.16.0
+        # v2.18.0
         uses: >-
-          step-security/harden-runner@fa2e9d605c4eeb9fcad4c99c224cee0c6c7f3594
+          step-security/harden-runner@6c3c2f2c1c457b00c10c4848d6f5491db3b629df
         with:
           egress-policy: audit
 
@@ -296,7 +464,7 @@ jobs:
       - name: Setup Node.js
         # v6.3.0
         uses: >-
-          actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f
+          actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
         with:
           node-version: 24
           cache: npm
@@ -336,9 +504,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Harden runner
-        # v2.16.0
+        # v2.18.0
         uses: >-
-          step-security/harden-runner@fa2e9d605c4eeb9fcad4c99c224cee0c6c7f3594
+          step-security/harden-runner@6c3c2f2c1c457b00c10c4848d6f5491db3b629df
         with:
           egress-policy: audit
 
@@ -347,24 +515,40 @@ jobs:
         uses: >-
           actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
 
-      - name: Install Helm
-        run: |
-          set -euo pipefail
-          HELM_VERSION="v3.14.4"
-          HELM_TARBALL_URL="https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz"
-          curl -fsSL "${HELM_TARBALL_URL}" -o /tmp/helm.tar.gz
-          tar -C /tmp -zxvf /tmp/helm.tar.gz
-          sudo mv /tmp/linux-amd64/helm /usr/local/bin/helm
-          helm version
+      - name: Setup Helm
+        # v5.0.0
+        uses: >-
+          azure/setup-helm@dda3372f752e03dde6b3237bc9431cdc2f7a02a2
 
       - name: Helm lint
         run: helm lint ./helm/sre-simulator
 
-      - name: Helm template
+      - name: Helm template (Route mode)
         run: |
           set -euo pipefail
           helm template sre-simulator ./helm/sre-simulator \
             --values ./helm/sre-simulator/values.yaml
+
+      - name: Helm template (AKS Gateway mode)
+        run: bash scripts/helm-render-gateway.sh
+
+      - name: Helm template (AKS publicService mode)
+        run: |
+          set -euo pipefail
+          helm template sre-simulator ./helm/sre-simulator \
+            --values ./helm/sre-simulator/values.yaml \
+            --set exposure.mode=publicService \
+            --set exposure.host=aks.example.test \
+            --set exposure.scheme=http \
+            --set frontend.service.public.loadBalancerIP=203.0.113.10 \
+            --set frontend.autoscaling.enabled=true \
+            --set frontend.autoscaling.minReplicas=1 \
+            --set frontend.autoscaling.maxReplicas=3 \
+            --set backend.autoscaling.enabled=true \
+            --set backend.autoscaling.minReplicas=1 \
+            --set backend.autoscaling.maxReplicas=4 \
+            --set database.enabled=true \
+            --set database.existingSecretName=sre-sql-creds
 
   docker-build:
     runs-on: ubuntu-latest
@@ -378,9 +562,9 @@ jobs:
             dockerfile: backend/Dockerfile
     steps:
       - name: Harden runner
-        # v2.16.0
+        # v2.18.0
         uses: >-
-          step-security/harden-runner@fa2e9d605c4eeb9fcad4c99c224cee0c6c7f3594
+          step-security/harden-runner@6c3c2f2c1c457b00c10c4848d6f5491db3b629df
         with:
           egress-policy: audit
 
@@ -406,6 +590,8 @@ jobs:
   ci-gate:
     if: always()
     needs:
+      - tag-mainline-check
+      - changes
       - lint-typecheck
       - test
       - integration-test
@@ -417,6 +603,10 @@ jobs:
     steps:
       - name: Verify all jobs passed
         env:
+          CHANGES_RESULT: ${{ needs.changes.result }}
+          TAG_MAINLINE_RESULT: ${{ needs.tag-mainline-check.result }}
+          DOCS_ONLY: ${{ needs.changes.outputs.docs_only }}
+          RUN_INTEGRATION: ${{ needs.changes.outputs.run_integration }}
           LINT_RESULT: ${{ needs.lint-typecheck.result }}
           TEST_RESULT: ${{ needs.test.result }}
           INTEGRATION_RESULT: ${{ needs.integration-test.result }}
@@ -429,6 +619,10 @@ jobs:
           failed_jobs=()
 
           echo "CI job results:"
+          echo "  tag-mainline-check:         ${TAG_MAINLINE_RESULT}"
+          echo "  changes:                    ${CHANGES_RESULT}"
+          echo "  docs-only change:           ${DOCS_ONLY}"
+          echo "  run integration suites:     ${RUN_INTEGRATION}"
           echo "  lint-typecheck:             ${LINT_RESULT}"
           echo "  test:                       ${TEST_RESULT}"
           echo "  integration-test:           ${INTEGRATION_RESULT}"
@@ -438,10 +632,10 @@ jobs:
           echo "  docker-build:               ${DOCKER_RESULT}"
 
           for name_result in \
+            "tag-mainline-check:${TAG_MAINLINE_RESULT}" \
+            "changes:${CHANGES_RESULT}" \
             "lint-typecheck:${LINT_RESULT}" \
             "test:${TEST_RESULT}" \
-            "integration-test:${INTEGRATION_RESULT}" \
-            "integration-test-mssql:${INTEGRATION_MSSQL_RESULT}" \
             "security:${SECURITY_RESULT}" \
             "helm-validate:${HELM_RESULT}" \
             "docker-build:${DOCKER_RESULT}"; do
@@ -452,6 +646,21 @@ jobs:
               failed_jobs+=("${name} (${result})")
             fi
           done
+
+          if [[ "${RUN_INTEGRATION}" == "true" ]]; then
+            for name_result in \
+              "integration-test:${INTEGRATION_RESULT}" \
+              "integration-test-mssql:${INTEGRATION_MSSQL_RESULT}"; do
+              name="${name_result%%:*}"
+              result="${name_result#*:}"
+              if [[ "$result" != "success" ]]; then
+                failed=true
+                failed_jobs+=("${name} (${result})")
+              fi
+            done
+          else
+            echo "Integration suites intentionally skipped (docs-only change)."
+          fi
 
           if [[ "$failed" == "true" ]]; then
             echo ""
@@ -478,9 +687,9 @@ jobs:
       contents: write
     steps:
       - name: Harden runner
-        # v2.16.0
+        # v2.18.0
         uses: >-
-          step-security/harden-runner@fa2e9d605c4eeb9fcad4c99c224cee0c6c7f3594
+          step-security/harden-runner@6c3c2f2c1c457b00c10c4848d6f5491db3b629df
         with:
           egress-policy: audit
 
@@ -495,7 +704,7 @@ jobs:
       - name: Setup Node.js
         # v6.3.0
         uses: >-
-          actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f
+          actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
         with:
           node-version: 24
           cache: npm
@@ -552,4 +761,21 @@ jobs:
           git -c user.name="github-actions[bot]" \
             -c user.email="github-actions[bot]@users.noreply.github.com" \
             commit -m "chore(ci): update coverage badge [skip ci]"
-          git push origin HEAD:main
+          push_output="$(mktemp)"
+          if git push origin HEAD:main >"${push_output}" 2>&1; then
+            rm -f "${push_output}"
+            exit 0
+          fi
+          if grep -Eiq \
+            '(protected branch|GH006|repository rule violations|ruleset)' \
+            "${push_output}"; then
+            echo "::warning::Coverage badge push blocked by repository rules."
+            echo "::warning::Skipping badge update push on protected main."
+            cat "${push_output}"
+            rm -f "${push_output}"
+            exit 0
+          fi
+          echo "::error::Failed to push updated coverage badge."
+          cat "${push_output}"
+          rm -f "${push_output}"
+          exit 1

@@ -6,15 +6,21 @@ metadata:
     {{- include "sre-simulator.labels" . | nindent 4 }}
     {{- include "sre-simulator.backend.selectorLabels" . | nindent 4 }}
 spec:
+  {{- if not (and .Values.backend.autoscaling.enabled .Values.database.enabled) }}
   replicas: {{ .Values.backend.replicas }}
+  {{- end }}
   selector:
     matchLabels:
       {{- include "sre-simulator.backend.selectorLabels" . | nindent 6 }}
   template:
     metadata:
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        checksum/ai-probe-secret: {{ include (print $.Template.BasePath "/ai-probe-secret.yaml") . | sha256sum }}
       labels:
         {{- include "sre-simulator.backend.selectorLabels" . | nindent 8 }}
     spec:
+      {{- include "sre-simulator.imagePullSecrets" . | nindent 6 }}
       containers:
         - name: backend
           image: "{{ .Values.backend.image.repository }}:{{ .Values.backend.image.tag }}"
@@ -26,7 +32,18 @@ spec:
             - name: DATA_DIR
               value: /data
             - name: CORS_ORIGIN
-              value: "https://{{ .Values.route.host }}"
+              value: {{ include "sre-simulator.publicOrigin" . | quote }}
+            - name: SENTRY_ENABLED
+              value: {{ ternary "true" "false" .Values.backend.sentry.enabled | quote }}
+            - name: SENTRY_DSN
+              value: {{ .Values.backend.sentry.dsn | quote }}
+            - name: SENTRY_ENVIRONMENT
+              value: {{ .Values.backend.sentry.environment | quote }}
+            {{- $sentryRelease := .Values.backend.sentry.release | default "" | trim }}
+            {{- if $sentryRelease }}
+            - name: SENTRY_RELEASE
+              value: {{ $sentryRelease | quote }}
+            {{- end }}
             {{- if .Values.ai.azureOpenai.endpointFromSecret.existingSecretName }}
             - name: AI_AZURE_OPENAI_ENDPOINT
               valueFrom:
@@ -40,6 +57,14 @@ spec:
                 secretKeyRef:
                   name: {{ .Values.ai.azureOpenai.credentials.existingSecretName }}
                   key: {{ .Values.ai.azureOpenai.credentials.key }}
+            {{- end }}
+            {{- $probeToken := .Values.ai.liveProbeToken | default "" | trim }}
+            {{- if $probeToken }}
+            - name: AI_LIVE_PROBE_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "sre-simulator.fullname" . }}-ai-probe
+                  key: token
             {{- end }}
             {{- if .Values.ai.vertex.credentials.existingSecretName }}
             - name: GOOGLE_APPLICATION_CREDENTIALS
@@ -58,16 +83,13 @@ spec:
             - configMapRef:
                 name: {{ include "sre-simulator.fullname" . }}-config
           volumeMounts:
+            {{- if not .Values.database.enabled }}
             - name: data
               mountPath: /data
+            {{- end }}
             {{- if .Values.ai.vertex.credentials.existingSecretName }}
             - name: gcp-credentials
               mountPath: {{ .Values.ai.vertex.credentials.mountPath }}
-              readOnly: true
-            {{- end }}
-            {{- if .Values.keyvault.name }}
-            - name: secrets
-              mountPath: /mnt/secrets
               readOnly: true
             {{- end }}
           resources:
@@ -85,19 +107,17 @@ spec:
             initialDelaySeconds: 5
             periodSeconds: 10
       volumes:
+        {{- if not .Values.database.enabled }}
         - name: data
+          {{- if .Values.storage.enabled }}
           persistentVolumeClaim:
             claimName: {{ include "sre-simulator.fullname" . }}-data
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+        {{- end }}
         {{- if .Values.ai.vertex.credentials.existingSecretName }}
         - name: gcp-credentials
           secret:
             secretName: {{ .Values.ai.vertex.credentials.existingSecretName }}
-        {{- end }}
-        {{- if .Values.keyvault.name }}
-        - name: secrets
-          csi:
-            driver: secrets-store.csi.k8s.io
-            readOnly: true
-            volumeAttributes:
-              secretProviderClass: {{ include "sre-simulator.fullname" . }}-secrets
         {{- end }}

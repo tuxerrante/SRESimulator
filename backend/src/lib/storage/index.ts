@@ -1,14 +1,35 @@
 import type sql from "mssql";
-import type { ISessionStore, ILeaderboardStore, IMetricsStore } from "./types";
+import type {
+  ISessionStore,
+  ILeaderboardStore,
+  IMetricsStore,
+  IPlayerStore,
+  IAnonymousTrialStore,
+} from "./types";
 import { JsonSessionStore } from "./json-session-store";
 import { JsonLeaderboardStore } from "./json-leaderboard-store";
 import { JsonMetricsStore } from "./json-metrics-store";
+import { JsonPlayerStore } from "./json-player-store";
+import { JsonAnonymousTrialStore } from "./json-anonymous-trial-store";
 
-export type { ISessionStore, ILeaderboardStore, IMetricsStore, GameSession, GameplayRecord } from "./types";
+export type {
+  ISessionStore,
+  ILeaderboardStore,
+  IMetricsStore,
+  IPlayerStore,
+  IAnonymousTrialStore,
+  GameSession,
+  GameplayRecord,
+  CreateGameSessionInput,
+  AnonymousTrialClaim,
+  PlayerRecord,
+} from "./types";
 
 let sessionStore: ISessionStore;
 let leaderboardStore: ILeaderboardStore;
 let metricsStore: IMetricsStore;
+let playerStore: IPlayerStore;
+let anonymousTrialStore: IAnonymousTrialStore;
 let mssqlPool: sql.ConnectionPool | undefined;
 
 export type StorageBackend = "json" | "mssql";
@@ -52,6 +73,10 @@ export async function initStorage(): Promise<void> {
       sessionStore = new MssqlSessionStore(pool);
       leaderboardStore = new MssqlLeaderboardStore(pool);
       metricsStore = new MssqlMetricsStore(pool);
+      const { MssqlPlayerStore } = await import("./mssql-player-store");
+      const { MssqlAnonymousTrialStore } = await import("./mssql-anonymous-trial-store");
+      playerStore = new MssqlPlayerStore(pool);
+      anonymousTrialStore = new MssqlAnonymousTrialStore(pool);
       console.log("[storage] backend=mssql ready");
     } catch (error) {
       try { await pool.close(); } catch { /* ignore close errors on failed pool */ }
@@ -61,6 +86,8 @@ export async function initStorage(): Promise<void> {
     sessionStore = new JsonSessionStore();
     leaderboardStore = new JsonLeaderboardStore();
     metricsStore = new JsonMetricsStore();
+    playerStore = new JsonPlayerStore();
+    anonymousTrialStore = new JsonAnonymousTrialStore();
     console.log("[storage] backend=json ready");
   }
 }
@@ -78,6 +105,16 @@ export function getLeaderboardStore(): ILeaderboardStore {
 export function getMetricsStore(): IMetricsStore {
   if (!metricsStore) throw new Error("Storage not initialized. Call initStorage() first.");
   return metricsStore;
+}
+
+export function getPlayerStore(): IPlayerStore {
+  if (!playerStore) throw new Error("Storage not initialized. Call initStorage() first.");
+  return playerStore;
+}
+
+export function getAnonymousTrialStore(): IAnonymousTrialStore {
+  if (!anonymousTrialStore) throw new Error("Storage not initialized. Call initStorage() first.");
+  return anonymousTrialStore;
 }
 
 export async function shutdownStorage(): Promise<void> {

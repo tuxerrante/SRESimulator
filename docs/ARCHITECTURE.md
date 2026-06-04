@@ -29,7 +29,7 @@ SRESimulator/
 ├── README.md
 ├── Makefile                              # Build, lint, dev, and CI targets
 ├── docker-compose.yml                    # Azure SQL Edge for local MSSQL testing
-├── helm/sre-simulator/                   # OpenShift/Kubernetes deployment manifests
+├── helm/sre-simulator/                   # AKS/ARO deployment manifests
 ├── knowledge_base/                       # Reference docs loaded into AI context
 │   ├── sre-investigation-techniques.md
 │   ├── Openshift-clusters-alerts-resolutions.md
@@ -82,18 +82,23 @@ SRESimulator/
 
 ---
 
-## Final Infra Baseline (ARO + Azure SQL)
+## Final Infra Baseline (AKS default + Azure SQL)
 
 For the final production-infra rehearsal, provision a dedicated environment
 through `infra/` with:
 
 - `owner_alias = "aaffinit"` so main Azure resources follow
   `aaffinit-test-*` naming (`aaffinit-test-rg`, `aaffinit-test` cluster).
+- `cluster_flavor = "aks"` so new environments follow the lower-cost AKS path
+  by default while keeping the ARO fallback available.
 - Isolated Terraform state key (for example
   `aaffinit-test-sre-simulator.tfstate`) to avoid side effects on other stacks.
 - Explicit `extra_tags.test = "true"` in addition to mandatory infra tags.
-- Minimum supported ARO sizing (`Standard_D8s_v3` masters,
-  `Standard_D4s_v3` workers, count `2`).
+- Minimum-cost AKS sizing (`Standard_B2s`, autoscaled from `1` to `3` nodes).
+- Static frontend public IP kept in the main resource group so the public
+  endpoint stays alongside the other customer-managed resources.
+- Acceptance of the AKS-managed node resource group as the one planned
+  resource-group exception; Azure creates and owns that RG automatically.
 - `enable_database = true` for Azure SQL-backed persistence.
 
 Preflight gate:
@@ -101,17 +106,21 @@ Preflight gate:
 ```bash
 make tf-preflight \
   OWNER_ALIAS=aaffinit \
+  CLUSTER_FLAVOR=aks \
   TF_STATE_ACCOUNT=<state-account> \
   LOCATION=westeurope \
   TF_STATE_KEY=aaffinit-test-sre-simulator.tfstate \
-  SQL_SERVER_NAME=aaffinit-test-sql-20260403 \
-  GENEVA_SUPPRESSION_ACCESS_CONFIRMED=true
+  SQL_SERVER_NAME=aaffinit-test-sql-20260403
 ```
+
+AKS preflight does not require Geneva confirmation. If you use the ARO
+fallback path instead, add `GENEVA_SUPPRESSION_ACCESS_CONFIRMED=true` after
+validating Geneva access.
 
 Then initialize state safely:
 
 ```bash
-make tf-init-isolated OWNER_ALIAS=aaffinit
+make tf-init-isolated OWNER_ALIAS=aaffinit CLUSTER_FLAVOR=aks
 ```
 
 For first-time runs, preflight prompts to create the Terraform backend when
@@ -120,34 +129,54 @@ For first-time runs, preflight prompts to create the Terraform backend when
 
 ---
 
-## OpenShift Exposure Model
+## Cluster Exposure Model
 
-Short answer: **only the frontend is internet-exposed; backend stays private inside the cluster**.
+Short answer: **only the frontend is internet-exposed; backend stays private
+inside the cluster**.
 
 ### What is exposed
 
-- A single OpenShift Route maps `https://<host>/` to the frontend `ClusterIP` service.
-- There is **no** backend Route (`/api` is not published by the OpenShift router).
+- On the AKS default path, Envoy Gateway publishes a namespaced `Gateway` plus
+  two `HTTPRoute` objects (HTTP redirect + HTTPS app route) on the existing
+  static public IP.
+- The AKS frontend `Service` stays `ClusterIP` in Gateway mode; the public edge
+  lives on Envoy, not on the app `Service` itself.
+- cert-manager owns the `sre-simulator-gateway-tls` secret via the
+  `letsencrypt-azuredns-prod` `ClusterIssuer`, so HTTPS for
+  `play.sresimulator.osadev.cloud` is cluster-managed.
+- The Azure-generated hostname tied to the static public IP remains an
+  operator-only fallback for DNS troubleshooting or propagation delays; the
+  customer-facing URL is `https://play.sresimulator.osadev.cloud`.
+- On the ARO fallback path, a single OpenShift `Route` serves the same role.
+- `publicService` mode remains the explicit AKS rollback path when operators
+  need to promote only the frontend back to a public `LoadBalancer`.
+- There is **no** backend Route, Ingress, Gateway listener, or public
+  `LoadBalancer` service (`/api` is not published directly).
 - The backend remains a private `ClusterIP` service reachable only from inside the namespace network.
 
 ### How the internal proxy works
 
 - Browser still calls same-origin paths like `/api/chat`.
-- Those requests hit the frontend Next.js server first.
+- Those requests reach the frontend origin first.
+- In AKS Gateway mode, Envoy terminates TLS and the HTTPS `HTTPRoute` forwards
+  traffic to the frontend `ClusterIP` service.
 - Frontend route handler (`app/api/[...path]/route.ts`) proxies server-to-server to `http://<release>-backend:<port>`.
 - Backend `NetworkPolicy` only allows ingress from frontend Pods on backend port.
 
-### Request flow in OpenShift
+### Request flow in cluster
 
-1. User opens `https://<host>/` (frontend Route).
-2. Frontend calls `fetch("/api/...")`.
-3. Frontend pod proxies the request internally to backend `ClusterIP`.
-4. Backend responds to frontend pod; frontend returns response to client.
+1. User opens `https://play.sresimulator.osadev.cloud/`.
+2. Envoy Gateway accepts the request on the static public IP and terminates TLS.
+3. The `HTTPRoute` forwards the request to the frontend `ClusterIP` service.
+4. Frontend calls `fetch("/api/...")`.
+5. Frontend pod proxies the request internally to backend `ClusterIP`.
+6. Backend responds to frontend pod; frontend returns response to client.
 
 ### Security outcome
 
 - Backend is not directly reachable from the internet.
-- External traffic terminates at frontend only.
+- External traffic terminates at the Gateway-managed frontend edge only.
+- Frontend and backend `Service` objects both stay private inside the namespace.
 - Backend remains isolated with least-privilege pod-to-pod access.
 
 Runtime audit command:
@@ -155,6 +184,38 @@ Runtime audit command:
 ```bash
 make public-exposure-audit NS=sre-simulator
 ```
+
+---
+
+## Manual E2E with Azure SQL (optional)
+
+The default manual E2E flow (`make e2e-azure-route-up`, which now targets AKS
+unless `CLUSTER_FLAVOR=aro` is set) deploys without cluster database
+credentials. To exercise **Helm database mode** in a throwaway E2E namespace,
+reuse an existing Kubernetes `Secret` that already holds the ADO.NET
+connection string (Helm default key: `connection-string` on
+`database.secretConnectionStringKey`).
+
+Prerequisites:
+
+1. A source namespace containing the canonical DB secret (for example the
+   stable production namespace `sre-simulator` or a dedicated shared namespace).
+2. RBAC allowing the deployer identity to **read** the secret in the source
+   namespace and **create/update** secrets in the target E2E namespace.
+3. `jq` must be installed on the machine running the Make target because the
+   secret-copy helper rewrites Kubernetes metadata client-side before
+   `kubectl apply` or `oc apply`.
+4. In `backend/.env.local` (or the environment), set `DB_SECRET_NAME` to the
+   secret resource name. Optionally set `DB_SECRET_SOURCE_NAMESPACE` to the
+   namespace that already holds that secret; if omitted, the automation copies
+   from `PROD_NAMESPACE` (Makefile default `sre-simulator`).
+
+Before `helm upgrade`, the selected deploy helper (`scripts/aks-deploy.sh` or
+`scripts/aro-deploy.sh` via `scripts/select-deploy.sh`) copies the secret into
+the new or refreshed E2E namespace using the active cluster CLI and `jq` only
+(secret values are not printed). `make e2e-azure-route-up` and
+`make e2e-azure-route-refresh` both run this step when `DB_SECRET_NAME` is set.
+When it is unset, behavior matches the previous non-DB E2E path.
 
 ---
 
@@ -240,11 +301,38 @@ Key design highlights:
 
 ## Backend API Routes
 
-In OpenShift, browser requests hit the frontend at `/api/*`; the frontend BFF proxy forwards them internally to this backend service.
+In cluster deployments, browser requests hit the frontend at `/api/*`; the
+frontend BFF proxy forwards them internally to this backend service.
+
+### Frontend auth routes
+
+GitHub sign-in is terminated in the Next.js app, not directly in Express. The
+frontend owns:
+
+- `GET /api/auth/github/login` — starts the GitHub OAuth redirect flow
+- `GET /api/auth/github/callback` — exchanges the code, fetches the GitHub
+  profile, and sets a signed HTTP-only viewer session cookie
+- `GET /api/auth/session` — returns the current viewer plus access policy for
+  the landing page
+- `POST /api/auth/logout` — clears the viewer session cookie
+
+Express reads the signed viewer session cookie on proxied requests and treats it
+as the source of truth for GitHub-authenticated access.
 
 ### `POST /api/scenario`
 
-Generates a scenario for the given difficulty. Calls the configured AI provider with knowledge-base context to produce a realistic incident ticket and cluster context. In `AI_MOCK_MODE=true`, returns a deterministic mock scenario.
+Generates a scenario for the given difficulty. Access is now gated by player
+identity:
+
+- **GitHub-authenticated players** can request `easy`, `medium`, and `hard`
+- **Anonymous players** can request `easy` only, and only after passing
+  Cloudflare Turnstile plus the browser fingerprint/IP anti-abuse check
+- Anonymous Easy mode is limited to one run per 24 hours via a salted server-side
+  claim key derived from browser fingerprint, IP, and user-agent signals
+
+After access is approved, the route calls the configured AI provider with
+knowledge-base context to produce a realistic incident ticket and cluster
+context. In `AI_MOCK_MODE=true`, it returns a deterministic mock scenario.
 
 ### `POST /api/chat`
 
@@ -277,9 +365,16 @@ environment variable (`json` or `mssql`).
 
 Best for local development and single-replica deployments.
 
-- **Sessions**: In-memory `Map` with 24h TTL. Lost on pod restart.
+- **Sessions**: In-memory `Map` with 24h TTL, now tagged with identity kind
+  (`github` vs `anonymous`) plus score persistence eligibility. Lost on pod
+  restart.
+- **Players**: JSON file (`data/players.json`) storing GitHub player metadata
+  used to normalize persistent identities locally.
+- **Anonymous trials**: JSON file (`data/anonymous-trial-claims.json`) storing
+  salted daily claim keys and expiry timestamps for guest-rate limiting.
 - **Leaderboard**: JSON file on PVC (`data/leaderboard.json`). Writes are
-  serialized through an in-process async mutex.
+  serialized through an in-process async mutex and keyed by GitHub user id per
+  difficulty.
 - **Metrics**: Log-only (no persistent storage).
 
 Constraints:
@@ -293,9 +388,17 @@ Required for multi-replica deployments and production use.  Uses Azure SQL
 Database free tier (100K vCore-seconds/month, 32 GB storage, $0/month).
 
 - **Sessions**: Stored in `sessions` table. Shared across replicas.
-  Stale entries (>24h) are cleaned up opportunistically.
+  Stale entries (>24h) are cleaned up opportunistically. Session rows now record
+  identity kind, GitHub identity, anonymous claim key, and whether the run is
+  eligible for persistent score submission.
+- **Players**: Stored in `players` and upserted by GitHub user id so nickname
+  changes do not create duplicate persistent identities.
+- **Anonymous trials**: Stored in `anonymous_trial_claims`, keyed by salted
+  claim digest with 24h expiry for free-trial enforcement.
 - **Leaderboard**: Stored in `leaderboard_entries` table. Uses `MERGE`
-  to atomically keep the best score per (nickname, difficulty).
+  to atomically keep the best score per (GitHub user id, difficulty). The
+  stored callsign/nickname corresponds to the best recorded run for that
+  entry, not necessarily the player's latest callsign change.
   Per-difficulty trim to 10 entries happens after each insert.
 - **Metrics**: Stored in `gameplay_metrics` table. Captures per-session
   analytics (commands executed, scoring events, AI token consumption) with
@@ -359,14 +462,16 @@ image).
 
 This is a manual smoke-test procedure that validates Terraform provisioning,
 Helm wiring, network connectivity, and actual Azure SQL free-tier behavior
-(auto-pause, resume latency). It requires an Azure subscription and a
-running ARO cluster and is **not** automated in CI.
+(auto-pause, resume latency). It requires an Azure subscription and a running
+cluster selected through `CLUSTER_FLAVOR` (AKS by default, ARO as fallback)
+and is **not** automated in CI.
 
 #### Prerequisites
 
-- ARO cluster provisioned via `terraform apply` (the base infra must
+- AKS or ARO cluster provisioned via `terraform apply` (the base infra must
   already exist).
-- CLI tools: `terraform`, `az`, `oc`, `helm`.
+- CLI tools: `terraform`, `az`, `helm`, and the platform CLI (`kubectl` for
+  AKS, `oc` for ARO).
 - A strong password that meets
   [Azure SQL complexity requirements](https://learn.microsoft.com/en-us/sql/relational-databases/security/password-policy).
 
@@ -395,9 +500,11 @@ in step 1.
 
 ```bash
 NS=sre-simulator   # or your target namespace
-oc -n "$NS" create secret generic sre-sql-creds \
+kubectl -n "$NS" create secret generic sre-sql-creds \
   --from-literal=connection-string="Server=<fqdn>;Database=sresimulator;User Id=sresimadmin;Password=<pwd>;Encrypt=true;TrustServerCertificate=false"
 ```
+
+Use `oc` instead of `kubectl` when running the ARO fallback path.
 
 The secret key must match `database.secretConnectionStringKey` in the Helm
 values (default: `connection-string`).
@@ -405,9 +512,9 @@ values (default: `connection-string`).
 #### Step 4 — Deploy with database enabled
 
 ```bash
-DB_SECRET_NAME=sre-sql-creds make prod-up
+DB_SECRET_NAME=sre-sql-creds CLUSTER_FLAVOR=aks make prod-up
 # or for an ephemeral namespace:
-DB_SECRET_NAME=sre-sql-creds make e2e-azure-route-up
+DB_SECRET_NAME=sre-sql-creds CLUSTER_FLAVOR=aks make e2e-azure-route-up
 ```
 
 `helm_deploy_sre()` detects `DB_SECRET_NAME` and passes
@@ -420,6 +527,7 @@ For the guarded final deployment flow (Geneva suppression + exposure/DB checks):
 ```bash
 DB_SECRET_NAME=sre-sql-creds \
 GENEVA_SUPPRESSION_RULE_ACTIVE=true \
+CLUSTER_FLAVOR=aks \
 make prod-up-final
 ```
 
@@ -430,8 +538,10 @@ make prod-up-final
 1. Kill the backend pod:
 
 ```bash
-oc -n "$NS" delete pod -l app.kubernetes.io/component=backend
+kubectl -n "$NS" delete pod -l app.kubernetes.io/component=backend
 ```
+
+Use `oc` instead of `kubectl` when running the ARO fallback path.
 
 1. Wait for the replacement pod to become ready, then reload the
    leaderboard page. The score must still be present.
@@ -445,12 +555,47 @@ The free-tier database auto-pauses after 60 minutes of inactivity.
 1. The first request will take approximately 30 seconds while Azure
    resumes the database. Subsequent requests should respond normally.
 
-If GitHub pipelines are unavailable, validate backend-to-DB reachability
-from your machine via `oc port-forward`:
+If GitHub pipelines are unavailable, first verify the deployed backend is wired
+for Azure SQL mode:
+
+```bash
+make db-mode-check NS=sre-simulator
+```
+
+This checks that the backend deployment is configured with
+`STORAGE_BACKEND=mssql` and a `DATABASE_URL` secret reference.
+
+Then use the selected cluster CLI's port-forward support as an additional
+reachability smoke test:
 
 ```bash
 make db-port-forward-check NS=sre-simulator
 ```
+
+For read-only inspection of live Azure SQL contents, use the local helper first:
+
+```bash
+make db-inspect NS=sre-simulator
+# quick player-only completion stats by difficulty
+make db-admin-stats NS=sre-simulator
+```
+
+If your local machine cannot reach Azure SQL directly because of firewall
+rules, run the same inspector inside the deployed backend pod instead:
+
+```bash
+make db-inspect-live NS=sre-simulator
+# quick player-only completion stats by difficulty
+make db-admin-stats-live NS=sre-simulator
+# or with a custom read-only query:
+NS=sre-simulator SQL="SELECT TOP 5 * FROM leaderboard_entries ORDER BY created_at DESC" make db-inspect-live
+```
+
+For custom queries, prefer single quotes around the outer `SQL=...` value when
+your statement contains shell-sensitive characters.
+
+The inspector retries transient SQL connection timeouts so Azure SQL serverless
+resume latency does not fail the first read-only inspection attempt immediately.
 
 #### Teardown
 
@@ -491,9 +636,10 @@ without session affinity.
 | Sticky sessions needed | No | No |
 | Connection pooling | N/A | `mssql.ConnectionPool` |
 
-When using Azure SQL, increase `backend.replicas` in Helm values as needed.
-No sticky sessions or session affinity are required since all state is in
-the database.
+When using Azure SQL, enable backend HPA or increase the backend replica floor
+in Helm values as needed. JSON mode stays single-backend only; Azure SQL mode
+is the supported path for safe horizontal scaling. No sticky sessions or
+session affinity are required since all state is in the database.
 
 ### Infrastructure
 

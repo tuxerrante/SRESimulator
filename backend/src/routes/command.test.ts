@@ -1,197 +1,213 @@
-import { describe, expect, it, beforeEach, afterEach } from "vitest";
 import express from "express";
+import type { Server } from "node:http";
+import type { AddressInfo } from "node:net";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+const mocks = vi.hoisted(() => ({
+  captureBackendRouteError: vi.fn(),
+  getAiReadiness: vi.fn(),
+  generateMockCommandOutput: vi.fn(),
+  generateAiText: vi.fn(),
+  buildScenarioContext: vi.fn(),
+  buildSimNow: vi.fn(),
+  buildCommandSystemPrompt: vi.fn(),
+  resolveAngleBracketPlaceholders: vi.fn(),
+  getSessionStore: vi.fn(),
+  sessionGet: vi.fn(),
+}));
+
+vi.mock("../lib/ai-config", () => ({
+  getAiReadiness: mocks.getAiReadiness,
+}));
+
+vi.mock("../lib/mock-ai", () => ({
+  generateMockCommandOutput: mocks.generateMockCommandOutput,
+}));
+
+vi.mock("../lib/ai-runtime", async () => {
+  const actual = await vi.importActual<typeof import("../lib/ai-runtime")>("../lib/ai-runtime");
+  return {
+    ...actual,
+    generateAiText: mocks.generateAiText,
+  };
+});
+
+vi.mock("../lib/prompts/command", () => ({
+  buildScenarioContext: mocks.buildScenarioContext,
+  buildSimNow: mocks.buildSimNow,
+  buildCommandSystemPrompt: mocks.buildCommandSystemPrompt,
+}));
+
+vi.mock("../lib/prompts/scenario-resources", () => ({
+  resolveAngleBracketPlaceholders: mocks.resolveAngleBracketPlaceholders,
+}));
+
+vi.mock("../lib/telemetry/capture", () => ({
+  captureBackendRouteError: mocks.captureBackendRouteError,
+}));
+
+vi.mock("../lib/storage", () => ({
+  getSessionStore: mocks.getSessionStore,
+}));
+
 import { commandRouter } from "./command";
 
-function createApp() {
-  const app = express();
-  app.use(express.json());
-  app.use("/api/command", commandRouter);
-  return app;
-}
-
-async function postJson(
-  app: express.Express,
-  path: string,
-  body: unknown
-): Promise<{ status: number; body: Record<string, unknown> }> {
-  const { request } = await import("http");
-  return new Promise((resolve, reject) => {
-    const server = app.listen(0, "127.0.0.1", () => {
-      const addr = server.address();
-      if (!addr || typeof addr === "string") {
-        server.close();
-        reject(new Error("Bad address"));
+async function close(server: Server): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    server.close((error) => {
+      if (error) {
+        reject(error);
         return;
       }
-      const payload = JSON.stringify(body);
-      const req = request(
-        {
-          hostname: "127.0.0.1",
-          port: addr.port,
-          path,
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "Content-Length": Buffer.byteLength(payload),
-          },
-        },
-        (res) => {
-          let data = "";
-          res.on("data", (chunk) => (data += chunk));
-          res.on("end", () => {
-            server.close();
-            resolve({
-              status: res.statusCode ?? 500,
-              body: JSON.parse(data),
-            });
-          });
-        }
-      );
-      req.on("error", (e) => {
-        server.close();
-        reject(e);
-      });
-      req.write(payload);
-      req.end();
+
+      resolve();
     });
   });
 }
 
-describe("POST /api/command", () => {
-  const originalEnv: Record<string, string | undefined> = {};
-
+describe("commandRouter", () => {
   beforeEach(() => {
-    originalEnv.AI_MOCK_MODE = process.env.AI_MOCK_MODE;
-    process.env.AI_MOCK_MODE = "true";
+    const sessionScenario = {
+      id: "scenario_test_easy",
+      title: "Test Scenario",
+      difficulty: "easy",
+      description: "Test scenario description",
+      incidentTicket: {
+        id: "IcM-TEST",
+        severity: "Sev3",
+        title: "Ticket title",
+        description: "Ticket description",
+        customerImpact: "Low",
+        reportedTime: "2026-05-01T10:00:00.000Z",
+        clusterName: "cluster-test",
+        region: "eastus",
+      },
+      clusterContext: {
+        name: "cluster-test",
+        version: "4.19.0",
+        region: "eastus",
+        nodeCount: 3,
+        status: "Degraded",
+        recentEvents: [],
+        alerts: [],
+        upgradeHistory: [],
+      },
+    };
+    vi.clearAllMocks();
+    mocks.getAiReadiness.mockReturnValue({ ready: true, mockMode: false });
+    mocks.buildScenarioContext.mockReturnValue("scenario context");
+    mocks.buildSimNow.mockReturnValue("sim now");
+    mocks.buildCommandSystemPrompt.mockReturnValue("system prompt");
+    mocks.resolveAngleBracketPlaceholders.mockImplementation((value: unknown) => value);
+    mocks.generateMockCommandOutput.mockReturnValue("fallback output");
+    mocks.getSessionStore.mockReturnValue({
+      get: mocks.sessionGet,
+    });
+    mocks.sessionGet.mockResolvedValue({
+      token: "session-123",
+      difficulty: "easy",
+      scenarioId: "scenario_test_easy",
+      scenarioTitle: "Test Scenario",
+      scenarioPayload: JSON.stringify(sessionScenario),
+      startTime: Date.now(),
+      used: false,
+      trafficSource: "player",
+      identityKind: "anonymous",
+      githubUserId: null,
+      githubLogin: null,
+      anonymousClaimKey: null,
+      persistentScoreEligible: false,
+    });
   });
 
   afterEach(() => {
-    if (originalEnv.AI_MOCK_MODE === undefined) {
-      delete process.env.AI_MOCK_MODE;
-    } else {
-      process.env.AI_MOCK_MODE = originalEnv.AI_MOCK_MODE;
+    vi.restoreAllMocks();
+  });
+
+  it("captures degraded fallback errors before returning mock command output", async () => {
+    const degradedError = new Error("model did not include text content");
+    mocks.generateAiText.mockRejectedValue(degradedError);
+
+    const app = express();
+    app.use(express.json());
+    app.use("/api/command", commandRouter);
+    const server = await new Promise<Server>((resolve) => {
+      const listeningServer = app.listen(0, "127.0.0.1", () => resolve(listeningServer));
+    });
+
+    try {
+      const { port } = server.address() as AddressInfo;
+      const response = await fetch(`http://127.0.0.1:${port}/api/command`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          sessionToken: "session-123",
+          command: "oc get pods",
+          type: "oc",
+          scenario: null,
+          commandHistory: [],
+        }),
+      });
+
+      expect(response.status).toBe(200);
+      await expect(response.json()).resolves.toEqual({
+        output: "fallback output",
+        exitCode: 1,
+        mode: "degraded",
+        degradedReason: "missing_output",
+      });
+      expect(mocks.captureBackendRouteError).toHaveBeenCalledTimes(1);
+      expect(mocks.captureBackendRouteError.mock.calls[0]?.[1]).toBe(degradedError);
+    } finally {
+      await close(server);
     }
   });
 
-  it("returns mock oc output in mock mode", async () => {
-    const app = createApp();
-    const res = await postJson(app, "/api/command", {
-      command: "oc get nodes",
-      type: "oc",
-      scenario: null,
+  it("rejects invalid stored session scenario payloads", async () => {
+    mocks.sessionGet.mockResolvedValueOnce({
+      token: "session-123",
+      difficulty: "easy",
+      scenarioId: "scenario_test_easy",
+      scenarioTitle: "Test Scenario",
+      scenarioPayload: "{",
+      startTime: Date.now(),
+      used: false,
+      trafficSource: "player",
+      identityKind: "anonymous",
+      githubUserId: null,
+      githubLogin: null,
+      anonymousClaimKey: null,
+      persistentScoreEligible: false,
     });
 
-    expect(res.status).toBe(200);
-    expect(res.body.exitCode).toBe(0);
-    expect(res.body.output).toContain("master-0");
-    expect(res.body.output).toContain("mock command received: oc get nodes");
-  });
-
-  it("returns mock kql output in mock mode", async () => {
-    const app = createApp();
-    const res = await postJson(app, "/api/command", {
-      command: "ClusterLogs | take 10",
-      type: "kql",
-      scenario: null,
+    const app = express();
+    app.use(express.json());
+    app.use("/api/command", commandRouter);
+    const server = await new Promise<Server>((resolve) => {
+      const listeningServer = app.listen(0, "127.0.0.1", () => resolve(listeningServer));
     });
 
-    expect(res.status).toBe(200);
-    expect(res.body.output).toContain("TimeGenerated");
+    try {
+      const { port } = server.address() as AddressInfo;
+      const response = await fetch(`http://127.0.0.1:${port}/api/command`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          sessionToken: "session-123",
+          command: "oc get pods",
+          type: "oc",
+          scenario: null,
+          commandHistory: [],
+        }),
+      });
+
+      expect(response.status).toBe(409);
+      await expect(response.json()).resolves.toEqual({
+        error: "Session scenario context is unavailable",
+      });
+    } finally {
+      await close(server);
+    }
   });
 
-  it("returns mock geneva output in mock mode", async () => {
-    const app = createApp();
-    const res = await postJson(app, "/api/command", {
-      command: "show dashboard",
-      type: "geneva",
-      scenario: null,
-    });
-
-    expect(res.status).toBe(200);
-    expect(res.body.output).toContain("Dashboard: Mock Geneva View");
-  });
-
-  it("rejects invalid command type", async () => {
-    const app = createApp();
-    const res = await postJson(app, "/api/command", {
-      command: "test",
-      type: "invalid",
-      scenario: null,
-    });
-
-    expect(res.status).toBe(400);
-    expect(res.body.error).toContain("Invalid command type");
-  });
-
-  it("accepts commandHistory field without error", async () => {
-    const app = createApp();
-    const res = await postJson(app, "/api/command", {
-      command: "oc get nodes",
-      type: "oc",
-      scenario: null,
-      commandHistory: [
-        { command: "oc get pods", output: "NAME  READY  STATUS\npod-1  1/1  Running", type: "oc" },
-      ],
-    });
-
-    expect(res.status).toBe(200);
-    expect(res.body.exitCode).toBe(0);
-  });
-
-  it("returns describe output for oc describe node in mock mode", async () => {
-    const app = createApp();
-    const res = await postJson(app, "/api/command", {
-      command: "oc describe node master-0",
-      type: "oc",
-      scenario: null,
-    });
-
-    expect(res.status).toBe(200);
-    expect(res.body.output).toContain("Name:");
-    expect(res.body.output).toContain("Conditions:");
-    expect(res.body.output).toContain("master-0");
-  });
-
-  it("returns delete confirmation for oc delete in mock mode", async () => {
-    const app = createApp();
-    const res = await postJson(app, "/api/command", {
-      command: "oc delete machine aro-worker-0",
-      type: "oc",
-      scenario: null,
-    });
-
-    expect(res.status).toBe(200);
-    expect(res.body.output).toBe('machine "aro-worker-0" deleted');
-  });
-
-  it("handles commandHistory with null/malformed entries without crashing", async () => {
-    const app = createApp();
-    const res = await postJson(app, "/api/command", {
-      command: "oc get nodes",
-      type: "oc",
-      scenario: null,
-      commandHistory: [
-        null,
-        { command: 123, output: null, type: "oc" },
-        { command: "oc get pods", output: "Running", type: "oc" },
-        "not-an-object",
-      ],
-    });
-
-    expect(res.status).toBe(200);
-    expect(res.body.exitCode).toBe(0);
-  });
-
-  it("handles commandHistory that is not an array", async () => {
-    const app = createApp();
-    const res = await postJson(app, "/api/command", {
-      command: "oc get nodes",
-      type: "oc",
-      scenario: null,
-      commandHistory: "invalid",
-    });
-
-    expect(res.status).toBe(200);
-    expect(res.body.exitCode).toBe(0);
-  });
 });

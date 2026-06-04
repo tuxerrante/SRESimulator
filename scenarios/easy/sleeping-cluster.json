@@ -1,0 +1,50 @@
+{
+  "id": "scenario_sleeping_cluster",
+  "title": "The Sleeping Cluster",
+  "difficulty": "easy",
+  "description": "A routine maintenance window appears to have left the cluster effectively powered down. The API is unavailable, control plane nodes are NotReady, and customer traffic is failing before it reaches workloads.",
+  "incidentTicket": {
+    "id": "IcM-240881",
+    "severity": "Sev3",
+    "title": "Customer cannot reach API after overnight maintenance",
+    "description": "Monitoring and customers report repeated API timeouts after a maintenance window. No user-initiated platform changes are recorded after the window closed.",
+    "customerImpact": "Administrators cannot log in to the cluster and application rollouts are blocked.",
+    "reportedTime": "{{daysAgo:2}}",
+    "clusterName": "aro-prod-eus2-01",
+    "region": "eastus2"
+  },
+  "clusterContext": {
+    "name": "aro-prod-eus2-01",
+    "version": "4.19.11",
+    "region": "eastus2",
+    "nodeCount": 6,
+    "status": "Unavailable",
+    "recentEvents": [
+      "{{minutesAgo:180}} - cluster-monitoring: API availability dropped below SLO",
+      "{{minutesAgo:110}} - machine-api: all control plane VMs stopped reporting guest heartbeat",
+      "{{minutesAgo:45}} - ingress: health checks failing while upstream API endpoints remain unreachable"
+    ],
+    "alerts": [
+      {
+        "name": "KubeAPIDown",
+        "severity": "critical",
+        "message": "The kube-apiserver route is timing out from multiple probes.",
+        "firingTime": "{{minutesAgo:35}}"
+      },
+      {
+        "name": "ControlPlaneNodesNotReady",
+        "severity": "warning",
+        "message": "All control plane nodes have remained NotReady for longer than 15 minutes.",
+        "firingTime": "{{minutesAgo:30}}"
+      }
+    ],
+    "upgradeHistory": [
+      {
+        "from": "4.19.10",
+        "to": "4.19.11",
+        "status": "completed",
+        "timestamp": "{{daysAgo:5}}"
+      }
+    ]
+  }
+}
