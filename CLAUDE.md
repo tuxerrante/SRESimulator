@@ -1,10 +1,18 @@
 # Project: ARO SRE Simulator (The "Break-Fix" Game)
 
-For the living implementation view, also see `docs/ARCHITECTURE.md`.
+This file is the product/design memory for the repository.
+
+For the living implementation view, prefer:
+
+- `docs/ARCHITECTURE.md`
+- `docs/AI_RUNTIME.md`
+- `Makefile`
+
+For explicit deploy/operator tasks, also use `docs/OPERATIONS.md`.
 
 ## 1. Mission & Philosophy
 
-To gamify the Azure Red Hat OpenShift (ARO) reliability engineering experience. The system uses an AI Agent to "break" a cluster based on real-world incidents and guides a human user through the investigation using natural language, translating their intent into technical commands (`oc`, `KQL`).
+To gamify the Azure Red Hat OpenShift (ARO) reliability engineering experience. The system uses an AI Agent to "break" a cluster based on real-world incidents and guides a human user through the investigation using natural language, translating their intent into simulated technical commands (`oc`, `KQL`).
 
 KQL and Geneva commands will be only shown and simulated, since they cannot be run from the local machine.
 
@@ -13,28 +21,55 @@ The game enforces the "Scientific Method of Investigation" as defined in the ARO
 
 ---
 
-## 2. System Architecture
+## 2. Current Implementation Reality
 
-### Frontend (The "Cockpit")
+### Frontend
 
-- **Tech Stack:** TypeScript, React (Next.js), TailwindCSS.
+- **Tech Stack:** TypeScript, React, Next.js, TailwindCSS.
 - **Components:**
-  - **Chat Interface:** For natural language interaction with the AI Agent.
-  - **Terminal Emulator:** (e.g., `xterm.js`) To display the execution of `oc` commands and raw logs.
-  - **Dashboard View:** A simulated "Geneva" or "Azure Portal" view for context gathering.
+  - **Chat Interface:** Natural-language interaction with the AI agent.
+  - **Terminal Output View:** Renders simulated `oc`/`kql`/`geneva` command output.
+  - **Dashboard View:** A simulated "Geneva" or Azure-style context view for investigation clues.
   - **Scoring Overlay:** Real-time feedback on "SRE usage" (points for safety, deduction, efficiency).
 
-### Backend (The "Engine")
+### Backend
 
-- **Local Server:** Node.js or Python (FastAPI).
+- **Local Server:** Node.js + Express.
 - **Integrations:**
-  - **Cluster Connection:** Uses local `KUBECONFIG` to execute commands against the target cluster.
-  - **LLM Provider:** API hooks for Claude Code / Gemini.
-  - **Scenario Manager:** Loads scripts from the `./scenarios` folder to inject faults.
+  - **AI Runtime:** Supports Vertex AI and Azure OpenAI/Foundry, plus `AI_MOCK_MODE` for local simulation.
+  - **Command Simulation:** Gameplay commands are generated and simulated by the backend during normal play.
+  - **Scenario Manager:** Loads JSON scenario catalogs from `./scenarios`.
+  - **Storage:** Uses JSON/in-memory locally and can use Azure SQL in deployed environments.
+
+### Shared Project Layout
+
+- `frontend/` - Next.js UI
+- `backend/` - Express API server
+- `shared/` - Cross-app types and helpers
+- `scenarios/` - JSON scenario catalogs by difficulty
+- `knowledge_base/` - Markdown files loaded into AI context
+- `docs/` - Living technical docs
+- `infra/` and `helm/` - deployment and environment infrastructure
+
+## 3. Local Dev Workflow
+
+- `make install` installs frontend/backend dependencies and project hooks.
+- `make dev` starts the frontend on `http://localhost:3000`.
+- Run the backend separately from `backend/` with `npm run dev` (default port `8080`).
+- Frontend proxy/runtime settings live in `frontend/.env.local.example`.
+- Backend AI/runtime settings live in `backend/.env.local.example`.
+- Prefer `make` targets over ad-hoc commands for validation, tests, e2e, and deploy flows.
+
+## 4. Public-Only Safety Boundary
+
+- Do not imply access to internal Red Hat or Azure systems unless a user explicitly provides that access in the current session.
+- Treat Geneva, KQL, and cluster investigation outputs in this project as simulated unless the current task is explicitly about deployment/operator workflows.
+- Use repository-local docs and public sources by default; label simulation-like behavior clearly.
+- Never reveal secrets from local env files or infrastructure config. Redact sensitive values by default.
 
 ---
 
-## 3. Game Mechanics & Difficulty Levels
+## 5. Game Mechanics & Difficulty Levels
 
 ### Level 1: "The Junior SRE" (Easy)
 
@@ -71,7 +106,7 @@ The game enforces the "Scientific Method of Investigation" as defined in the ARO
 
 ---
 
-## 4. The AI Agent Persona (The "Dungeon Master")
+## 6. The AI Agent Persona (The "Dungeon Master")
 
 The AI acts as both the **Breaker** and the **Mentor**.
 
@@ -80,11 +115,11 @@ The AI acts as both the **Breaker** and the **Mentor**.
 When the user asks to "fix it," the AI must push back and enforce the workflow:
 
 1. **Reading Phase:** Ask the user, "What inconsistencies do you see in the ticket?".
-2. **Context Phase:** Encourage checking "Geneva" dashboards before touching `kubectl`.
-   - _Hint:_ "Have you checked the cluster history or basic checks first?".
-3. **Facts Gathering:** Translate user intent into KQL.
+2. **Context Phase:** Encourage checking the simulated Geneva-style dashboards before touching commands.
+   - _Hint:_ "Have you checked the cluster history or basic checks first in the dashboard context?".
+3. **Facts Gathering:** Translate user intent into simulated KQL.
    - _User:_ "Show me who deleted the node."
-   - _AI Action:_ Generate KQL for `ClusterAuditLogs` looking for `Verb == "delete"` and `objectRef_resource == "nodes"`.
+   - _AI Action:_ Generate a simulated KQL query for `ClusterAuditLogs` looking for `Verb == "delete"` and `objectRef_resource == "nodes"`.
 4. **Action Phase:** Verify safety. "Are you sure this is non-destructive? Is this reversible?".
 
 ### Command Translation (Natural Language -> CLI)
@@ -92,32 +127,11 @@ When the user asks to "fix it," the AI must push back and enforce the workflow:
 The AI maps user intent to specific tools defined in the "Tools" documentation.
 
 - **Intent:** "Check logs for pod crashes."
-- **Execution:** `oc get events --sort-by='.lastTimestamp'` OR KQL: `ClusterLogs | where MESSAGE contains "error" ...`.
+- **Execution:** produce simulated command output for `oc get events --sort-by='.lastTimestamp'` or a simulated KQL query such as `ClusterLogs | where MESSAGE contains "error" ...`.
 
 ---
 
-## 5. Directory Structure
-
-```text
-/
-├── CLAUDE.md              # This design file
-├── /frontend              # TypeScript/Next.js UI
-├── /backend               # Local server for cluster connection
-├── /scenarios             # The "Breaks"
-│   ├── /easy
-│   │   ├── scenario_001_master_down.yaml
-│   │   └── solution_001.sh
-│   ├── /medium
-│   │   └── ...
-│   └── /hard
-│       └── ...
-└── /knowledge_base        # RAG context
-    ├── kusto_queries.md   #
-    ├── investigation.md   #
-    └── alerts.md          #
-```
-
-## 6. Scoring Metrics
+## 7. Scoring Metrics
 
 - **Efficiency:** Number of commands run vs. optimal path.
 - **Safety:** Did the user back up config? Did they check "Geneva" before SSH-ing?.
@@ -125,26 +139,3 @@ The AI maps user intent to specific tools defined in the "Tools" documentation.
 - **Documentation:** Did the user "Say what they do, do what they say"?.
 
 - **Accuracy:** Was the root cause correctly identified (e.g., distinguishing between a "Network Issue" and a "Geneva Blip" )?
-
----
-
-### Answer to your UI Question
-
-**Q: Would it be possible to connect both the cluster and the LLM agent from a nice TypeScript local UI?**
-
-**A: Yes, absolutely.** This is the ideal architecture for this tool.
-
-You should use a **TypeScript/Electron** app or a local **Next.js** application. Here is how the connections would work:
-
-1. **The Terminal Interface (`xterm.js`):**
-    You don't need to re-implement a shell. You can embed `xterm.js` in your React UI. The frontend sends the AI-generated command (e.g., `oc get nodes`) to your local Node.js backend. The backend spawns a child process using the user's existing local shell (which already has the `KUBECONFIG` and `oc` binary loaded), executes the command, and streams the stdout/stderr back to the frontend.
-
-2. **The LLM Integration:**
-    The Frontend captures the user's natural language input (e.g., _"Why is the API server down?"_). It sends this to the LLM (Gemini/Claude) along with a system prompt containing the `CLAUDE.md` context and the `kusto_queries.md` content. The LLM returns a JSON object containing the suggested command and the explanation.
-
-3. **The "Geneva" Simulation:**
-    Since you likely cannot grant the game actual access to Microsoft's internal "Geneva" dashboards, your UI can simulate this. When the user asks to "Check Geneva," the LLM can generate a query based on the **Kusto Tables** file, run it against the cluster's log endpoint (if available) or a mock dataset, and render a graph in the UI using a library like **Recharts**.
-
-### Next Step
-
-Would you like me to generate the **Scenario 001 (Easy): "The Sleeping Cluster"** script and its corresponding solution file to populate your `/scenarios/easy` folder?
