@@ -1,0 +1,28 @@
+---
+# Generic Kubernetes profile (kind/minikube/managed clusters with Ingress).
+#
+# Usage:
+#   helm template sre-simulator ./helm/sre-simulator \
+#     --values ./helm/sre-simulator/values.yaml \
+#     --values ./helm/sre-simulator/values-generic.yaml
+
+exposure:
+  mode: ingress
+  host: sre-simulator.local
+
+route:
+  enabled: false
+
+ingress:
+  enabled: true
+  className: nginx
+  path: /
+  pathType: Prefix
+  annotations: {}
+  tls:
+    enabled: false
+    secretName: ""
+
+storage:
+  # Use the cluster's default StorageClass.
+  storageClass: ""

@@ -523,11 +523,51 @@ jobs:
       - name: Helm lint
         run: helm lint ./helm/sre-simulator
 
+      - name: Helm lint (generic profile)
+        run: |
+          set -euo pipefail
+          helm lint ./helm/sre-simulator \
+            --values ./helm/sre-simulator/values.yaml \
+            --values ./helm/sre-simulator/values-generic.yaml
+
+      - name: Helm lint (ARO AI profile)
+        run: |
+          set -euo pipefail
+          helm lint ./helm/sre-simulator \
+            --values ./helm/sre-simulator/values.yaml \
+            --values ./helm/sre-simulator/values-aro-ai-live.example.yaml
+
       - name: Helm template (Route mode)
         run: |
           set -euo pipefail
           helm template sre-simulator ./helm/sre-simulator \
             --values ./helm/sre-simulator/values.yaml
+
+      - name: Helm template (Ingress mode via generic profile)
+        run: |
+          set -euo pipefail
+          helm template sre-simulator ./helm/sre-simulator \
+            --values ./helm/sre-simulator/values.yaml \
+            --values ./helm/sre-simulator/values-generic.yaml
+
+      - name: Helm template (legacy route toggle)
+        run: |
+          set -euo pipefail
+          helm template sre-simulator ./helm/sre-simulator \
+            --values ./helm/sre-simulator/values.yaml \
+            --set exposure.mode= \
+            --set route.enabled=true \
+            --set ingress.enabled=false
+
+      - name: Helm template (legacy ingress toggle)
+        run: |
+          set -euo pipefail
+          helm template sre-simulator ./helm/sre-simulator \
+            --values ./helm/sre-simulator/values.yaml \
+            --set exposure.mode= \
+            --set route.enabled=false \
+            --set ingress.enabled=true \
+            --set exposure.host=ingress.example.test
 
       - name: Helm template (AKS Gateway mode)
         run: bash scripts/helm-render-gateway.sh

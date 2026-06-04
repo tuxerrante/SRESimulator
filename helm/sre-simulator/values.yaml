@@ -104,13 +104,15 @@ exposure:
   # publicService: Kubernetes Service type LoadBalancer
   # gateway: Kubernetes Gateway API public edge
   # none: no public edge object
-  mode: route
+  # Leave empty to use legacy toggles (route.enabled / ingress.enabled).
+  mode: ""
   host: sre-simulator.apps.example.com
   # Optional override. Defaults to https for Route and Gateway, ingress
   # when TLS is enabled, and http for a public Service.
   scheme: ""
 
 route:
+  enabled: true
   tls:
     termination: edge
 
@@ -119,6 +121,7 @@ route:
 publicOrigin: ""
 
 ingress:
+  enabled: false
   className: nginx
   path: /
   pathType: Prefix
@@ -145,7 +148,8 @@ database:
 
 storage:
   enabled: true
-  storageClass: azurefile-csi
+  # Empty means "use the cluster default storage class".
+  storageClass: ""
   size: 1Gi
 
 imagePullSecrets: []
