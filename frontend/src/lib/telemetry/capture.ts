@@ -75,19 +75,23 @@ export function captureFrontendError(
   context: FrontendTelemetryContext,
   safeMessage?: string,
 ): void {
-  Sentry.withScope((scope) => {
-    scope.setTag("feature", context.feature);
-    if (context.phase) scope.setTag("phase", context.phase);
-    if (context.difficulty) scope.setTag("difficulty", context.difficulty);
-    if (context.requestId) scope.setTag("requestId", context.requestId);
-    if (context.actorRef) scope.setTag("actorRef", context.actorRef);
-    if (context.gameSessionRef) scope.setTag("gameSessionRef", context.gameSessionRef);
+  try {
+    Sentry.withScope((scope) => {
+      scope.setTag("feature", context.feature);
+      if (context.phase) scope.setTag("phase", context.phase);
+      if (context.difficulty) scope.setTag("difficulty", context.difficulty);
+      if (context.requestId) scope.setTag("requestId", context.requestId);
+      if (context.actorRef) scope.setTag("actorRef", context.actorRef);
+      if (context.gameSessionRef) scope.setTag("gameSessionRef", context.gameSessionRef);
 
-    Sentry.captureException(
-      buildSafeFrontendError(
-        error,
-        safeMessage ?? defaultFrontendSentryMessage(context.feature),
-      ),
-    );
-  });
+      Sentry.captureException(
+        buildSafeFrontendError(
+          error,
+          safeMessage ?? defaultFrontendSentryMessage(context.feature),
+        ),
+      );
+    });
+  } catch {
+    // Frontend telemetry failures must never break user-visible flows.
+  }
 }

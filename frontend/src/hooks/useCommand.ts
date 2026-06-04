@@ -2,6 +2,7 @@
 
 import { useCallback } from "react";
 import { useGameStore } from "@/stores/gameStore";
+import { parseJsonObject } from "@/lib/api-client";
 import { buildTelemetryHeaders } from "@/lib/telemetry/request-context";
 import { captureFrontendError } from "@/lib/telemetry/capture";
 import {
@@ -100,7 +101,7 @@ export function useCommand() {
         const raw = await response.text();
         let data: Record<string, unknown>;
         try {
-          data = JSON.parse(raw);
+          data = parseJsonObject(raw);
         } catch {
           data = { error: `Server error (${response.status})`, exitCode: 1 };
         }

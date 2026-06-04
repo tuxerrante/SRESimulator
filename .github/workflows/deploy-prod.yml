@@ -55,7 +55,7 @@ jobs:
       - name: Harden runner
         # v2.18.0
         uses: >-
-          step-security/harden-runner@6c3c2f2c1c457b00c10c4848d6f5491db3b629df
+          step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411
         with:
           egress-policy: audit
 
@@ -184,6 +184,7 @@ jobs:
       AOAI_DEPLOYMENT_COMMAND: ${{ secrets.AOAI_DEPLOYMENT_COMMAND }}
       AOAI_DEPLOYMENT_SCENARIO: ${{ secrets.AOAI_DEPLOYMENT_SCENARIO }}
       AOAI_DEPLOYMENT_PROBE: ${{ secrets.AOAI_DEPLOYMENT_PROBE }}
+      GITHUB_AUTH_SECRET_NAME: ${{ secrets.GITHUB_AUTH_SECRET_NAME }}
       DB_SECRET_NAME: ${{ secrets.DB_SECRET_NAME }}
       PROD_NAMESPACE: ${{ secrets.PROD_NAMESPACE }}
       E2E_RELEASE: sre-simulator
@@ -192,7 +193,7 @@ jobs:
       - name: Harden runner
         # v2.18.0
         uses: >-
-          step-security/harden-runner@6c3c2f2c1c457b00c10c4848d6f5491db3b629df
+          step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411
         with:
           egress-policy: audit
 
@@ -244,6 +245,7 @@ jobs:
           for name in \
             AZURE_SUBSCRIPTION_ID \
             AOAI_RG AOAI_ACCOUNT AOAI_DEPLOYMENT \
+            GITHUB_AUTH_SECRET_NAME \
             DB_SECRET_NAME; do
             if [[ -z "${!name:-}" ]]; then
               missing+=("$name")
@@ -276,14 +278,37 @@ jobs:
             gh api \
               "repos/${GITHUB_REPOSITORY}/commits/${RELEASE_SHA}/check-runs" \
               --jq '
-                .check_runs[] |
-                select(.name == "ci-gate") |
-                .conclusion
-              ' | \
-              head -n 1
+                [
+                  .check_runs[] |
+                  select(.name == "ci-gate")
+                ] |
+                sort_by(.started_at // .completed_at // "") |
+                last |
+                .conclusion // ""
+              '
           )"
           if [[ "${ci_gate_conclusion}" != "success" ]]; then
             echo "CI gate check did not pass for ${RELEASE_TAG}."
+            echo "Commit: ${RELEASE_SHA}"
+            exit 1
+          fi
+
+          helm_integration_conclusion="$(
+            gh api \
+              "repos/${GITHUB_REPOSITORY}/commits/${RELEASE_SHA}/check-runs" \
+              --jq '
+                [
+                  .check_runs[] |
+                  select(.name == "helm-test")
+                ] |
+                sort_by(.started_at // .completed_at // "") |
+                last |
+                .conclusion // ""
+              '
+          )"
+          if [[ "${helm_integration_conclusion}" != "success" ]]; then
+            echo "Helm integration check did not pass for ${RELEASE_TAG}."
+            echo "Expected check run name: helm-test"
             echo "Commit: ${RELEASE_SHA}"
             exit 1
           fi

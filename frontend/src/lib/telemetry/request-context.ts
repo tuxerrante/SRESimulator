@@ -21,13 +21,20 @@ async function toGameSessionRef(sessionToken: string | null): Promise<string | u
     .join("");
 }
 
+export function buildSafeRequestId(): string | undefined {
+  try {
+    return crypto.randomUUID();
+  } catch {
+    return undefined;
+  }
+}
+
 export async function buildTelemetryHeaders(sessionToken: string | null): Promise<Record<string, string>> {
   const headers: Record<string, string> = {};
 
-  try {
-    headers[REQUEST_ID_HEADER] = crypto.randomUUID();
-  } catch {
-    // Keep requests functional even if random UUID generation fails.
+  const requestId = buildSafeRequestId();
+  if (requestId) {
+    headers[REQUEST_ID_HEADER] = requestId;
   }
 
   try {

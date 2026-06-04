@@ -40,7 +40,9 @@ export class JsonSessionStore implements ISessionStore {
     sessions.set(token, {
       token,
       difficulty: input.difficulty,
+      scenarioId: input.scenarioId ?? null,
       scenarioTitle: input.scenarioTitle,
+      scenarioPayload: input.scenarioPayload ?? null,
       startTime: Date.now(),
       used: false,
       trafficSource: input.trafficSource ?? "player",

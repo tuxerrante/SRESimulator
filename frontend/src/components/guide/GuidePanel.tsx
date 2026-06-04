@@ -4,6 +4,7 @@ import { useEffect, useState, useRef, useMemo, type ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { useGameStore } from "@/stores/gameStore";
+import { fetchJsonObject } from "@/lib/api-client";
 import { cn } from "@/lib/utils";
 import {
   Loader2,
@@ -227,18 +228,7 @@ export function GuidePanel() {
       controller.abort();
     }, 10_000);
 
-    fetch("/api/guide", { signal: controller.signal })
-      .then(async (r) => {
-        const raw = await r.text();
-        let parsed: Record<string, unknown>;
-        try {
-          parsed = JSON.parse(raw);
-        } catch {
-          throw new Error(`Server error (${r.status}): ${raw.slice(0, 120)}`);
-        }
-        if (!r.ok) throw new Error((parsed.error as string) || "Failed to load guide");
-        return parsed;
-      })
+    fetchJsonObject("/api/guide", { signal: controller.signal }, "Failed to load guide")
       .then((d) => {
         if (!d.content) throw new Error("Guide content is empty");
         if (!unmounted) setContent(d.content as string);
