@@ -23,6 +23,8 @@ import {
   REQUEST_ID_HEADER,
 } from "@shared/telemetry/constants";
 
+const LOCAL_TURNSTILE_TEST_TOKEN = "local-turnstile-test-token";
+
 export default function HomePage() {
   const router = useRouter();
   const startGame = useGameStore((s) => s.startGame);
@@ -40,11 +42,14 @@ export default function HomePage() {
   const [sessionLoadError, setSessionLoadError] = useState(false);
   const [fingerprintHash, setFingerprintHash] = useState<string | null>(null);
   const [turnstileToken, setTurnstileToken] = useState<string | null>(null);
+  const [turnstileSiteKey, setTurnstileSiteKey] = useState<string | null>(null);
+  const [turnstileTestMode, setTurnstileTestMode] = useState(false);
   const hasCallsign = Boolean(nickname);
-  const turnstileSiteKey = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY;
+  const turnstileConfigured = turnstileTestMode || Boolean(turnstileSiteKey);
   const anonymousVerificationMessage = getAnonymousVerificationMessage({
-    turnstileConfigured: Boolean(turnstileSiteKey),
+    turnstileConfigured,
     turnstileVerified: Boolean(turnstileToken),
+    turnstileTestMode,
   });
 
   useEffect(() => {
@@ -66,11 +71,16 @@ export default function HomePage() {
           } | null;
           authConfigured: boolean;
           adminAnalyticsEnabled?: boolean;
+          turnstileConfigured?: boolean;
+          turnstileSiteKey?: string | null;
+          turnstileTestMode?: boolean;
         };
 
         setSessionLoadError(false);
         setAuthConfigured(data.authConfigured);
         setAdminAnalyticsEnabled(Boolean(data.adminAnalyticsEnabled));
+        setTurnstileSiteKey(data.turnstileSiteKey ?? null);
+        setTurnstileTestMode(Boolean(data.turnstileTestMode));
         if (data.viewer) {
           setViewer(data.viewer);
         } else {
@@ -84,6 +94,8 @@ export default function HomePage() {
         setSessionLoadError(true);
         setAuthConfigured(false);
         setAdminAnalyticsEnabled(false);
+        setTurnstileSiteKey(null);
+        setTurnstileTestMode(false);
         clearViewer();
       } finally {
         setSessionReady(true);
@@ -141,7 +153,11 @@ export default function HomePage() {
     }
 
     if (!viewer && difficulty === "easy" && (!fingerprintHash || !turnstileToken)) {
-      setError("Complete the captcha check to start an anonymous Easy run.");
+      setError(
+        turnstileTestMode
+          ? "Complete local verification to start an anonymous Easy run."
+          : "Complete the captcha check to start an anonymous Easy run."
+      );
       return;
     }
 
@@ -301,7 +317,25 @@ export default function HomePage() {
             <div className="mb-3 text-sm font-semibold text-zinc-100">
               Anonymous play
             </div>
-            {turnstileSiteKey ? (
+            {turnstileTestMode ? (
+              <button
+                type="button"
+                onClick={() => {
+                  setTurnstileToken(LOCAL_TURNSTILE_TEST_TOKEN);
+                  setError(null);
+                }}
+                className={cn(
+                  "rounded-lg border px-3 py-2 text-xs transition-colors",
+                  turnstileToken
+                    ? "border-emerald-700/50 bg-emerald-950/30 text-emerald-300"
+                    : "border-zinc-700 bg-zinc-950/60 text-zinc-300 hover:bg-zinc-900"
+                )}
+              >
+                {turnstileToken
+                  ? "Local test verification enabled"
+                  : "Use local test verification"}
+              </button>
+            ) : turnstileSiteKey ? (
               <TurnstileWidget siteKey={turnstileSiteKey} onTokenChange={setTurnstileToken} />
             ) : (
               <div className="rounded-lg border border-zinc-800 bg-zinc-950/60 px-3 py-2 text-xs text-zinc-500">

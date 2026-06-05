@@ -36,6 +36,9 @@ frontend:
     githubClientIdKey: github-client-id
     githubClientSecretKey: github-client-secret
     authSessionSecretKey: auth-session-secret
+    # Optional keys in the same Secret for anonymous verification flows.
+    antiAbuseHmacSecretKey: ""
+    turnstileSiteKeyKey: ""
   trustProxyHeaders: false
   adminAnalyticsEnabled: false
 
@@ -68,6 +71,17 @@ backend:
   persistentLeaderboardEnabled: false
   aiChatTimeoutMs: 30000
   aiScenarioTimeoutMs: 30000
+  auth:
+    # Existing Secret used by backend auth/anonymous verification routes.
+    existingSecretName: ""
+    authSessionSecretKey: auth-session-secret
+    antiAbuseHmacSecretKey: ""
+    turnstileSecretKey: ""
+    turnstileExpectedHostnameKey: ""
+    turnstileTestMode: false
+  podSecurityContext:
+    fsGroup: 1001
+    fsGroupChangePolicy: OnRootMismatch
 
 ai:
   provider: vertex

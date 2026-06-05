@@ -329,6 +329,9 @@ cleanup_port_forward_from_metadata() {
 stub_cluster_helpers() {
   require_cli() { :; }
   ensure_namespace() { :; }
+  ensure_auth_secret_for_e2e_namespace() {
+    printf '%s\n' "${GITHUB_AUTH_SECRET_NAME:-}"
+  }
   resolve_aks_public_endpoint() {
     AKS_FRONTEND_PUBLIC_IP_NAME="example-frontend-pip"
     AKS_FRONTEND_PUBLIC_IP="203.0.113.10"
@@ -594,6 +597,41 @@ run_frontend_auth_secret_flag_check() {
 
   assert_contains "--set-string" "$TMP_DIR/helm-args.txt"
   assert_contains "frontend.auth.existingSecretName=sre-auth-secrets" "$TMP_DIR/helm-args.txt"
+  assert_contains "backend.auth.existingSecretName=sre-auth-secrets" "$TMP_DIR/helm-args.txt"
+  assert_contains "backend.auth.authSessionSecretKey=auth-session-secret" "$TMP_DIR/helm-args.txt"
+}
+
+run_optional_auth_verification_flag_check() {
+  # shellcheck disable=SC1091
+  source "$ROOT_DIR/scripts/aks-deploy.sh"
+  stub_cluster_helpers
+  capture_helm_invocation
+
+  unset AKS_GATEWAY_HOST AKS_GATEWAY_CLASS_NAME \
+    AKS_CLUSTER_ISSUER_NAME AKS_GATEWAY_TLS_SECRET_NAME || true
+  E2E_RELEASE="sre-simulator"
+  AKS_RG="example-aks-rg"
+  AKS_CLUSTER="example-aks"
+  AKS_EXPOSURE_MODE="publicService"
+  AOAI_DEPLOYMENT="gpt-4o-mini"
+  GITHUB_AUTH_SECRET_NAME="sre-auth-secrets"
+  ANTI_ABUSE_HMAC_SECRET="anti-abuse-hmac"
+  TURNSTILE_SECRET_KEY="turnstile-secret"
+  TURNSTILE_EXPECTED_HOSTNAME="play.sresimulator.osadev.cloud"
+  TURNSTILE_SITE_KEY="turnstile-site"
+  TURNSTILE_TEST_MODE="true"
+
+  if ! helm_deploy_sre "sre-simulator" "latest" "probe-token" >"$TMP_DIR/auth-optional-flags.txt" 2>&1; then
+    cat "$TMP_DIR/auth-optional-flags.txt" >&2 || true
+    fail "helm_deploy_sre should pass optional auth verification secret keys when configured"
+  fi
+
+  assert_contains "frontend.auth.antiAbuseHmacSecretKey=anti-abuse-hmac-secret" "$TMP_DIR/helm-args.txt"
+  assert_contains "frontend.auth.turnstileSiteKeyKey=turnstile-site-key" "$TMP_DIR/helm-args.txt"
+  assert_contains "backend.auth.antiAbuseHmacSecretKey=anti-abuse-hmac-secret" "$TMP_DIR/helm-args.txt"
+  assert_contains "backend.auth.turnstileSecretKey=turnstile-secret-key" "$TMP_DIR/helm-args.txt"
+  assert_contains "backend.auth.turnstileExpectedHostnameKey=turnstile-expected-hostname" "$TMP_DIR/helm-args.txt"
+  assert_contains "backend.auth.turnstileTestMode=true" "$TMP_DIR/helm-args.txt"
 }
 
 run_clusterissuer_manifest_check() {
@@ -1418,6 +1456,7 @@ main() {
   run_none_deploy_path_check
   run_immutable_tag_check
   run_frontend_auth_secret_flag_check
+  run_optional_auth_verification_flag_check
   run_clusterissuer_manifest_check
   run_clusterissuer_manifest_requires_email_check
   run_gatewayclass_manifest_check

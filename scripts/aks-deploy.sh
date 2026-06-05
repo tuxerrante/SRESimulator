@@ -434,16 +434,49 @@ helm_deploy_sre() {
   local aoai_route_flags=()
   local image_pull_policy
   local aoai_model
+  local resolved_auth_secret
+  local turnstile_site_key
 
   image_pull_policy="$(image_pull_policy_for_tag "$tag")"
   aoai_model="${AOAI_MODEL:-${AOAI_DEPLOYMENT}}"
+  turnstile_site_key="${TURNSTILE_SITE_KEY:-${NEXT_PUBLIC_TURNSTILE_SITE_KEY:-}}"
 
   if [ -n "${GHCR_IMAGE_PULL_SECRET:-}" ]; then
     image_pull_flags+=(--set "imagePullSecrets[0]=${GHCR_IMAGE_PULL_SECRET}")
   fi
 
-  if [ -n "${GITHUB_AUTH_SECRET_NAME:-}" ]; then
-    auth_flags+=(--set-string "frontend.auth.existingSecretName=${GITHUB_AUTH_SECRET_NAME}")
+  if ! resolved_auth_secret="$(ensure_auth_secret_for_e2e_namespace "$ns")"; then
+    rm -f "$exposure_values_file"
+    return 1
+  fi
+
+  if [ -n "$resolved_auth_secret" ]; then
+    auth_flags+=(--set-string "frontend.auth.existingSecretName=${resolved_auth_secret}")
+    auth_flags+=(--set-string "backend.auth.existingSecretName=${resolved_auth_secret}")
+    auth_flags+=(--set-string "backend.auth.authSessionSecretKey=auth-session-secret")
+
+    if [ -n "${ANTI_ABUSE_HMAC_SECRET:-}" ]; then
+      auth_flags+=(--set-string "frontend.auth.antiAbuseHmacSecretKey=anti-abuse-hmac-secret")
+      auth_flags+=(--set-string "backend.auth.antiAbuseHmacSecretKey=anti-abuse-hmac-secret")
+    fi
+
+    if [ -n "$turnstile_site_key" ]; then
+      auth_flags+=(--set-string "frontend.auth.turnstileSiteKeyKey=turnstile-site-key")
+    fi
+
+    if [ -n "${TURNSTILE_SECRET_KEY:-}" ]; then
+      auth_flags+=(--set-string "backend.auth.turnstileSecretKey=turnstile-secret-key")
+    fi
+
+    if [ -n "${TURNSTILE_EXPECTED_HOSTNAME:-}" ]; then
+      auth_flags+=(
+        --set-string "backend.auth.turnstileExpectedHostnameKey=turnstile-expected-hostname"
+      )
+    fi
+  fi
+
+  if [ -n "${TURNSTILE_TEST_MODE:-}" ]; then
+    auth_flags+=(--set-string "backend.auth.turnstileTestMode=${TURNSTILE_TEST_MODE}")
   fi
 
   if [ -n "${DB_SECRET_NAME:-}" ]; then
