@@ -489,6 +489,10 @@ e2e-azure-route-up: env-check ## Deploy frontend/backend to the selected cluster
 	TS=$$(date +%Y%m%d-%H%M%S); \
 	NS="$(E2E_NAMESPACE_PREFIX)-$$TS"; \
 	if [ "$(CLUSTER_FLAVOR)" = "aks" ]; then TAG="$${TAG:-latest}"; else TAG="e2e$$TS"; fi; \
+	if [ "$(CLUSTER_FLAVOR)" = "aks" ] && [ "$$TAG" = "latest" ]; then \
+		echo "WARNING: TAG=latest uses GHCR latest, which only updates on semver tag publish."; \
+		echo "Publish a fresh semver release tag before e2e when you need the newest main changes."; \
+	fi; \
 	PROBE_TOKEN="probe-$$TS"; \
 	KEEP_PORT_FORWARD=""; \
 	stop_port_forward() { \
@@ -575,6 +579,10 @@ e2e-azure-route-refresh: env-check ## Refresh the selected e2e namespace (NS=...
 	. scripts/select-deploy.sh; \
 	TS=$$(date +%Y%m%d-%H%M%S); \
 	if [ "$(CLUSTER_FLAVOR)" = "aks" ]; then TAG="$${TAG:-latest}"; else TAG="e2e$$TS"; fi; \
+	if [ "$(CLUSTER_FLAVOR)" = "aks" ] && [ "$$TAG" = "latest" ]; then \
+		echo "WARNING: TAG=latest uses GHCR latest, which only updates on semver tag publish."; \
+		echo "Publish a fresh semver release tag before e2e when you need the newest main changes."; \
+	fi; \
 	PROBE_TOKEN="probe-$$TS"; \
 	stop_port_forward() { \
 		if [ -z "$${PORT_FORWARD_PID:-}" ]; then \
