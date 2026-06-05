@@ -5,6 +5,14 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.4] - 2026-06-05
+
+### Changed (0.1.4)
+
+- Moved Turnstile capability detection to runtime session config so anonymous gating does not depend on frontend build-time environment variables.
+- Added local/e2e Turnstile test mode support for anonymous-path validation without external captcha dependency.
+- Hardened AKS auth secret wiring and backend data volume permissions to eliminate `/api/scores` failures from `/data` write access regressions.
+
 ## [0.2.0] - 2026-05-12
 
 ### Added (0.2.0)
