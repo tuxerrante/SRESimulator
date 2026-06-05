@@ -6,6 +6,7 @@ describe("verifyTurnstileToken", () => {
     vi.unstubAllGlobals();
     delete process.env.TURNSTILE_SECRET_KEY;
     delete process.env.TURNSTILE_EXPECTED_HOSTNAME;
+    delete process.env.TURNSTILE_TEST_MODE;
     delete process.env.NODE_ENV;
   });
 
@@ -37,5 +38,13 @@ describe("verifyTurnstileToken", () => {
     process.env.TURNSTILE_SECRET_KEY = "test-secret";
 
     await expect(verifyTurnstileToken("pass", undefined)).resolves.toBe(true);
+  });
+
+  it("accepts non-empty tokens in explicit Turnstile test mode", async () => {
+    process.env.TURNSTILE_SECRET_KEY = "local-test-secret";
+    process.env.TURNSTILE_TEST_MODE = "true";
+
+    await expect(verifyTurnstileToken("local-token", undefined)).resolves.toBe(true);
+    await expect(verifyTurnstileToken("", undefined)).resolves.toBe(false);
   });
 });

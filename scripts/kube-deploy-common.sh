@@ -89,6 +89,71 @@ copy_secret_across_namespaces() {
     | "$KUBE_CLI" -n "$dst_ns" apply -f - >/dev/null
 }
 
+# Usage: upsert_secret_literal_key <namespace> <secret_name> <key> <value>
+# Adds/updates a single key without removing existing secret data keys.
+upsert_secret_literal_key() {
+  local ns=$1 secret_name=$2 key=$3 value=$4 encoded
+  if [ -z "$value" ]; then
+    return 0
+  fi
+
+  if ! "$KUBE_CLI" -n "$ns" get "secret/$secret_name" >/dev/null 2>&1; then
+    "$KUBE_CLI" -n "$ns" create secret generic "$secret_name" \
+      --from-literal="${key}=${value}" >/dev/null
+    return 0
+  fi
+
+  encoded="$(printf '%s' "$value" | base64 | tr -d '\n')"
+  "$KUBE_CLI" -n "$ns" patch "secret/$secret_name" \
+    --type merge \
+    -p "{\"data\":{\"${key}\":\"${encoded}\"}}" >/dev/null
+}
+
+# Usage: ensure_auth_secret_for_e2e_namespace <dst_ns>
+# Resolves/creates the auth Secret used by Helm and prints the resolved secret
+# name, or prints an empty string when auth remains intentionally unset.
+ensure_auth_secret_for_e2e_namespace() {
+  local dst_ns=$1
+  local secret_name="${GITHUB_AUTH_SECRET_NAME:-${E2E_AUTH_SECRET_NAME:-}}"
+  local src_ns turnstile_site_key has_runtime_values=false
+
+  if [ -n "${GITHUB_AUTH_SECRET_NAME:-}" ]; then
+    src_ns="${AUTH_SECRET_SOURCE_NAMESPACE:-${PROD_NAMESPACE:-sre-simulator}}"
+    echo "Ensuring auth secret in '$dst_ns' (from namespace '$src_ns', secret '${GITHUB_AUTH_SECRET_NAME}'; payload not logged)."
+    copy_secret_across_namespaces "$src_ns" "$dst_ns" "$GITHUB_AUTH_SECRET_NAME" || return 1
+  fi
+
+  turnstile_site_key="${TURNSTILE_SITE_KEY:-${NEXT_PUBLIC_TURNSTILE_SITE_KEY:-}}"
+  if [ -n "${GITHUB_CLIENT_ID:-}" ] || \
+     [ -n "${GITHUB_CLIENT_SECRET:-}" ] || \
+     [ -n "${AUTH_SESSION_SECRET:-}" ] || \
+     [ -n "${ANTI_ABUSE_HMAC_SECRET:-}" ] || \
+     [ -n "${TURNSTILE_SECRET_KEY:-}" ] || \
+     [ -n "${TURNSTILE_EXPECTED_HOSTNAME:-}" ] || \
+     [ -n "$turnstile_site_key" ]; then
+    has_runtime_values=true
+  fi
+
+  if [ -z "$secret_name" ] && [ "$has_runtime_values" = true ]; then
+    secret_name="${E2E_AUTH_SECRET_NAME:-sre-auth-secrets}"
+  fi
+
+  if [ -z "$secret_name" ]; then
+    printf '%s\n' ""
+    return 0
+  fi
+
+  upsert_secret_literal_key "$dst_ns" "$secret_name" "github-client-id" "${GITHUB_CLIENT_ID:-}" || return 1
+  upsert_secret_literal_key "$dst_ns" "$secret_name" "github-client-secret" "${GITHUB_CLIENT_SECRET:-}" || return 1
+  upsert_secret_literal_key "$dst_ns" "$secret_name" "auth-session-secret" "${AUTH_SESSION_SECRET:-}" || return 1
+  upsert_secret_literal_key "$dst_ns" "$secret_name" "anti-abuse-hmac-secret" "${ANTI_ABUSE_HMAC_SECRET:-}" || return 1
+  upsert_secret_literal_key "$dst_ns" "$secret_name" "turnstile-secret-key" "${TURNSTILE_SECRET_KEY:-}" || return 1
+  upsert_secret_literal_key "$dst_ns" "$secret_name" "turnstile-expected-hostname" "${TURNSTILE_EXPECTED_HOSTNAME:-}" || return 1
+  upsert_secret_literal_key "$dst_ns" "$secret_name" "turnstile-site-key" "$turnstile_site_key" || return 1
+
+  printf '%s\n' "$secret_name"
+}
+
 # Usage: ensure_db_secret_for_e2e_namespace <dst_ns>
 # When DB_SECRET_NAME is set, copies that secret from DB_SECRET_SOURCE_NAMESPACE
 # if set, otherwise from PROD_NAMESPACE (default sre-simulator). No-op when

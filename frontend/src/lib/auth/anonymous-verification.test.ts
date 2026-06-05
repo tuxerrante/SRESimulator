@@ -7,6 +7,7 @@ describe("getAnonymousVerificationMessage", () => {
       getAnonymousVerificationMessage({
         turnstileConfigured: true,
         turnstileVerified: false,
+        turnstileTestMode: false,
       })
     ).toBeNull();
   });
@@ -16,6 +17,7 @@ describe("getAnonymousVerificationMessage", () => {
       getAnonymousVerificationMessage({
         turnstileConfigured: true,
         turnstileVerified: true,
+        turnstileTestMode: false,
       })
     ).toBe("Verification complete. You can start your anonymous Easy run.");
   });
@@ -25,7 +27,28 @@ describe("getAnonymousVerificationMessage", () => {
       getAnonymousVerificationMessage({
         turnstileConfigured: false,
         turnstileVerified: false,
+        turnstileTestMode: false,
       })
     ).toBe("Anonymous guest mode is unavailable until Turnstile is configured.");
+  });
+
+  it("provides local test mode guidance before verification", () => {
+    expect(
+      getAnonymousVerificationMessage({
+        turnstileConfigured: true,
+        turnstileVerified: false,
+        turnstileTestMode: true,
+      })
+    ).toBe("Local test mode is enabled. Use local verification to unlock anonymous Easy mode.");
+  });
+
+  it("shows local test mode completion after verification", () => {
+    expect(
+      getAnonymousVerificationMessage({
+        turnstileConfigured: true,
+        turnstileVerified: true,
+        turnstileTestMode: true,
+      })
+    ).toBe("Local test verification complete. You can start your anonymous Easy run.");
   });
 });

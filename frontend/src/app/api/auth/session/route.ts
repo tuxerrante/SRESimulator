@@ -6,9 +6,38 @@ import { readViewerSessionToken } from "@shared/auth/session";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+const DEFAULT_TURNSTILE_TEST_SITE_KEY = "1x00000000000000000000AA";
+
+function readTurnstileConfig(): {
+  turnstileConfigured: boolean;
+  turnstileSiteKey: string | null;
+  turnstileTestMode: boolean;
+} {
+  const turnstileTestMode = process.env.TURNSTILE_TEST_MODE === "true";
+  const turnstileSiteKey =
+    process.env.TURNSTILE_SITE_KEY?.trim() ||
+    process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY?.trim() ||
+    null;
+
+  if (turnstileTestMode) {
+    return {
+      turnstileConfigured: true,
+      turnstileSiteKey: turnstileSiteKey ?? DEFAULT_TURNSTILE_TEST_SITE_KEY,
+      turnstileTestMode,
+    };
+  }
+
+  return {
+    turnstileConfigured: Boolean(turnstileSiteKey),
+    turnstileSiteKey,
+    turnstileTestMode,
+  };
+}
+
 export async function GET(request: NextRequest): Promise<NextResponse> {
   const adminAnalyticsEnabled =
     process.env.NEXT_PUBLIC_ADMIN_ANALYTICS_ENABLED === "true";
+  const turnstile = readTurnstileConfig();
   const secret = process.env.AUTH_SESSION_SECRET;
   if (!secret) {
     return NextResponse.json(
@@ -17,6 +46,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         accessPolicy: getViewerAccessPolicy(null),
         authConfigured: false,
         adminAnalyticsEnabled,
+        ...turnstile,
       },
       { status: 200 }
     );
@@ -39,5 +69,6 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     accessPolicy: getViewerAccessPolicy(viewer),
     authConfigured: Boolean(process.env.GITHUB_CLIENT_ID && process.env.GITHUB_CLIENT_SECRET),
     adminAnalyticsEnabled,
+    ...turnstile,
   });
 }

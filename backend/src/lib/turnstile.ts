@@ -4,12 +4,17 @@ export async function verifyTurnstileToken(
 ): Promise<boolean> {
   const secret = process.env.TURNSTILE_SECRET_KEY;
   const expectedHostname = process.env.TURNSTILE_EXPECTED_HOSTNAME?.trim();
+  const testMode = process.env.TURNSTILE_TEST_MODE === "true";
   if (!secret || !token) {
     return false;
   }
 
   if (process.env.NODE_ENV === "test" && secret === "test-secret") {
     return token === "pass";
+  }
+
+  if (testMode) {
+    return token.trim().length > 0;
   }
 
   const body = new URLSearchParams({
