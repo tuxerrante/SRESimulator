@@ -1,5 +1,5 @@
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { generateAiText } from "./ai-runtime";
+import { AiReasoningRetryEvent, generateAiText, streamAiText } from "./ai-runtime";
 import { _resetForTests, getTokenMetrics } from "./token-logger";
 
 const TEST_ENV_KEYS = [
@@ -9,6 +9,7 @@ const TEST_ENV_KEYS = [
   "AI_AZURE_OPENAI_ENDPOINT",
   "AI_AZURE_OPENAI_API_KEY",
   "AI_AZURE_OPENAI_DEPLOYMENT",
+  "AI_AZURE_OPENAI_DEPLOYMENT_CHAT",
   "AI_AZURE_OPENAI_DEPLOYMENT_COMMAND",
   "AI_AZURE_OPENAI_DEPLOYMENT_SCENARIO",
 ] as const;
@@ -50,6 +51,122 @@ function okResponse(text: string): Response {
       headers: { "content-type": "application/json" },
     },
   );
+}
+
+function azureStreamResponse(events: unknown[]): Response {
+  const encoder = new TextEncoder();
+  return new Response(
+    new ReadableStream<Uint8Array>({
+      start(controller) {
+        for (const event of events) {
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
+        }
+        controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+        controller.close();
+      },
+    }),
+    {
+      status: 200,
+      headers: { "content-type": "text/event-stream" },
+    },
+  );
+}
+
+function truncatedAzureStreamResponse(events: unknown[]): Response {
+  const encoder = new TextEncoder();
+  return new Response(
+    new ReadableStream<Uint8Array>({
+      start(controller) {
+        for (const event of events) {
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
+        }
+        controller.close();
+      },
+    }),
+    {
+      status: 200,
+      headers: { "content-type": "text/event-stream" },
+    },
+  );
+}
+
+function createDeferred<T = void>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  const promise = new Promise<T>((innerResolve) => {
+    resolve = innerResolve;
+  });
+  return { promise, resolve };
+}
+
+async function withTimeout<T>(promise: Promise<T>, label: string, ms = 250): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`${label} timed out`)), ms);
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
+}
+
+function controlledAzureStreamResponse(
+  initialEvents: unknown[],
+  trailingEvents: unknown[],
+): { response: Response; complete: () => void; completed: Promise<void> } {
+  const encoder = new TextEncoder();
+  const release = createDeferred<void>();
+  const completed = createDeferred<void>();
+  let cancelled = false;
+
+  const response = new Response(
+    new ReadableStream<Uint8Array>({
+      async start(controller) {
+        for (const event of initialEvents) {
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
+        }
+        await release.promise;
+        if (cancelled) {
+          completed.resolve();
+          return;
+        }
+        for (const event of trailingEvents) {
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
+        }
+        controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+        controller.close();
+        completed.resolve();
+      },
+      cancel() {
+        cancelled = true;
+        release.resolve();
+      },
+    }),
+    {
+      status: 200,
+      headers: { "content-type": "text/event-stream" },
+    },
+  );
+
+  return {
+    response,
+    complete: () => release.resolve(),
+    completed: completed.promise,
+  };
+}
+
+async function collectStream(
+  stream: AsyncGenerator<string | AiReasoningRetryEvent, void, void>,
+): Promise<Array<string | AiReasoningRetryEvent>> {
+  const chunks: Array<string | AiReasoningRetryEvent> = [];
+  for await (const chunk of stream) {
+    chunks.push(chunk);
+  }
+  return chunks;
 }
 
 describe("ai-runtime reasoning_effort compatibility", () => {
@@ -292,5 +409,214 @@ describe("ai-runtime Azure deployment fallback", () => {
     await expect(requestPromise).rejects.toMatchObject({ name: "AbortError" });
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(fetchMock.mock.calls[0]?.[1]?.signal).toBe(controller.signal);
+  });
+});
+
+describe("ai-runtime Azure streaming", () => {
+  beforeEach(() => {
+    clearTestEnv();
+    _resetForTests();
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+
+    process.env.AI_PROVIDER = "azure-openai";
+    process.env.AI_MODEL = "gpt-5.2";
+    process.env.AI_AZURE_OPENAI_ENDPOINT = "https://example.openai.azure.com";
+    process.env.AI_AZURE_OPENAI_API_KEY = "test-key";
+    process.env.AI_AZURE_OPENAI_DEPLOYMENT = "gpt-5.2";
+  });
+
+  afterAll(() => {
+    vi.unstubAllGlobals();
+    restoreTestEnv();
+  });
+
+  it("yields the first Azure chunk before the upstream stream fully completes", async () => {
+    const upstream = controlledAzureStreamResponse(
+      [{ choices: [{ delta: { content: "Hello" }, finish_reason: null }] }],
+      [
+        { choices: [{ delta: { content: " world" }, finish_reason: null }] },
+        {
+          choices: [{ delta: {}, finish_reason: "stop" }],
+          usage: {
+            prompt_tokens: 1,
+            completion_tokens: 2,
+            total_tokens: 3,
+          },
+        },
+      ],
+    );
+    const fetchMock = vi.fn().mockResolvedValue(upstream.response);
+    vi.stubGlobal("fetch", fetchMock);
+
+    const iterator = streamAiText({
+      system: "You are helpful.",
+      messages: [{ role: "user", content: "hello" }],
+      maxTokens: 64,
+      route: "chat",
+    });
+
+    const firstChunk = await withTimeout(iterator.next(), "first Azure stream chunk");
+    let upstreamCompleted = false;
+    upstream.completed.then(() => {
+      upstreamCompleted = true;
+    });
+
+    expect(firstChunk).toEqual({ done: false, value: "Hello" });
+    expect(upstreamCompleted).toBe(false);
+
+    upstream.complete();
+
+    const secondChunk = await withTimeout(iterator.next(), "second Azure stream chunk");
+    const done = await withTimeout(iterator.next(), "Azure stream completion");
+
+    expect(secondChunk).toEqual({ done: false, value: " world" });
+    expect(done).toEqual({ done: true, value: undefined });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const body = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
+    expect(body.stream).toBe(true);
+  });
+
+  it("emits a reasoning retry event before retrying the Azure stream with low effort", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(
+        azureStreamResponse([
+          {
+            choices: [{ delta: {}, finish_reason: "length" }],
+            usage: {
+              prompt_tokens: 1,
+              completion_tokens: 4,
+              total_tokens: 5,
+              completion_tokens_details: {
+                reasoning_tokens: 4,
+              },
+            },
+          },
+        ]),
+      )
+      .mockResolvedValueOnce(
+        azureStreamResponse([
+          { choices: [{ delta: { content: "Recovered" }, finish_reason: null }] },
+          { choices: [{ delta: { content: " output" }, finish_reason: null }] },
+          {
+            choices: [{ delta: {}, finish_reason: "stop" }],
+            usage: {
+              prompt_tokens: 1,
+              completion_tokens: 2,
+              total_tokens: 3,
+            },
+          },
+        ]),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const chunks = await collectStream(
+      streamAiText({
+        system: "You are helpful.",
+        messages: [{ role: "user", content: "hello" }],
+        maxTokens: 64,
+        route: "chat",
+      }),
+    );
+
+    expect(chunks).toHaveLength(3);
+    expect(chunks[0]).toBeInstanceOf(AiReasoningRetryEvent);
+    expect(chunks.slice(1)).toEqual(["Recovered", " output"]);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+
+    const firstBody = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
+    const secondBody = JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body));
+    expect(firstBody.reasoning_effort).toBe("medium");
+    expect(secondBody.reasoning_effort).toBe("low");
+    expect(firstBody.stream).toBe(true);
+    expect(secondBody.stream).toBe(true);
+  });
+
+  it("fails an Azure stream that ends before the completion marker even after yielding text", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      truncatedAzureStreamResponse([
+        { choices: [{ delta: { content: "Hello" }, finish_reason: null }] },
+      ]),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const iterator = streamAiText({
+      system: "You are helpful.",
+      messages: [{ role: "user", content: "hello" }],
+      maxTokens: 64,
+      route: "chat",
+    });
+
+    const firstChunk = await withTimeout(iterator.next(), "first truncated Azure chunk");
+
+    expect(firstChunk).toEqual({ done: false, value: "Hello" });
+    await expect(iterator.next()).rejects.toThrow(
+      "Azure OpenAI stream ended before the completion marker",
+    );
+  });
+
+  it("aborts while consuming an Azure SSE body", async () => {
+    const controller = new AbortController();
+    const upstream = controlledAzureStreamResponse(
+      [{ choices: [{ delta: { content: "Hello" }, finish_reason: null }] }],
+      [{ choices: [{ delta: { content: " world" }, finish_reason: null }] }],
+    );
+    const fetchMock = vi.fn().mockResolvedValue(upstream.response);
+    vi.stubGlobal("fetch", fetchMock);
+
+    const iterator = streamAiText({
+      system: "You are helpful.",
+      messages: [{ role: "user", content: "hello" }],
+      maxTokens: 64,
+      route: "chat",
+      signal: controller.signal,
+    });
+
+    const firstChunk = await withTimeout(iterator.next(), "first abortable Azure chunk");
+    expect(firstChunk).toEqual({ done: false, value: "Hello" });
+
+    const pendingChunk = iterator.next();
+    controller.abort();
+
+    await expect(pendingChunk).rejects.toMatchObject({ name: "AbortError" });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0]?.[1]?.signal).toBe(controller.signal);
+    upstream.complete();
+    await upstream.completed;
+  });
+
+  it("retries a streamed request against the global deployment when the route-specific deployment is missing", async () => {
+    process.env.AI_AZURE_OPENAI_DEPLOYMENT_SCENARIO = "gpt-4o-mini";
+
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(deploymentNotFoundResponse())
+      .mockResolvedValueOnce(
+        azureStreamResponse([
+          { choices: [{ delta: { content: "scenario-text" }, finish_reason: null }] },
+          {
+            choices: [{ delta: {}, finish_reason: "stop" }],
+            usage: {
+              prompt_tokens: 1,
+              completion_tokens: 1,
+              total_tokens: 2,
+            },
+          },
+        ]),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const chunks = await collectStream(
+      streamAiText({
+        system: "You are helpful.",
+        messages: [{ role: "user", content: "create scenario" }],
+        maxTokens: 64,
+        route: "scenario",
+      }),
+    );
+
+    expect(chunks).toEqual(["scenario-text"]);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain("/deployments/gpt-4o-mini/");
+    expect(String(fetchMock.mock.calls[1]?.[0])).toContain("/deployments/gpt-5.2/");
   });
 });
