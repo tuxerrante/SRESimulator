@@ -19,7 +19,8 @@
     "express": "^5.2.1",
     "express-rate-limit": "^8.5.2",
     "gpt-tokenizer": "^3.4.0",
-    "mssql": "^12.5.3"
+    "mssql": "^12.5.3",
+    "redis": "^6.0.0"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.0",

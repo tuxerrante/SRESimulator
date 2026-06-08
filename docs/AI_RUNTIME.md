@@ -208,11 +208,26 @@ in production.
 
 ## Rate Limiting & Throttle Handling
 
-### Client-side rate limiting
+### Session-aware sliding-window rate limiting
 
-AI-backed routes (`/api/chat`, `/api/command`, `/api/scenario`) are rate-limited
-at **15 req/min per IP** using `express-rate-limit`. This prevents a single
-user from exhausting the shared AOAI TPM quota.
+AI-backed routes (`/api/chat`, `/api/command`, `/api/scenario`) share a
+server-side sliding-window limiter (default: **15 requests / 60 seconds**).
+Identity is session-oriented when possible:
+
+- `/api/chat` and `/api/command` use the JSON body `sessionToken`
+- `/api/scenario` uses the signed viewer cookie first, then the anonymous
+  proof cookie
+- if neither session identity is available, the backend falls back to the
+  existing signed client-IP path (or the prior socket/IP fallback rules in
+  local/dev mode)
+
+The limiter uses Redis when `AI_RATE_LIMIT_REDIS_URL` is configured, which is
+the intended multi-replica/deployed mode. When Redis is unset, the backend
+uses an in-memory store for local development and tests. When Redis is
+configured but unavailable, the backend **fails open explicitly** instead of
+silently degrading to per-process local enforcement. In that state the request
+is allowed through, a warning is logged, and the response includes
+`x-sresim-rate-limit-status: fail-open` so the degraded protection is visible.
 
 ### Azure OpenAI 429 retries
 
@@ -247,8 +262,9 @@ concurrent request rate and increase `aoai_capacity` accordingly.
 
 ## Concurrent Load Test Results (March 2026)
 
-Tested against live ARO deployment with gpt-5.2, 80K TPM, single
-deployment, 15 req/min/IP rate limit.
+Historical baseline captured before the session-aware limiter rollout:
+live ARO deployment with gpt-5.2, 80K TPM, single deployment, legacy
+15 req/min/IP rate limit.
 
 | Concurrent requests | Result | Latency range |
 | ------------------- | ----------------------------------- | ------------- |
@@ -266,17 +282,25 @@ session isolation, rate-limit enforcement, token-metrics recording).
 
 ## Known Limitations
 
-### Single-IP rate limit affects all concurrent players behind NAT/proxy
+### Fallback IP identity can still group pre-session traffic
 
-The 15 req/min/IP rate limit applies per source IP. When multiple
-players share an IP (corporate proxy, NAT, OpenShift router), they
-collectively share the same rate-limit bucket. This means 2–3 active
-players behind the same IP can trigger throttling during normal
-gameplay (each player may send 4–6 requests per minute across chat,
-command, and scenario routes).
+The limiter now keys on session data for normal gameplay, but requests that
+arrive before a session/cookie identity exists still fall back to signed
+client IP. That mostly affects anonymous/bootstrap traffic and misconfigured
+reverse proxies.
 
-**Mitigation:** Consider per-session rate limiting (e.g., keyed by a
-session token or browser fingerprint) instead of per-IP.
+**Mitigation:** Keep trusted proxy signing enabled in deployed environments so
+the fallback identity is the real client hop, not the router pod IP.
+
+### Redis outage disables distributed enforcement
+
+If `AI_RATE_LIMIT_REDIS_URL` is configured and Redis becomes unavailable, the
+AI limiter no longer switches to a misleading per-process in-memory bucket.
+Instead it fails open deliberately and surfaces that degraded state via logs
+and the `x-sresim-rate-limit-status: fail-open` response header.
+
+**Mitigation:** Monitor Redis availability and alert on the fail-open header or
+the corresponding backend warning log.
 
 ### No server-side streaming for Azure OpenAI
 
@@ -355,4 +379,5 @@ prevention, rate-limit enforcement, and token-metrics recording.
 | Per-route deployments | `AI_AZURE_OPENAI_DEPLOYMENT_CHAT`, `_COMMAND`, `_SCENARIO`, `_PROBE` |
 | Reasoning | `AI_REASONING_EFFORT` (`low` / `medium` / `high`) |
 | Compaction tuning | `COMPACTION_TOKEN_BUDGET`, `COMPACTION_TAIL_MESSAGES` |
+| Rate limiting | `AI_RATE_LIMIT_WINDOW_MS`, `AI_RATE_LIMIT_MAX`, `AI_RATE_LIMIT_REDIS_URL` |
 | Production gates | `AI_LIVE_PROBE_TOKEN` |

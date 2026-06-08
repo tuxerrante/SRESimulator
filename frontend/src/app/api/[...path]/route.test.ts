@@ -7,6 +7,26 @@ import {
 } from "@shared/telemetry/constants";
 import { GET, POST } from "./route";
 
+function buildRequestBody(pathname: string): string {
+  if (pathname === "/api/scenario") {
+    return JSON.stringify({ difficulty: "easy" });
+  }
+  if (pathname === "/api/command") {
+    return JSON.stringify({
+      sessionToken: "session-token",
+      command: "oc get pods",
+      type: "oc",
+      scenario: null,
+    });
+  }
+  return JSON.stringify({
+    sessionToken: "session-token",
+    messages: [{ role: "user", content: "hello" }],
+    scenario: null,
+    currentPhase: "reading",
+  });
+}
+
 describe("frontend backend proxy route", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
@@ -162,6 +182,88 @@ describe("frontend backend proxy route", () => {
     expect(headers.get("x-sresim-client-ip")).toBe("203.0.113.5");
     expect(headers.get("x-sresim-client-ip-signature")).toBeTruthy();
   });
+
+  it.each(["/api/chat", "/api/command"])(
+    "rejects %s when proxy trust is enabled but the client IP is unavailable",
+    async (pathname) => {
+      process.env.BACKEND_INTERNAL_BASE_URL = "http://backend.internal";
+      process.env.TRUST_PROXY_HEADERS = "true";
+      process.env.ANTI_ABUSE_HMAC_SECRET = "test-hmac";
+
+      const fetchMock = vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ ok: true }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        })
+      );
+      vi.stubGlobal("fetch", fetchMock);
+
+      const request = new NextRequest(`https://play.example.com${pathname}`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+        },
+        body: buildRequestBody(pathname),
+      });
+
+      const response = await POST(request);
+
+      expect(response.status).toBe(400);
+      await expect(response.json()).resolves.toEqual({
+        error: "Trusted proxy client IP verification failed",
+      });
+      expect(fetchMock).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    ["/api/chat", {
+      sessionToken: "session-token",
+      messages: [{ role: "user", content: "hello" }],
+      scenario: null,
+      currentPhase: "reading",
+    }],
+    ["/api/command", {
+      sessionToken: "session-token",
+      command: "oc get pods",
+      type: "oc",
+      scenario: null,
+    }],
+  ])(
+    "preserves sessionToken when proxying %s",
+    async (pathname, payload) => {
+      process.env.ANTI_ABUSE_HMAC_SECRET = "test-hmac";
+      process.env.BACKEND_INTERNAL_BASE_URL = "http://backend.internal";
+      process.env.TRUST_PROXY_HEADERS = "true";
+
+      const fetchMock = vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ ok: true }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        })
+      );
+      vi.stubGlobal("fetch", fetchMock);
+
+      const request = new NextRequest(`https://play.example.com${pathname}`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-real-ip": "203.0.113.5",
+          "x-forwarded-for": "203.0.113.5, 10.0.0.1",
+        },
+        body: JSON.stringify(payload),
+      });
+
+      const response = await POST(request);
+
+      expect(response.status).toBe(200);
+      const [, options] = fetchMock.mock.calls[0] as [string, RequestInit];
+      const proxiedBody = options.body as ArrayBuffer;
+      expect(new TextDecoder().decode(new Uint8Array(proxiedBody))).toBe(
+        JSON.stringify(payload),
+      );
+    },
+  );
 
   it("rejects trusted proxy requests when client IP headers disagree", async () => {
     process.env.ANTI_ABUSE_HMAC_SECRET = "test-hmac";
