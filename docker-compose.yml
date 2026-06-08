@@ -4,7 +4,9 @@ services:
     image: mcr.microsoft.com/azure-sql-edge:latest
     environment:
       ACCEPT_EULA: "Y"
-      MSSQL_SA_PASSWORD: "${MSSQL_SA_PASSWORD:-DevPass@123!}"
+      MSSQL_SA_PASSWORD: >-
+        ${MSSQL_SA_PASSWORD:?Set MSSQL_SA_PASSWORD in your shell or untracked
+        local env before starting SQL Edge}
     ports:
       - "1433:1433"
     healthcheck:
