@@ -7,6 +7,11 @@ WORKDIR /app/backend
 COPY backend/package.json backend/package-lock.json ./
 RUN npm ci
 
+FROM base AS prod-deps
+WORKDIR /app/backend
+COPY backend/package.json backend/package-lock.json ./
+RUN npm ci --omit=dev
+
 FROM base AS build
 WORKDIR /app/backend
 COPY --from=deps /app/backend/node_modules ./node_modules
@@ -20,10 +25,11 @@ ENV NODE_ENV=production
 RUN addgroup --system --gid 1001 nodejs && \
     adduser --system --uid 1001 appuser
 
-COPY --from=deps /app/backend/node_modules ./node_modules
+COPY --from=prod-deps /app/backend/node_modules ./node_modules
 COPY --from=build /app/backend/dist ./dist
 COPY backend/src/lib/storage/migrations/ ./dist/backend/src/lib/storage/migrations/
 COPY knowledge_base/ ../knowledge_base/
+COPY scenarios/ ../scenarios/
 
 USER 1001
 EXPOSE 8080
