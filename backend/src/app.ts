@@ -9,6 +9,11 @@ import { gameplayRouter } from "./routes/gameplay";
 import { healthRouter } from "./routes/health";
 import { aiRouter } from "./routes/ai";
 import { guideRouter } from "./routes/guide";
+import {
+  applyHttpHardening,
+  jsonBodyParserErrorHandler,
+  jsonRouteParsers,
+} from "./lib/http-hardening";
 import { aiRateLimit } from "./lib/rate-limit";
 import { isSentryEnabled } from "./lib/telemetry/sentry";
 
@@ -37,16 +42,17 @@ export function createApp(): express.Express {
   app.use(cors({
     origin: process.env.CORS_ORIGIN || "http://localhost:3000",
   }));
-  app.use(express.json());
+  applyHttpHardening(app);
 
-  app.use("/api/chat", aiRateLimit, chatRouter);
-  app.use("/api/command", aiRateLimit, commandRouter);
-  app.use("/api/scenario", aiRateLimit, scenarioRouter);
-  app.use("/api/scores", scoresRouter);
-  app.use("/api/gameplay", gameplayRouter);
+  app.use("/api/chat", jsonRouteParsers.chat, aiRateLimit, chatRouter);
+  app.use("/api/command", jsonRouteParsers.command, aiRateLimit, commandRouter);
+  app.use("/api/scenario", jsonRouteParsers.scenario, aiRateLimit, scenarioRouter);
+  app.use("/api/scores", jsonRouteParsers.scores, scoresRouter);
+  app.use("/api/gameplay", jsonRouteParsers.gameplay, gameplayRouter);
   app.use("/api/ai", aiRouter);
   app.use("/api/guide", guideRouter);
   app.use("/", healthRouter);
+  app.use(jsonBodyParserErrorHandler);
 
   if (isSentryEnabled()) {
     Sentry.setupExpressErrorHandler(app);
