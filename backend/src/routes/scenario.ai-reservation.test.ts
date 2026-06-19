@@ -201,6 +201,33 @@ describe("scenario reservation before AI generation", () => {
     expect(generateAiTextMock).toHaveBeenCalledTimes(1);
   });
 
+  it("requests low reasoning effort for AI-generated scenarios", async () => {
+    const storageModule = await import("../lib/storage");
+    await storageModule.initStorage();
+    const scenarioModule = await import("./scenario");
+    const app = createApp(scenarioModule.scenarioRouter);
+    const headers = {
+      cookie: createAnonymousProofCookie("fp_low_reasoning"),
+      "user-agent": anonymousUserAgent,
+      ...createSignedClientIpHeaders("203.0.113.43"),
+    };
+
+    const response = await postJson(
+      app,
+      "/api/scenario",
+      { difficulty: "easy", turnstileToken: "pass" },
+      headers
+    );
+
+    expect(response.status).toBe(200);
+    expect(generateAiTextMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        route: "scenario",
+        _reasoningEffortOverride: "low",
+      }),
+    );
+  });
+
   it("releases reserved anonymous claims when AI returns schema-invalid JSON", async () => {
     const invalidScenario = createValidAiScenario();
     invalidScenario.clusterContext = {
