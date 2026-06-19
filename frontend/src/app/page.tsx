@@ -35,7 +35,15 @@ export default function HomePage() {
   const setViewer = useGameStore((s) => s.setViewer);
   const clearViewer = useGameStore((s) => s.clearViewer);
   const [loading, setLoading] = useState<Difficulty | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(() => {
+    if (typeof window === "undefined") {
+      return null;
+    }
+    const params = new URLSearchParams(window.location.search);
+    return params.get("error")
+      ? "GitHub sign-in failed. Please try again."
+      : null;
+  });
   const [adminAnalyticsEnabled, setAdminAnalyticsEnabled] = useState(false);
   const [authConfigured, setAuthConfigured] = useState(false);
   const [sessionReady, setSessionReady] = useState(false);
@@ -103,23 +111,13 @@ export default function HomePage() {
     })();
 
     const params = new URLSearchParams(window.location.search);
-    const authError = params.get("error");
-    if (authError) {
-      setError("GitHub sign-in failed. Please try again.");
+    if (params.get("error")) {
       window.history.replaceState({}, "", "/");
     }
   }, [clearViewer, hydrateNickname, setViewer]);
 
   useEffect(() => {
-    if (!sessionReady) {
-      setFingerprintHash(null);
-      setTurnstileToken(null);
-      return;
-    }
-
-    if (viewer) {
-      setFingerprintHash(null);
-      setTurnstileToken(null);
+    if (!sessionReady || viewer) {
       return;
     }
 
