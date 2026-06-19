@@ -16,7 +16,17 @@ assert_contains() {
   grep -Fq -- "$needle" "$file" || fail "expected '$needle' in $file"
 }
 
+require_python39() {
+  python3 - <<'PY'
+import sys
+
+if sys.version_info < (3, 9):
+    raise SystemExit("python3.9+ is required by docker-image-slimming.test.sh")
+PY
+}
+
 run_backend_runtime_checks() {
+  require_python39
   python3 - "$BACKEND_DOCKERFILE" <<'PY'
 import pathlib
 import sys
