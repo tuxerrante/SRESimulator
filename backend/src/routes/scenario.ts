@@ -530,6 +530,7 @@ scenarioRouter.post("/", async (req: Request, res: Response) => {
         generateAiText({
           maxTokens: 1024,
           route: "scenario",
+          _reasoningEffortOverride: "low",
           signal,
           system: `You are a scenario generator for an ARO (Azure Red Hat OpenShift) SRE training simulator.
 Generate a realistic incident scenario. Be concise.
