@@ -45,7 +45,7 @@ jobs:
       - name: Checkout
         # v6.0.2
         uses: >-
-          actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+          actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
         with:
           fetch-depth: 0
 
@@ -105,7 +105,7 @@ jobs:
       - name: Checkout
         # v6.0.2
         uses: >-
-          actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+          actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
         with:
           fetch-depth: 0
 
@@ -193,7 +193,7 @@ jobs:
       - name: Checkout
         # v6.0.2
         uses: >-
-          actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+          actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
 
       - name: Load npm version
         run: echo "NPM_VERSION=$(tr -d '\n' < .npm-version)" >> "$GITHUB_ENV"
@@ -240,7 +240,7 @@ jobs:
       - name: Checkout
         # v6.0.2
         uses: >-
-          actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+          actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
 
       - name: Load npm version
         run: echo "NPM_VERSION=$(tr -d '\n' < .npm-version)" >> "$GITHUB_ENV"
@@ -311,7 +311,7 @@ jobs:
       - name: Checkout
         # v6.0.2
         uses: >-
-          actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+          actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
 
       - name: Load npm version
         run: echo "NPM_VERSION=$(tr -d '\n' < .npm-version)" >> "$GITHUB_ENV"
@@ -374,7 +374,7 @@ jobs:
       - name: Checkout
         # v6.0.2
         uses: >-
-          actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+          actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
 
       - name: Load npm version
         run: echo "NPM_VERSION=$(tr -d '\n' < .npm-version)" >> "$GITHUB_ENV"
@@ -456,7 +456,7 @@ jobs:
       - name: Checkout
         # v6.0.2
         uses: >-
-          actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+          actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
 
       - name: Load npm version
         run: echo "NPM_VERSION=$(tr -d '\n' < .npm-version)" >> "$GITHUB_ENV"
@@ -513,7 +513,7 @@ jobs:
       - name: Checkout
         # v6.0.2
         uses: >-
-          actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+          actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
 
       - name: Setup Helm
         # v5.0.0
@@ -611,7 +611,7 @@ jobs:
       - name: Checkout
         # v6.0.2
         uses: >-
-          actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+          actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
 
       - name: Load npm version
         run: echo "NPM_VERSION=$(tr -d '\n' < .npm-version)" >> "$GITHUB_ENV"
@@ -736,7 +736,7 @@ jobs:
       - name: Checkout
         # v6.0.2
         uses: >-
-          actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+          actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
 
       - name: Load npm version
         run: echo "NPM_VERSION=$(tr -d '\n' < .npm-version)" >> "$GITHUB_ENV"
