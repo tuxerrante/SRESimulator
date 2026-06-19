@@ -600,7 +600,13 @@ async function* parseAzureOpenAiStream(
         return { events, remainder, done: true };
       }
 
-      events.push(JSON.parse(data) as AzureChatStreamChunk);
+      let parsed: AzureChatStreamChunk;
+      try {
+        parsed = JSON.parse(data) as AzureChatStreamChunk;
+      } catch {
+        throw new Error(`Azure SSE stream: malformed JSON chunk received`);
+      }
+      events.push(parsed);
     }
     return { events, remainder, done: false };
   };
