@@ -5,6 +5,14 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.1] - 2026-06-19
+
+### Changed (0.2.1)
+
+- Lowered Azure OpenAI reasoning effort for live scenario generation so the easy-scenario start path is less likely to exhaust its completion budget without returning JSON.
+- Streamed Azure OpenAI chat responses, hardened backend Express request handling, and slimmed backend runtime image inputs for the production release line.
+- Required explicit local MSSQL secrets and enforced Azure SQL-backed production storage wiring in the deployment path.
+
 ## [0.1.4] - 2026-06-05
 
 ### Changed (0.1.4)
