@@ -1,5 +1,5 @@
 import rateLimit, { ipKeyGenerator } from "express-rate-limit";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type { NextFunction, Request, RequestHandler, Response } from "express";
 import { createClient, type RedisClientType } from "redis";
 import { verifySignedClientIp } from "../../../shared/auth/client-ip";
@@ -100,6 +100,12 @@ function isScenarioRequest(req: RateLimitRequestLike): boolean {
   return getRequestPath(req).startsWith("/api/scenario");
 }
 
+const UUID_RE = /^[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}$/i;
+
+function hashToken(token: string): string {
+  return createHash("sha256").update(token).digest("hex").slice(0, 16);
+}
+
 function getSessionTokenIdentity(req: RateLimitRequestLike): string | null {
   if (!isChatOrCommandRequest(req) || !isRecord(req.body)) {
     return null;
@@ -110,7 +116,12 @@ function getSessionTokenIdentity(req: RateLimitRequestLike): string | null {
     return null;
   }
 
-  return `session:${sessionToken.trim()}`;
+  const trimmed = sessionToken.trim();
+  if (!UUID_RE.test(trimmed)) {
+    return null;
+  }
+
+  return `session:${hashToken(trimmed)}`;
 }
 
 function getScenarioCookieIdentity(
