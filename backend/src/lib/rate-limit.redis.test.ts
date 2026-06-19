@@ -35,7 +35,7 @@ function createRequest(
     },
     originalUrl: "/api/chat",
     body: {
-      sessionToken: "session-token",
+      sessionToken: "cafebabe-dead-beef-cafe-babedeadbeef",
     },
     ...overrides,
   };
@@ -127,7 +127,7 @@ describe("aiRateLimit Redis store", () => {
       expect.arrayContaining([
         "EVAL",
         "1",
-        expect.stringContaining("sresim:rate-limit:session:session-token"),
+        expect.stringContaining("sresim:rate-limit:session:"),
       ]),
     );
     expect(firstNext).toHaveBeenCalledTimes(1);

@@ -60,11 +60,11 @@ describe("getRateLimitKey", () => {
   it("separates chat requests by session token even behind a shared IP", () => {
     const requestA = createRequest({
       originalUrl: "/api/chat",
-      body: { sessionToken: "session-a" },
+      body: { sessionToken: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa" },
     });
     const requestB = createRequest({
       originalUrl: "/api/chat",
-      body: { sessionToken: "session-b" },
+      body: { sessionToken: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb" },
     });
 
     expect(getRateLimitKey(requestA, "anti-abuse-secret")).not.toBe(
