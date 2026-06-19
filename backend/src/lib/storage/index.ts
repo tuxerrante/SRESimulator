@@ -42,13 +42,27 @@ export function getStorageBackend(): StorageBackend {
   return value;
 }
 
+function isProductionLikeRuntime(): boolean {
+  return process.env.NODE_ENV === "production" || Boolean(process.env.KUBERNETES_SERVICE_HOST);
+}
+
+function assertStorageBackendAllowed(backend: StorageBackend): void {
+  if (backend === "json" && isProductionLikeRuntime()) {
+    throw new Error(
+      "Refusing to start with STORAGE_BACKEND=json in production or deployed mode. " +
+      "Set STORAGE_BACKEND=mssql and DATABASE_URL."
+    );
+  }
+}
+
 export async function initStorage(): Promise<void> {
   const backend = getStorageBackend();
+  assertStorageBackendAllowed(backend);
 
   if (backend === "mssql") {
     if (mssqlPool) return;
 
-    const databaseUrl = process.env.DATABASE_URL;
+    const databaseUrl = process.env.DATABASE_URL?.trim();
     if (!databaseUrl) {
       throw new Error("DATABASE_URL is required when STORAGE_BACKEND=mssql");
     }

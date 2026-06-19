@@ -359,11 +359,12 @@ Returns per-route token usage totals and recent request entries. See [AI_RUNTIME
 ## Persistence & Storage Backends
 
 The backend supports two storage modes, selected via the `STORAGE_BACKEND`
-environment variable (`json` or `mssql`).
+environment variable (`json` or `mssql`). `json` is the local/test fallback;
+Azure SQL (`mssql`) is the intended deployed and production storage path.
 
-### JSON mode (default)
+### JSON mode (default for local/test)
 
-Best for local development and single-replica deployments.
+Best for local development and test runs only.
 
 - **Sessions**: In-memory `Map` with 24h TTL, now tagged with identity kind
   (`github` vs `anonymous`) plus score persistence eligibility. Lost on pod
@@ -381,10 +382,13 @@ Constraints:
 
 - Single backend replica only (PVC is `ReadWriteOnce`, sessions are in-process).
 - No data survives pod restarts (except leaderboard file on PVC).
+- Not a supported deployed or in-cluster runtime mode.
+- `initStorage()` now refuses to start with `STORAGE_BACKEND=json` when either
+  `NODE_ENV=production` or `KUBERNETES_SERVICE_HOST` is present.
 
 ### Azure SQL mode
 
-Required for multi-replica deployments and production use.  Uses Azure SQL
+Required for multi-replica deployments and the intended production path. Uses Azure SQL
 Database free tier (100K vCore-seconds/month, 32 GB storage, $0/month).
 
 - **Sessions**: Stored in `sessions` table. Shared across replicas.
@@ -410,6 +414,9 @@ To enable:
 STORAGE_BACKEND=mssql
 DATABASE_URL="Server=<fqdn>;Database=sresimulator;User Id=sresimadmin;Password=<pwd>;Encrypt=true"
 ```
+
+Helm sets these automatically when `database.enabled=true`, and startup now
+fails fast instead of silently falling back to JSON in production-like runtimes.
 
 Migrations run automatically on startup using `sp_getapplock` for
 cross-replica serialization. Schema is managed via numbered `.sql` files
@@ -449,9 +456,9 @@ the SQL engine to accept queries, and creates the `sresimulator` database.
 suite with `STORAGE_BACKEND=mssql`.
 
 CI runs the same tests automatically via an `integration-test-mssql` job
-that uses Azure SQL Edge as a GitHub Actions service container.
-The same job now includes `make smoke-backend-mssql` to verify backend startup
-and DB-backed route behavior (`GET /api/scores`) with `STORAGE_BACKEND=mssql`.
+that uses Azure SQL Edge as a GitHub Actions service container. The same job
+includes `make smoke-backend-mssql` to verify backend startup and DB-backed
+route behavior (`GET /api/scores`) with `STORAGE_BACKEND=mssql`.
 
 **Note:** The Azure SQL Edge `latest` image does not ship `sqlcmd`. All
 readiness checks use Node.js (`net` module for TCP, `mssql` package for
@@ -563,7 +570,10 @@ make db-mode-check NS=sre-simulator
 ```
 
 This checks that the backend deployment is configured with
-`STORAGE_BACKEND=mssql` and a `DATABASE_URL` secret reference.
+`STORAGE_BACKEND=mssql` and a `DATABASE_URL` secret reference. Production and
+final deploy flows already run this check, followed by `make db-port-forward-check`,
+so the repo has both deployment-time and startup-time protection against
+accidentally serving production traffic on the JSON backend.
 
 Then use the selected cluster CLI's port-forward support as an additional
 reachability smoke test:
@@ -637,9 +647,10 @@ without session affinity.
 | Connection pooling | N/A | `mssql.ConnectionPool` |
 
 When using Azure SQL, enable backend HPA or increase the backend replica floor
-in Helm values as needed. JSON mode stays single-backend only; Azure SQL mode
-is the supported path for safe horizontal scaling. No sticky sessions or
-session affinity are required since all state is in the database.
+in Helm values as needed. JSON mode is local/test only and is not a supported
+deployed path; Azure SQL mode is the supported path for safe horizontal
+scaling. No sticky sessions or session affinity are required since all state is
+in the database.
 
 ### Infrastructure
 

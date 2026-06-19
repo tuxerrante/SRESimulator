@@ -8,6 +8,24 @@ and stays resilient under concurrent load.
 
 ---
 
+## Deployment Prerequisites
+
+AI readiness and storage readiness are separate checks, but deployed backends
+are expected to run with Azure SQL rather than the JSON fallback:
+
+- `STORAGE_BACKEND=json` is for local development and tests only.
+- Deployed or production-like runtimes should use `STORAGE_BACKEND=mssql`
+  together with `DATABASE_URL`; startup now fails fast instead of silently
+  falling back to JSON when `NODE_ENV=production` or
+  `KUBERNETES_SERVICE_HOST` is present.
+- Helm already wires `STORAGE_BACKEND=mssql` and `DATABASE_URL` when
+  `database.enabled=true`.
+- The repository already includes deployment/runtime checks for this path:
+  `make db-mode-check`, `make db-port-forward-check`, and
+  `make smoke-backend-mssql`.
+
+---
+
 ## Provider Abstraction
 
 The runtime supports two providers behind a single interface
