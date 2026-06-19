@@ -21,7 +21,19 @@ describe("initStorage production guard", () => {
       const storage = await import("./index");
       await storage.shutdownStorage();
     } finally {
-      process.env = { ...ORIGINAL_ENV };
+      Object.assign(process.env, ORIGINAL_ENV);
+      for (const key of Object.keys(process.env)) {
+        if (!(key in ORIGINAL_ENV)) {
+          delete process.env[key];
+        }
+      }
+      vi.doUnmock("mssql");
+      vi.doUnmock("./migrate");
+      vi.doUnmock("./mssql-session-store");
+      vi.doUnmock("./mssql-leaderboard-store");
+      vi.doUnmock("./mssql-metrics-store");
+      vi.doUnmock("./mssql-player-store");
+      vi.doUnmock("./mssql-anonymous-trial-store");
       vi.resetModules();
     }
   });
@@ -56,6 +68,16 @@ describe("initStorage production guard", () => {
     await expect(storage.initStorage()).resolves.toBeUndefined();
     expect(storage.getStorageBackend()).toBe("json");
     expect(storage.getSessionStore()).toBeDefined();
+  });
+
+  test("rejects whitespace-only DATABASE_URL for mssql", async () => {
+    process.env.NODE_ENV = "production";
+    process.env.STORAGE_BACKEND = "mssql";
+    process.env.DATABASE_URL = "   ";
+
+    const storage = await loadStorageModule();
+
+    await expect(storage.initStorage()).rejects.toThrow("DATABASE_URL is required when STORAGE_BACKEND=mssql");
   });
 
   test("allows production-like runtimes to proceed with mssql", async () => {
