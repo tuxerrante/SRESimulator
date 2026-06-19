@@ -39,10 +39,10 @@ export function createApp(): express.Express {
   // Match the frontend proxy model: forwarded headers are only trusted when explicitly enabled.
   app.set("trust proxy", shouldTrustProxyHeaders());
 
+  applyHttpHardening(app);
   app.use(cors({
     origin: process.env.CORS_ORIGIN || "http://localhost:3000",
   }));
-  applyHttpHardening(app);
 
   app.use("/api/chat", jsonRouteParsers.chat, aiRateLimit, chatRouter);
   app.use("/api/command", jsonRouteParsers.command, aiRateLimit, commandRouter);
