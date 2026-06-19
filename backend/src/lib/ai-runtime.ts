@@ -311,6 +311,19 @@ interface AzureChatResponse {
   };
 }
 
+interface AzureStreamChoice {
+  finish_reason?: string | null;
+  delta?: {
+    content?: string | Array<{ text?: string }>;
+    refusal?: string | null;
+  };
+}
+
+interface AzureChatStreamChunk {
+  choices?: AzureStreamChoice[];
+  usage?: AzureChatResponse["usage"];
+}
+
 const VALID_REASONING_EFFORTS = new Set(["low", "medium", "high"]);
 const deploymentReasoningEffortSupport = new Map<string, boolean>();
 
@@ -363,7 +376,8 @@ async function runAzureOpenAiRequest(
   apiVersion: string,
   request: AiTextRequest,
   useLegacyMaxTokens: boolean,
-  includeReasoningEffort: boolean
+  includeReasoningEffort: boolean,
+  stream: boolean,
 ): Promise<Response> {
   throwIfAborted(request.signal);
   const reasoningEffort = includeReasoningEffort
@@ -382,6 +396,7 @@ async function runAzureOpenAiRequest(
     ],
     ...(includeReasoningEffort ? {} : { temperature: 0 }),
     ...(reasoningEffort ? { reasoning_effort: reasoningEffort } : {}),
+    ...(stream ? { stream: true, stream_options: { include_usage: true } } : {}),
     ...(useLegacyMaxTokens
       ? { max_tokens: request.maxTokens }
       : { max_completion_tokens: request.maxTokens }),
@@ -397,6 +412,7 @@ async function runAzureOpenAiRequest(
       method: "POST",
       headers: {
         "api-key": key,
+        accept: stream ? "text/event-stream" : "application/json",
         "content-type": "application/json",
       },
       body: JSON.stringify(body),
@@ -411,6 +427,7 @@ async function executeAzureRequest(
   deployment: string,
   apiVersion: string,
   request: AiTextRequest,
+  stream = false,
 ): Promise<Response> {
   throwIfAborted(request.signal);
   const deploymentKey = deployment.trim().toLowerCase();
@@ -419,7 +436,7 @@ async function executeAzureRequest(
 
   while (true) {
     const response = await runAzureOpenAiRequest(
-      base, key, deployment, apiVersion, request, useLegacyMaxTokens, includeReasoningEffort,
+      base, key, deployment, apiVersion, request, useLegacyMaxTokens, includeReasoningEffort, stream,
     );
 
     if (response.ok || response.status === 429) {
@@ -457,7 +474,20 @@ async function executeAzureRequest(
   }
 }
 
-async function callAzureOpenAi(request: AiTextRequest): Promise<string> {
+function extractAzureTextContent(content: string | Array<{ text?: string }> | undefined): string {
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) {
+    return content
+      .map((part) => (typeof part?.text === "string" ? part.text : ""))
+      .join("");
+  }
+  return "";
+}
+
+async function requestAzureOpenAiResponse(
+  request: AiTextRequest,
+  stream = false,
+): Promise<{ response: Response; deployment: string; latencyStartMs: number }> {
   throwIfAborted(request.signal);
   const endpoint = process.env.AI_AZURE_OPENAI_ENDPOINT!;
   const key = process.env.AI_AZURE_OPENAI_API_KEY!;
@@ -469,7 +499,7 @@ async function callAzureOpenAi(request: AiTextRequest): Promise<string> {
     globalDeployment.length > 0 &&
     routeSpecificDeployment !== globalDeployment;
   const apiVersion = getAzureOpenAiApiVersion();
-  const start = Date.now();
+  const latencyStartMs = Date.now();
 
   const base = endpoint.replace(/\/+$/, "");
 
@@ -479,7 +509,7 @@ async function callAzureOpenAi(request: AiTextRequest): Promise<string> {
   outer: while (true) {
     for (let attempt = 0; attempt < RETRY_MAX_ATTEMPTS; attempt++) {
       try {
-        response = await executeAzureRequest(base, key, deployment, apiVersion, request);
+        response = await executeAzureRequest(base, key, deployment, apiVersion, request, stream);
       } catch (error) {
         if (error instanceof AzureDeploymentNotFoundError) {
           if (
@@ -527,9 +557,97 @@ async function callAzureOpenAi(request: AiTextRequest): Promise<string> {
     throw new Error(`Azure OpenAI request failed (${response!.status}): ${details}`);
   }
 
-  const payload = (await response!.json()) as AzureChatResponse;
+  return { response: response!, deployment, latencyStartMs };
+}
 
-  const latencyMs = Date.now() - start;
+async function* parseAzureOpenAiStream(
+  response: Response,
+  signal?: AbortSignal,
+): AsyncGenerator<AzureChatStreamChunk, void, void> {
+  const reader = response.body?.getReader();
+  if (!reader) {
+    throw new Error("Azure OpenAI stream did not include a readable body");
+  }
+
+  const decoder = new TextDecoder();
+  let buffer = "";
+  const onAbort = () => {
+    void reader.cancel(toAbortError(signal?.reason));
+  };
+  signal?.addEventListener("abort", onAbort, { once: true });
+
+  const flushBuffer = (
+    rawBuffer: string,
+  ): { events: AzureChatStreamChunk[]; remainder: string; done: boolean } => {
+    const events: AzureChatStreamChunk[] = [];
+    let remainder = rawBuffer;
+    while (true) {
+      const boundary = remainder.search(/\r?\n\r?\n/);
+      if (boundary === -1) break;
+      const rawEvent = remainder.slice(0, boundary);
+      const separatorLength = remainder.startsWith("\r\n\r\n", boundary) ? 4 : 2;
+      remainder = remainder.slice(boundary + separatorLength);
+
+      const data = rawEvent
+        .split(/\r?\n/)
+        .filter((line) => line.startsWith("data:"))
+        .map((line) => line.slice(5).trimStart())
+        .join("\n")
+        .trim();
+
+      if (!data) continue;
+      if (data === "[DONE]") {
+        return { events, remainder, done: true };
+      }
+
+      let parsed: AzureChatStreamChunk;
+      try {
+        parsed = JSON.parse(data) as AzureChatStreamChunk;
+      } catch {
+        throw new Error(`Azure SSE stream: malformed JSON chunk received`);
+      }
+      events.push(parsed);
+    }
+    return { events, remainder, done: false };
+  };
+
+  try {
+    while (true) {
+      throwIfAborted(signal);
+      const { done, value } = await raceWithAbort(reader.read(), signal);
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+
+      const flushed = flushBuffer(buffer);
+      for (const event of flushed.events) {
+        yield event;
+      }
+      buffer = flushed.remainder;
+      if (flushed.done) {
+        return;
+      }
+    }
+
+    buffer += decoder.decode();
+    const trailing = flushBuffer(buffer);
+    for (const event of trailing.events) {
+      yield event;
+    }
+    if (trailing.done) {
+      return;
+    }
+    throw new Error("Azure OpenAI stream ended before the completion marker");
+  } finally {
+    signal?.removeEventListener("abort", onAbort);
+    reader.releaseLock();
+  }
+}
+
+async function callAzureOpenAi(request: AiTextRequest): Promise<string> {
+  const { response, deployment, latencyStartMs } = await requestAzureOpenAiResponse(request);
+  const payload = (await response.json()) as AzureChatResponse;
+
+  const latencyMs = Date.now() - latencyStartMs;
   const promptTokens = payload.usage?.prompt_tokens ?? 0;
   const completionTokens = payload.usage?.completion_tokens ?? 0;
   const reasoningTokens = payload.usage?.completion_tokens_details?.reasoning_tokens ?? 0;
@@ -555,15 +673,7 @@ async function callAzureOpenAi(request: AiTextRequest): Promise<string> {
 
   const firstChoice = payload.choices?.[0];
   const messageContent = firstChoice?.message?.content;
-  const text =
-    typeof messageContent === "string"
-      ? messageContent.trim()
-      : Array.isArray(messageContent)
-        ? messageContent
-            .map((part) => (typeof part?.text === "string" ? part.text : ""))
-            .join("")
-            .trim()
-        : "";
+  const text = extractAzureTextContent(messageContent).trim();
 
   const refusal = firstChoice?.message?.refusal?.trim() ?? "";
   if (!text && refusal) {
@@ -584,6 +694,78 @@ async function callAzureOpenAi(request: AiTextRequest): Promise<string> {
     throw new Error(msg);
   }
   return text;
+}
+
+async function* streamAzureOpenAi(
+  request: AiTextRequest,
+): AsyncGenerator<string, void, void> {
+  const { response, deployment, latencyStartMs } = await requestAzureOpenAiResponse(request, true);
+  let finishReason: string | null | undefined;
+  let usage: AzureChatResponse["usage"];
+  let sawText = false;
+  let refusal = "";
+
+  for await (const chunk of parseAzureOpenAiStream(response, request.signal)) {
+    if (chunk.usage) {
+      usage = chunk.usage;
+    }
+
+    const firstChoice = chunk.choices?.[0];
+    if (!firstChoice) continue;
+
+    finishReason = firstChoice.finish_reason ?? finishReason;
+    const textChunk = extractAzureTextContent(firstChoice.delta?.content);
+    if (textChunk) {
+      sawText = true;
+      yield textChunk;
+    }
+
+    if (typeof firstChoice.delta?.refusal === "string") {
+      refusal += firstChoice.delta.refusal;
+    }
+  }
+
+  const latencyMs = Date.now() - latencyStartMs;
+  const promptTokens = usage?.prompt_tokens ?? 0;
+  const completionTokens = usage?.completion_tokens ?? 0;
+  const reasoningTokens = usage?.completion_tokens_details?.reasoning_tokens ?? 0;
+  const cachedTokens = usage?.prompt_tokens_details?.cached_tokens ?? 0;
+  const totalTokens = usage?.total_tokens ?? (promptTokens + completionTokens);
+
+  if (request.route) {
+    logTokenUsage({
+      route: request.route,
+      model: getConfiguredModel(),
+      deployment,
+      promptTokens,
+      completionTokens,
+      reasoningTokens,
+      cachedTokens,
+      totalTokens,
+      latencyMs,
+      timestamp: Date.now(),
+      compacted: request.compactionMeta?.compacted ?? false,
+      compactedMessageCount: request.compactionMeta?.compactedMessageCount ?? 0,
+    });
+  }
+
+  if (sawText) return;
+
+  const refusalText = refusal.trim();
+  if (refusalText) {
+    yield refusalText;
+    return;
+  }
+
+  if (finishReason === "length" && (!usage || (completionTokens > 0 && reasoningTokens > 0))) {
+    const msg = "Azure OpenAI consumed completion tokens for reasoning without output text";
+    if (request.route) logTokenError(request.route, msg);
+    throw new AiReasoningExhaustedError();
+  }
+
+  const msg = "Azure OpenAI response did not include text content";
+  if (request.route) logTokenError(request.route, msg);
+  throw new Error(msg);
 }
 
 export async function generateAiText(request: AiTextRequest): Promise<string> {
@@ -611,17 +793,15 @@ export async function* streamAiText(
   const readiness = assertAiReadyForRuntime();
   if (readiness.provider === "azure-openai") {
     try {
-      const text = await callAzureOpenAi(request);
-      yield text;
+      yield* streamAzureOpenAi(request);
     } catch (error) {
       if (error instanceof AiReasoningExhaustedError) {
         console.warn("[ai-runtime] Reasoning exhausted budget, retrying with reasoning_effort=low");
         yield new AiReasoningRetryEvent();
-        const text = await callAzureOpenAi({
+        yield* streamAzureOpenAi({
           ...request,
           _reasoningEffortOverride: "low",
         });
-        yield text;
       } else {
         throw error;
       }

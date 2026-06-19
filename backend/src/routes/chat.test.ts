@@ -55,7 +55,71 @@ vi.mock("../lib/storage", () => ({
   getSessionStore: mocks.getSessionStore,
 }));
 
+import { AiReasoningRetryEvent } from "../lib/ai-runtime";
 import { chatRouter } from "./chat";
+
+function createDeferred<T = void>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  const promise = new Promise<T>((innerResolve) => {
+    resolve = innerResolve;
+  });
+  return { promise, resolve };
+}
+
+async function withTimeout<T>(promise: Promise<T>, label: string, ms = 250): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`${label} timed out`)), ms);
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
+}
+
+interface SseReaderState {
+  reader: ReadableStreamDefaultReader<Uint8Array>;
+  decoder: TextDecoder;
+  buffer: string;
+}
+
+function createSseReader(response: Response): SseReaderState {
+  const reader = response.body?.getReader();
+  if (!reader) {
+    throw new Error("Expected SSE response body");
+  }
+
+  return {
+    reader,
+    decoder: new TextDecoder(),
+    buffer: "",
+  };
+}
+
+async function readNextSseEvent(state: SseReaderState, label: string): Promise<string> {
+  return withTimeout((async () => {
+    while (true) {
+      const boundary = state.buffer.indexOf("\n\n");
+      if (boundary !== -1) {
+        const event = state.buffer.slice(0, boundary + 2);
+        state.buffer = state.buffer.slice(boundary + 2);
+        return event;
+      }
+
+      const { done, value } = await state.reader.read();
+      if (done) {
+        throw new Error("SSE stream ended before next event");
+      }
+
+      state.buffer += state.decoder.decode(value, { stream: true });
+    }
+  })(), label);
+}
 
 async function close(server: Server): Promise<void> {
   await new Promise<void>((resolve, reject) => {
@@ -68,6 +132,32 @@ async function close(server: Server): Promise<void> {
       resolve();
     });
   });
+}
+
+async function withChatServer(run: (baseUrl: string) => Promise<void>): Promise<void> {
+  const app = express();
+  app.use(express.json());
+  app.use("/api/chat", chatRouter);
+
+  const server = await new Promise<Server>((resolve) => {
+    const listeningServer = app.listen(0, "127.0.0.1", () => resolve(listeningServer));
+  });
+
+  try {
+    const { port } = server.address() as AddressInfo;
+    await run(`http://127.0.0.1:${port}/api/chat`);
+  } finally {
+    await close(server);
+  }
+}
+
+function defaultChatBody() {
+  return {
+    sessionToken: "session-123",
+    messages: [{ role: "user", content: "hello" }],
+    scenario: null,
+    currentPhase: "reading",
+  };
 }
 
 describe("chatRouter", () => {
@@ -98,6 +188,7 @@ describe("chatRouter", () => {
         upgradeHistory: [],
       },
     };
+
     vi.clearAllMocks();
     mocks.getAiReadiness.mockReturnValue({ ready: true, mockMode: false });
     mocks.loadKnowledgeSections.mockResolvedValue([]);
@@ -136,6 +227,75 @@ describe("chatRouter", () => {
     vi.restoreAllMocks();
   });
 
+  it("streams separate Azure text chunks to SSE clients before the AI stream finishes", async () => {
+    const allowSecondChunk = createDeferred<void>();
+    let streamCompleted = false;
+
+    mocks.streamAiText.mockImplementation(async function* () {
+      yield "Hello";
+      await allowSecondChunk.promise;
+      yield " world";
+      streamCompleted = true;
+    });
+
+    await withChatServer(async (url) => {
+      const response = await fetch(url, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(defaultChatBody()),
+      });
+
+      expect(response.status).toBe(200);
+      expect(response.headers.get("content-type")).toContain("text/event-stream");
+
+      const sse = createSseReader(response);
+      const firstEvent = await readNextSseEvent(sse, "first SSE chunk");
+
+      expect(firstEvent).toBe(`data: ${JSON.stringify({ text: "Hello" })}\n\n`);
+      expect(streamCompleted).toBe(false);
+
+      allowSecondChunk.resolve();
+
+      const secondEvent = await readNextSseEvent(sse, "second SSE chunk");
+      const doneEvent = await readNextSseEvent(sse, "DONE SSE chunk");
+
+      expect(secondEvent).toBe(`data: ${JSON.stringify({ text: " world" })}\n\n`);
+      expect(doneEvent).toBe("data: [DONE]\n\n");
+    });
+  });
+
+  it("preserves reasoning retry signaling between Azure SSE text chunks", async () => {
+    mocks.streamAiText.mockImplementation(async function* () {
+      yield "Thinking";
+      yield new AiReasoningRetryEvent();
+      yield "Recovered";
+      yield " output";
+    });
+
+    await withChatServer(async (url) => {
+      const response = await fetch(url, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(defaultChatBody()),
+      });
+
+      expect(response.status).toBe(200);
+
+      const sse = createSseReader(response);
+      const firstEvent = await readNextSseEvent(sse, "first SSE event");
+      const retryEvent = await readNextSseEvent(sse, "reasoning SSE event");
+      const thirdEvent = await readNextSseEvent(sse, "third SSE event");
+      const fourthEvent = await readNextSseEvent(sse, "fourth SSE event");
+      const doneEvent = await readNextSseEvent(sse, "DONE SSE event");
+
+      expect(firstEvent).toBe(`data: ${JSON.stringify({ text: "Thinking" })}\n\n`);
+      expect(retryEvent).toBe(`data: ${JSON.stringify({ reasoning: true })}\n\n`);
+      expect(thirdEvent).toBe(`data: ${JSON.stringify({ text: "Recovered" })}\n\n`);
+      expect(fourthEvent).toBe(`data: ${JSON.stringify({ text: " output" })}\n\n`);
+      expect(doneEvent).toBe("data: [DONE]\n\n");
+    });
+  });
+
   it("captures stream failures after SSE headers are sent", async () => {
     const streamError = new Error("stream exploded");
 
@@ -151,24 +311,11 @@ describe("chatRouter", () => {
 
     mocks.streamAiText.mockReturnValue(failingStream);
 
-    const app = express();
-    app.use(express.json());
-    app.use("/api/chat", chatRouter);
-    const server = await new Promise<Server>((resolve) => {
-      const listeningServer = app.listen(0, "127.0.0.1", () => resolve(listeningServer));
-    });
-
-    try {
-      const { port } = server.address() as AddressInfo;
-      const response = await fetch(`http://127.0.0.1:${port}/api/chat`, {
+    await withChatServer(async (url) => {
+      const response = await fetch(url, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          sessionToken: "session-123",
-          messages: [{ role: "user", content: "hello" }],
-          scenario: null,
-          currentPhase: "reading",
-        }),
+        body: JSON.stringify(defaultChatBody()),
       });
 
       expect(response.status).toBe(200);
@@ -176,9 +323,7 @@ describe("chatRouter", () => {
       expect(mocks.captureBackendRouteError).toHaveBeenCalledTimes(1);
       expect(mocks.captureBackendRouteError.mock.calls[0]?.[1]).toBe(streamError);
       expect(mocks.captureBackendRouteError.mock.calls[0]?.[2]).toBe("Chat stream failed");
-    } finally {
-      await close(server);
-    }
+    });
   });
 
   it("rejects invalid stored session scenario payloads", async () => {
@@ -198,33 +343,17 @@ describe("chatRouter", () => {
       persistentScoreEligible: false,
     });
 
-    const app = express();
-    app.use(express.json());
-    app.use("/api/chat", chatRouter);
-    const server = await new Promise<Server>((resolve) => {
-      const listeningServer = app.listen(0, "127.0.0.1", () => resolve(listeningServer));
-    });
-
-    try {
-      const { port } = server.address() as AddressInfo;
-      const response = await fetch(`http://127.0.0.1:${port}/api/chat`, {
+    await withChatServer(async (url) => {
+      const response = await fetch(url, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          sessionToken: "session-123",
-          messages: [{ role: "user", content: "hello" }],
-          scenario: null,
-          currentPhase: "reading",
-        }),
+        body: JSON.stringify(defaultChatBody()),
       });
 
       expect(response.status).toBe(409);
       await expect(response.json()).resolves.toEqual({
         error: "Session scenario context is unavailable",
       });
-    } finally {
-      await close(server);
-    }
+    });
   });
-
 });

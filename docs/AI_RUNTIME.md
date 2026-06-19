@@ -34,12 +34,24 @@ The runtime supports two providers behind a single interface
 | Provider | SDK / transport | Streaming |
 | -------------- | ---------------------------------- | ------------------------------------ |
 | **Vertex AI** | `@anthropic-ai/vertex-sdk` (Claude) | Native token-by-token via SDK |
-| **Azure OpenAI** | REST `fetch` to chat completions | Pseudo-stream (single yield after full completion) |
+| **Azure OpenAI** | REST `fetch` to chat completions | True incremental streaming via SSE chunks |
 
 `ai-config.ts` resolves the active provider from `AI_PROVIDER` and validates
 credentials at startup. When `AI_STRICT_STARTUP` is true (default) and
 validation fails, the process exits immediately. `AI_MOCK_MODE=true` bypasses
 all live-provider requirements and returns deterministic fixtures.
+
+### Azure streaming
+
+For `streamAiText()`, the backend sends `stream: true` to Azure chat
+completions and incrementally parses the returned `data:` events from the
+response body. Each text delta is forwarded immediately through the existing
+Express SSE route, so the frontend renders Azure output progressively instead
+of waiting for a single completed JSON payload.
+
+The streaming path keeps the same resilience behavior as one-shot Azure
+requests: route-specific deployment fallback, 429 retry/backoff, abort signal
+forwarding, and reasoning-budget retry with `AiReasoningRetryEvent`.
 
 ### Reasoning-model compatibility
 
@@ -295,18 +307,6 @@ command, and scenario routes).
 
 **Mitigation:** Consider per-session rate limiting (e.g., keyed by a
 session token or browser fingerprint) instead of per-IP.
-
-### No server-side streaming for Azure OpenAI
-
-Azure OpenAI chat completions are consumed as a single response and
-then yielded as one SSE chunk. The frontend receives the full response
-at once rather than token-by-token. This means:
-
-- Users see no incremental output during the 7–18s response time.
-- Long responses feel slower than they would with true streaming.
-
-**Mitigation:** Implement Azure SSE streaming by consuming the
-`stream: true` response incrementally.
 
 ### Reasoning models consume unpredictable token budgets
 
