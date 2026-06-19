@@ -23,13 +23,13 @@ assert_not_contains() {
 }
 
 run_missing_secret_guards() {
-  if make -C "$ROOT_DIR" dev-db >"$TMP_DIR/dev-db-missing.txt" 2>&1; then
+  if MSSQL_SA_PASSWORD= MSSQL_DATABASE_URL= make -C "$ROOT_DIR" dev-db >"$TMP_DIR/dev-db-missing.txt" 2>&1; then
     fail "dev-db should fail without MSSQL_SA_PASSWORD"
   fi
   assert_contains "MSSQL_SA_PASSWORD is required for local SQL Edge flows." "$TMP_DIR/dev-db-missing.txt"
   assert_contains "backend/.env.local" "$TMP_DIR/dev-db-missing.txt"
 
-  if make -C "$ROOT_DIR" smoke-backend-mssql >"$TMP_DIR/smoke-missing.txt" 2>&1; then
+  if MSSQL_SA_PASSWORD= MSSQL_DATABASE_URL= make -C "$ROOT_DIR" smoke-backend-mssql >"$TMP_DIR/smoke-missing.txt" 2>&1; then
     fail "smoke-backend-mssql should fail without an explicit MSSQL secret source"
   fi
   assert_contains "Set MSSQL_DATABASE_URL or MSSQL_SA_PASSWORD before running this target." "$TMP_DIR/smoke-missing.txt"
