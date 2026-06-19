@@ -49,7 +49,7 @@ export function ChatMessage({ message, onRunCommand }: ChatMessageProps) {
           <ReactMarkdown
             remarkPlugins={[remarkGfm]}
             components={{
-              a({ href, children, node, className, ...props }) {
+              a({ href, children, className, ...props }) {
                 return (
                   <a
                     {...props}
@@ -71,7 +71,7 @@ export function ChatMessage({ message, onRunCommand }: ChatMessageProps) {
                   </a>
                 );
               },
-              code({ className, children, node, ...props }) {
+              code({ className, children, ...props }) {
                 const match = /language-(\w+)/.exec(className || "");
                 const lang = match ? match[1] : "";
                 const codeStr = String(children).replace(/\n$/, "");
