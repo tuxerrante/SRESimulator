@@ -12,7 +12,7 @@ fail() {
 }
 
 assert_contains() {
-  local needle=$1 file=$2
+  local needle="$1" file="$2"
   grep -Fq -- "$needle" "$file" || fail "expected '$needle' in $file"
 }
 
@@ -23,6 +23,11 @@ import sys
 if sys.version_info < (3, 9):
     raise SystemExit("python3.9+ is required by docker-image-slimming.test.sh")
 PY
+}
+
+assert_exact_line() {
+  local needle="$1" file="$2"
+  grep -Fxq -- "$needle" "$file" || fail "expected exact line '$needle' in $file"
 }
 
 run_backend_runtime_checks() {
@@ -72,8 +77,8 @@ run_frontend_runtime_checks() {
 }
 
 run_dockerignore_checks() {
-  assert_contains 'docs' "$DOCKERIGNORE_FILE"
-  assert_contains 'scripts' "$DOCKERIGNORE_FILE"
+  assert_exact_line 'docs' "$DOCKERIGNORE_FILE"
+  assert_exact_line 'scripts' "$DOCKERIGNORE_FILE"
 }
 
 main() {
