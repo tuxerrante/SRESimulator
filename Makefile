@@ -2,7 +2,7 @@
        fmt fmt-check \
        lint lint-ts lint-backend lint-unused-exports lint-yaml lint-md \
        typecheck typecheck-backend validate \
-       security audit lockfile-lint gitleaks grype \
+       security audit lockfile-lint gitleaks grype require-mssql-sa-password require-mssql-database-url \
        test test-shell test-integration test-mssql dev-db smoke-backend-mssql smoke-local-vertex release-prepare verify-release-version env-check aro-login aks-login e2e-azure-route e2e-azure-route-up e2e-azure-route-refresh e2e-azure-route-down \
        prod-up prod-up-tag prod-down prod-status public-exposure-audit db-mode-check db-port-forward-check db-inspect db-inspect-live db-admin-stats db-admin-stats-live geneva-suppression-check prod-up-final \
        build dev start capture-readme-hero \
@@ -273,6 +273,7 @@ test-shell: ## Run shell regression tests
 	bash scripts/helm-integration-trigger.test.sh
 	bash scripts/helm-platform.test.sh
 	bash scripts/install-worktree-cleanup-launchd.test.sh
+	bash scripts/local-mssql-secrets.test.sh
 	bash scripts/prod-db-guard.test.sh
 	bash scripts/release-version-sync.test.sh
 	bash scripts/select-deploy.test.sh
@@ -297,48 +298,76 @@ verify-release-version: ## Verify semver surfaces for a release tag
 test-integration: test-shell ## Run backend integration tests (full API game flow, mock mode)
 	cd $(BACKEND_DIR) && npm run test:integration
 
-MSSQL_SA_PASSWORD ?= DevPass@123!
-MSSQL_DATABASE_URL ?= Server=localhost;Database=sresimulator;User Id=sa;Password=$(MSSQL_SA_PASSWORD);TrustServerCertificate=true
+MSSQL_SA_PASSWORD ?=
+MSSQL_DATABASE_URL ?=
+export MSSQL_SA_PASSWORD MSSQL_DATABASE_URL
 
-dev-db: ## Start Azure SQL Edge container for local development
-	docker compose up -d sqlserver
-	@echo "Waiting for SQL Edge to accept connections..."
-	@until node -e " \
+require-mssql-sa-password:
+	@if [ -z "$${MSSQL_SA_PASSWORD:-}" ]; then \
+		echo "MSSQL_SA_PASSWORD is required for local SQL Edge flows."; \
+		echo "Set it in your shell or an untracked env file such as $(BACKEND_DIR)/.env.local."; \
+		exit 1; \
+	fi
+
+require-mssql-database-url:
+	@if [ -n "$${MSSQL_DATABASE_URL:-}" ] || [ -n "$${MSSQL_SA_PASSWORD:-}" ]; then \
+		exit 0; \
+	fi; \
+	echo "Set MSSQL_DATABASE_URL or MSSQL_SA_PASSWORD before running this target."; \
+	echo "Use an operator-provided value from your shell or an untracked env file such as $(BACKEND_DIR)/.env.local."; \
+	exit 1
+
+dev-db: require-mssql-sa-password ## Start Azure SQL Edge container for local development
+	@set -e; \
+	LOCAL_SERVER_URL="Server=localhost;User Id=sa;Password=$${MSSQL_SA_PASSWORD};TrustServerCertificate=true"; \
+	docker compose up -d sqlserver; \
+	echo "Waiting for SQL Edge to accept connections..."; \
+	until node -e " \
 		const s = require('net').createConnection(1433, 'localhost'); \
 		s.on('connect', () => { s.end(); process.exit(0); }); \
 		s.on('error', () => process.exit(1)); \
 		setTimeout(() => process.exit(1), 2000);" 2>/dev/null; do \
 		sleep 2; \
-	done
-	@echo "TCP ready, waiting for SQL engine..."
-	@until NODE_PATH=$(CURDIR)/$(BACKEND_DIR)/node_modules node -e " \
+	done; \
+	echo "TCP ready, waiting for SQL engine..."; \
+	until NODE_PATH=$(CURDIR)/$(BACKEND_DIR)/node_modules DATABASE_URL="$$LOCAL_SERVER_URL" node -e " \
 		const sql = require('mssql'); \
-		sql.connect('Server=localhost;User Id=sa;Password=$(MSSQL_SA_PASSWORD);TrustServerCertificate=true') \
+		sql.connect(process.env.DATABASE_URL) \
 		  .then(p => p.request().query('SELECT 1').then(() => p.close())) \
 		  .then(() => process.exit(0)) \
 		  .catch(() => process.exit(1));" 2>/dev/null; do \
 		sleep 2; \
-	done
-	@NODE_PATH=$(CURDIR)/$(BACKEND_DIR)/node_modules node -e " \
+	done; \
+	NODE_PATH=$(CURDIR)/$(BACKEND_DIR)/node_modules DATABASE_URL="$$LOCAL_SERVER_URL" node -e " \
 		const sql = require('mssql'); \
-		sql.connect('Server=localhost;User Id=sa;Password=$(MSSQL_SA_PASSWORD);TrustServerCertificate=true') \
+		sql.connect(process.env.DATABASE_URL) \
 		  .then(p => p.request().query(\"IF DB_ID('sresimulator') IS NULL CREATE DATABASE sresimulator\") \
 		    .then(() => p.close())) \
 		  .then(() => { console.log('Database sresimulator ensured'); process.exit(0); }) \
-		  .catch(e => { console.error(e.message); process.exit(1); });"
-	@echo "SQL Edge ready on localhost:1433 (database: sresimulator)"
+		  .catch(e => { console.error(e.message); process.exit(1); });"; \
+	echo "SQL Edge ready on localhost:1433 (database: sresimulator)"
 
 test-mssql: dev-db ## Run MSSQL integration tests against local SQL Edge container
+	@set -e; \
+	DATABASE_URL="$${MSSQL_DATABASE_URL:-}"; \
+	if [ -z "$$DATABASE_URL" ]; then \
+		DATABASE_URL="Server=localhost;Database=sresimulator;User Id=sa;Password=$${MSSQL_SA_PASSWORD};TrustServerCertificate=true"; \
+	fi; \
 	cd $(BACKEND_DIR) && STORAGE_BACKEND=mssql \
-		DATABASE_URL="$(MSSQL_DATABASE_URL)" \
+		DATABASE_URL="$$DATABASE_URL" \
 		npx vitest run -c vitest.integration.config.ts
 
-smoke-backend-mssql: ## Start backend with MSSQL and verify DB-backed route responds
+smoke-backend-mssql: require-mssql-database-url ## Start backend with MSSQL and verify DB-backed route responds
 	@set -e; \
 	PORT="$${PORT:-18081}"; \
 	LOG_FILE="$${LOG_FILE:-/tmp/sre-backend-mssql-smoke.log}"; \
-	RESPONSE_FILE="$$(mktemp /tmp/sre-db-smoke-response.XXXXXX.json)"; \
-	if ! NODE_PATH="$(CURDIR)/$(BACKEND_DIR)/node_modules" DATABASE_URL="$(MSSQL_DATABASE_URL)" node -e " \
+	RESPONSE_FILE="$$(mktemp "$${TMPDIR:-/tmp}/sre-db-smoke-response.XXXXXX")"; \
+	DATABASE_URL="$${MSSQL_DATABASE_URL:-}"; \
+	if [ -z "$$DATABASE_URL" ]; then \
+		DATABASE_URL="Server=localhost;Database=sresimulator;User Id=sa;Password=$${MSSQL_SA_PASSWORD};TrustServerCertificate=true"; \
+	fi; \
+	trap 'rm -f "$$RESPONSE_FILE"' EXIT INT TERM; \
+	if ! NODE_PATH="$(CURDIR)/$(BACKEND_DIR)/node_modules" DATABASE_URL="$$DATABASE_URL" node -e " \
 		const sql = require('mssql'); \
 		sql.connect(process.env.DATABASE_URL) \
 		  .then(pool => pool.request().query('SELECT 1').then(() => pool.close())) \
@@ -350,7 +379,7 @@ smoke-backend-mssql: ## Start backend with MSSQL and verify DB-backed route resp
 	fi; \
 	echo "Starting backend with STORAGE_BACKEND=mssql on port $$PORT"; \
 	STORAGE_BACKEND=mssql \
-	DATABASE_URL="$(MSSQL_DATABASE_URL)" \
+	DATABASE_URL="$$DATABASE_URL" \
 	AI_MOCK_MODE=true \
 	AI_STRICT_STARTUP=true \
 	PORT="$$PORT" \
