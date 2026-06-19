@@ -19,6 +19,7 @@
     "express": "^5.2.1",
     "express-rate-limit": "^8.5.2",
     "gpt-tokenizer": "^3.4.0",
+    "helmet": "^8.2.0",
     "mssql": "^12.5.5"
   },
   "devDependencies": {

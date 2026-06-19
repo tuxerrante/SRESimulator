@@ -1,5 +1,6 @@
 import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
+import type { Express } from "express";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 async function close(server: Server): Promise<void> {
@@ -15,6 +16,12 @@ async function close(server: Server): Promise<void> {
   });
 }
 
+async function listen(app: Express): Promise<Server> {
+  return new Promise<Server>((resolve) => {
+    const listeningServer = app.listen(0, "127.0.0.1", () => resolve(listeningServer));
+  });
+}
+
 describe("createApp", () => {
   const originalTrustProxyHeaders = process.env.TRUST_PROXY_HEADERS;
   const originalAntiAbuseSecret = process.env.ANTI_ABUSE_HMAC_SECRET;
@@ -24,6 +31,7 @@ describe("createApp", () => {
   afterEach(() => {
     vi.resetModules();
     vi.doUnmock("@sentry/node");
+    vi.doUnmock("./lib/storage");
 
     if (originalTrustProxyHeaders === undefined) {
       delete process.env.TRUST_PROXY_HEADERS;
@@ -109,6 +117,66 @@ describe("createApp", () => {
     expect(setupExpressErrorHandler).toHaveBeenCalledWith(app);
   });
 
+  it("applies security headers and hides express fingerprinting", async () => {
+    const { createApp } = await import("./app");
+    const app = createApp();
+    const server = await listen(app);
+
+    try {
+      const { port } = server.address() as AddressInfo;
+      const response = await fetch(`http://127.0.0.1:${port}/healthz`);
+
+      expect(response.status).toBe(200);
+      expect(response.headers.get("x-powered-by")).toBeNull();
+      expect(response.headers.get("x-content-type-options")).toBe("nosniff");
+      expect(response.headers.get("x-dns-prefetch-control")).toBe("off");
+    } finally {
+      await close(server);
+    }
+  });
+
+  it("enforces tighter JSON limits per route", async () => {
+    const sessionGet = vi.fn().mockResolvedValue(null);
+    vi.doMock("./lib/storage", () => ({
+      getSessionStore: () => ({
+        get: sessionGet,
+      }),
+    }));
+
+    const { createApp } = await import("./app");
+    const app = createApp();
+    const server = await listen(app);
+
+    try {
+      const { port } = server.address() as AddressInfo;
+      const payload = JSON.stringify({
+        sessionToken: "invalid-session-token",
+        messages: [{ role: "user", content: "x".repeat(80 * 1024) }],
+        scenario: null,
+        currentPhase: "facts",
+      });
+
+      const acceptedByChat = await fetch(`http://127.0.0.1:${port}/api/chat`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: payload,
+      });
+      const rejectedByScenario = await fetch(`http://127.0.0.1:${port}/api/scenario`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: payload,
+      });
+      const rejectedByScenarioBody = await rejectedByScenario.json() as { error: string };
+
+      expect(acceptedByChat.status).toBe(403);
+      expect(rejectedByScenario.status).toBe(413);
+      expect(rejectedByScenario.headers.get("content-type")).toContain("application/json");
+      expect(rejectedByScenarioBody).toEqual({ error: "JSON payload too large" });
+    } finally {
+      await close(server);
+    }
+  });
+
   it("keeps malformed JSON handling independent from sentry scope mutation", async () => {
     process.env.SENTRY_ENABLED = "true";
     process.env.SENTRY_DSN = "https://examplePublicKey@o0.ingest.sentry.io/0";
@@ -127,9 +195,7 @@ describe("createApp", () => {
 
     const { createApp } = await import("./app");
     const app = createApp();
-    const server = await new Promise<Server>((resolve) => {
-      const listeningServer = app.listen(0, "127.0.0.1", () => resolve(listeningServer));
-    });
+    const server = await listen(app);
 
     try {
       const { port } = server.address() as AddressInfo;
@@ -138,8 +204,11 @@ describe("createApp", () => {
         headers: { "content-type": "application/json" },
         body: "{",
       });
+      const responseBody = await response.json() as { error: string };
 
       expect(response.status).toBe(400);
+      expect(response.headers.get("content-type")).toContain("application/json");
+      expect(responseBody).toEqual({ error: "Malformed JSON request body" });
       expect(setTags).not.toHaveBeenCalled();
       expect(setExtras).not.toHaveBeenCalled();
       expect(init).not.toHaveBeenCalled();
