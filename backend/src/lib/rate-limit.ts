@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import rateLimit, { ipKeyGenerator } from "express-rate-limit";
+import { VIEWER_SESSION_COOKIE } from "../../../shared/auth/constants";
 import { verifySignedClientIp } from "../../../shared/auth/client-ip";
 import { readAnonymousProofFromCookieHeader, readViewerFromCookieHeader } from "./viewer-auth";
 
@@ -33,17 +34,10 @@ function readHeader(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;
 }
 
-function getRequestPath(req: RateLimitRequestLike): string {
-  return (req.originalUrl ?? "").split("?")[0] ?? "";
-}
-
-function isChatOrCommandRequest(req: RateLimitRequestLike): boolean {
-  const path = getRequestPath(req);
-  return path.startsWith("/api/chat") || path.startsWith("/api/command");
-}
-
-function isScenarioRequest(req: RateLimitRequestLike): boolean {
-  return getRequestPath(req).startsWith("/api/scenario");
+function hasCookie(cookieHeader: string, name: string): boolean {
+  return cookieHeader
+    .split(";")
+    .some((value) => value.trim().startsWith(`${name}=`));
 }
 
 const UUID_RE = /^[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}$/i;
@@ -53,7 +47,7 @@ function hashToken(token: string): string {
 }
 
 function getSessionTokenIdentity(req: RateLimitRequestLike): string | null {
-  if (!isChatOrCommandRequest(req) || !isRecord(req.body)) {
+  if (!isRecord(req.body)) {
     return null;
   }
 
@@ -70,18 +64,24 @@ function getSessionTokenIdentity(req: RateLimitRequestLike): string | null {
   return `session:${hashToken(trimmed)}`;
 }
 
+let loggedMissingAuthSessionSecret = false;
+
 function getScenarioCookieIdentity(
   req: RateLimitRequestLike,
   antiAbuseSecret: string | undefined,
   authSessionSecret: string | undefined,
 ): string | null {
-  if (!isScenarioRequest(req)) {
-    return null;
-  }
-
   const cookieHeader = readHeader(req.headers.cookie);
   if (!cookieHeader) {
     return null;
+  }
+
+  const hasViewerSessionCookie = hasCookie(cookieHeader, VIEWER_SESSION_COOKIE);
+  if (hasViewerSessionCookie && !authSessionSecret && !loggedMissingAuthSessionSecret) {
+    console.warn(
+      "[rate-limit] AUTH_SESSION_SECRET missing; viewer session cookies cannot be used for limiter identity",
+    );
+    loggedMissingAuthSessionSecret = true;
   }
 
   if (authSessionSecret) {
