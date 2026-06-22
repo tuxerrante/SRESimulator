@@ -184,7 +184,14 @@ jobs:
       AOAI_DEPLOYMENT_COMMAND: ${{ secrets.AOAI_DEPLOYMENT_COMMAND }}
       AOAI_DEPLOYMENT_SCENARIO: ${{ secrets.AOAI_DEPLOYMENT_SCENARIO }}
       AOAI_DEPLOYMENT_PROBE: ${{ secrets.AOAI_DEPLOYMENT_PROBE }}
-      GITHUB_AUTH_SECRET_NAME: ${{ secrets.GITHUB_AUTH_SECRET_NAME }}
+      GITHUB_AUTH_SECRET_NAME: >-
+        ${{
+          vars.AUTH_SECRET_NAME ||
+          secrets.AUTH_SECRET_NAME ||
+          vars.GITHUB_AUTH_SECRET_NAME ||
+          secrets.GITHUB_AUTH_SECRET_NAME ||
+          'sre-auth-secrets'
+        }}
       DB_SECRET_NAME: ${{ secrets.DB_SECRET_NAME }}
       PROD_NAMESPACE: ${{ secrets.PROD_NAMESPACE }}
       E2E_RELEASE: sre-simulator
@@ -238,7 +245,7 @@ jobs:
             exit 1
           fi
 
-      - name: Validate required deployment secrets
+      - name: Validate required deployment configuration
         run: |
           set -euo pipefail
           missing=()
@@ -265,7 +272,7 @@ jobs:
             done
           fi
           if [[ "${#missing[@]}" -gt 0 ]]; then
-            echo "Missing required secrets: ${missing[*]}"
+            echo "Missing required deployment config: ${missing[*]}"
             exit 1
           fi
 
