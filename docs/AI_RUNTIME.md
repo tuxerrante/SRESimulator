@@ -238,11 +238,17 @@ in production.
 
 ## Rate Limiting & Throttle Handling
 
-### Client-side rate limiting
+### Session-aware rate limiting
 
 AI-backed routes (`/api/chat`, `/api/command`, `/api/scenario`) are rate-limited
-at **15 req/min per IP** using `express-rate-limit`. This prevents a single
-user from exhausting the shared AOAI TPM quota.
+at **15 req/min** using `express-rate-limit`, but the bucket identity is now
+session-oriented when possible:
+
+- `/api/chat` and `/api/command` prefer the JSON body `sessionToken`
+- `/api/scenario` prefers the signed viewer cookie, then the anonymous proof
+  cookie
+- requests without a usable session identity still fall back to the verified
+  client IP (or the existing socket/IP fallback rules in local mode)
 
 ### Azure OpenAI 429 retries
 
@@ -277,8 +283,9 @@ concurrent request rate and increase `aoai_capacity` accordingly.
 
 ## Concurrent Load Test Results (March 2026)
 
-Tested against live ARO deployment with gpt-5.2, 80K TPM, single
-deployment, 15 req/min/IP rate limit.
+Historical baseline captured before the session-aware limiter rollout:
+live ARO deployment with gpt-5.2, 80K TPM, single deployment,
+15 req/min/IP rate limit.
 
 | Concurrent requests | Result | Latency range |
 | ------------------- | ----------------------------------- | ------------- |
@@ -296,17 +303,15 @@ session isolation, rate-limit enforcement, token-metrics recording).
 
 ## Known Limitations
 
-### Single-IP rate limit affects all concurrent players behind NAT/proxy
+### Fallback IP identity can still group pre-session traffic
 
-The 15 req/min/IP rate limit applies per source IP. When multiple
-players share an IP (corporate proxy, NAT, OpenShift router), they
-collectively share the same rate-limit bucket. This means 2–3 active
-players behind the same IP can trigger throttling during normal
-gameplay (each player may send 4–6 requests per minute across chat,
-command, and scenario routes).
+The limiter now keys normal gameplay traffic on session identity, but requests
+that arrive before a session or cookie exists still fall back to client IP.
+That mostly affects anonymous/bootstrap traffic and misconfigured reverse
+proxies.
 
-**Mitigation:** Consider per-session rate limiting (e.g., keyed by a
-session token or browser fingerprint) instead of per-IP.
+**Mitigation:** Keep trusted proxy signing enabled in deployed environments so
+the fallback identity is the real client hop rather than a shared router IP.
 
 ### Reasoning models consume unpredictable token budgets
 
