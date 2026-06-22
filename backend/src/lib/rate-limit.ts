@@ -1,5 +1,5 @@
 import rateLimit, { ipKeyGenerator } from "express-rate-limit";
-import { createHash, randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 import type { NextFunction, Request, RequestHandler, Response } from "express";
 import { createClient, type RedisClientType } from "redis";
 import { VIEWER_SESSION_COOKIE } from "../../../shared/auth/constants";
@@ -24,6 +24,7 @@ interface SlidingWindowDecision {
 }
 
 interface SlidingWindowStore {
+  readonly distributed: boolean;
   consume(
     key: string,
     nowMs: number,
@@ -35,8 +36,11 @@ interface SlidingWindowStore {
 const DEFAULT_AI_RATE_LIMIT_WINDOW_MS = 60 * 1000;
 const DEFAULT_AI_RATE_LIMIT_MAX = 15;
 const DEFAULT_GAMEPLAY_TELEMETRY_RATE_LIMIT_MAX = 60;
+const MIN_RATE_LIMIT_WINDOW_SECONDS = 1;
 const REDIS_KEY_PREFIX = "sresim:rate-limit";
 const RATE_LIMIT_STATUS_HEADER = "x-sresim-rate-limit-status";
+const IN_MEMORY_SWEEP_INTERVAL = 256;
+const REDIS_MEMBER_PREFIX = `${process.pid.toString(36)}-${Date.now().toString(36)}`;
 const REDIS_SLIDING_WINDOW_SCRIPT = `
 local key = KEYS[1]
 local now = tonumber(ARGV[1])
@@ -70,6 +74,27 @@ function readPositiveLimitFromEnv(
 ): number {
   const parsed = Number.parseInt(rawValue ?? "", 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+interface CachedLimitValue {
+  raw: string | undefined;
+  parsed: number;
+  initialized: boolean;
+}
+
+function readCachedPositiveLimit(
+  cache: CachedLimitValue,
+  rawValue: string | undefined,
+  fallback: number,
+): number {
+  if (cache.initialized && cache.raw === rawValue) {
+    return cache.parsed;
+  }
+
+  cache.raw = rawValue;
+  cache.parsed = readPositiveLimitFromEnv(rawValue, fallback);
+  cache.initialized = true;
+  return cache.parsed;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -221,7 +246,9 @@ export function getRateLimitKey(
 }
 
 export class InMemorySlidingWindowStore implements SlidingWindowStore {
+  readonly distributed = false;
   private readonly buckets = new Map<string, number[]>();
+  private operationsSinceSweep = 0;
 
   private pruneExpiredBuckets(cutoff: number): void {
     for (const [bucketKey, timestamps] of this.buckets.entries()) {
@@ -234,6 +261,17 @@ export class InMemorySlidingWindowStore implements SlidingWindowStore {
     }
   }
 
+  private readActiveBucket(key: string, cutoff: number): number[] {
+    const activeTimestamps = (this.buckets.get(key) ?? [])
+      .filter((timestamp) => timestamp > cutoff);
+    if (activeTimestamps.length === 0) {
+      this.buckets.delete(key);
+      return [];
+    }
+    this.buckets.set(key, activeTimestamps);
+    return activeTimestamps;
+  }
+
   async consume(
     key: string,
     nowMs: number,
@@ -241,8 +279,13 @@ export class InMemorySlidingWindowStore implements SlidingWindowStore {
     limit: number,
   ): Promise<SlidingWindowDecision> {
     const cutoff = nowMs - windowMs;
-    this.pruneExpiredBuckets(cutoff);
-    const existing = [...(this.buckets.get(key) ?? [])];
+    this.operationsSinceSweep += 1;
+    if (this.operationsSinceSweep >= IN_MEMORY_SWEEP_INTERVAL) {
+      this.pruneExpiredBuckets(cutoff);
+      this.operationsSinceSweep = 0;
+    }
+
+    const existing = this.readActiveBucket(key, cutoff);
 
     if (existing.length >= limit) {
       const resetAtMs = (existing[0] ?? nowMs) + windowMs;
@@ -268,27 +311,36 @@ export class InMemorySlidingWindowStore implements SlidingWindowStore {
 }
 
 class RedisSlidingWindowStore implements SlidingWindowStore {
+  readonly distributed = true;
   private client: RedisClientType | null = null;
   private connectPromise: Promise<RedisClientType> | null = null;
+  private memberSequence = 0;
 
   constructor(private readonly url: string) {}
 
-  private async getClient(): Promise<RedisClientType> {
-    if (this.client?.isOpen) {
+  private getOrCreateClient(): RedisClientType {
+    if (this.client) {
       return this.client;
+    }
+
+    this.client = createClient({ url: this.url });
+    this.client.on("error", (error) => {
+      console.warn("[rate-limit] redis client error", error);
+    });
+    return this.client;
+  }
+
+  private async getClient(): Promise<RedisClientType> {
+    const client = this.getOrCreateClient();
+    if (client.isOpen) {
+      return client;
     }
     if (this.connectPromise) {
       return this.connectPromise;
     }
 
-    const client = createClient({ url: this.url });
-    client.on("error", (error) => {
-      console.warn("[rate-limit] redis client error", error);
-    });
-
     this.connectPromise = client.connect()
       .then(() => {
-        this.client = client;
         this.connectPromise = null;
         return client;
       })
@@ -298,6 +350,50 @@ class RedisSlidingWindowStore implements SlidingWindowStore {
       });
 
     return this.connectPromise;
+  }
+
+  private nextMember(nowMs: number): string {
+    this.memberSequence += 1;
+    return `${REDIS_MEMBER_PREFIX}:${nowMs}:${this.memberSequence}`;
+  }
+
+  private parseResult(
+    rawResult: unknown,
+    nowMs: number,
+    windowMs: number,
+    limit: number,
+  ): SlidingWindowDecision {
+    if (!Array.isArray(rawResult) || rawResult.length < 3) {
+      throw new Error("redis sliding-window script returned an invalid payload shape");
+    }
+
+    const [allowedValue, countValue, resetAtValue] = rawResult;
+    const allowedRaw = Number(allowedValue);
+    const count = Number(countValue);
+    const resetAtMs = Number(resetAtValue);
+
+    if (
+      !Number.isFinite(allowedRaw) ||
+      !Number.isFinite(count) ||
+      !Number.isFinite(resetAtMs) ||
+      (allowedRaw !== 0 && allowedRaw !== 1) ||
+      count < 0
+    ) {
+      throw new Error("redis sliding-window script returned non-numeric decision values");
+    }
+
+    const normalizedResetAtMs = resetAtMs > nowMs ? resetAtMs : nowMs + windowMs;
+    const allowed = allowedRaw === 1;
+
+    return {
+      allowed,
+      remaining: allowed ? Math.max(limit - count, 0) : 0,
+      resetAtMs: normalizedResetAtMs,
+      retryAfterSeconds: Math.max(
+        MIN_RATE_LIMIT_WINDOW_SECONDS,
+        Math.ceil((normalizedResetAtMs - nowMs) / 1000),
+      ),
+    };
   }
 
   async consume(
@@ -316,26 +412,30 @@ class RedisSlidingWindowStore implements SlidingWindowStore {
       String(nowMs),
       String(windowMs),
       String(limit),
-      `${nowMs}:${randomUUID()}`,
+      this.nextMember(nowMs),
     ]);
-
-    const [allowedRaw, countRaw, resetAtRaw] = result.map((value) => Number(value));
-    const allowed = allowedRaw === 1;
-    const count = Number.isFinite(countRaw) ? countRaw : 0;
-    const resetAtMs = Number.isFinite(resetAtRaw) ? resetAtRaw : nowMs + windowMs;
-
-    return {
-      allowed,
-      remaining: allowed ? Math.max(limit - count, 0) : 0,
-      resetAtMs,
-      retryAfterSeconds: Math.max(1, Math.ceil((resetAtMs - nowMs) / 1000)),
-    };
+    return this.parseResult(result, nowMs, windowMs, limit);
   }
 }
 
 let inMemoryStore: InMemorySlidingWindowStore | null = null;
 let redisStore: RedisSlidingWindowStore | null = null;
 let loggedRedisFailOpen = false;
+const cachedAiRateLimitWindowMs: CachedLimitValue = {
+  raw: undefined,
+  parsed: DEFAULT_AI_RATE_LIMIT_WINDOW_MS,
+  initialized: false,
+};
+const cachedAiRateLimitMax: CachedLimitValue = {
+  raw: undefined,
+  parsed: DEFAULT_AI_RATE_LIMIT_MAX,
+  initialized: false,
+};
+const cachedGameplayTelemetryRateLimitMax: CachedLimitValue = {
+  raw: undefined,
+  parsed: DEFAULT_GAMEPLAY_TELEMETRY_RATE_LIMIT_MAX,
+  initialized: false,
+};
 
 function getInMemoryStore(): InMemorySlidingWindowStore {
   inMemoryStore ??= new InMemorySlidingWindowStore();
@@ -353,14 +453,16 @@ function getSlidingWindowStore(): SlidingWindowStore {
 }
 
 function getAiRateLimitWindowMs(): number {
-  return readPositiveLimitFromEnv(
+  return readCachedPositiveLimit(
+    cachedAiRateLimitWindowMs,
     process.env.AI_RATE_LIMIT_WINDOW_MS,
     DEFAULT_AI_RATE_LIMIT_WINDOW_MS,
   );
 }
 
 function getAiRateLimitMax(): number {
-  return readPositiveLimitFromEnv(
+  return readCachedPositiveLimit(
+    cachedAiRateLimitMax,
     process.env.AI_RATE_LIMIT_MAX,
     DEFAULT_AI_RATE_LIMIT_MAX,
   );
@@ -369,10 +471,16 @@ function getAiRateLimitMax(): number {
 function applyRateLimitHeaders(
   res: Response,
   limit: number,
+  windowMs: number,
   remaining: number,
   resetAtMs: number,
 ): void {
+  const windowSeconds = Math.max(
+    MIN_RATE_LIMIT_WINDOW_SECONDS,
+    Math.ceil(windowMs / 1000),
+  );
   res.setHeader("RateLimit-Limit", String(limit));
+  res.setHeader("RateLimit-Policy", `${limit};w=${windowSeconds}`);
   res.setHeader("RateLimit-Remaining", String(Math.max(remaining, 0)));
   res.setHeader(
     "RateLimit-Reset",
@@ -398,7 +506,7 @@ function createSlidingWindowRateLimit(options: {
       try {
         decision = await store.consume(key, nowMs, windowMs, limit);
       } catch (error) {
-        if (store instanceof RedisSlidingWindowStore) {
+        if (store.distributed) {
           if (!loggedRedisFailOpen) {
             console.warn(
               "[rate-limit] redis unavailable, failing open for AI rate limiting",
@@ -416,7 +524,17 @@ function createSlidingWindowRateLimit(options: {
         throw error;
       }
 
-      applyRateLimitHeaders(res, limit, decision.remaining, decision.resetAtMs);
+      if (loggedRedisFailOpen) {
+        loggedRedisFailOpen = false;
+      }
+
+      applyRateLimitHeaders(
+        res,
+        limit,
+        windowMs,
+        decision.remaining,
+        decision.resetAtMs,
+      );
 
       if (!decision.allowed) {
         res.setHeader("Retry-After", String(decision.retryAfterSeconds));
@@ -441,7 +559,8 @@ export const aiRateLimit = createSlidingWindowRateLimit({
 
 export const gameplayTelemetryRateLimit = rateLimit({
   windowMs: DEFAULT_AI_RATE_LIMIT_WINDOW_MS,
-  limit: () => readPositiveLimitFromEnv(
+  limit: () => readCachedPositiveLimit(
+    cachedGameplayTelemetryRateLimitMax,
     process.env.GAMEPLAY_TELEMETRY_RATE_LIMIT_MAX,
     DEFAULT_GAMEPLAY_TELEMETRY_RATE_LIMIT_MAX,
   ),
