@@ -108,7 +108,6 @@ function readHeader(value: string | string[] | undefined): string | undefined {
 function shouldTreatReqIpAsTrustedFallback(): boolean {
   return process.env.TRUST_PROXY_HEADERS !== "true";
 }
-
 function hasCookie(cookieHeader: string, name: string): boolean {
   return cookieHeader
     .split(";")
