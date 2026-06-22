@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   ANONYMOUS_PROOF_COOKIE,
   VIEWER_SESSION_COOKIE,
@@ -74,6 +74,21 @@ describe("getRateLimitKey", () => {
     );
   });
 
+  it("uses sessionToken identity for AI routes beyond hardcoded prefixes", () => {
+    const requestA = createRequest({
+      originalUrl: "/api/ai/new-route",
+      body: { sessionToken: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa" },
+    });
+    const requestB = createRequest({
+      originalUrl: "/api/ai/new-route",
+      body: { sessionToken: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb" },
+    });
+
+    expect(getRateLimitKey(requestA, "anti-abuse-secret")).not.toBe(
+      getRateLimitKey(requestB, "anti-abuse-secret"),
+    );
+  });
+
   it("falls back to the IP bucket when chat sessionToken is not a UUID", () => {
     const fallbackRequest = createRequest({
       originalUrl: "/api/chat",
@@ -129,6 +144,34 @@ describe("getRateLimitKey", () => {
     expect(getRateLimitKey(requestA, "anti-abuse-secret")).not.toBe(
       getRateLimitKey(requestB, "anti-abuse-secret"),
     );
+  });
+
+  it("warns once when viewer cookie exists but AUTH_SESSION_SECRET is missing", () => {
+    const now = Date.now();
+    const viewerCookie = createViewerSessionToken({
+      kind: "github",
+      githubUserId: "viewer-a",
+      githubLogin: "viewer-a",
+      displayName: "Viewer A",
+      avatarUrl: null,
+      issuedAt: now,
+      expiresAt: now + 60_000,
+    }, "auth-session-secret");
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const request = createRequest({
+      originalUrl: "/api/scenario",
+      headers: {
+        ...createRequest().headers,
+        cookie: `${VIEWER_SESSION_COOKIE}=${viewerCookie}`,
+      },
+    });
+
+    getRateLimitKey(request, "anti-abuse-secret", undefined);
+    getRateLimitKey(request, "anti-abuse-secret", undefined);
+
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    warnSpy.mockRestore();
   });
 
   it("uses the anonymous proof cookie for anonymous scenario requests", () => {
