@@ -98,6 +98,14 @@ function isScenarioProxyRequest(request: NextRequest): boolean {
   return request.method === "POST" && request.nextUrl.pathname === "/api/scenario";
 }
 
+function isAiProxyRequest(request: NextRequest): boolean {
+  return request.method === "POST" && (
+    request.nextUrl.pathname === "/api/chat" ||
+    request.nextUrl.pathname === "/api/command" ||
+    request.nextUrl.pathname === "/api/scenario"
+  );
+}
+
 function buildSafeRequestId(): string | undefined {
   try {
     return crypto.randomUUID();
@@ -130,7 +138,7 @@ async function proxyRequest(request: NextRequest): Promise<NextResponse> {
   const hasBody = request.method !== "GET" && request.method !== "HEAD";
   const antiAbuseSecret = process.env.ANTI_ABUSE_HMAC_SECRET;
   const clientIp = getTrustedClientIp(request);
-  if (trustProxyHeaders && isScenarioProxyRequest(request) && !clientIp) {
+  if (trustProxyHeaders && isAiProxyRequest(request) && !clientIp) {
     return NextResponse.json({ error: "Trusted proxy client IP verification failed" }, { status: 400 });
   }
   if (clientIp && antiAbuseSecret) {
