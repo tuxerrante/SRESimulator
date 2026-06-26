@@ -41,6 +41,20 @@ function createRequest(overrides: Partial<TestRequest> = {}): TestRequest {
   };
 }
 
+async function createStoredSessionToken(label: string): Promise<string> {
+  const storageModule = await import("./storage");
+  await storageModule.initStorage();
+  return storageModule.getSessionStore().create("easy", label);
+}
+
+async function resolveKey(
+  request: TestRequest,
+  antiAbuseSecret = "anti-abuse-secret",
+  authSessionSecret?: string,
+): Promise<string> {
+  return getRateLimitKey(request, antiAbuseSecret, authSessionSecret);
+}
+
 describe("getRateLimitKey", () => {
   const originalTrustProxyHeaders = process.env.TRUST_PROXY_HEADERS;
   const originalAuthSessionSecret = process.env.AUTH_SESSION_SECRET;
@@ -59,37 +73,41 @@ describe("getRateLimitKey", () => {
     }
   });
 
-  it("separates chat requests by session token even behind a shared IP", () => {
+  it("separates chat requests by stored session token even behind a shared IP", async () => {
+    const sessionTokenA = await createStoredSessionToken("Session A");
+    const sessionTokenB = await createStoredSessionToken("Session B");
     const requestA = createRequest({
       originalUrl: "/api/chat",
-      body: { sessionToken: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa" },
+      body: { sessionToken: sessionTokenA },
     });
     const requestB = createRequest({
       originalUrl: "/api/chat",
-      body: { sessionToken: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb" },
+      body: { sessionToken: sessionTokenB },
     });
 
-    expect(getRateLimitKey(requestA, "anti-abuse-secret")).not.toBe(
-      getRateLimitKey(requestB, "anti-abuse-secret"),
-    );
+    const keyA = await resolveKey(requestA);
+    const keyB = await resolveKey(requestB);
+    expect(keyA).not.toBe(keyB);
   });
 
-  it("uses sessionToken identity for AI routes beyond hardcoded prefixes", () => {
+  it("uses stored sessionToken identity for AI routes beyond hardcoded prefixes", async () => {
+    const sessionTokenA = await createStoredSessionToken("New Route Session A");
+    const sessionTokenB = await createStoredSessionToken("New Route Session B");
     const requestA = createRequest({
       originalUrl: "/api/ai/new-route",
-      body: { sessionToken: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa" },
+      body: { sessionToken: sessionTokenA },
     });
     const requestB = createRequest({
       originalUrl: "/api/ai/new-route",
-      body: { sessionToken: "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb" },
+      body: { sessionToken: sessionTokenB },
     });
 
-    expect(getRateLimitKey(requestA, "anti-abuse-secret")).not.toBe(
-      getRateLimitKey(requestB, "anti-abuse-secret"),
-    );
+    const keyA = await resolveKey(requestA);
+    const keyB = await resolveKey(requestB);
+    expect(keyA).not.toBe(keyB);
   });
 
-  it("falls back to the IP bucket when chat sessionToken is not a UUID", () => {
+  it("falls back to the IP bucket when chat sessionToken is not a UUID", async () => {
     const fallbackRequest = createRequest({
       originalUrl: "/api/chat",
       body: { sessionToken: "not-a-uuid" },
@@ -99,12 +117,26 @@ describe("getRateLimitKey", () => {
       body: {},
     });
 
-    expect(getRateLimitKey(fallbackRequest, "anti-abuse-secret")).toBe(
-      getRateLimitKey(ipRequest, "anti-abuse-secret"),
-    );
+    expect(await resolveKey(fallbackRequest)).toBe(await resolveKey(ipRequest));
   });
 
-  it("uses the viewer session cookie for scenario requests", () => {
+  it("falls back to the IP bucket when chat sessionToken is not a stored session", async () => {
+    await createStoredSessionToken("Existing Session");
+    const fallbackRequest = createRequest({
+      originalUrl: "/api/chat",
+      body: { sessionToken: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa" },
+    });
+    const ipRequest = createRequest({
+      originalUrl: "/api/chat",
+      body: {},
+    });
+
+    const fallbackKey = await resolveKey(fallbackRequest);
+    const ipKey = await resolveKey(ipRequest);
+    expect(fallbackKey).toBe(ipKey);
+  });
+
+  it("uses the viewer session cookie for scenario requests", async () => {
     process.env.AUTH_SESSION_SECRET = "auth-session-secret";
     const now = Date.now();
     const viewerCookieA = createViewerSessionToken({
@@ -141,12 +173,10 @@ describe("getRateLimitKey", () => {
       },
     });
 
-    expect(getRateLimitKey(requestA, "anti-abuse-secret")).not.toBe(
-      getRateLimitKey(requestB, "anti-abuse-secret"),
-    );
+    expect(await resolveKey(requestA)).not.toBe(await resolveKey(requestB));
   });
 
-  it("warns once when viewer cookie exists but AUTH_SESSION_SECRET is missing", () => {
+  it("warns once when viewer cookie exists but AUTH_SESSION_SECRET is missing", async () => {
     const now = Date.now();
     const viewerCookie = createViewerSessionToken({
       kind: "github",
@@ -167,14 +197,14 @@ describe("getRateLimitKey", () => {
       },
     });
 
-    getRateLimitKey(request, "anti-abuse-secret", undefined);
-    getRateLimitKey(request, "anti-abuse-secret", undefined);
+    await resolveKey(request, "anti-abuse-secret", undefined);
+    await resolveKey(request, "anti-abuse-secret", undefined);
 
     expect(warnSpy).toHaveBeenCalledTimes(1);
     warnSpy.mockRestore();
   });
 
-  it("uses the anonymous proof cookie for anonymous scenario requests", () => {
+  it("uses the anonymous proof cookie for anonymous scenario requests", async () => {
     const userAgent = "vitest-agent";
     const now = Date.now();
     const anonymousProofA = createAnonymousProofToken({
@@ -207,17 +237,15 @@ describe("getRateLimitKey", () => {
       },
     });
 
-    expect(getRateLimitKey(requestA, "anti-abuse-secret")).not.toBe(
-      getRateLimitKey(requestB, "anti-abuse-secret"),
-    );
+    expect(await resolveKey(requestA)).not.toBe(await resolveKey(requestB));
   });
 
-  it("uses the verified signed client IP when available", () => {
+  it("uses the verified signed client IP when available", async () => {
     const secret = "test-hmac";
     const signedIp = "2001:db8::10";
     const signature = createSignedClientIp(signedIp, secret);
 
-    const key = getRateLimitKey(
+    const key = await resolveKey(
       createRequest({
         ip: "10.0.0.5",
         headers: {
@@ -233,8 +261,8 @@ describe("getRateLimitKey", () => {
     expect(key).toBeTruthy();
   });
 
-  it("falls back to req.ip when the signed client IP is missing or invalid", () => {
-    const key = getRateLimitKey(
+  it("falls back to req.ip when the signed client IP is missing or invalid", async () => {
+    const key = await resolveKey(
       createRequest({
         ip: "203.0.113.44",
         headers: {
@@ -248,7 +276,7 @@ describe("getRateLimitKey", () => {
 
     expect(key).toBeTruthy();
     expect(key).not.toBe(
-      getRateLimitKey(
+      await resolveKey(
         createRequest({
           ip: "198.51.100.10",
           headers: {},
@@ -258,9 +286,9 @@ describe("getRateLimitKey", () => {
     );
   });
 
-  it("prefers req.ip over socket remote address when signed headers are invalid", () => {
+  it("prefers req.ip over socket remote address when signed headers are invalid", async () => {
     delete process.env.TRUST_PROXY_HEADERS;
-    const key = getRateLimitKey(
+    const key = await resolveKey(
       createRequest({
         ip: "198.51.100.200",
         socket: { remoteAddress: "10.0.0.15" },
@@ -272,16 +300,16 @@ describe("getRateLimitKey", () => {
       "test-hmac",
     );
 
-    const reqIpKey = getRateLimitKey(
+    const reqIpKey = await resolveKey(
       createRequest({ ip: "198.51.100.200", headers: {} }),
       "test-hmac",
     );
     expect(key).toBe(reqIpKey);
   });
 
-  it("prefers socket remote address over req.ip when trust proxy headers are enabled", () => {
+  it("prefers socket remote address over req.ip when trust proxy headers are enabled", async () => {
     process.env.TRUST_PROXY_HEADERS = "true";
-    const key = getRateLimitKey(
+    const key = await resolveKey(
       createRequest({
         ip: "198.51.100.200",
         socket: { remoteAddress: "10.0.0.15" },
@@ -293,7 +321,7 @@ describe("getRateLimitKey", () => {
       "test-hmac",
     );
 
-    const socketKey = getRateLimitKey(
+    const socketKey = await resolveKey(
       createRequest({
         ip: "127.0.0.1",
         socket: { remoteAddress: "10.0.0.15" },
@@ -304,9 +332,9 @@ describe("getRateLimitKey", () => {
     expect(key).toBe(socketKey);
   });
 
-  it("uses socket remote address when trust proxy headers are enabled and signed headers are missing", () => {
+  it("uses socket remote address when trust proxy headers are enabled and signed headers are missing", async () => {
     process.env.TRUST_PROXY_HEADERS = "true";
-    const key = getRateLimitKey(
+    const key = await resolveKey(
       createRequest({
         ip: "198.51.100.200",
         socket: { remoteAddress: "10.0.0.15" },
@@ -315,7 +343,7 @@ describe("getRateLimitKey", () => {
       "test-hmac",
     );
 
-    const socketKey = getRateLimitKey(
+    const socketKey = await resolveKey(
       createRequest({
         ip: undefined,
         socket: { remoteAddress: "10.0.0.15" },
@@ -326,9 +354,9 @@ describe("getRateLimitKey", () => {
     expect(key).toBe(socketKey);
   });
 
-  it("does not trust req.ip fallback when trust proxy headers are enabled and socket is unavailable", () => {
+  it("does not trust req.ip fallback when trust proxy headers are enabled and socket is unavailable", async () => {
     process.env.TRUST_PROXY_HEADERS = "true";
-    const key = getRateLimitKey(
+    const key = await resolveKey(
       createRequest({
         ip: "198.51.100.200",
         socket: undefined,
@@ -343,9 +371,9 @@ describe("getRateLimitKey", () => {
     expect(key).toBe("unknown");
   });
 
-  it("falls back to socket remote address when req.ip is unavailable", () => {
+  it("falls back to socket remote address when req.ip is unavailable", async () => {
     delete process.env.TRUST_PROXY_HEADERS;
-    const key = getRateLimitKey(
+    const key = await resolveKey(
       createRequest({
         ip: undefined,
         socket: { remoteAddress: "10.0.0.15" },
@@ -357,7 +385,7 @@ describe("getRateLimitKey", () => {
       "test-hmac",
     );
 
-    const socketKey = getRateLimitKey(
+    const socketKey = await resolveKey(
       createRequest({
         ip: undefined,
         socket: { remoteAddress: "10.0.0.15" },

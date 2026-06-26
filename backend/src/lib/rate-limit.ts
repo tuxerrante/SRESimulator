@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import rateLimit, { ipKeyGenerator } from "express-rate-limit";
 import { VIEWER_SESSION_COOKIE } from "../../../shared/auth/constants";
 import { verifySignedClientIp } from "../../../shared/auth/client-ip";
+import { getSessionStore } from "./storage";
 import { readAnonymousProofFromCookieHeader, readViewerFromCookieHeader } from "./viewer-auth";
 
 interface RateLimitRequestLike {
@@ -46,7 +47,7 @@ function hashToken(token: string): string {
   return createHash("sha256").update(token).digest("hex").slice(0, 16);
 }
 
-function getSessionTokenIdentity(req: RateLimitRequestLike): string | null {
+async function getSessionTokenIdentity(req: RateLimitRequestLike): Promise<string | null> {
   if (!isRecord(req.body)) {
     return null;
   }
@@ -58,6 +59,15 @@ function getSessionTokenIdentity(req: RateLimitRequestLike): string | null {
 
   const trimmed = sessionToken.trim();
   if (!UUID_RE.test(trimmed)) {
+    return null;
+  }
+
+  try {
+    const session = await getSessionStore().get(trimmed);
+    if (!session || session.used) {
+      return null;
+    }
+  } catch {
     return null;
   }
 
@@ -160,12 +170,13 @@ export function getIpRateLimitKey(
   return getIpFallbackIdentity(req, antiAbuseSecret);
 }
 
-export function getRateLimitKey(
+export async function getRateLimitKey(
   req: RateLimitRequestLike,
   antiAbuseSecret = process.env.ANTI_ABUSE_HMAC_SECRET,
   authSessionSecret = process.env.AUTH_SESSION_SECRET,
-): string {
-  return getSessionTokenIdentity(req)
+): Promise<string> {
+  const sessionIdentity = await getSessionTokenIdentity(req);
+  return sessionIdentity
     ?? getScenarioCookieIdentity(req, antiAbuseSecret, authSessionSecret)
     ?? getIpFallbackIdentity(req, antiAbuseSecret);
 }
@@ -185,7 +196,7 @@ export const aiRateLimit = rateLimit({
   message: {
     error: "Too many requests. Please slow down and try again in a moment.",
   },
-  keyGenerator: (req) => getRateLimitKey(req),
+  keyGenerator: async (req) => getRateLimitKey(req),
 });
 
 export const gameplayTelemetryRateLimit = rateLimit({
