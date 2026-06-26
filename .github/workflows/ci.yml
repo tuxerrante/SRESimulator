@@ -336,7 +336,7 @@ jobs:
       - name: Setup Helm
         # v5.0.0
         uses: >-
-          azure/setup-helm@dda3372f752e03dde6b3237bc9431cdc2f7a02a2
+          azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310
 
       - name: Run integration tests (mock mode)
         run: make test-integration
@@ -399,7 +399,7 @@ jobs:
       - name: Setup Helm
         # v5.0.0
         uses: >-
-          azure/setup-helm@dda3372f752e03dde6b3237bc9431cdc2f7a02a2
+          azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310
 
       - name: Create sresimulator database
         working-directory: backend
@@ -518,7 +518,7 @@ jobs:
       - name: Setup Helm
         # v5.0.0
         uses: >-
-          azure/setup-helm@dda3372f752e03dde6b3237bc9431cdc2f7a02a2
+          azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310
 
       - name: Helm lint
         run: helm lint ./helm/sre-simulator
