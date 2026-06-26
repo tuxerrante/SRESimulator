@@ -113,7 +113,7 @@ upsert_secret_literal_key() {
 # Returns the first non-empty trimmed line to avoid accidental multiline
 # values from CI/runtime env expansion.
 sanitize_single_line_value() {
-  local raw_value=${1-}
+  local raw_value="${1-}"
   local line
 
   raw_value="${raw_value//$'\r'/}"
