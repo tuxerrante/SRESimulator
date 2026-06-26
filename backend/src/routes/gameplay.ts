@@ -154,11 +154,11 @@ const gameplayAdminRateLimit = rateLimit({
   message: {
     error: "Too many gameplay admin requests. Please retry in a moment.",
   },
-  keyGenerator: (req, res) => {
+  keyGenerator: async (req, res) => {
     const bucket = hasPreparedGameplayAdminAccess(res)
       ? GAMEPLAY_ADMIN_AUTH_KEY
       : GAMEPLAY_ADMIN_ANON_KEY;
-    return `${bucket}:${getRateLimitKey(req)}`;
+    return `${bucket}:${await getRateLimitKey(req)}`;
   },
 });
 
