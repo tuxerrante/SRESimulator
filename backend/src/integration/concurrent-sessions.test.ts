@@ -20,7 +20,9 @@ const externalSessionTokens = (process.env.E2E_SESSION_TOKENS ?? "")
 let chatSessionTokens: string[] = [];
 
 function sessionTokenFor(index: number): string {
-  return chatSessionTokens[index] ?? chatSessionTokens[0] ?? "session-token";
+  return chatSessionTokens[index]
+    ?? chatSessionTokens[0]
+    ?? "00000000-0000-4000-8000-000000000001";
 }
 
 async function createLocalApp(withRateLimit: boolean) {
@@ -282,7 +284,7 @@ describe("rate-limit behavior", { timeout: 120_000 }, () => {
     expect(result.status).toBe(200);
   });
 
-  it("returns 429 after exceeding per-IP rate limit", async () => {
+  it("does not throttle distinct sessions that share the same source IP", async () => {
     if (isExternalTarget()) {
       const bodies = Array.from({ length: 20 }, (_, i) =>
         buildChatBody(1, "reading", sessionTokenFor(i)),
@@ -301,19 +303,56 @@ describe("rate-limit behavior", { timeout: 120_000 }, () => {
         )
         .map((r) => r.value.status);
 
-      expect(statuses.some((s) => s === 200)).toBe(true);
+      expect(statuses.every((status) => status === 200)).toBe(true);
       return;
     }
 
-    // Local: 15 req/min/IP limit. Fire 20 requests sequentially.
+    // Distinct sessions should not share the same rate-limit bucket.
     const results: number[] = [];
     for (let i = 0; i < 20; i++) {
       const r = await postChatSSE(rateLimitUrl, buildChatBody(1, "reading", sessionTokenFor(i)));
       results.push(r.status);
     }
 
-    const throttled = results.filter((s) => s === 429).length;
-    expect(throttled).toBeGreaterThan(0);
+    expect(results).toEqual(Array.from({ length: 20 }, () => 200));
+  });
+
+  it("returns 429 after exceeding the per-session rate limit", async () => {
+    const repeatedSessionToken = sessionTokenFor(0);
+
+    if (isExternalTarget()) {
+      const bodies = Array.from({ length: 20 }, () =>
+        buildChatBody(1, "reading", repeatedSessionToken),
+      );
+      const results = await Promise.allSettled(
+        bodies.map((body) => postChatSSE(rateLimitUrl, body)),
+      );
+
+      const statuses = results
+        .filter(
+          (
+            result,
+          ): result is PromiseFulfilledResult<
+            Awaited<ReturnType<typeof postChatSSE>>
+          > => result.status === "fulfilled",
+        )
+        .map((result) => result.value.status);
+
+      expect(statuses.some((status) => status === 200)).toBe(true);
+      expect(statuses.some((status) => status === 429)).toBe(true);
+      return;
+    }
+
+    const results: number[] = [];
+    for (let i = 0; i < 20; i++) {
+      const response = await postChatSSE(
+        rateLimitUrl,
+        buildChatBody(1, "reading", repeatedSessionToken),
+      );
+      results.push(response.status);
+    }
+
+    expect(results.filter((status) => status === 429).length).toBeGreaterThan(0);
   });
 
   it("recovers after rate limit window expires", async () => {

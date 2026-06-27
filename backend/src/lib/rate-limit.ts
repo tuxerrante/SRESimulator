@@ -1,5 +1,9 @@
+import { createHash } from "node:crypto";
 import rateLimit, { ipKeyGenerator } from "express-rate-limit";
+import { VIEWER_SESSION_COOKIE } from "../../../shared/auth/constants";
 import { verifySignedClientIp } from "../../../shared/auth/client-ip";
+import { getSessionStore } from "./storage";
+import { readAnonymousProofFromCookieHeader, readViewerFromCookieHeader } from "./viewer-auth";
 
 interface RateLimitRequestLike {
   ip?: string;
@@ -7,6 +11,8 @@ interface RateLimitRequestLike {
     remoteAddress?: string;
   };
   headers: Record<string, string | string[] | undefined>;
+  originalUrl?: string;
+  body?: unknown;
 }
 
 function readPositiveLimitFromEnv(
@@ -21,14 +27,102 @@ function shouldTreatReqIpAsTrustedFallback(): boolean {
   return process.env.TRUST_PROXY_HEADERS !== "true";
 }
 
-export function getRateLimitKey(
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function readHeader(value: string | string[] | undefined): string | undefined {
+  return Array.isArray(value) ? value[0] : value;
+}
+
+function hasCookie(cookieHeader: string, name: string): boolean {
+  return cookieHeader
+    .split(";")
+    .some((value) => value.trim().startsWith(`${name}=`));
+}
+
+const UUID_RE = /^[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}$/i;
+
+function hashToken(token: string): string {
+  return createHash("sha256").update(token).digest("hex").slice(0, 16);
+}
+
+async function getSessionTokenIdentity(req: RateLimitRequestLike): Promise<string | null> {
+  if (!isRecord(req.body)) {
+    return null;
+  }
+
+  const sessionToken = req.body.sessionToken;
+  if (typeof sessionToken !== "string" || sessionToken.trim() === "") {
+    return null;
+  }
+
+  const trimmed = sessionToken.trim();
+  if (!UUID_RE.test(trimmed)) {
+    return null;
+  }
+
+  try {
+    const session = await getSessionStore().get(trimmed);
+    if (!session || session.used) {
+      return null;
+    }
+  } catch {
+    return null;
+  }
+
+  return `session:${hashToken(trimmed)}`;
+}
+
+let loggedMissingAuthSessionSecret = false;
+
+function getScenarioCookieIdentity(
   req: RateLimitRequestLike,
-  antiAbuseSecret = process.env.ANTI_ABUSE_HMAC_SECRET,
-): string {
-  const signedIpHeader = req.headers["x-sresim-client-ip"];
-  const signatureHeader = req.headers["x-sresim-client-ip-signature"];
-  const signedIp = Array.isArray(signedIpHeader) ? signedIpHeader[0] : signedIpHeader;
-  const signature = Array.isArray(signatureHeader) ? signatureHeader[0] : signatureHeader;
+  antiAbuseSecret: string | undefined,
+  authSessionSecret: string | undefined,
+): string | null {
+  const cookieHeader = readHeader(req.headers.cookie);
+  if (!cookieHeader) {
+    return null;
+  }
+
+  const hasViewerSessionCookie = hasCookie(cookieHeader, VIEWER_SESSION_COOKIE);
+  if (hasViewerSessionCookie && !authSessionSecret && !loggedMissingAuthSessionSecret) {
+    console.warn(
+      "[rate-limit] AUTH_SESSION_SECRET missing; viewer session cookies cannot be used for limiter identity",
+    );
+    loggedMissingAuthSessionSecret = true;
+  }
+
+  if (authSessionSecret) {
+    const viewer = readViewerFromCookieHeader(cookieHeader, authSessionSecret);
+    if (viewer?.githubUserId) {
+      return `viewer:${viewer.githubUserId}`;
+    }
+  }
+
+  if (!antiAbuseSecret) {
+    return null;
+  }
+
+  const userAgent = readHeader(req.headers["user-agent"]) ?? "unknown";
+  const anonymousProof = readAnonymousProofFromCookieHeader(
+    cookieHeader,
+    antiAbuseSecret,
+    userAgent,
+  );
+
+  return anonymousProof?.fingerprintHash
+    ? `anonymous:${anonymousProof.fingerprintHash}`
+    : null;
+}
+
+function getSignedClientIp(
+  req: RateLimitRequestLike,
+  antiAbuseSecret: string | undefined,
+): string | null {
+  const signedIp = readHeader(req.headers["x-sresim-client-ip"])?.trim();
+  const signature = readHeader(req.headers["x-sresim-client-ip-signature"])?.trim();
 
   if (
     antiAbuseSecret &&
@@ -36,25 +130,55 @@ export function getRateLimitKey(
     signature &&
     verifySignedClientIp(signedIp, signature, antiAbuseSecret)
   ) {
-    return ipKeyGenerator(signedIp);
+    return signedIp;
+  }
+
+  return null;
+}
+
+function getIpFallbackIdentity(
+  req: RateLimitRequestLike,
+  antiAbuseSecret: string | undefined,
+): string {
+  const signedClientIp = getSignedClientIp(req, antiAbuseSecret);
+  if (signedClientIp) {
+    return `ip:${ipKeyGenerator(signedClientIp)}`;
   }
 
   if (shouldTreatReqIpAsTrustedFallback()) {
     if (req.ip) {
-      return ipKeyGenerator(req.ip);
+      return `ip:${ipKeyGenerator(req.ip)}`;
     }
     const socketIp = req.socket?.remoteAddress;
     if (socketIp) {
-      return ipKeyGenerator(socketIp);
+      return `ip:${ipKeyGenerator(socketIp)}`;
     }
   } else {
     const socketIp = req.socket?.remoteAddress;
     if (socketIp) {
-      return ipKeyGenerator(socketIp);
+      return `ip:${ipKeyGenerator(socketIp)}`;
     }
   }
 
   return "unknown";
+}
+
+export function getIpRateLimitKey(
+  req: RateLimitRequestLike,
+  antiAbuseSecret = process.env.ANTI_ABUSE_HMAC_SECRET,
+): string {
+  return getIpFallbackIdentity(req, antiAbuseSecret);
+}
+
+export async function getRateLimitKey(
+  req: RateLimitRequestLike,
+  antiAbuseSecret = process.env.ANTI_ABUSE_HMAC_SECRET,
+  authSessionSecret = process.env.AUTH_SESSION_SECRET,
+): Promise<string> {
+  const sessionIdentity = await getSessionTokenIdentity(req);
+  return sessionIdentity
+    ?? getScenarioCookieIdentity(req, antiAbuseSecret, authSessionSecret)
+    ?? getIpFallbackIdentity(req, antiAbuseSecret);
 }
 
 /**
@@ -72,7 +196,7 @@ export const aiRateLimit = rateLimit({
   message: {
     error: "Too many requests. Please slow down and try again in a moment.",
   },
-  keyGenerator: (req) => getRateLimitKey(req),
+  keyGenerator: async (req) => getRateLimitKey(req),
 });
 
 export const gameplayTelemetryRateLimit = rateLimit({
@@ -83,5 +207,5 @@ export const gameplayTelemetryRateLimit = rateLimit({
   message: {
     error: "Too many gameplay telemetry events. Please slow down and try again shortly.",
   },
-  keyGenerator: (req) => getRateLimitKey(req),
+  keyGenerator: (req) => getIpRateLimitKey(req),
 });
