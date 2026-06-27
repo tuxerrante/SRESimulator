@@ -35,15 +35,7 @@ export default function HomePage() {
   const setViewer = useGameStore((s) => s.setViewer);
   const clearViewer = useGameStore((s) => s.clearViewer);
   const [loading, setLoading] = useState<Difficulty | null>(null);
-  const [error, setError] = useState<string | null>(() => {
-    if (typeof window === "undefined") {
-      return null;
-    }
-    const params = new URLSearchParams(window.location.search);
-    return params.get("error")
-      ? "GitHub sign-in failed. Please try again."
-      : null;
-  });
+  const [error, setError] = useState<string | null>(null);
   const [adminAnalyticsEnabled, setAdminAnalyticsEnabled] = useState(false);
   const [authConfigured, setAuthConfigured] = useState(false);
   const [sessionReady, setSessionReady] = useState(false);
@@ -112,7 +104,11 @@ export default function HomePage() {
 
     const params = new URLSearchParams(window.location.search);
     if (params.get("error")) {
+      const timeoutId = window.setTimeout(() => {
+        setError("GitHub sign-in failed. Please try again.");
+      }, 0);
       window.history.replaceState({}, "", "/");
+      return () => window.clearTimeout(timeoutId);
     }
   }, [clearViewer, hydrateNickname, setViewer]);
 
