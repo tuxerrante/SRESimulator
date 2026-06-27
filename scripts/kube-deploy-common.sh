@@ -109,18 +109,42 @@ upsert_secret_literal_key() {
     -p "{\"data\":{\"${key}\":\"${encoded}\"}}" >/dev/null
 }
 
+# Usage: sanitize_single_line_value <raw_value>
+# Returns the first non-empty trimmed line to avoid accidental multiline
+# values from CI/runtime env expansion.
+sanitize_single_line_value() {
+  local raw_value="${1-}"
+  local line
+
+  raw_value="${raw_value//$'\r'/}"
+  while IFS= read -r line || [ -n "$line" ]; do
+    line="${line#"${line%%[![:space:]]*}"}"
+    line="${line%"${line##*[![:space:]]}"}"
+    if [ -n "$line" ]; then
+      printf '%s\n' "$line"
+      return 0
+    fi
+  done <<<"$raw_value"
+
+  printf '%s\n' ""
+}
+
 # Usage: ensure_auth_secret_for_e2e_namespace <dst_ns>
 # Resolves/creates the auth Secret used by Helm and prints the resolved secret
 # name, or prints an empty string when auth remains intentionally unset.
 ensure_auth_secret_for_e2e_namespace() {
   local dst_ns=$1
-  local secret_name="${GITHUB_AUTH_SECRET_NAME:-${E2E_AUTH_SECRET_NAME:-}}"
+  local github_auth_secret_name e2e_auth_secret_name secret_name
   local src_ns turnstile_site_key has_runtime_values=false
 
-  if [ -n "${GITHUB_AUTH_SECRET_NAME:-}" ]; then
+  github_auth_secret_name="$(sanitize_single_line_value "${GITHUB_AUTH_SECRET_NAME:-}")"
+  e2e_auth_secret_name="$(sanitize_single_line_value "${E2E_AUTH_SECRET_NAME:-}")"
+  secret_name="${github_auth_secret_name:-${e2e_auth_secret_name}}"
+
+  if [ -n "$github_auth_secret_name" ]; then
     src_ns="${AUTH_SECRET_SOURCE_NAMESPACE:-${PROD_NAMESPACE:-sre-simulator}}"
-    echo "Ensuring auth secret in '$dst_ns' (from namespace '$src_ns', secret '${GITHUB_AUTH_SECRET_NAME}'; payload not logged)."
-    copy_secret_across_namespaces "$src_ns" "$dst_ns" "$GITHUB_AUTH_SECRET_NAME" || return 1
+    echo "Ensuring auth secret in '$dst_ns' (from namespace '$src_ns', secret '${github_auth_secret_name}'; payload not logged)." >&2
+    copy_secret_across_namespaces "$src_ns" "$dst_ns" "$github_auth_secret_name" || return 1
   fi
 
   turnstile_site_key="${TURNSTILE_SITE_KEY:-${NEXT_PUBLIC_TURNSTILE_SITE_KEY:-}}"
@@ -135,7 +159,7 @@ ensure_auth_secret_for_e2e_namespace() {
   fi
 
   if [ -z "$secret_name" ] && [ "$has_runtime_values" = true ]; then
-    secret_name="${E2E_AUTH_SECRET_NAME:-sre-auth-secrets}"
+    secret_name="${e2e_auth_secret_name:-sre-auth-secrets}"
   fi
 
   if [ -z "$secret_name" ]; then
