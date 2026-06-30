@@ -601,6 +601,51 @@ run_frontend_auth_secret_flag_check() {
   assert_contains "backend.auth.authSessionSecretKey=auth-session-secret" "$TMP_DIR/helm-args.txt"
 }
 
+run_auth_secret_resolution_sanitizes_and_keeps_helm_args_clean_check() {
+  # shellcheck disable=SC1091
+  source "$ROOT_DIR/scripts/aks-deploy.sh"
+  capture_helm_invocation
+
+  require_cli() { :; }
+  ensure_namespace() { :; }
+  resolve_aks_public_endpoint() {
+    AKS_FRONTEND_PUBLIC_IP_NAME="example-frontend-pip"
+    AKS_FRONTEND_PUBLIC_IP="203.0.113.10"
+    AKS_FRONTEND_PUBLIC_FQDN="aks.example.test"
+    AKS_FRONTEND_PUBLIC_ENDPOINT_HOST="aks.example.test"
+  }
+  copy_secret_across_namespaces() {
+    printf '%s|%s|%s\n' "$1" "$2" "$3" >"$TMP_DIR/auth-secret-copy.txt"
+  }
+  upsert_secret_literal_key() { :; }
+
+  unset AKS_GATEWAY_HOST AKS_GATEWAY_CLASS_NAME \
+    AKS_CLUSTER_ISSUER_NAME AKS_GATEWAY_TLS_SECRET_NAME || true
+  unset E2E_AUTH_SECRET_NAME GITHUB_CLIENT_ID GITHUB_CLIENT_SECRET AUTH_SESSION_SECRET || true
+  unset ANTI_ABUSE_HMAC_SECRET TURNSTILE_SITE_KEY NEXT_PUBLIC_TURNSTILE_SITE_KEY || true
+  unset TURNSTILE_SECRET_KEY TURNSTILE_EXPECTED_HOSTNAME TURNSTILE_TEST_MODE || true
+  E2E_RELEASE="sre-simulator"
+  AKS_RG="example-aks-rg"
+  AKS_CLUSTER="example-aks"
+  AKS_EXPOSURE_MODE="publicService"
+  AOAI_DEPLOYMENT="gpt-4o-mini"
+  AUTH_SECRET_SOURCE_NAMESPACE="source-auth-ns"
+  GITHUB_AUTH_SECRET_NAME=$'  sre-auth-secrets  \nignored-extra-line'
+
+  if ! helm_deploy_sre "sre-simulator" "latest" "probe-token" >"$TMP_DIR/auth-secret-sanitized.out" 2>"$TMP_DIR/auth-secret-sanitized.err"; then
+    cat "$TMP_DIR/auth-secret-sanitized.out" >&2 || true
+    cat "$TMP_DIR/auth-secret-sanitized.err" >&2 || true
+    fail "helm_deploy_sre should sanitize auth secret name and keep Helm args clean"
+  fi
+
+  assert_contains "frontend.auth.existingSecretName=sre-auth-secrets" "$TMP_DIR/helm-args.txt"
+  assert_contains "backend.auth.existingSecretName=sre-auth-secrets" "$TMP_DIR/helm-args.txt"
+  assert_not_contains "ignored-extra-line" "$TMP_DIR/helm-args.txt"
+  assert_not_contains "Ensuring auth secret in" "$TMP_DIR/helm-args.txt"
+  assert_contains "source-auth-ns|sre-simulator|sre-auth-secrets" "$TMP_DIR/auth-secret-copy.txt"
+  assert_contains "Ensuring auth secret in 'sre-simulator' (from namespace 'source-auth-ns', secret 'sre-auth-secrets'; payload not logged)." "$TMP_DIR/auth-secret-sanitized.err"
+}
+
 run_optional_auth_verification_flag_check() {
   # shellcheck disable=SC1091
   source "$ROOT_DIR/scripts/aks-deploy.sh"
@@ -1456,6 +1501,7 @@ main() {
   run_none_deploy_path_check
   run_immutable_tag_check
   run_frontend_auth_secret_flag_check
+  run_auth_secret_resolution_sanitizes_and_keeps_helm_args_clean_check
   run_optional_auth_verification_flag_check
   run_clusterissuer_manifest_check
   run_clusterissuer_manifest_requires_email_check

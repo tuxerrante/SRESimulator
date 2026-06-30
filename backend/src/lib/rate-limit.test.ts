@@ -85,7 +85,9 @@ describe("getRateLimitKey", () => {
       body: { sessionToken: sessionTokenB },
     });
 
-    expect(await resolveKey(requestA)).not.toBe(await resolveKey(requestB));
+    const keyA = await resolveKey(requestA);
+    const keyB = await resolveKey(requestB);
+    expect(keyA).not.toBe(keyB);
   });
 
   it("uses stored sessionToken identity for AI routes beyond hardcoded prefixes", async () => {
@@ -100,7 +102,9 @@ describe("getRateLimitKey", () => {
       body: { sessionToken: sessionTokenB },
     });
 
-    expect(await resolveKey(requestA)).not.toBe(await resolveKey(requestB));
+    const keyA = await resolveKey(requestA);
+    const keyB = await resolveKey(requestB);
+    expect(keyA).not.toBe(keyB);
   });
 
   it("falls back to the IP bucket when chat sessionToken is not a UUID", async () => {
@@ -127,7 +131,9 @@ describe("getRateLimitKey", () => {
       body: {},
     });
 
-    expect(await resolveKey(fallbackRequest)).toBe(await resolveKey(ipRequest));
+    const fallbackKey = await resolveKey(fallbackRequest);
+    const ipKey = await resolveKey(ipRequest);
+    expect(fallbackKey).toBe(ipKey);
   });
 
   it("uses the viewer session cookie for scenario requests", async () => {

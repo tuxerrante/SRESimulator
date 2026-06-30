@@ -1,5 +1,5 @@
-import rateLimit, { ipKeyGenerator } from "express-rate-limit";
 import { createHash } from "node:crypto";
+import rateLimit, { ipKeyGenerator } from "express-rate-limit";
 import type { NextFunction, Request, RequestHandler, Response } from "express";
 import { createClient, type RedisClientType } from "redis";
 import { VIEWER_SESSION_COOKIE } from "../../../shared/auth/constants";
@@ -103,6 +103,9 @@ function readCachedPositiveLimit(
   return cache.parsed;
 }
 
+const UUID_RE = /^[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}$/i;
+const RATE_LIMIT_SESSION_LOOKUP = Symbol("rate-limit-session-lookup");
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -114,14 +117,12 @@ function readHeader(value: string | string[] | undefined): string | undefined {
 function shouldTreatReqIpAsTrustedFallback(): boolean {
   return process.env.TRUST_PROXY_HEADERS !== "true";
 }
+
 function hasCookie(cookieHeader: string, name: string): boolean {
   return cookieHeader
     .split(";")
     .some((value) => value.trim().startsWith(`${name}=`));
 }
-
-const UUID_RE = /^[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}$/i;
-const RATE_LIMIT_SESSION_LOOKUP = Symbol("rate-limit-session-lookup");
 
 function hashToken(token: string): string {
   return createHash("sha256").update(token).digest("hex").slice(0, 16);
@@ -304,7 +305,6 @@ export function getScenarioRateLimitKey(
   return getScenarioCookieIdentity(req, antiAbuseSecret, authSessionSecret) ??
     getIpFallbackIdentity(req, antiAbuseSecret);
 }
-
 export async function getRateLimitKey(
   req: RateLimitRequestLike,
   antiAbuseSecret = process.env.ANTI_ABUSE_HMAC_SECRET,
