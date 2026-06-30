@@ -410,6 +410,29 @@ describe("gameplay routes", () => {
     expect(limited.body.error).toContain("Too many gameplay admin requests");
   });
 
+  it("GET /api/gameplay/admin ignores rotating session tokens when keying the admin rate limit", async () => {
+    process.env.GAMEPLAY_ADMIN_TOKEN = "gameplay-admin-secret";
+    process.env.GAMEPLAY_ADMIN_RATE_LIMIT_MAX = "1";
+    const tokenA = await getSessionStore().create("easy", "The Sleeping Cluster");
+    const tokenB = await getSessionStore().create("easy", "The Sleeping Cluster");
+    const app = createApp();
+
+    const first = await httpRequest(app, "GET", "/api/gameplay/admin", {
+      sessionToken: tokenA,
+    }, {
+      authorization: "Bearer gameplay-admin-secret",
+    });
+    const limited = await httpRequest(app, "GET", "/api/gameplay/admin", {
+      sessionToken: tokenB,
+    }, {
+      authorization: "Bearer gameplay-admin-secret",
+    });
+
+    expect(first.status).toBe(200);
+    expect(limited.status).toBe(429);
+    expect(limited.body.error).toContain("Too many gameplay admin requests");
+  });
+
   it("GET /api/gameplay/admin keeps cache hardening headers on 429 responses", async () => {
     process.env.GAMEPLAY_ADMIN_TOKEN = "gameplay-admin-secret";
     process.env.GAMEPLAY_ADMIN_RATE_LIMIT_MAX = "1";

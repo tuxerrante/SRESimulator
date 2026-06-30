@@ -4,7 +4,7 @@ import type { NextFunction, Request, RequestHandler, Response } from "express";
 import { createClient, type RedisClientType } from "redis";
 import { VIEWER_SESSION_COOKIE } from "../../../shared/auth/constants";
 import { verifySignedClientIp } from "../../../shared/auth/client-ip";
-import { getSessionStore } from "./storage";
+import { getSessionStore, type GameSession } from "./storage";
 import { readAnonymousProofFromCookieHeader, readViewerFromCookieHeader } from "./viewer-auth";
 
 interface RateLimitRequestLike {
@@ -15,6 +15,11 @@ interface RateLimitRequestLike {
   headers: Record<string, string | string[] | undefined>;
   originalUrl?: string;
   body?: unknown;
+}
+
+interface CachedSessionLookup {
+  token: string;
+  session: GameSession | null;
 }
 
 interface SlidingWindowDecision {
@@ -116,9 +121,56 @@ function hasCookie(cookieHeader: string, name: string): boolean {
 }
 
 const UUID_RE = /^[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}$/i;
+const RATE_LIMIT_SESSION_LOOKUP = Symbol("rate-limit-session-lookup");
 
 function hashToken(token: string): string {
   return createHash("sha256").update(token).digest("hex").slice(0, 16);
+}
+
+function readCachedSessionLookup(
+  req: RateLimitRequestLike,
+  token: string,
+): GameSession | null | undefined {
+  const cached = (req as RateLimitRequestLike & {
+    [RATE_LIMIT_SESSION_LOOKUP]?: CachedSessionLookup;
+  })[RATE_LIMIT_SESSION_LOOKUP];
+  return cached?.token === token ? cached.session : undefined;
+}
+
+function writeCachedSessionLookup(
+  req: RateLimitRequestLike,
+  token: string,
+  session: GameSession | null,
+): void {
+  (req as RateLimitRequestLike & {
+    [RATE_LIMIT_SESSION_LOOKUP]?: CachedSessionLookup;
+  })[RATE_LIMIT_SESSION_LOOKUP] = { token, session };
+}
+
+async function getStoredSession(
+  req: RateLimitRequestLike,
+  token: string,
+): Promise<GameSession | null> {
+  const cachedSession = readCachedSessionLookup(req, token);
+  if (cachedSession !== undefined) {
+    return cachedSession;
+  }
+
+  const session = await getSessionStore().get(token);
+  writeCachedSessionLookup(req, token, session);
+  return session;
+}
+
+export async function getRequestSession(
+  req: Request | RateLimitRequestLike,
+  sessionToken: string,
+): Promise<GameSession | null> {
+  const trimmed = sessionToken.trim();
+  if (trimmed === "") {
+    return null;
+  }
+
+  return getStoredSession(req, trimmed);
 }
 
 async function getSessionTokenIdentity(req: RateLimitRequestLike): Promise<string | null> {
@@ -137,7 +189,7 @@ async function getSessionTokenIdentity(req: RateLimitRequestLike): Promise<strin
   }
 
   try {
-    const session = await getSessionStore().get(trimmed);
+    const session = await getStoredSession(req, trimmed);
     if (!session || session.used) {
       return null;
     }
@@ -242,6 +294,15 @@ export function getIpRateLimitKey(
   antiAbuseSecret = process.env.ANTI_ABUSE_HMAC_SECRET,
 ): string {
   return getIpFallbackIdentity(req, antiAbuseSecret);
+}
+
+export function getScenarioRateLimitKey(
+  req: RateLimitRequestLike,
+  antiAbuseSecret = process.env.ANTI_ABUSE_HMAC_SECRET,
+  authSessionSecret = process.env.AUTH_SESSION_SECRET,
+): string {
+  return getScenarioCookieIdentity(req, antiAbuseSecret, authSessionSecret) ??
+    getIpFallbackIdentity(req, antiAbuseSecret);
 }
 
 export async function getRateLimitKey(
