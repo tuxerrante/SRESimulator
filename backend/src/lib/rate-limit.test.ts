@@ -136,6 +136,20 @@ describe("getRateLimitKey", () => {
     expect(fallbackKey).toBe(ipKey);
   });
 
+  it("ignores stored session tokens for scenario requests", async () => {
+    const sessionToken = await createStoredSessionToken("Scenario Request Session");
+    const scenarioRequest = createRequest({
+      originalUrl: "/api/scenario",
+      body: { sessionToken },
+    });
+    const ipRequest = createRequest({
+      originalUrl: "/api/scenario",
+      body: {},
+    });
+
+    expect(await resolveKey(scenarioRequest)).toBe(await resolveKey(ipRequest));
+  });
+
   it("uses the viewer session cookie for scenario requests", async () => {
     process.env.AUTH_SESSION_SECRET = "auth-session-secret";
     const now = Date.now();

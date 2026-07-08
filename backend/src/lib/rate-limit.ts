@@ -124,6 +124,14 @@ function hasCookie(cookieHeader: string, name: string): boolean {
     .some((value) => value.trim().startsWith(`${name}=`));
 }
 
+function supportsSessionTokenIdentity(originalUrl: string | undefined): boolean {
+  const pathname = originalUrl?.split("?", 1)[0] ?? "";
+  return pathname === "/api/chat" ||
+    pathname === "/api/command" ||
+    pathname === "/api/ai" ||
+    pathname.startsWith("/api/ai/");
+}
+
 function hashToken(token: string): string {
   return createHash("sha256").update(token).digest("hex").slice(0, 16);
 }
@@ -175,6 +183,10 @@ export async function getRequestSession(
 }
 
 async function getSessionTokenIdentity(req: RateLimitRequestLike): Promise<string | null> {
+  if (!supportsSessionTokenIdentity(req.originalUrl)) {
+    return null;
+  }
+
   if (!isRecord(req.body)) {
     return null;
   }
