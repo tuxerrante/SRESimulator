@@ -238,17 +238,34 @@ in production.
 
 ## Rate Limiting & Throttle Handling
 
-### Session-aware rate limiting
+### Session-aware sliding-window rate limiting
 
-AI-backed routes (`/api/chat`, `/api/command`, `/api/scenario`) are rate-limited
-at **15 req/min** using `express-rate-limit`, but the bucket identity is now
-session-oriented when possible:
+AI-backed routes (`/api/chat`, `/api/command`, `/api/scenario`) share a
+server-side sliding-window limiter (default: **15 requests / 60 seconds**).
+Identity is session-oriented when possible:
 
-- `/api/chat` and `/api/command` prefer the JSON body `sessionToken`
-- `/api/scenario` prefers the signed viewer cookie, then the anonymous proof
-  cookie
-- requests without a usable session identity still fall back to the verified
-  client IP (or the existing socket/IP fallback rules in local mode)
+- `/api/chat` and `/api/command` use the JSON body `sessionToken`
+- `/api/scenario` uses the signed viewer cookie first, then the anonymous
+  proof cookie
+- if neither session identity is available, the backend falls back to the
+  existing signed client-IP path (or the prior socket/IP fallback rules in
+  local/dev mode)
+
+Limiter tuning is controlled by these backend env vars:
+
+| Variable | Default | Meaning |
+| ------------------------- | ------- | -------------------------------------------------------------- |
+| `AI_RATE_LIMIT_MAX` | `15` | Maximum requests allowed inside one sliding window |
+| `AI_RATE_LIMIT_WINDOW_MS` | `60000` | Sliding-window duration in milliseconds |
+| `AI_RATE_LIMIT_REDIS_URL` | unset | Shared Redis store for deployed or multi-replica backends |
+
+The limiter uses Redis when `AI_RATE_LIMIT_REDIS_URL` is configured, which is
+the intended multi-replica/deployed mode. When Redis is unset, the backend
+uses an in-memory store for local development and tests. When Redis is
+configured but unavailable, the backend **fails open explicitly** instead of
+silently degrading to per-process local enforcement. In that state the request
+is allowed through, a warning is logged, and the response includes
+`x-sresim-rate-limit-status: fail-open` so the degraded protection is visible.
 
 ### Azure OpenAI 429 retries
 
@@ -312,6 +329,16 @@ proxies.
 
 **Mitigation:** Keep trusted proxy signing enabled in deployed environments so
 the fallback identity is the real client hop rather than a shared router IP.
+
+### Redis outage disables distributed enforcement
+
+If `AI_RATE_LIMIT_REDIS_URL` is configured and Redis becomes unavailable, the
+AI limiter no longer switches to a misleading per-process in-memory bucket.
+Instead it fails open deliberately and surfaces that degraded state via logs
+and the `x-sresim-rate-limit-status: fail-open` response header.
+
+**Mitigation:** Monitor Redis availability and alert on the fail-open header or
+the corresponding backend warning log.
 
 ### Reasoning models consume unpredictable token budgets
 
@@ -378,4 +405,5 @@ prevention, rate-limit enforcement, and token-metrics recording.
 | Per-route deployments | `AI_AZURE_OPENAI_DEPLOYMENT_CHAT`, `_COMMAND`, `_SCENARIO`, `_PROBE` |
 | Reasoning | `AI_REASONING_EFFORT` (`low` / `medium` / `high`) |
 | Compaction tuning | `COMPACTION_TOKEN_BUDGET`, `COMPACTION_TAIL_MESSAGES` |
+| Rate limiting | `AI_RATE_LIMIT_WINDOW_MS`, `AI_RATE_LIMIT_MAX`, `AI_RATE_LIMIT_REDIS_URL` |
 | Production gates | `AI_LIVE_PROBE_TOKEN` |

@@ -50,6 +50,7 @@ vi.mock("../lib/storage", () => ({
   getSessionStore: mocks.getSessionStore,
 }));
 
+import { aiRateLimit } from "../lib/rate-limit";
 import { commandRouter } from "./command";
 
 async function close(server: Server): Promise<void> {
@@ -158,6 +159,45 @@ describe("commandRouter", () => {
       });
       expect(mocks.captureBackendRouteError).toHaveBeenCalledTimes(1);
       expect(mocks.captureBackendRouteError.mock.calls[0]?.[1]).toBe(degradedError);
+    } finally {
+      await close(server);
+    }
+  });
+
+  it("reuses the rate-limit session lookup on hot command requests", async () => {
+    const sessionToken = "11111111-1111-4111-8111-111111111111";
+    mocks.getAiReadiness.mockReturnValue({ ready: true, mockMode: true });
+    mocks.generateMockCommandOutput.mockReturnValue("mock output");
+
+    const app = express();
+    app.use(express.json());
+    app.use("/api/command", aiRateLimit, commandRouter);
+    const server = await new Promise<Server>((resolve) => {
+      const listeningServer = app.listen(0, "127.0.0.1", () => resolve(listeningServer));
+    });
+
+    try {
+      const { port } = server.address() as AddressInfo;
+      const response = await fetch(`http://127.0.0.1:${port}/api/command`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          sessionToken,
+          command: "oc get pods",
+          type: "oc",
+          scenario: null,
+          commandHistory: [],
+        }),
+      });
+
+      expect(response.status).toBe(200);
+      await expect(response.json()).resolves.toEqual({
+        output: "mock output",
+        exitCode: 0,
+        mode: "mock",
+      });
+      expect(mocks.sessionGet).toHaveBeenCalledTimes(1);
+      expect(mocks.sessionGet).toHaveBeenCalledWith(sessionToken);
     } finally {
       await close(server);
     }

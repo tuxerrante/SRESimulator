@@ -1,8 +1,10 @@
 import { createHash } from "node:crypto";
 import rateLimit, { ipKeyGenerator } from "express-rate-limit";
+import type { NextFunction, Request, RequestHandler, Response } from "express";
+import { createClient, type RedisClientType } from "redis";
 import { VIEWER_SESSION_COOKIE } from "../../../shared/auth/constants";
 import { verifySignedClientIp } from "../../../shared/auth/client-ip";
-import { getSessionStore } from "./storage";
+import { getSessionStore, type GameSession } from "./storage";
 import { readAnonymousProofFromCookieHeader, readViewerFromCookieHeader } from "./viewer-auth";
 
 interface RateLimitRequestLike {
@@ -15,6 +17,63 @@ interface RateLimitRequestLike {
   body?: unknown;
 }
 
+interface CachedSessionLookup {
+  token: string;
+  session: GameSession | null;
+}
+
+interface SlidingWindowDecision {
+  allowed: boolean;
+  remaining: number;
+  resetAtMs: number;
+  retryAfterSeconds: number;
+}
+
+interface SlidingWindowStore {
+  readonly distributed: boolean;
+  consume(
+    key: string,
+    nowMs: number,
+    windowMs: number,
+    limit: number,
+  ): Promise<SlidingWindowDecision>;
+}
+
+const DEFAULT_AI_RATE_LIMIT_WINDOW_MS = 60 * 1000;
+const DEFAULT_AI_RATE_LIMIT_MAX = 15;
+const DEFAULT_GAMEPLAY_TELEMETRY_RATE_LIMIT_MAX = 60;
+const MIN_RATE_LIMIT_WINDOW_SECONDS = 1;
+const REDIS_KEY_PREFIX = "sresim:rate-limit";
+const RATE_LIMIT_STATUS_HEADER = "x-sresim-rate-limit-status";
+const IN_MEMORY_SWEEP_INTERVAL = 256;
+const REDIS_MEMBER_PREFIX = `${process.pid.toString(36)}-${Date.now().toString(36)}`;
+const REDIS_SLIDING_WINDOW_SCRIPT = `
+local key = KEYS[1]
+local now = tonumber(ARGV[1])
+local windowMs = tonumber(ARGV[2])
+local limit = tonumber(ARGV[3])
+local member = ARGV[4]
+local cutoff = now - windowMs
+
+redis.call("ZREMRANGEBYSCORE", key, "-inf", cutoff)
+
+local current = redis.call("ZCARD", key)
+if current >= limit then
+  local oldest = redis.call("ZRANGE", key, 0, 0, "WITHSCORES")
+  local resetAt = now + windowMs
+  if oldest[2] then
+    resetAt = tonumber(oldest[2]) + windowMs
+  end
+  return {0, current, resetAt}
+end
+
+redis.call("ZADD", key, now, member)
+redis.call("PEXPIRE", key, windowMs)
+
+local count = redis.call("ZCARD", key)
+return {1, count, now + windowMs}
+`;
+
 function readPositiveLimitFromEnv(
   rawValue: string | undefined,
   fallback: number,
@@ -23,9 +82,29 @@ function readPositiveLimitFromEnv(
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
-function shouldTreatReqIpAsTrustedFallback(): boolean {
-  return process.env.TRUST_PROXY_HEADERS !== "true";
+interface CachedLimitValue {
+  raw: string | undefined;
+  parsed: number;
+  initialized: boolean;
 }
+
+function readCachedPositiveLimit(
+  cache: CachedLimitValue,
+  rawValue: string | undefined,
+  fallback: number,
+): number {
+  if (cache.initialized && cache.raw === rawValue) {
+    return cache.parsed;
+  }
+
+  cache.raw = rawValue;
+  cache.parsed = readPositiveLimitFromEnv(rawValue, fallback);
+  cache.initialized = true;
+  return cache.parsed;
+}
+
+const UUID_RE = /^[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}$/i;
+const RATE_LIMIT_SESSION_LOOKUP = Symbol("rate-limit-session-lookup");
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -35,19 +114,79 @@ function readHeader(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;
 }
 
+function shouldTreatReqIpAsTrustedFallback(): boolean {
+  return process.env.TRUST_PROXY_HEADERS !== "true";
+}
+
 function hasCookie(cookieHeader: string, name: string): boolean {
   return cookieHeader
     .split(";")
     .some((value) => value.trim().startsWith(`${name}=`));
 }
 
-const UUID_RE = /^[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}$/i;
+function supportsSessionTokenIdentity(originalUrl: string | undefined): boolean {
+  const pathname = originalUrl?.split("?", 1)[0] ?? "";
+  return pathname === "/api/chat" ||
+    pathname === "/api/command" ||
+    pathname === "/api/ai" ||
+    pathname.startsWith("/api/ai/");
+}
 
 function hashToken(token: string): string {
   return createHash("sha256").update(token).digest("hex").slice(0, 16);
 }
 
+function readCachedSessionLookup(
+  req: RateLimitRequestLike,
+  token: string,
+): GameSession | null | undefined {
+  const cached = (req as RateLimitRequestLike & {
+    [RATE_LIMIT_SESSION_LOOKUP]?: CachedSessionLookup;
+  })[RATE_LIMIT_SESSION_LOOKUP];
+  return cached?.token === token ? cached.session : undefined;
+}
+
+function writeCachedSessionLookup(
+  req: RateLimitRequestLike,
+  token: string,
+  session: GameSession | null,
+): void {
+  (req as RateLimitRequestLike & {
+    [RATE_LIMIT_SESSION_LOOKUP]?: CachedSessionLookup;
+  })[RATE_LIMIT_SESSION_LOOKUP] = { token, session };
+}
+
+async function getStoredSession(
+  req: RateLimitRequestLike,
+  token: string,
+): Promise<GameSession | null> {
+  const cachedSession = readCachedSessionLookup(req, token);
+  if (cachedSession !== undefined) {
+    return cachedSession;
+  }
+
+  const session = await getSessionStore().get(token);
+  writeCachedSessionLookup(req, token, session);
+  return session;
+}
+
+export async function getRequestSession(
+  req: Request | RateLimitRequestLike,
+  sessionToken: string,
+): Promise<GameSession | null> {
+  const trimmed = sessionToken.trim();
+  if (trimmed === "") {
+    return null;
+  }
+
+  return getStoredSession(req, trimmed);
+}
+
 async function getSessionTokenIdentity(req: RateLimitRequestLike): Promise<string | null> {
+  if (!supportsSessionTokenIdentity(req.originalUrl)) {
+    return null;
+  }
+
   if (!isRecord(req.body)) {
     return null;
   }
@@ -63,7 +202,7 @@ async function getSessionTokenIdentity(req: RateLimitRequestLike): Promise<strin
   }
 
   try {
-    const session = await getSessionStore().get(trimmed);
+    const session = await getStoredSession(req, trimmed);
     if (!session || session.used) {
       return null;
     }
@@ -170,38 +309,344 @@ export function getIpRateLimitKey(
   return getIpFallbackIdentity(req, antiAbuseSecret);
 }
 
+export function getScenarioRateLimitKey(
+  req: RateLimitRequestLike,
+  antiAbuseSecret = process.env.ANTI_ABUSE_HMAC_SECRET,
+  authSessionSecret = process.env.AUTH_SESSION_SECRET,
+): string {
+  return getScenarioCookieIdentity(req, antiAbuseSecret, authSessionSecret) ??
+    getIpFallbackIdentity(req, antiAbuseSecret);
+}
 export async function getRateLimitKey(
   req: RateLimitRequestLike,
   antiAbuseSecret = process.env.ANTI_ABUSE_HMAC_SECRET,
   authSessionSecret = process.env.AUTH_SESSION_SECRET,
 ): Promise<string> {
   const sessionIdentity = await getSessionTokenIdentity(req);
-  return sessionIdentity
-    ?? getScenarioCookieIdentity(req, antiAbuseSecret, authSessionSecret)
-    ?? getIpFallbackIdentity(req, antiAbuseSecret);
+  return sessionIdentity ??
+    getScenarioCookieIdentity(req, antiAbuseSecret, authSessionSecret) ??
+    getIpFallbackIdentity(req, antiAbuseSecret);
 }
 
-/**
- * Per-IP rate limiter for AI-backed routes to prevent a single client
- * from exhausting shared Azure OpenAI TPM quota.
- *
- * Limits apply per windowMs. Exceeding the limit returns HTTP 429
- * with a JSON body before the request reaches the AI provider.
- */
-export const aiRateLimit = rateLimit({
-  windowMs: 60 * 1000,
-  limit: 15,
-  standardHeaders: "draft-7",
-  legacyHeaders: false,
+export class InMemorySlidingWindowStore implements SlidingWindowStore {
+  readonly distributed = false;
+  private readonly buckets = new Map<string, number[]>();
+  private operationsSinceSweep = 0;
+
+  private pruneExpiredBuckets(cutoff: number): void {
+    for (const [bucketKey, timestamps] of this.buckets.entries()) {
+      const activeTimestamps = timestamps.filter((timestamp) => timestamp > cutoff);
+      if (activeTimestamps.length === 0) {
+        this.buckets.delete(bucketKey);
+        continue;
+      }
+      this.buckets.set(bucketKey, activeTimestamps);
+    }
+  }
+
+  private readActiveBucket(key: string, cutoff: number): number[] {
+    const activeTimestamps = (this.buckets.get(key) ?? [])
+      .filter((timestamp) => timestamp > cutoff);
+    if (activeTimestamps.length === 0) {
+      this.buckets.delete(key);
+      return [];
+    }
+    this.buckets.set(key, activeTimestamps);
+    return activeTimestamps;
+  }
+
+  async consume(
+    key: string,
+    nowMs: number,
+    windowMs: number,
+    limit: number,
+  ): Promise<SlidingWindowDecision> {
+    const cutoff = nowMs - windowMs;
+    this.operationsSinceSweep += 1;
+    if (this.operationsSinceSweep >= IN_MEMORY_SWEEP_INTERVAL) {
+      this.pruneExpiredBuckets(cutoff);
+      this.operationsSinceSweep = 0;
+    }
+
+    const existing = this.readActiveBucket(key, cutoff);
+
+    if (existing.length >= limit) {
+      const resetAtMs = (existing[0] ?? nowMs) + windowMs;
+      this.buckets.set(key, existing);
+      return {
+        allowed: false,
+        remaining: 0,
+        resetAtMs,
+        retryAfterSeconds: Math.max(1, Math.ceil((resetAtMs - nowMs) / 1000)),
+      };
+    }
+
+    existing.push(nowMs);
+    this.buckets.set(key, existing);
+
+    return {
+      allowed: true,
+      remaining: Math.max(limit - existing.length, 0),
+      resetAtMs: nowMs + windowMs,
+      retryAfterSeconds: Math.max(1, Math.ceil(windowMs / 1000)),
+    };
+  }
+}
+
+class RedisSlidingWindowStore implements SlidingWindowStore {
+  readonly distributed = true;
+  private client: RedisClientType | null = null;
+  private connectPromise: Promise<RedisClientType> | null = null;
+  private memberSequence = 0;
+
+  constructor(private readonly url: string) {}
+
+  private getOrCreateClient(): RedisClientType {
+    if (this.client) {
+      return this.client;
+    }
+
+    this.client = createClient({ url: this.url });
+    this.client.on("error", (error) => {
+      console.warn("[rate-limit] redis client error", error);
+    });
+    return this.client;
+  }
+
+  private async getClient(): Promise<RedisClientType> {
+    const client = this.getOrCreateClient();
+    if (client.isOpen) {
+      return client;
+    }
+    if (this.connectPromise) {
+      return this.connectPromise;
+    }
+
+    this.connectPromise = client.connect()
+      .then(() => {
+        this.connectPromise = null;
+        return client;
+      })
+      .catch((error) => {
+        this.connectPromise = null;
+        throw error;
+      });
+
+    return this.connectPromise;
+  }
+
+  private nextMember(nowMs: number): string {
+    this.memberSequence += 1;
+    return `${REDIS_MEMBER_PREFIX}:${nowMs}:${this.memberSequence}`;
+  }
+
+  private parseResult(
+    rawResult: unknown,
+    nowMs: number,
+    windowMs: number,
+    limit: number,
+  ): SlidingWindowDecision {
+    if (!Array.isArray(rawResult) || rawResult.length < 3) {
+      throw new Error("redis sliding-window script returned an invalid payload shape");
+    }
+
+    const [allowedValue, countValue, resetAtValue] = rawResult;
+    const allowedRaw = Number(allowedValue);
+    const count = Number(countValue);
+    const resetAtMs = Number(resetAtValue);
+
+    if (
+      !Number.isFinite(allowedRaw) ||
+      !Number.isFinite(count) ||
+      !Number.isFinite(resetAtMs) ||
+      (allowedRaw !== 0 && allowedRaw !== 1) ||
+      count < 0
+    ) {
+      throw new Error("redis sliding-window script returned non-numeric decision values");
+    }
+
+    const normalizedResetAtMs = resetAtMs > nowMs ? resetAtMs : nowMs + windowMs;
+    const allowed = allowedRaw === 1;
+
+    return {
+      allowed,
+      remaining: allowed ? Math.max(limit - count, 0) : 0,
+      resetAtMs: normalizedResetAtMs,
+      retryAfterSeconds: Math.max(
+        MIN_RATE_LIMIT_WINDOW_SECONDS,
+        Math.ceil((normalizedResetAtMs - nowMs) / 1000),
+      ),
+    };
+  }
+
+  async consume(
+    key: string,
+    nowMs: number,
+    windowMs: number,
+    limit: number,
+  ): Promise<SlidingWindowDecision> {
+    const client = await this.getClient();
+    const redisKey = `${REDIS_KEY_PREFIX}:${key}`;
+    const result = await client.sendCommand<string[]>([
+      "EVAL",
+      REDIS_SLIDING_WINDOW_SCRIPT,
+      "1",
+      redisKey,
+      String(nowMs),
+      String(windowMs),
+      String(limit),
+      this.nextMember(nowMs),
+    ]);
+    return this.parseResult(result, nowMs, windowMs, limit);
+  }
+}
+
+let inMemoryStore: InMemorySlidingWindowStore | null = null;
+let redisStore: RedisSlidingWindowStore | null = null;
+let loggedRedisFailOpen = false;
+const cachedAiRateLimitWindowMs: CachedLimitValue = {
+  raw: undefined,
+  parsed: DEFAULT_AI_RATE_LIMIT_WINDOW_MS,
+  initialized: false,
+};
+const cachedAiRateLimitMax: CachedLimitValue = {
+  raw: undefined,
+  parsed: DEFAULT_AI_RATE_LIMIT_MAX,
+  initialized: false,
+};
+const cachedGameplayTelemetryRateLimitMax: CachedLimitValue = {
+  raw: undefined,
+  parsed: DEFAULT_GAMEPLAY_TELEMETRY_RATE_LIMIT_MAX,
+  initialized: false,
+};
+
+function getInMemoryStore(): InMemorySlidingWindowStore {
+  inMemoryStore ??= new InMemorySlidingWindowStore();
+  return inMemoryStore;
+}
+
+function getSlidingWindowStore(): SlidingWindowStore {
+  const redisUrl = process.env.AI_RATE_LIMIT_REDIS_URL?.trim();
+  if (!redisUrl) {
+    return getInMemoryStore();
+  }
+
+  redisStore ??= new RedisSlidingWindowStore(redisUrl);
+  return redisStore;
+}
+
+function getAiRateLimitWindowMs(): number {
+  return readCachedPositiveLimit(
+    cachedAiRateLimitWindowMs,
+    process.env.AI_RATE_LIMIT_WINDOW_MS,
+    DEFAULT_AI_RATE_LIMIT_WINDOW_MS,
+  );
+}
+
+function getAiRateLimitMax(): number {
+  return readCachedPositiveLimit(
+    cachedAiRateLimitMax,
+    process.env.AI_RATE_LIMIT_MAX,
+    DEFAULT_AI_RATE_LIMIT_MAX,
+  );
+}
+
+function applyRateLimitHeaders(
+  res: Response,
+  limit: number,
+  windowMs: number,
+  remaining: number,
+  resetAtMs: number,
+): void {
+  const windowSeconds = Math.max(
+    MIN_RATE_LIMIT_WINDOW_SECONDS,
+    Math.ceil(windowMs / 1000),
+  );
+  res.setHeader("RateLimit-Limit", String(limit));
+  res.setHeader("RateLimit-Policy", `${limit};w=${windowSeconds}`);
+  res.setHeader("RateLimit-Remaining", String(Math.max(remaining, 0)));
+  res.setHeader(
+    "RateLimit-Reset",
+    String(Math.max(Math.ceil((resetAtMs - Date.now()) / 1000), 0)),
+  );
+}
+
+function createSlidingWindowRateLimit(options: {
+  max: () => number;
+  windowMs: () => number;
+  message: { error: string };
+}): RequestHandler {
+  return async (req: Request, res: Response, next: NextFunction) => {
+    const limit = options.max();
+    const windowMs = options.windowMs();
+    const key = await getRateLimitKey(req);
+    const nowMs = Date.now();
+
+    try {
+      const store = getSlidingWindowStore();
+      let decision: SlidingWindowDecision;
+
+      try {
+        decision = await store.consume(key, nowMs, windowMs, limit);
+      } catch (error) {
+        if (store.distributed) {
+          if (!loggedRedisFailOpen) {
+            console.warn(
+              "[rate-limit] redis unavailable, failing open for AI rate limiting",
+              error,
+            );
+            loggedRedisFailOpen = true;
+          }
+          // When distributed enforcement is configured but Redis is unavailable,
+          // fail open explicitly rather than silently degrading to per-process
+          // local throttling that would misrepresent the actual protection level.
+          res.setHeader(RATE_LIMIT_STATUS_HEADER, "fail-open");
+          next();
+          return;
+        }
+        throw error;
+      }
+
+      if (loggedRedisFailOpen) {
+        loggedRedisFailOpen = false;
+      }
+
+      applyRateLimitHeaders(
+        res,
+        limit,
+        windowMs,
+        decision.remaining,
+        decision.resetAtMs,
+      );
+
+      if (!decision.allowed) {
+        res.setHeader("Retry-After", String(decision.retryAfterSeconds));
+        res.status(429).json(options.message);
+        return;
+      }
+
+      next();
+    } catch (error) {
+      next(error);
+    }
+  };
+}
+
+export const aiRateLimit = createSlidingWindowRateLimit({
+  windowMs: getAiRateLimitWindowMs,
+  max: getAiRateLimitMax,
   message: {
     error: "Too many requests. Please slow down and try again in a moment.",
   },
-  keyGenerator: async (req) => getRateLimitKey(req),
 });
 
 export const gameplayTelemetryRateLimit = rateLimit({
-  windowMs: 60 * 1000,
-  limit: () => readPositiveLimitFromEnv(process.env.GAMEPLAY_TELEMETRY_RATE_LIMIT_MAX, 60),
+  windowMs: DEFAULT_AI_RATE_LIMIT_WINDOW_MS,
+  limit: () => readCachedPositiveLimit(
+    cachedGameplayTelemetryRateLimitMax,
+    process.env.GAMEPLAY_TELEMETRY_RATE_LIMIT_MAX,
+    DEFAULT_GAMEPLAY_TELEMETRY_RATE_LIMIT_MAX,
+  ),
   standardHeaders: "draft-7",
   legacyHeaders: false,
   message: {

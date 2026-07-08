@@ -56,6 +56,7 @@ vi.mock("../lib/storage", () => ({
 }));
 
 import { AiReasoningRetryEvent } from "../lib/ai-runtime";
+import { aiRateLimit } from "../lib/rate-limit";
 import { chatRouter } from "./chat";
 
 function createDeferred<T = void>() {
@@ -294,6 +295,39 @@ describe("chatRouter", () => {
       expect(fourthEvent).toBe(`data: ${JSON.stringify({ text: " output" })}\n\n`);
       expect(doneEvent).toBe("data: [DONE]\n\n");
     });
+  });
+
+  it("reuses the rate-limit session lookup on hot chat requests", async () => {
+    const sessionToken = "11111111-1111-4111-8111-111111111111";
+    mocks.getAiReadiness.mockReturnValue({ ready: true, mockMode: true });
+    mocks.generateMockChatResponse.mockReturnValue("mock chat response");
+
+    const app = express();
+    app.use(express.json());
+    app.use("/api/chat", aiRateLimit, chatRouter);
+
+    const server = await new Promise<Server>((resolve) => {
+      const listeningServer = app.listen(0, "127.0.0.1", () => resolve(listeningServer));
+    });
+
+    try {
+      const { port } = server.address() as AddressInfo;
+      const response = await fetch(`http://127.0.0.1:${port}/api/chat`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          ...defaultChatBody(),
+          sessionToken,
+        }),
+      });
+
+      expect(response.status).toBe(200);
+      await expect(response.text()).resolves.toContain("mock chat response");
+      expect(mocks.sessionGet).toHaveBeenCalledTimes(1);
+      expect(mocks.sessionGet).toHaveBeenCalledWith(sessionToken);
+    } finally {
+      await close(server);
+    }
   });
 
   it("captures stream failures after SSE headers are sent", async () => {

@@ -6,8 +6,8 @@ import { generateMockChatResponse } from "../lib/mock-ai";
 import { streamAiText, AiThrottledError, AiReasoningRetryEvent } from "../lib/ai-runtime";
 import { compactHistory, estimateTokens } from "../lib/context-compactor";
 import { captureBackendRouteError } from "../lib/telemetry/capture";
-import { getSessionStore } from "../lib/storage";
 import { parsePositiveIntEnv } from "../lib/env";
+import { getRequestSession } from "../lib/rate-limit";
 import { validateSessionScenario } from "../lib/session-scenario";
 import { isScenario } from "../lib/scenario-validation";
 import type { Scenario } from "../../../shared/types/game";
@@ -101,7 +101,7 @@ chatRouter.post("/", async (req: Request, res: Response) => {
       return;
     }
 
-    const session = await getSessionStore().get(body.sessionToken);
+    const session = await getRequestSession(req, body.sessionToken);
     if (!session || session.used) {
       res.status(403).json({ error: "Invalid or expired session token" });
       return;

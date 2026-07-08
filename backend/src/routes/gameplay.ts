@@ -1,7 +1,7 @@
 import { Router, type Request, type Response } from "express";
 import rateLimit from "express-rate-limit";
 import { getMetricsStore, getSessionStore } from "../lib/storage";
-import { getRateLimitKey, gameplayTelemetryRateLimit } from "../lib/rate-limit";
+import { getScenarioRateLimitKey, gameplayTelemetryRateLimit } from "../lib/rate-limit";
 import { matchesSharedSecret } from "../lib/shared-secret";
 import { captureBackendRouteError } from "../lib/telemetry/capture";
 import type { GameplayLifecycleState } from "../../../shared/types/gameplay";
@@ -158,7 +158,7 @@ const gameplayAdminRateLimit = rateLimit({
     const bucket = hasPreparedGameplayAdminAccess(res)
       ? GAMEPLAY_ADMIN_AUTH_KEY
       : GAMEPLAY_ADMIN_ANON_KEY;
-    return `${bucket}:${await getRateLimitKey(req)}`;
+    return `${bucket}:${getScenarioRateLimitKey(req)}`;
   },
 });
 
