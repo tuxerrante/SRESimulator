@@ -56,7 +56,7 @@ SRESimulator/
 │   │   ├── stores/                       # Zustand game state
 │   │   ├── lib/                          # API client helpers
 │   │   └── types/                        # TypeScript type definitions
-│   └── .env.local                        # Environment variables (not committed)
+│   └── .env.local                        # Preferred local env file (Makefile falls back to .env)
 └── backend/                              # Express API server
     └── src/
         ├── index.ts                      # API wiring and middleware
@@ -205,10 +205,11 @@ Prerequisites:
 3. `jq` must be installed on the machine running the Make target because the
    secret-copy helper rewrites Kubernetes metadata client-side before
    `kubectl apply` or `oc apply`.
-4. In `backend/.env.local` (or the environment), set `DB_SECRET_NAME` to the
-   secret resource name. Optionally set `DB_SECRET_SOURCE_NAMESPACE` to the
-   namespace that already holds that secret; if omitted, the automation copies
-   from `PROD_NAMESPACE` (Makefile default `sre-simulator`).
+4. In `backend/.env.local` (preferred), `backend/.env` (fallback), or the
+   environment, set `DB_SECRET_NAME` to the secret resource name. Optionally
+   set `DB_SECRET_SOURCE_NAMESPACE` to the namespace that already holds that
+   secret; if omitted, the automation copies from `PROD_NAMESPACE` (Makefile
+   default `sre-simulator`).
 
 Before `helm upgrade`, the selected deploy helper (`scripts/aks-deploy.sh` or
 `scripts/aro-deploy.sh` via `scripts/select-deploy.sh`) copies the secret into

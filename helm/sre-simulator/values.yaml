@@ -71,6 +71,13 @@ backend:
   persistentLeaderboardEnabled: false
   aiChatTimeoutMs: 30000
   aiScenarioTimeoutMs: 30000
+  rateLimit:
+    windowMs: 60000
+    max: 15
+    redisUrl: ""
+    redisUrlFromSecret:
+      existingSecretName: ""
+      key: redis-url
   auth:
     # Existing Secret used by backend auth/anonymous verification routes.
     existingSecretName: ""
