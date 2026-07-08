@@ -14,7 +14,9 @@ SHELL := /bin/bash
 
 FRONTEND_DIR := frontend
 BACKEND_DIR := backend
-E2E_ENV_FILE ?= $(BACKEND_DIR)/.env.local
+E2E_PRIMARY_ENV_FILE ?= $(BACKEND_DIR)/.env.local
+E2E_FALLBACK_ENV_FILE ?= $(BACKEND_DIR)/.env
+E2E_ENV_FILE ?= $(if $(wildcard $(E2E_PRIMARY_ENV_FILE)),$(E2E_PRIMARY_ENV_FILE),$(if $(wildcard $(E2E_FALLBACK_ENV_FILE)),$(E2E_FALLBACK_ENV_FILE),$(E2E_PRIMARY_ENV_FILE)))
 -include $(E2E_ENV_FILE)
 SECURITY_FAIL_LEVEL ?= high
 GRYPE_VERSION ?= v0.110.0
@@ -86,8 +88,14 @@ export AOAI_DEPLOYMENT_CHAT AOAI_DEPLOYMENT_COMMAND AOAI_DEPLOYMENT_SCENARIO AOA
 export E2E_RELEASE NPM_VERSION
 export PROD_NAMESPACE DB_SECRET_NAME DB_SECRET_SOURCE_NAMESPACE
 
+E2E_ENV_FILE_KEYS := $(strip $(shell if [ -f "$(E2E_ENV_FILE)" ]; then awk -F '=' '/^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*=/{ sub(/^[[:space:]]*/, "", $$1); print $$1 }' "$(E2E_ENV_FILE)"; fi))
+
+define e2e_env_file_status
+$(if $(findstring environment,$(origin E2E_ENV_FILE)),$(E2E_ENV_FILE) (environment override$(if $(wildcard $(E2E_ENV_FILE)),,; file missing)),$(if $(findstring command line,$(origin E2E_ENV_FILE)),$(E2E_ENV_FILE) (command line override$(if $(wildcard $(E2E_ENV_FILE)),,; file missing)),$(if $(wildcard $(E2E_PRIMARY_ENV_FILE)),$(E2E_PRIMARY_ENV_FILE),$(if $(wildcard $(E2E_FALLBACK_ENV_FILE)),$(E2E_FALLBACK_ENV_FILE) (fallback from $(E2E_PRIMARY_ENV_FILE)),$(E2E_PRIMARY_ENV_FILE) (missing; fallback $(E2E_FALLBACK_ENV_FILE) also missing)))))
+endef
+
 define e2e_var_source
-$(if $(findstring environment,$(origin $(1))),shell,$(if $(findstring command line,$(origin $(1))),shell (command line),$(if $(filter file,$(origin $(1))),$(E2E_ENV_FILE),make ($(origin $(1))))))
+$(if $(findstring environment,$(origin $(1))),shell,$(if $(findstring command line,$(origin $(1))),shell (command line),$(if $(filter $(1),$(E2E_ENV_FILE_KEYS)),$(E2E_ENV_FILE),make ($(origin $(1))))))
 endef
 
 E2E_MISSING_VARS := $(strip \
@@ -267,18 +275,19 @@ test: ## Run backend and frontend unit tests with coverage
 	cd $(FRONTEND_DIR) && npm run test:coverage
 
 test-shell: ## Run shell regression tests
-	bash scripts/aro-login.test.sh
-	bash scripts/aks-deploy.test.sh
-	bash scripts/cleanup-old-worktrees.test.sh
-	bash scripts/docker-image-slimming.test.sh
-	bash scripts/helm-integration-trigger.test.sh
-	bash scripts/helm-platform.test.sh
-	bash scripts/install-worktree-cleanup-launchd.test.sh
-	bash scripts/local-mssql-secrets.test.sh
-	bash scripts/prod-db-guard.test.sh
-	bash scripts/release-version-sync.test.sh
-	bash scripts/select-deploy.test.sh
-	bash infra/scripts/tf-preflight.test.sh
+	env -i PATH="$$PATH" HOME="$$HOME" TMPDIR="$${TMPDIR:-/tmp}" bash scripts/aro-login.test.sh
+	env -i PATH="$$PATH" HOME="$$HOME" TMPDIR="$${TMPDIR:-/tmp}" bash scripts/aks-deploy.test.sh
+	env -i PATH="$$PATH" HOME="$$HOME" TMPDIR="$${TMPDIR:-/tmp}" bash scripts/cleanup-old-worktrees.test.sh
+	env -i PATH="$$PATH" HOME="$$HOME" TMPDIR="$${TMPDIR:-/tmp}" bash scripts/docker-image-slimming.test.sh
+	env -i PATH="$$PATH" HOME="$$HOME" TMPDIR="$${TMPDIR:-/tmp}" bash scripts/e2e-env-file.test.sh
+	env -i PATH="$$PATH" HOME="$$HOME" TMPDIR="$${TMPDIR:-/tmp}" bash scripts/helm-integration-trigger.test.sh
+	env -i PATH="$$PATH" HOME="$$HOME" TMPDIR="$${TMPDIR:-/tmp}" bash scripts/helm-platform.test.sh
+	env -i PATH="$$PATH" HOME="$$HOME" TMPDIR="$${TMPDIR:-/tmp}" bash scripts/install-worktree-cleanup-launchd.test.sh
+	env -i PATH="$$PATH" HOME="$$HOME" TMPDIR="$${TMPDIR:-/tmp}" bash scripts/local-mssql-secrets.test.sh
+	env -i PATH="$$PATH" HOME="$$HOME" TMPDIR="$${TMPDIR:-/tmp}" bash scripts/prod-db-guard.test.sh
+	env -i PATH="$$PATH" HOME="$$HOME" TMPDIR="$${TMPDIR:-/tmp}" bash scripts/release-version-sync.test.sh
+	env -i PATH="$$PATH" HOME="$$HOME" TMPDIR="$${TMPDIR:-/tmp}" bash scripts/select-deploy.test.sh
+	env -i PATH="$$PATH" HOME="$$HOME" TMPDIR="$${TMPDIR:-/tmp}" bash infra/scripts/tf-preflight.test.sh
 
 release-prepare: ## Update semver surfaces for a release tag
 	@set -euo pipefail; \
@@ -448,6 +457,7 @@ e2e-azure-route: e2e-azure-route-up ## Create temporary Azure OpenAI-backed rout
 
 env-check: ## Show source of required e2e vars (values hidden)
 	@echo "E2E variable source check (values hidden):"
+	@echo "  E2E env file: $(call e2e_env_file_status)"
 	@echo "  CLUSTER_FLAVOR: $(call e2e_var_source,CLUSTER_FLAVOR)"
 	@echo "  AZURE_SUBSCRIPTION_ID: $(call e2e_var_source,AZURE_SUBSCRIPTION_ID)"
 	@if [ "$(CLUSTER_FLAVOR)" = "aks" ]; then \

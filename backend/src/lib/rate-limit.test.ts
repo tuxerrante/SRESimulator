@@ -9,7 +9,7 @@ import {
 } from "../../../shared/auth/anonymous-proof";
 import { createSignedClientIp } from "../../../shared/auth/client-ip";
 import { createViewerSessionToken } from "../../../shared/auth/session";
-import { getRateLimitKey } from "./rate-limit";
+import { getRateLimitKey, InMemorySlidingWindowStore } from "./rate-limit";
 
 interface TestRequest {
   ip?: string;
@@ -33,6 +33,7 @@ function createRequest(overrides: Partial<TestRequest> = {}): TestRequest {
     ip: "10.0.0.10",
     socket: { remoteAddress: "10.0.0.20" },
     headers: {
+      "content-type": "application/json",
       ...buildSignedIpHeaders("203.0.113.10", "anti-abuse-secret"),
     },
     originalUrl: "/api/chat",
@@ -408,5 +409,23 @@ describe("getRateLimitKey", () => {
       "test-hmac",
     );
     expect(key).toBe(socketKey);
+  });
+});
+
+describe("InMemorySlidingWindowStore", () => {
+  it("periodically prunes expired cold buckets while processing new keys", async () => {
+    const store = new InMemorySlidingWindowStore();
+    const storeBuckets = (store as unknown as { buckets: Map<string, number[]> }).buckets;
+    const storeState = store as unknown as { operationsSinceSweep: number };
+
+    await store.consume("session:expired", 0, 100, 2);
+    expect(storeBuckets.size).toBe(1);
+
+    storeState.operationsSinceSweep = 255;
+    await store.consume("session:active", 101, 100, 2);
+
+    expect(storeBuckets.size).toBe(1);
+    expect(storeBuckets.has("session:expired")).toBe(false);
+    expect(storeBuckets.has("session:active")).toBe(true);
   });
 });

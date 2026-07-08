@@ -48,6 +48,25 @@ spec:
             - name: SENTRY_RELEASE
               value: {{ $sentryRelease | quote }}
             {{- end }}
+            - name: AI_RATE_LIMIT_WINDOW_MS
+              value: {{ .Values.backend.rateLimit.windowMs | quote }}
+            - name: AI_RATE_LIMIT_MAX
+              value: {{ .Values.backend.rateLimit.max | quote }}
+            {{- $backendRateLimitRedisUrl := .Values.backend.rateLimit.redisUrl | default "" | trim }}
+            {{- $backendRateLimitRedisSecretName := .Values.backend.rateLimit.redisUrlFromSecret.existingSecretName | default "" | trim }}
+            {{- if and $backendRateLimitRedisUrl $backendRateLimitRedisSecretName }}
+            {{- fail "backend.rateLimit.redisUrl and backend.rateLimit.redisUrlFromSecret.existingSecretName are mutually exclusive" }}
+            {{- end }}
+            {{- if $backendRateLimitRedisUrl }}
+            - name: AI_RATE_LIMIT_REDIS_URL
+              value: {{ $backendRateLimitRedisUrl | quote }}
+            {{- else if $backendRateLimitRedisSecretName }}
+            - name: AI_RATE_LIMIT_REDIS_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $backendRateLimitRedisSecretName | quote }}
+                  key: {{ .Values.backend.rateLimit.redisUrlFromSecret.key | quote }}
+            {{- end }}
             {{- if .Values.ai.azureOpenai.endpointFromSecret.existingSecretName }}
             - name: AI_AZURE_OPENAI_ENDPOINT
               valueFrom:
