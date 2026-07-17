@@ -1,23 +1,50 @@
 ---
-description: Enforce isolated worktrees for all code changes
+description: Always work in isolated git worktrees, never edit host checkout directly
 alwaysApply: true
 ---
-
 # Worktree Isolation
 
-- Never edit host checkout files for implementation work.
-- Start each task in an isolated git worktree: `git worktree add -b <branch-name> .worktrees/<task-name> main`
-- Always branch from `main`.
-- Keep host checkout read-only — use it only for exploration, review, and context.
-- Only include task-related files in commits.
+## Rule
+
+Never edit host checkout files for implementation work. Start each task in an isolated git worktree.
+
+## Setup
+
+```bash
+git worktree add -b <branch-name> .worktrees/<task-name> <base-branch>
+```
+
+- Always branch from the repo's default branch
+- Keep host checkout read-only (exploration and review only)
+- All edits, builds, and tests happen inside the worktree directory
 
 ## Before Starting
 
-1. Run `gh pr list --state open` to check for parallel work that may conflict.
-2. Create the worktree from the host checkout root.
-3. Verify ancestry: `git merge-base --is-ancestor main HEAD`
+1. Check for parallel PRs touching the same area
+2. Create worktree from host root
+3. Verify branch ancestry is correct
+4. Bootstrap tracked env files from the host checkout into the worktree when they exist on the base branch (do not assume they are absent just because a fresh worktree does not include them)
 
-## Implementation
+## Tracked Env Bootstrap
 
-- All edits, builds, and tests happen inside the worktree directory.
-- Never `cd` back to host checkout to make changes.
+- If the repository tracks env files in `main`/base, copy them into the worktree before builds, tests, or deploy checks
+- In this repo, explicitly check `backend/.env` and `frontend/.env`
+- Keep host checkout read-only for implementation, but use it as the source of truth for tracked env files that must also exist in the worktree
+
+## Branch Naming (non-blocking)
+
+`<github-alias>/<jira-id>/<short-description>`
+
+## Execution Attestation (ARO-26594)
+
+When working as an agent, produce verifiable proof of worktree-based execution:
+- Record the worktree path and host checkout path at session start
+- Confirm no files were modified in the host checkout directory
+- CI should validate that the PR was authored from an isolated worktree
+
+## Cleanup
+
+Remove worktrees after merging:
+```bash
+git worktree remove .worktrees/<task-name>
+```
