@@ -310,6 +310,37 @@ case "$command" in
 esac
 EOF
   chmod +x "$TMP_DIR/e2e-bin/kubectl"
+
+  cat >"$TMP_DIR/e2e-bin/docker" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+printf '%s\n' "$*" >>"${FAKE_DOCKER_LOG:?}"
+if [ "${1:-}" = "login" ]; then
+  cat >/dev/null
+fi
+EOF
+  chmod +x "$TMP_DIR/e2e-bin/docker"
+
+  cat >"$TMP_DIR/e2e-bin/gh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+printf '%s\n' "$*" >>"${FAKE_GH_LOG:?}"
+case "$*" in
+  "auth token")
+    printf '%s' 'fake-gh-token'
+    ;;
+  "api user --jq .login")
+    printf '%s\n' "${FAKE_GH_USER:-fake-gh-user}"
+    ;;
+  *)
+    echo "unexpected fake gh invocation: $*" >&2
+    exit 1
+    ;;
+esac
+EOF
+  chmod +x "$TMP_DIR/e2e-bin/gh"
 }
 
 cleanup_port_forward_from_metadata() {
@@ -1403,6 +1434,75 @@ EOF
   assert_contains 'http://aks.example.test/api/ai/probe?live=true' "$curl_log"
 }
 
+run_e2e_route_up_dev_image_fallback_check() {
+  local metadata_file output_file az_log kubectl_log helm_log helm_values curl_log nohup_log state_dir docker_log gh_log
+
+  write_fake_e2e_clis
+  metadata_file="$TMP_DIR/e2e-up-dev.env"
+  output_file="$TMP_DIR/e2e-up-dev.out"
+  az_log="$TMP_DIR/e2e-up-dev.az.log"
+  kubectl_log="$TMP_DIR/e2e-up-dev.kubectl.log"
+  helm_log="$TMP_DIR/e2e-up-dev.helm.log"
+  helm_values="$TMP_DIR/e2e-up-dev.values.yaml"
+  curl_log="$TMP_DIR/e2e-up-dev.curl.log"
+  nohup_log="$TMP_DIR/e2e-up-dev.nohup.log"
+  docker_log="$TMP_DIR/e2e-up-dev.docker.log"
+  gh_log="$TMP_DIR/e2e-up-dev.gh.log"
+  state_dir="$TMP_DIR/e2e-up-dev.state"
+  mkdir -p "$state_dir"
+  : >"$az_log"
+  : >"$kubectl_log"
+  : >"$helm_log"
+  : >"$curl_log"
+  : >"$nohup_log"
+  : >"$docker_log"
+  : >"$gh_log"
+
+  if ! env \
+    -u AKS_EXPOSURE_MODE \
+    PATH="$TMP_DIR/e2e-bin:$PATH" \
+    FAKE_AZ_LOG="$az_log" \
+    FAKE_KUBECTL_LOG="$kubectl_log" \
+    FAKE_KUBECTL_STATE_DIR="$state_dir" \
+    FAKE_HELM_LOG="$helm_log" \
+    FAKE_HELM_VALUES_CAPTURE="$helm_values" \
+    FAKE_CURL_LOG="$curl_log" \
+    FAKE_NOHUP_LOG="$nohup_log" \
+    FAKE_DOCKER_LOG="$docker_log" \
+    FAKE_GH_LOG="$gh_log" \
+    make -s -C "$ROOT_DIR" e2e-azure-route-up \
+      E2E_ENV_FILE="$TMP_DIR/missing.env" \
+      E2E_METADATA_FILE="$metadata_file" \
+      E2E_NAMESPACE_PREFIX="test-e2e" \
+      CLUSTER_FLAVOR=aks \
+      AZURE_SUBSCRIPTION_ID=00000000-0000-0000-0000-000000000001 \
+      AKS_RG=test-aks-rg \
+      AKS_CLUSTER=test-aks \
+      AOAI_RG=test-aoai-rg \
+      AOAI_ACCOUNT=test-aoai \
+      AOAI_DEPLOYMENT=gpt-4o-mini \
+      AKS_E2E_EXPOSURE_MODE=none \
+      AKS_LOCAL_PORT_FORWARD_PORT=38080 \
+      FRONTEND_PORT=3000 \
+      AKS_E2E_PUSH_DEV_IMAGES=YES >"$output_file" 2>&1; then
+    cat "$output_file" >&2 || true
+    fail "e2e-azure-route-up should support the AKS dev-image fallback path"
+  fi
+
+  cleanup_port_forward_from_metadata "$metadata_file"
+  assert_contains 'AKS E2E dev-image fallback enabled; using GHCR tag e2e-' "$output_file"
+  assert_matches '^TAG=e2e-[0-9]{8}-[0-9]{6}-[a-z0-9]+-dev$' "$metadata_file"
+  dev_tag="$(sed -n 's/^TAG=//p' "$metadata_file")"
+  assert_contains "auth token" "$gh_log"
+  assert_contains "api user --jq .login" "$gh_log"
+  assert_contains "login ghcr.io -u fake-gh-user --password-stdin" "$docker_log"
+  assert_contains "build -f frontend/Dockerfile -t ghcr.io/tuxerrante/sre-simulator-frontend:${dev_tag} ." "$docker_log"
+  assert_contains "push ghcr.io/tuxerrante/sre-simulator-frontend:${dev_tag}" "$docker_log"
+  assert_contains "build -f backend/Dockerfile -t ghcr.io/tuxerrante/sre-simulator-backend:${dev_tag} ." "$docker_log"
+  assert_contains "push ghcr.io/tuxerrante/sre-simulator-backend:${dev_tag}" "$docker_log"
+  assert_not_contains 'WARNING: TAG=latest uses GHCR latest' "$output_file"
+}
+
 run_makefile_gateway_defaults_check() {
   local makefile="$ROOT_DIR/Makefile"
 
@@ -1418,6 +1518,9 @@ run_makefile_gateway_defaults_check() {
   assert_contains 'AKS_CERT_MANAGER_ACME_EMAIL ?=' "$makefile"
   assert_not_contains 'AKS_CERT_MANAGER_ACME_EMAIL ?= aaffinit@redhat.com' "$makefile"
   assert_contains 'AKS_SKIP_GATEWAY_BOOTSTRAP ?= false' "$makefile"
+  assert_contains 'AKS_E2E_PUSH_DEV_IMAGES ?= false' "$makefile"
+  assert_contains 'AKS_E2E_DEV_IMAGE_TAG ?=' "$makefile"
+  assert_contains 'AKS_E2E_DEV_IMAGE_TAG_SUFFIX ?= dev' "$makefile"
   assert_contains 'export AKS_EXPOSURE_MODE AKS_E2E_EXPOSURE_MODE AKS_GATEWAY_HOST AKS_GATEWAY_CLASS_NAME' "$makefile"
   assert_contains 'export AKS_GATEWAY_TLS_SECRET_NAME AKS_CLUSTER_ISSUER_NAME' "$makefile"
   assert_contains 'export AKS_DNS_ZONE_NAME AKS_DNS_ZONE_RESOURCE_GROUP' "$makefile"
@@ -1444,7 +1547,9 @@ run_makefile_port_forward_e2e_targets_check() {
 
   assert_contains 'AKS_LOCAL_PORT_FORWARD_PORT ?= 38080' "$makefile"
   assert_contains 'AKS_E2E_EXPOSURE_MODE ?= none' "$makefile"
+  assert_contains 'AKS E2E dev-image fallback enabled; using GHCR tag $$TAG' "$makefile"
   assert_contains 'export AKS_SKIP_GATEWAY_BOOTSTRAP AKS_LOCAL_PORT_FORWARD_PORT' "$makefile"
+  assert_contains 'export AKS_E2E_PUSH_DEV_IMAGES AKS_E2E_DEV_IMAGE_TAG AKS_E2E_DEV_IMAGE_TAG_SUFFIX' "$makefile"
   assert_contains 'echo "  AKS_EXPOSURE_MODE: $(call e2e_var_source,AKS_EXPOSURE_MODE)"' "$makefile"
   assert_contains 'echo "  AKS_E2E_EXPOSURE_MODE: $(call e2e_var_source,AKS_E2E_EXPOSURE_MODE)"' "$makefile"
   assert_contains 'if [ "$(CLUSTER_FLAVOR)" = "aks" ] && [ -z "$(AKS_EXPOSURE_MODE_EXPLICIT)" ]; then \' "$makefile"
@@ -1522,6 +1627,7 @@ main() {
   run_e2e_route_up_default_none_mode_check
   run_e2e_route_up_explicit_override_check
   run_e2e_route_refresh_metadata_mode_check
+  run_e2e_route_up_dev_image_fallback_check
   run_makefile_gateway_defaults_check
   run_makefile_gateway_audit_targets_check
   run_makefile_port_forward_e2e_targets_check

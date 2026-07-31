@@ -26,14 +26,19 @@ repos:
         args: [--strict]
         exclude: ^helm/
 
-  - repo: https://github.com/igorshubovych/markdownlint-cli
-    rev: v0.44.0
-    hooks:
-      - id: markdownlint
-        args: [--fix]
-
   - repo: local
     hooks:
+      - id: markdownlint
+        name: markdownlint
+        entry: >-
+          bash -c
+          'npx --yes markdownlint-cli@0.44.0
+          "**/*.md"
+          --ignore
+          "**/node_modules/**"
+          --fix'
+        language: system
+        pass_filenames: false
       - id: no-push-to-main
         name: Block direct pushes to main
         entry: >-
@@ -50,7 +55,11 @@ repos:
         stages: [pre-push]
       - id: npm-audit
         name: npm audit (high/critical)
-        entry: bash -c 'cd frontend && npm audit --audit-level=high'
+        entry: >-
+          node scripts/frontend-audit-check.mjs
+          --root .
+          --frontend-dir frontend
+          --audit-level high
         language: system
         files: frontend/package-lock\.json
         pass_filenames: false

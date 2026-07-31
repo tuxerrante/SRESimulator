@@ -376,8 +376,107 @@ ensure_aks_gateway_stack() {
 }
 
 prepare_release_images() {
+  local ns=$1 tag=$2
+
+  if aks_e2e_push_dev_images_enabled; then
+    publish_aks_e2e_dev_images "$ns" "$tag" || return 1
+  fi
+
   # AKS deploys consume GHCR-published images directly.
   return 0
+}
+
+aks_e2e_push_dev_images_enabled() {
+  case "${AKS_E2E_PUSH_DEV_IMAGES:-false}" in
+    1|true|TRUE|yes|YES)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+require_aks_e2e_dev_image_tag() {
+  local tag=$1 suffix="${AKS_E2E_DEV_IMAGE_TAG_SUFFIX:-dev}"
+
+  if [[ -z "$tag" ]]; then
+    echo "error: AKS E2E dev-image fallback requires a non-empty tag" >&2
+    return 1
+  fi
+  if [[ "$tag" == "latest" ]]; then
+    echo "error: AKS E2E dev-image fallback refuses to overwrite the mutable latest tag" >&2
+    return 1
+  fi
+  if [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    echo "error: AKS E2E dev-image fallback refuses to publish a production-looking semver tag (${tag})" >&2
+    return 1
+  fi
+  if [[ "$tag" != *"-${suffix}" ]]; then
+    echo "error: AKS E2E dev-image fallback tag '${tag}' must end with '-${suffix}'" >&2
+    return 1
+  fi
+  if [[ "$tag" =~ [^A-Za-z0-9._-] ]]; then
+    echo "error: AKS E2E dev-image fallback tag '${tag}' contains invalid OCI tag characters" >&2
+    return 1
+  fi
+}
+
+detect_aks_local_container_cli() {
+  if command -v docker >/dev/null 2>&1; then
+    printf '%s\n' docker
+    return 0
+  fi
+  if command -v podman >/dev/null 2>&1; then
+    printf '%s\n' podman
+    return 0
+  fi
+
+  echo "error: AKS E2E dev-image fallback requires docker or podman in PATH" >&2
+  return 1
+}
+
+resolve_ghcr_username() {
+  if [ -n "${GHCR_USERNAME:-}" ]; then
+    printf '%s\n' "${GHCR_USERNAME}"
+    return 0
+  fi
+
+  gh api user --jq .login
+}
+
+login_ghcr_with_local_cli() {
+  local container_cli=$1 username token
+
+  require_cli gh || return 1
+  username="$(resolve_ghcr_username)" || return 1
+  token="$(gh auth token)" || return 1
+  printf '%s' "$token" | "$container_cli" login ghcr.io -u "$username" --password-stdin >/dev/null
+}
+
+build_and_push_ghcr_image() {
+  local container_cli=$1 image_repo=$2 image_tag=$3 dockerfile=$4
+
+  "$container_cli" build -f "$dockerfile" -t "${image_repo}:${image_tag}" . >/dev/null
+  "$container_cli" push "${image_repo}:${image_tag}" >/dev/null
+}
+
+publish_aks_e2e_dev_images() {
+  local ns=$1 tag=$2 container_cli
+
+  require_aks_e2e_dev_image_tag "$tag" || return 1
+  container_cli="$(detect_aks_local_container_cli)" || return 1
+  login_ghcr_with_local_cli "$container_cli" || return 1
+
+  echo "Publishing AKS E2E dev images for namespace ${ns} with GHCR tag ${tag}."
+  build_and_push_ghcr_image "$container_cli" \
+    "${AKS_FRONTEND_IMAGE_REPO:-ghcr.io/tuxerrante/sre-simulator-frontend}" \
+    "$tag" \
+    "frontend/Dockerfile" || return 1
+  build_and_push_ghcr_image "$container_cli" \
+    "${AKS_BACKEND_IMAGE_REPO:-ghcr.io/tuxerrante/sre-simulator-backend}" \
+    "$tag" \
+    "backend/Dockerfile" || return 1
 }
 
 image_pull_policy_for_tag() {
