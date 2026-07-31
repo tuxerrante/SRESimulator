@@ -9,6 +9,7 @@ For the living implementation view, prefer:
 - `Makefile`
 
 For explicit deploy/operator tasks, also use `docs/OPERATIONS.md`.
+That includes AKS E2E refreshes, shared-edge hostname work, artifact verification, and rollback planning.
 
 ## 1. Mission & Philosophy
 

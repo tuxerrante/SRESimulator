@@ -1,0 +1,35 @@
+{
+  "policyName": "stable-frontend-lint-stack-exception",
+  "approvedOn": "2026-07-31",
+  "reviewBy": "upstream-compatible package movement",
+  "expectedHighCount": 9,
+  "packages": {
+    "@eslint/config-array": {
+      "reason": "Current stable eslint 9 stack still pulls vulnerable minimatch/brace-expansion transitives."
+    },
+    "@eslint/eslintrc": {
+      "reason": "Current stable eslint 9 stack still pulls vulnerable minimatch/brace-expansion transitives."
+    },
+    "brace-expansion": {
+      "reason": "Residual advisory is isolated to the stable eslint/eslint-config-next chain."
+    },
+    "eslint": {
+      "reason": "The only npm-proposed remediation is eslint@10, which breaks make validate with the current stable eslint-config-next stack."
+    },
+    "eslint-config-next": {
+      "reason": "Latest published stable release still resolves the minimatch/brace-expansion chain."
+    },
+    "eslint-plugin-import": {
+      "reason": "Transitive dependency of eslint-config-next in the stable lint stack."
+    },
+    "eslint-plugin-jsx-a11y": {
+      "reason": "Transitive dependency of eslint-config-next in the stable lint stack."
+    },
+    "eslint-plugin-react": {
+      "reason": "Transitive dependency of eslint-config-next in the stable lint stack."
+    },
+    "minimatch": {
+      "reason": "Residual advisory is isolated to the stable eslint/eslint-config-next chain."
+    }
+  }
+}
