@@ -206,6 +206,8 @@ For namespace-only rollback:
 
 If GHCR `latest` still serves an older frontend footer than expected, the public E2E host is not on the intended release build even if routing is correct. In that case the blocker is artifact publication, not namespace wiring.
 
+Even after the direct E2E host reaches the intended `v0.3.0` frontend build, do not claim anonymous Easy is fixed unless the public root page itself stops rendering `Anonymous guest mode is unavailable until Turnstile is configured.` Image tags, deployment state, or `/api/auth/session` alone are not enough to prove the user-facing path is working.
+
 ## Observed Shared-Edge Findings
 
 The July 2026 shared-edge E2E run established the following durable, non-secret facts:
@@ -216,6 +218,9 @@ The July 2026 shared-edge E2E run established the following durable, non-secret 
 - `data/e2e-azure-route.env` can remain pointed at the original local port-forward URL (`AKS_E2E_EXPOSURE_MODE=none`) even after separate additive shared-edge hostname work. Do not treat that file as the source of truth for public shared-edge hostnames; hand off the public hostname explicitly in docs or issue comments.
 - The local dev-image fallback is the intended escape hatch when GHCR release tags are missing, but it requires a real local builder (`docker` or `podman`). On the investigation machine used for this run, `docker`, `podman`, `buildah`, and `nerdctl` were all absent, so the fallback could not publish a fresh E2E tag.
 - As of the same investigation point, public GHCR `latest` manifests existed for both frontend and backend, while `v0.3.0` manifests returned `404`. That combination explains why the public E2E host could be reachable yet still unable to serve the intended `v0.3.0` build.
+- After the WSL builder path was enabled and explicit dev-only images were published to GHCR, the direct E2E host moved to footer `v0.3.0` while the stable host remained on `v0.2.1`.
+- Despite that rollout difference, the public root HTML for both hosts still rendered `Anonymous guest mode is unavailable until Turnstile is configured.`
+- The remaining blocker is therefore no longer GHCR publication, namespace rollout, or shared-edge routing. It is now an app-level frontend/rendering mismatch in the deployed E2E frontend behavior.
 
 ## Setup and Operations
 
