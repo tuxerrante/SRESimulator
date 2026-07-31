@@ -1484,7 +1484,7 @@ run_e2e_route_up_dev_image_fallback_check() {
       AKS_E2E_EXPOSURE_MODE=none \
       AKS_LOCAL_PORT_FORWARD_PORT=38080 \
       FRONTEND_PORT=3000 \
-      AKS_E2E_PUSH_DEV_IMAGES=true >"$output_file" 2>&1; then
+      AKS_E2E_PUSH_DEV_IMAGES=YES >"$output_file" 2>&1; then
     cat "$output_file" >&2 || true
     fail "e2e-azure-route-up should support the AKS dev-image fallback path"
   fi

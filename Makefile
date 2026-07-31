@@ -535,7 +535,7 @@ e2e-azure-route-up: env-check ## Deploy frontend/backend to the selected cluster
 	NS="$(E2E_NAMESPACE_PREFIX)-$$TS"; \
 	if [ "$(CLUSTER_FLAVOR)" = "aks" ]; then \
 		TAG="$${TAG:-latest}"; \
-		if [ "$(AKS_E2E_PUSH_DEV_IMAGES)" = "true" ] && [ "$$TAG" = "latest" ]; then \
+		if aks_e2e_push_dev_images_enabled && [ "$$TAG" = "latest" ]; then \
 			SHORT_SHA="$${GIT_SHORT_SHA:-$$(git rev-parse --short=12 HEAD 2>/dev/null || printf manual)}"; \
 			TAG="$${AKS_E2E_DEV_IMAGE_TAG:-e2e-$$TS-$$SHORT_SHA-$(AKS_E2E_DEV_IMAGE_TAG_SUFFIX)}"; \
 			echo "AKS E2E dev-image fallback enabled; using GHCR tag $$TAG"; \
@@ -634,7 +634,7 @@ e2e-azure-route-refresh: env-check ## Refresh the selected e2e namespace (NS=...
 	TS=$$(date +%Y%m%d-%H%M%S); \
 	if [ "$(CLUSTER_FLAVOR)" = "aks" ]; then \
 		TAG="$${TAG:-latest}"; \
-		if [ "$(AKS_E2E_PUSH_DEV_IMAGES)" = "true" ] && [ "$$TAG" = "latest" ]; then \
+		if aks_e2e_push_dev_images_enabled && [ "$$TAG" = "latest" ]; then \
 			SHORT_SHA="$${GIT_SHORT_SHA:-$$(git rev-parse --short=12 HEAD 2>/dev/null || printf manual)}"; \
 			TAG="$${AKS_E2E_DEV_IMAGE_TAG:-e2e-$$TS-$$SHORT_SHA-$(AKS_E2E_DEV_IMAGE_TAG_SUFFIX)}"; \
 			echo "AKS E2E dev-image fallback enabled; using GHCR tag $$TAG"; \
