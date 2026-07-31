@@ -554,20 +554,24 @@ helm_deploy_sre() {
     auth_flags+=(--set-string "backend.auth.existingSecretName=${resolved_auth_secret}")
     auth_flags+=(--set-string "backend.auth.authSessionSecretKey=auth-session-secret")
 
-    if [ -n "${ANTI_ABUSE_HMAC_SECRET:-}" ]; then
+    if [ -n "${ANTI_ABUSE_HMAC_SECRET:-}" ] || \
+       secret_has_key "$ns" "$resolved_auth_secret" "anti-abuse-hmac-secret"; then
       auth_flags+=(--set-string "frontend.auth.antiAbuseHmacSecretKey=anti-abuse-hmac-secret")
       auth_flags+=(--set-string "backend.auth.antiAbuseHmacSecretKey=anti-abuse-hmac-secret")
     fi
 
-    if [ -n "$turnstile_site_key" ]; then
+    if [ -n "$turnstile_site_key" ] || \
+       secret_has_key "$ns" "$resolved_auth_secret" "turnstile-site-key"; then
       auth_flags+=(--set-string "frontend.auth.turnstileSiteKeyKey=turnstile-site-key")
     fi
 
-    if [ -n "${TURNSTILE_SECRET_KEY:-}" ]; then
+    if [ -n "${TURNSTILE_SECRET_KEY:-}" ] || \
+       secret_has_key "$ns" "$resolved_auth_secret" "turnstile-secret-key"; then
       auth_flags+=(--set-string "backend.auth.turnstileSecretKey=turnstile-secret-key")
     fi
 
-    if [ -n "${TURNSTILE_EXPECTED_HOSTNAME:-}" ]; then
+    if [ -n "${TURNSTILE_EXPECTED_HOSTNAME:-}" ] || \
+       secret_has_key "$ns" "$resolved_auth_secret" "turnstile-expected-hostname"; then
       auth_flags+=(
         --set-string "backend.auth.turnstileExpectedHostnameKey=turnstile-expected-hostname"
       )

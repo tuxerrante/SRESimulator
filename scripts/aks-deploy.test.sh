@@ -712,6 +712,65 @@ run_optional_auth_verification_flag_check() {
   assert_contains "backend.auth.localTestVerificationEnabled=true" "$TMP_DIR/helm-args.txt"
 }
 
+run_default_copied_auth_secret_wires_anonymous_easy_keys_check() {
+  # shellcheck disable=SC1091
+  source "$ROOT_DIR/scripts/aks-deploy.sh"
+  capture_helm_invocation
+
+  require_cli() { :; }
+  ensure_namespace() { :; }
+  resolve_aks_public_endpoint() {
+    AKS_FRONTEND_PUBLIC_IP_NAME="example-frontend-pip"
+    AKS_FRONTEND_PUBLIC_IP="203.0.113.10"
+    AKS_FRONTEND_PUBLIC_FQDN="aks.example.test"
+    AKS_FRONTEND_PUBLIC_ENDPOINT_HOST="aks.example.test"
+  }
+  copy_secret_across_namespaces() {
+    printf '%s|%s|%s\n' "$1" "$2" "$3" >"$TMP_DIR/default-auth-secret-copy.txt"
+  }
+  upsert_secret_literal_key() { :; }
+  secret_exists_in_namespace() {
+    [ "$1" = "sre-simulator" ] && [ "$2" = "sre-auth-secrets" ]
+  }
+  secret_has_key() {
+    case "$3" in
+      anti-abuse-hmac-secret|turnstile-site-key|turnstile-secret-key|turnstile-expected-hostname)
+        return 0
+        ;;
+      *)
+        return 1
+        ;;
+    esac
+  }
+
+  unset AKS_GATEWAY_HOST AKS_GATEWAY_CLASS_NAME \
+    AKS_CLUSTER_ISSUER_NAME AKS_GATEWAY_TLS_SECRET_NAME || true
+  unset GITHUB_AUTH_SECRET_NAME E2E_AUTH_SECRET_NAME AUTH_SECRET_SOURCE_NAMESPACE || true
+  unset GITHUB_CLIENT_ID GITHUB_CLIENT_SECRET AUTH_SESSION_SECRET ANTI_ABUSE_HMAC_SECRET || true
+  unset TURNSTILE_SECRET_KEY TURNSTILE_EXPECTED_HOSTNAME TURNSTILE_SITE_KEY NEXT_PUBLIC_TURNSTILE_SITE_KEY || true
+  unset TURNSTILE_TEST_MODE || true
+  E2E_RELEASE="sre-simulator"
+  AKS_RG="example-aks-rg"
+  AKS_CLUSTER="example-aks"
+  AKS_EXPOSURE_MODE="publicService"
+  AOAI_DEPLOYMENT="gpt-4o-mini"
+
+  if ! helm_deploy_sre "sre-e2e" "latest" "probe-token" >"$TMP_DIR/default-auth-secret.out" 2>&1; then
+    cat "$TMP_DIR/default-auth-secret.out" >&2 || true
+    fail "helm_deploy_sre should reuse the default copied auth secret for anonymous Easy verification"
+  fi
+
+  assert_contains "frontend.auth.existingSecretName=sre-auth-secrets" "$TMP_DIR/helm-args.txt"
+  assert_contains "backend.auth.existingSecretName=sre-auth-secrets" "$TMP_DIR/helm-args.txt"
+  assert_contains "backend.auth.authSessionSecretKey=auth-session-secret" "$TMP_DIR/helm-args.txt"
+  assert_contains "frontend.auth.antiAbuseHmacSecretKey=anti-abuse-hmac-secret" "$TMP_DIR/helm-args.txt"
+  assert_contains "frontend.auth.turnstileSiteKeyKey=turnstile-site-key" "$TMP_DIR/helm-args.txt"
+  assert_contains "backend.auth.antiAbuseHmacSecretKey=anti-abuse-hmac-secret" "$TMP_DIR/helm-args.txt"
+  assert_contains "backend.auth.turnstileSecretKey=turnstile-secret-key" "$TMP_DIR/helm-args.txt"
+  assert_contains "backend.auth.turnstileExpectedHostnameKey=turnstile-expected-hostname" "$TMP_DIR/helm-args.txt"
+  assert_contains "sre-simulator|sre-e2e|sre-auth-secrets" "$TMP_DIR/default-auth-secret-copy.txt"
+}
+
 run_clusterissuer_manifest_check() {
   local manifest
 
@@ -1610,6 +1669,7 @@ main() {
   run_frontend_auth_secret_flag_check
   run_auth_secret_resolution_sanitizes_and_keeps_helm_args_clean_check
   run_optional_auth_verification_flag_check
+  run_default_copied_auth_secret_wires_anonymous_easy_keys_check
   run_clusterissuer_manifest_check
   run_clusterissuer_manifest_requires_email_check
   run_gatewayclass_manifest_check
