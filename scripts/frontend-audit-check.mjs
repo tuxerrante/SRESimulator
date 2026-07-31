@@ -220,11 +220,18 @@ function main() {
 
   const expectedCount = policy.expectedCounts?.[auditLevel];
   const actualCount = report.metadata?.vulnerabilities?.[auditLevel] ?? 0;
-  if (typeof expectedCount === "number" && Number.isFinite(expectedCount) && actualCount !== expectedCount) {
-    console.error(
-      `Expected ${expectedCount} ${auditLevel} vulnerabilities in the approved frontend exception set, found ${actualCount}.`
-    );
-    process.exit(1);
+  if (typeof expectedCount === "number" && Number.isFinite(expectedCount)) {
+    if (actualCount > expectedCount) {
+      console.error(
+        `Expected at most ${expectedCount} ${auditLevel} vulnerabilities in the approved frontend exception set, found ${actualCount}.`
+      );
+      process.exit(1);
+    }
+    if (actualCount < expectedCount) {
+      console.log(
+        `Observed ${actualCount} ${auditLevel} vulnerabilities, below the approved exception ceiling of ${expectedCount}.`
+      );
+    }
   }
 
   console.log("Frontend audit passed with only approved exception packages remaining.");

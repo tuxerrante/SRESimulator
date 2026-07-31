@@ -139,7 +139,7 @@ run_blocking_signature_mismatch_check() {
   assert_contains "totally-new-advisory" "$TMP_DIR/blocking.out"
 }
 
-run_expected_count_check() {
+run_expected_count_ceiling_check() {
   local repo_dir="$TMP_DIR/repo-count"
   write_fixture_repo "$repo_dir"
   write_audit_json "$TMP_DIR/count-audit.json" '{
@@ -169,10 +169,39 @@ run_expected_count_check() {
       --root "$repo_dir" \
       --frontend-dir frontend \
       --audit-level high >"$TMP_DIR/count.out" 2>&1; then
-    fail "expected count mismatch should fail"
+    fail "expected count ceiling should fail when audit count grows"
   fi
 
-  assert_contains "Expected 1 high vulnerabilities" "$TMP_DIR/count.out"
+  assert_contains "Expected at most 1 high vulnerabilities" "$TMP_DIR/count.out"
+}
+
+run_lower_count_pass_check() {
+  local repo_dir="$TMP_DIR/repo-lower-count"
+  write_fixture_repo "$repo_dir"
+  write_audit_json "$TMP_DIR/lower-count-audit.json" '{
+  "vulnerabilities": {},
+  "metadata": {
+    "vulnerabilities": {
+      "high": 0,
+      "critical": 0,
+      "total": 0
+    }
+  }
+}'
+
+  if ! env \
+    PATH="$repo_dir/bin:$PATH" \
+    FAKE_NPM_AUDIT_JSON="$TMP_DIR/lower-count-audit.json" \
+    FAKE_NPM_EXIT_CODE=0 \
+    node "$ROOT_DIR/scripts/frontend-audit-check.mjs" \
+      --root "$repo_dir" \
+      --frontend-dir frontend \
+      --audit-level high >"$TMP_DIR/lower-count.out" 2>&1; then
+    cat "$TMP_DIR/lower-count.out" >&2 || true
+    fail "lower audit counts should pass"
+  fi
+
+  assert_contains "Observed 0 high vulnerabilities, below the approved exception ceiling of 1." "$TMP_DIR/lower-count.out"
 }
 
 run_critical_gate_skips_high_count_check() {
@@ -224,7 +253,8 @@ run_missing_arg_check() {
 main() {
   run_allowed_exception_check
   run_blocking_signature_mismatch_check
-  run_expected_count_check
+  run_expected_count_ceiling_check
+  run_lower_count_pass_check
   run_critical_gate_skips_high_count_check
   run_missing_arg_check
   echo "frontend audit check tests passed."
