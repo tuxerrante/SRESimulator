@@ -7,7 +7,7 @@ export default defineConfig({
     exclude: ["src/integration/**"],
     coverage: {
       provider: "v8",
-      reportsDirectory: "coverage",
+      reportsDirectory: process.env.VITEST_COVERAGE_DIR ?? "coverage",
       reporter: ["text", "json-summary", "lcov"],
     },
   },

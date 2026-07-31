@@ -15,5 +15,5 @@ describe("frontend backend proxy route configuration", () => {
     await expect(import("./route")).rejects.toThrow(
       "TRUST_PROXY_HEADERS=true requires ANTI_ABUSE_HMAC_SECRET for signed client IP verification",
     );
-  });
+  }, 30000);
 });

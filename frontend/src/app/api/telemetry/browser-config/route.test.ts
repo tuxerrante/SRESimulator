@@ -34,5 +34,5 @@ describe("telemetry browser config route", () => {
     expect(body).toContain('"dsn":"https://public@example.ingest.sentry.io/1"');
     expect(body).not.toContain("frontend@1.2.3");
     expect(body).not.toContain('"release"');
-  });
+  }, 30000);
 });

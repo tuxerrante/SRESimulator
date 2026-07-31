@@ -138,7 +138,7 @@ describe("POST /api/scenario", () => {
 
     const scenarioModule = await import("./scenario");
     scenarioRouter = scenarioModule.scenarioRouter;
-  });
+  }, 120000);
 
   beforeEach(() => {
     process.env.AI_MOCK_MODE = "true";

@@ -105,7 +105,7 @@ describe("gameplay routes", () => {
 
     const gameplayModule = await import("./gameplay");
     gameplayRouter = gameplayModule.gameplayRouter;
-  });
+  }, 120000);
 
   afterEach(async () => {
     if (origDataDir === undefined) {

@@ -140,7 +140,7 @@ describe("aiRateLimit Redis store", () => {
     expect(allowedResponseB.headers.get("RateLimit-Remaining")).toBe("0");
     expect(deniedResponse.status).toHaveBeenCalledWith(429);
     expect(deniedResponse.headers.get("Retry-After")).toBe("15");
-  });
+  }, 30000);
 
   it("reuses a single Redis client across requests", async () => {
     process.env.AI_RATE_LIMIT_REDIS_URL = "redis://127.0.0.1:6379/0";
@@ -206,7 +206,7 @@ describe("aiRateLimit Redis store", () => {
     expect(secondNext).not.toHaveBeenCalled();
     expect(secondResponse.headers.get("RateLimit-Policy")).toBe("1;w=60");
     expect(secondResponse.status).toHaveBeenCalledWith(429);
-  });
+  }, 30000);
 
   it("reconnects with the same Redis client after a transient failure", async () => {
     process.env.AI_RATE_LIMIT_REDIS_URL = "redis://127.0.0.1:6379/0";

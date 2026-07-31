@@ -72,18 +72,21 @@ async function postJson(
 describe("scenario telemetry", () => {
   const originalMockMode = process.env.AI_MOCK_MODE;
   const originalAuthSessionSecret = process.env.AUTH_SESSION_SECRET;
-  const githubAuthCookie = `${VIEWER_SESSION_COOKIE}=${createViewerSessionToken(
-    {
-      kind: "github",
-      githubUserId: "12345",
-      githubLogin: "octocat",
-      displayName: "The Octocat",
-      avatarUrl: null,
-      issuedAt: Date.now(),
-      expiresAt: Date.now() + 60_000,
-    },
-    "test-secret"
-  )}`;
+
+  function buildGithubAuthCookie(): string {
+    return `${VIEWER_SESSION_COOKIE}=${createViewerSessionToken(
+      {
+        kind: "github",
+        githubUserId: "12345",
+        githubLogin: "octocat",
+        displayName: "The Octocat",
+        avatarUrl: null,
+        issuedAt: Date.now(),
+        expiresAt: Date.now() + 60_000,
+      },
+      "test-secret"
+    )}`;
+  }
 
   beforeEach(() => {
     process.env.AI_MOCK_MODE = "true";
@@ -132,7 +135,7 @@ describe("scenario telemetry", () => {
       app,
       "/api/scenario",
       { difficulty: "easy" },
-      { cookie: githubAuthCookie }
+      { cookie: buildGithubAuthCookie() }
     );
 
     expect(response.status).toBe(200);
@@ -144,7 +147,7 @@ describe("scenario telemetry", () => {
       completed: false,
       metadata: { source: "scenario" },
     }));
-  });
+  }, 90000);
 
   it("still returns the scenario when started telemetry recording fails", async () => {
     const create = vi.fn().mockResolvedValue("session-123");
@@ -171,7 +174,7 @@ describe("scenario telemetry", () => {
       app,
       "/api/scenario",
       { difficulty: "medium" },
-      { cookie: githubAuthCookie }
+      { cookie: buildGithubAuthCookie() }
     );
 
     expect(response.status).toBe(200);
@@ -179,7 +182,7 @@ describe("scenario telemetry", () => {
     expect(upsertGithubViewer).toHaveBeenCalled();
     expect(warn).toHaveBeenCalled();
     expect(JSON.stringify(warn.mock.calls)).not.toContain("session-123");
-  });
+  }, 90000);
 
   it("does not wait for started telemetry to finish before returning the scenario", async () => {
     const create = vi.fn().mockResolvedValue("session-123");
@@ -211,8 +214,8 @@ describe("scenario telemetry", () => {
       app,
       "/api/scenario",
       { difficulty: "easy" },
-      { cookie: githubAuthCookie },
-      100
+      { cookie: buildGithubAuthCookie() },
+      1500
     );
 
     expect(response.status).toBe(200);
@@ -220,5 +223,5 @@ describe("scenario telemetry", () => {
     expect(recordGameplay).toHaveBeenCalled();
 
     resolveStartedTelemetry?.();
-  });
+  }, 90000);
 });

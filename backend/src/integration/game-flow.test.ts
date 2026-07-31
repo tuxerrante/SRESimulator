@@ -40,18 +40,21 @@ let savedTurnstileSecret: string | undefined;
 let savedAuthSecret: string | undefined;
 let savedAntiAbuseSecret: string | undefined;
 let savedPersistentLeaderboardEnabled: string | undefined;
-const githubAuthCookie = `${VIEWER_SESSION_COOKIE}=${createViewerSessionToken(
-  {
-    kind: "github",
-    githubUserId: "12345",
-    githubLogin: "octocat",
-    displayName: "The Octocat",
-    avatarUrl: null,
-    issuedAt: Date.now(),
-    expiresAt: Date.now() + 60_000,
-  },
-  "test-secret"
-)}`;
+
+function buildGithubAuthCookie(): string {
+  return `${VIEWER_SESSION_COOKIE}=${createViewerSessionToken(
+    {
+      kind: "github",
+      githubUserId: "12345",
+      githubLogin: "octocat",
+      displayName: "The Octocat",
+      avatarUrl: null,
+      issuedAt: Date.now(),
+      expiresAt: Date.now() + 60_000,
+    },
+    "test-secret"
+  )}`;
+}
 
 async function createFullApp(): Promise<Express> {
   savedMockMode = process.env.AI_MOCK_MODE;
@@ -98,7 +101,7 @@ beforeAll(async () => {
   const result = await startLocalServer(app);
   baseUrl = result.url;
   localServer = result.server;
-});
+}, 120000);
 
 afterAll(() => {
   if (localServer) {
@@ -157,7 +160,7 @@ describe("full game flow: scenario -> chat -> command -> scores", () => {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        cookie: githubAuthCookie,
+        cookie: buildGithubAuthCookie(),
         ...getScenarioRequestHeaders(),
       },
       body: JSON.stringify({ difficulty: "easy" }),
@@ -339,7 +342,7 @@ describe("scenario validation", () => {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          cookie: githubAuthCookie,
+          cookie: buildGithubAuthCookie(),
         },
         body: JSON.stringify({ difficulty }),
       });

@@ -5,6 +5,13 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-07-31
+
+### Changed (0.3.0)
+
+- Hardened Node 24 release validation by isolating slow WSL/Vitest cold-start behavior, deconflicting coverage output, and normalizing deployment shell/chart files to LF so the mainline quality gates pass consistently.
+- Updated the default Azure OpenAI/Foundry deployment wiring to `gpt-5.6-terra` and aligned release/e2e metadata for the `v0.3.0` promotion path.
+
 ## [0.2.1] - 2026-06-19
 
 ### Changed (0.2.1)

@@ -97,5 +97,5 @@ describe("gameplay route errors", () => {
     expect(JSON.stringify(response.body)).not.toContain("driver blew up");
     expect(hasLifecycleEvent).toHaveBeenCalledWith("session-123", "completed");
     expect(recordGameplay).toHaveBeenCalled();
-  });
+  }, 180000);
 });

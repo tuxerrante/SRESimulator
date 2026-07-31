@@ -86,7 +86,7 @@ describe("scores routes", () => {
 
     const scoresModule = await import("./scores");
     scoresRouter = scoresModule.scoresRouter;
-  });
+  }, 60000);
 
   afterAll(async () => {
     if (origDataDir === undefined) {

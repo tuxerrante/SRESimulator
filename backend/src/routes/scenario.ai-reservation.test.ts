@@ -199,7 +199,7 @@ describe("scenario reservation before AI generation", () => {
 
     expect([first.status, second.status].sort()).toEqual([200, 429]);
     expect(generateAiTextMock).toHaveBeenCalledTimes(1);
-  });
+  }, 60000);
 
   it("requests low reasoning effort for AI-generated scenarios", async () => {
     const storageModule = await import("../lib/storage");

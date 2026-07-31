@@ -234,13 +234,13 @@ variable "aks_cert_manager_identity_name" {
 variable "aoai_model_name" {
   description = "Azure OpenAI model to deploy (must be available in the chosen region)."
   type        = string
-  default     = "gpt-4o-mini"
+  default     = "gpt-5.6-terra"
 }
 
 variable "aoai_model_version" {
   description = "Model version for the Azure OpenAI deployment."
   type        = string
-  default     = "2024-07-18"
+  default     = "2026-07-09"
 }
 
 variable "aoai_sku_name" {

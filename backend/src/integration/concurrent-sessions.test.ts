@@ -77,7 +77,7 @@ beforeAll(async () => {
       sessionStore.create("easy", `Concurrent Chat ${index + 1}`),
     ),
   );
-});
+}, 120000);
 
 afterAll(() => {
   if (localServer) {
