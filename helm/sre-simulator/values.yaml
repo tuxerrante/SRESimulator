@@ -86,6 +86,7 @@ backend:
     turnstileSecretKey: ""
     turnstileExpectedHostnameKey: ""
     turnstileTestMode: false
+    localTestVerificationEnabled: false
   podSecurityContext:
     fsGroup: 1001
     fsGroupChangePolicy: OnRootMismatch

@@ -548,6 +548,9 @@ e2e-azure-route-up: env-check ## Deploy frontend/backend to the selected cluster
 		echo "Publish a fresh semver release tag before e2e when you need the newest main changes."; \
 	fi; \
 	PROBE_TOKEN="probe-$$TS"; \
+	if [ -n "$${TURNSTILE_TEST_MODE:-}" ]; then \
+		export LOCAL_TEST_VERIFICATION_ENABLED="$${LOCAL_TEST_VERIFICATION_ENABLED:-true}"; \
+	fi; \
 	KEEP_PORT_FORWARD=""; \
 	stop_port_forward() { \
 		if [ -z "$${PORT_FORWARD_PID:-}" ]; then \
@@ -647,6 +650,9 @@ e2e-azure-route-refresh: env-check ## Refresh the selected e2e namespace (NS=...
 		echo "Publish a fresh semver release tag before e2e when you need the newest main changes."; \
 	fi; \
 	PROBE_TOKEN="probe-$$TS"; \
+	if [ -n "$${TURNSTILE_TEST_MODE:-}" ]; then \
+		export LOCAL_TEST_VERIFICATION_ENABLED="$${LOCAL_TEST_VERIFICATION_ENABLED:-true}"; \
+	fi; \
 	stop_port_forward() { \
 		if [ -z "$${PORT_FORWARD_PID:-}" ]; then \
 			return 0; \

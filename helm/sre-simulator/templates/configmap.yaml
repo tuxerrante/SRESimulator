@@ -37,5 +37,6 @@ data:
   TRUST_PROXY_HEADERS: {{ ternary "true" "false" .Values.backend.trustProxyHeaders | quote }}
   PERSISTENT_LEADERBOARD_ENABLED: {{ ternary "true" "false" .Values.backend.persistentLeaderboardEnabled | quote }}
   TURNSTILE_TEST_MODE: {{ ternary "true" "false" .Values.backend.auth.turnstileTestMode | quote }}
+  LOCAL_TEST_VERIFICATION_ENABLED: {{ ternary "true" "false" .Values.backend.auth.localTestVerificationEnabled | quote }}
   AI_CHAT_TIMEOUT_MS: "{{ .Values.backend.aiChatTimeoutMs }}"
   AI_SCENARIO_TIMEOUT_MS: "{{ .Values.backend.aiScenarioTimeoutMs }}"

@@ -578,6 +578,12 @@ helm_deploy_sre() {
     auth_flags+=(--set-string "backend.auth.turnstileTestMode=${TURNSTILE_TEST_MODE}")
   fi
 
+  if [ -n "${LOCAL_TEST_VERIFICATION_ENABLED:-}" ]; then
+    auth_flags+=(
+      --set-string "backend.auth.localTestVerificationEnabled=${LOCAL_TEST_VERIFICATION_ENABLED}"
+    )
+  fi
+
   if [ -n "${DB_SECRET_NAME:-}" ]; then
     db_flags=(
       --set database.enabled=true

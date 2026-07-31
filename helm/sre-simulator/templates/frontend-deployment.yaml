@@ -75,6 +75,8 @@ spec:
               value: {{ ternary "true" "false" .Values.frontend.trustProxyHeaders | quote }}
             - name: TURNSTILE_TEST_MODE
               value: {{ ternary "true" "false" .Values.backend.auth.turnstileTestMode | quote }}
+            - name: LOCAL_TEST_VERIFICATION_ENABLED
+              value: {{ ternary "true" "false" .Values.backend.auth.localTestVerificationEnabled | quote }}
             - name: NEXT_PUBLIC_SENTRY_ENABLED
               value: {{ ternary "true" "false" .Values.frontend.sentry.enabled | quote }}
             - name: NEXT_PUBLIC_ADMIN_ANALYTICS_ENABLED

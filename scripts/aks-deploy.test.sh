@@ -696,6 +696,7 @@ run_optional_auth_verification_flag_check() {
   TURNSTILE_EXPECTED_HOSTNAME="play.sresimulator.osadev.cloud"
   TURNSTILE_SITE_KEY="turnstile-site"
   TURNSTILE_TEST_MODE="true"
+  LOCAL_TEST_VERIFICATION_ENABLED="true"
 
   if ! helm_deploy_sre "sre-simulator" "latest" "probe-token" >"$TMP_DIR/auth-optional-flags.txt" 2>&1; then
     cat "$TMP_DIR/auth-optional-flags.txt" >&2 || true
@@ -708,6 +709,7 @@ run_optional_auth_verification_flag_check() {
   assert_contains "backend.auth.turnstileSecretKey=turnstile-secret-key" "$TMP_DIR/helm-args.txt"
   assert_contains "backend.auth.turnstileExpectedHostnameKey=turnstile-expected-hostname" "$TMP_DIR/helm-args.txt"
   assert_contains "backend.auth.turnstileTestMode=true" "$TMP_DIR/helm-args.txt"
+  assert_contains "backend.auth.localTestVerificationEnabled=true" "$TMP_DIR/helm-args.txt"
 }
 
 run_clusterissuer_manifest_check() {
