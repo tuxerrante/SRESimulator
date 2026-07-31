@@ -2,9 +2,10 @@ import type sql from "mssql";
 import type {
   GameplayAnalytics,
   GameplayDifficultyAnalytics,
+  GameplayPlatformAnalytics,
   GameplayScenarioAnalytics,
 } from "../../../../shared/types/gameplay";
-import type { IMetricsStore, GameplayRecord } from "./types";
+import type { GameplayAnalyticsFilters, IMetricsStore, GameplayRecord } from "./types";
 
 const DUPLICATE_LIFECYCLE_INDEX = "ux_gameplay_metrics_session_lifecycle";
 
@@ -31,6 +32,7 @@ function toRate(part: number, total: number): number {
 interface GameplayRow {
   id: string;
   session_token: string | null;
+  platform: "aro-classic" | "aro-hcp" | "aks" | null;
   traffic_source: "player" | "automated" | null;
   nickname: string | null;
   difficulty: string | null;
@@ -54,6 +56,7 @@ function mapGameplayRow(row: GameplayRow): GameplayRecord {
   return {
     id: row.id,
     sessionToken: row.session_token ?? undefined,
+    platform: row.platform ?? undefined,
     trafficSource: row.traffic_source ?? undefined,
     nickname: row.nickname ?? undefined,
     difficulty: (row.difficulty ?? undefined) as GameplayRecord["difficulty"],
@@ -83,6 +86,7 @@ export class MssqlMetricsStore implements IMetricsStore {
     try {
       await this.pool.request()
         .input("sessionToken", data.sessionToken ?? null)
+        .input("platform", data.platform ?? "aro-classic")
         .input("trafficSource", data.trafficSource ?? "player")
         .input("nickname", data.nickname ?? null)
         .input("difficulty", data.difficulty ?? null)
@@ -101,12 +105,12 @@ export class MssqlMetricsStore implements IMetricsStore {
         .input("metadata", JSON.stringify(data.metadata ?? {}))
         .query(`
           INSERT INTO gameplay_metrics
-            (session_token, traffic_source, nickname, difficulty, scenario_title, lifecycle_state,
+            (session_token, platform, traffic_source, nickname, difficulty, scenario_title, lifecycle_state,
              command_count,
              commands_executed, scoring_events, chat_message_count,
              ai_prompt_tokens, ai_completion_tokens, duration_ms, score_total, grade,
              completed, metadata)
-          VALUES (@sessionToken, @trafficSource, @nickname, @difficulty, @scenarioTitle, @lifecycleState,
+          VALUES (@sessionToken, @platform, @trafficSource, @nickname, @difficulty, @scenarioTitle, @lifecycleState,
                   @commandCount, @commandsExecuted, @scoringEvents, @chatMessageCount,
                   @aiPromptTokens, @aiCompletionTokens, @durationMs,
                   @scoreTotal, @grade, @completed, @metadata)
@@ -126,6 +130,7 @@ export class MssqlMetricsStore implements IMetricsStore {
         SELECT TOP 100
           id,
           session_token,
+          platform,
           traffic_source,
           nickname,
           difficulty,
@@ -172,6 +177,7 @@ export class MssqlMetricsStore implements IMetricsStore {
         SELECT TOP 1
           id,
           session_token,
+          platform,
           traffic_source,
           nickname,
           difficulty,
@@ -212,6 +218,7 @@ export class MssqlMetricsStore implements IMetricsStore {
         SELECT TOP 1
           id,
           session_token,
+          platform,
           traffic_source,
           nickname,
           difficulty,
@@ -243,7 +250,9 @@ export class MssqlMetricsStore implements IMetricsStore {
     return mapGameplayRow(row);
   }
 
-  async getGameplayAnalytics(): Promise<GameplayAnalytics> {
+  async getGameplayAnalytics(
+    filters?: GameplayAnalyticsFilters,
+  ): Promise<GameplayAnalytics> {
     type SummaryRow = {
       total_sessions: number;
       completed_sessions: number;
@@ -254,6 +263,13 @@ export class MssqlMetricsStore implements IMetricsStore {
       avg_completion_chat_message_count: number | null;
       avg_completion_score_total: number | null;
     };
+    type PlatformRow = {
+      platform: string;
+      total_sessions: number;
+      completed_sessions: number;
+      abandoned_sessions: number;
+      in_progress_sessions: number;
+    };
     type DifficultyRow = {
       difficulty: string;
       total_sessions: number;
@@ -262,6 +278,7 @@ export class MssqlMetricsStore implements IMetricsStore {
       in_progress_sessions: number;
     };
     type ScenarioRow = {
+      platform: string | null;
       scenario_title: string;
       difficulty: string | null;
       total_sessions: number;
@@ -270,6 +287,7 @@ export class MssqlMetricsStore implements IMetricsStore {
       in_progress_sessions: number;
     };
     type RecentRow = {
+      platform: string | null;
       lifecycle_state: string | null;
       nickname: string | null;
       difficulty: string | null;
@@ -282,9 +300,12 @@ export class MssqlMetricsStore implements IMetricsStore {
       created_at: Date;
     };
 
+    const request = this.pool.request().input("platform", filters?.platform ?? null);
+
     const latestSessionCte = `
       WITH ranked_sessions AS (
         SELECT
+          platform,
           lifecycle_state,
           nickname,
           difficulty,
@@ -305,9 +326,11 @@ export class MssqlMetricsStore implements IMetricsStore {
         FROM gameplay_metrics
         WHERE traffic_source = 'player'
           AND session_token IS NOT NULL
+          AND (@platform IS NULL OR platform = @platform)
       ),
       latest AS (
         SELECT
+          platform,
           lifecycle_state,
           nickname,
           difficulty,
@@ -322,6 +345,7 @@ export class MssqlMetricsStore implements IMetricsStore {
         WHERE rn = 1
         UNION ALL
         SELECT
+          platform,
           lifecycle_state,
           nickname,
           difficulty,
@@ -335,12 +359,14 @@ export class MssqlMetricsStore implements IMetricsStore {
         FROM gameplay_metrics
         WHERE traffic_source = 'player'
           AND session_token IS NULL
+          AND (@platform IS NULL OR platform = @platform)
       )
     `;
 
-    const analyticsResult = await this.pool.request().query<SummaryRow>(`
+    const analyticsResult = await request.query<SummaryRow>(`
       ${latestSessionCte}
       CREATE TABLE #latest_sessions (
+        platform VARCHAR(16) NULL,
         lifecycle_state VARCHAR(16) NULL,
         nickname NVARCHAR(20) NULL,
         difficulty VARCHAR(10) NULL,
@@ -354,6 +380,7 @@ export class MssqlMetricsStore implements IMetricsStore {
       );
 
       INSERT INTO #latest_sessions (
+        platform,
         lifecycle_state,
         nickname,
         difficulty,
@@ -366,6 +393,7 @@ export class MssqlMetricsStore implements IMetricsStore {
         created_at
       )
       SELECT
+        platform,
         lifecycle_state,
         nickname,
         difficulty,
@@ -391,6 +419,17 @@ export class MssqlMetricsStore implements IMetricsStore {
       FROM #latest_sessions;
 
       SELECT
+        platform,
+        COUNT(*) AS total_sessions,
+        SUM(CASE WHEN lifecycle_state = 'completed' THEN 1 ELSE 0 END) AS completed_sessions,
+        SUM(CASE WHEN lifecycle_state = 'abandoned' THEN 1 ELSE 0 END) AS abandoned_sessions,
+        SUM(CASE WHEN lifecycle_state = 'started' THEN 1 ELSE 0 END) AS in_progress_sessions
+      FROM #latest_sessions
+      WHERE platform IS NOT NULL
+      GROUP BY platform
+      ORDER BY platform;
+
+      SELECT
         difficulty,
         COUNT(*) AS total_sessions,
         SUM(CASE WHEN lifecycle_state = 'completed' THEN 1 ELSE 0 END) AS completed_sessions,
@@ -402,6 +441,7 @@ export class MssqlMetricsStore implements IMetricsStore {
       ORDER BY difficulty;
 
       SELECT TOP 10
+        platform,
         scenario_title,
         difficulty,
         COUNT(*) AS total_sessions,
@@ -410,10 +450,11 @@ export class MssqlMetricsStore implements IMetricsStore {
         SUM(CASE WHEN lifecycle_state = 'started' THEN 1 ELSE 0 END) AS in_progress_sessions
       FROM #latest_sessions
       WHERE scenario_title IS NOT NULL
-      GROUP BY scenario_title, difficulty
-      ORDER BY total_sessions DESC, scenario_title ASC;
+      GROUP BY platform, scenario_title, difficulty
+      ORDER BY total_sessions DESC, scenario_title ASC, platform ASC;
 
       SELECT TOP 20
+        platform,
         lifecycle_state,
         nickname,
         difficulty,
@@ -432,9 +473,10 @@ export class MssqlMetricsStore implements IMetricsStore {
 
     const recordsets = analyticsResult.recordsets as unknown[];
     const summaryRows = (recordsets[0] as SummaryRow[] | undefined) ?? analyticsResult.recordset;
-    const difficultyRows = (recordsets[1] as DifficultyRow[] | undefined) ?? [];
-    const scenarioRows = (recordsets[2] as ScenarioRow[] | undefined) ?? [];
-    const recentRows = (recordsets[3] as RecentRow[] | undefined) ?? [];
+    const platformRows = (recordsets[1] as PlatformRow[] | undefined) ?? [];
+    const difficultyRows = (recordsets[2] as DifficultyRow[] | undefined) ?? [];
+    const scenarioRows = (recordsets[3] as ScenarioRow[] | undefined) ?? [];
+    const recentRows = (recordsets[4] as RecentRow[] | undefined) ?? [];
     const summary = summaryRows[0] ?? {
       total_sessions: 0,
       completed_sessions: 0,
@@ -459,6 +501,14 @@ export class MssqlMetricsStore implements IMetricsStore {
         avgCompletionChatMessageCount: summary.avg_completion_chat_message_count,
         avgCompletionScoreTotal: summary.avg_completion_score_total,
       },
+      byPlatform: (platformRows ?? []).map((row): GameplayPlatformAnalytics => ({
+        platform: row.platform as GameplayPlatformAnalytics["platform"],
+        totalSessions: row.total_sessions,
+        completedSessions: row.completed_sessions,
+        abandonedSessions: row.abandoned_sessions,
+        inProgressSessions: row.in_progress_sessions,
+        completionRate: toRate(row.completed_sessions, row.total_sessions),
+      })),
       byDifficulty: (difficultyRows ?? []).map((row): GameplayDifficultyAnalytics => ({
         difficulty: row.difficulty as GameplayDifficultyAnalytics["difficulty"],
         totalSessions: row.total_sessions,
@@ -469,6 +519,7 @@ export class MssqlMetricsStore implements IMetricsStore {
       })),
       byScenario: (scenarioRows ?? []).map((row): GameplayScenarioAnalytics => ({
         scenarioTitle: row.scenario_title,
+        platform: (row.platform ?? undefined) as GameplayScenarioAnalytics["platform"],
         difficulty: (row.difficulty ?? undefined) as GameplayScenarioAnalytics["difficulty"],
         totalSessions: row.total_sessions,
         completedSessions: row.completed_sessions,
@@ -477,6 +528,7 @@ export class MssqlMetricsStore implements IMetricsStore {
         completionRate: toRate(row.completed_sessions, row.total_sessions),
       })),
       recentSessions: (recentRows ?? []).map((row) => ({
+        platform: (row.platform ?? undefined) as GameplayRecord["platform"],
         lifecycleState: (row.lifecycle_state ?? "completed") as "started" | "completed" | "abandoned",
         nickname: row.nickname ?? undefined,
         difficulty: (row.difficulty ?? undefined) as GameplayRecord["difficulty"],

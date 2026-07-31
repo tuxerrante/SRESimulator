@@ -1,6 +1,10 @@
 import { Router, type Request, type Response } from "express";
 import { getAiReadiness } from "../lib/ai-config";
 import { generateMockCommandOutput } from "../lib/mock-ai";
+import {
+  getRuntimePlatformProfile,
+  isCommandTypeAllowedForPlatform,
+} from "../lib/platform-profiles";
 import { generateAiText, AiThrottledError } from "../lib/ai-runtime";
 import {
   buildScenarioContext,
@@ -16,15 +20,16 @@ import { getRequestSession } from "../lib/rate-limit";
 import { validateSessionScenario } from "../lib/session-scenario";
 import { withAbortTimeout } from "../lib/timeout";
 import type { Scenario } from "../../../shared/types/game";
+import type { CompatibleCommandType } from "../../../shared/types/platform";
 import { stripTerminalCommandEcho } from "../../../shared/stripTerminalCommandEcho";
 
 export const commandRouter = Router();
-const VALID_COMMAND_TYPES = ["oc", "kql", "geneva"] as const;
+const VALID_COMMAND_TYPES = ["oc", "kubectl", "kql", "geneva"] as const;
 
 interface CommandRequestBody {
   sessionToken: string;
   command: string;
-  type: "oc" | "kql" | "geneva";
+  type: CompatibleCommandType;
   scenario: Scenario | null;
   commandHistory?: unknown;
 }
@@ -59,7 +64,7 @@ class CommandGenerationTimeoutError extends Error {
 
 function buildMockCommandResponse(
   command: string,
-  type: "oc" | "kql" | "geneva",
+  type: CompatibleCommandType,
   options?: { degradedReason?: string },
 ) {
   const degradedReason = options?.degradedReason;
@@ -119,7 +124,7 @@ commandRouter.post("/", async (req: Request, res: Response) => {
     }
     if (!VALID_COMMAND_TYPES.includes(type)) {
       res.status(400).json({
-        error: "Invalid command type. Must be oc, kql, or geneva.",
+        error: "Invalid command type. Must be oc, kubectl, kql, or geneva.",
       });
       return;
     }
@@ -136,6 +141,14 @@ commandRouter.post("/", async (req: Request, res: Response) => {
     }
     const scenario = scenarioResult.scenario;
     requestScenario = scenario;
+    const profile = getRuntimePlatformProfile(session.platform);
+
+    if (!isCommandTypeAllowedForPlatform(session.platform, type)) {
+      res.status(409).json({
+        error: `Command type ${type} does not match platform ${session.platform}`,
+      });
+      return;
+    }
 
     const commandResolved = resolveAngleBracketPlaceholders(command, scenario);
     const commandHistoryResolved = resolveCommandHistoryPlaceholders(commandHistory, scenario);
@@ -160,6 +173,7 @@ commandRouter.post("/", async (req: Request, res: Response) => {
       scenarioContext,
       simNow,
       commandHistoryResolved,
+      profile,
     );
 
     const responseText = await withAbortTimeout(

@@ -1,0 +1,67 @@
+{
+  "id": "aro-classic-easy-master-node-deleted",
+  "platform": "aro-classic",
+  "title": "Master Node Deleted",
+  "difficulty": "easy",
+  "description": "A master VM was deleted and the machine API has not reconciled a healthy replacement, leaving control plane capacity degraded and cluster operators noisy.",
+  "incidentTicket": {
+    "id": "IcM-260101",
+    "severity": "Sev3",
+    "title": "Control plane degraded after missing master instance",
+    "description": "Monitoring reports that one master node disappeared after maintenance and key operators now report degraded or progressing.",
+    "customerImpact": "Administrative actions are slower and recovery-sensitive because the control plane is running without its normal redundancy.",
+    "reportedTime": "{{daysAgo:2}}",
+    "clusterName": "aro-prod-eastus2-04",
+    "region": "eastus2"
+  },
+  "clusterContext": {
+    "name": "aro-prod-eastus2-04",
+    "version": "4.19.11",
+    "region": "eastus2",
+    "nodeCount": 8,
+    "status": "Degraded",
+    "recentEvents": [
+      "{{minutesAgo:180}} - machine-api: instance master-eastus2-2 no longer found in Azure provider inventory",
+      "{{minutesAgo:75}} - cluster-etcd-operator: quorum healthy but running with reduced control plane redundancy",
+      "{{minutesAgo:18}} - kube-apiserver: requests succeeding but latency budget reduced while one master remains absent"
+    ],
+    "alerts": [
+      {
+        "name": "ControlPlaneMachineMissing",
+        "severity": "critical",
+        "message": "A master machine no longer maps to a backing VM and has not reconciled a replacement.",
+        "firingTime": "{{minutesAgo:15}}"
+      },
+      {
+        "name": "ClusterOperatorDegraded",
+        "severity": "warning",
+        "message": "One or more control plane operators remain degraded while the master set is incomplete.",
+        "firingTime": "{{minutesAgo:12}}"
+      }
+    ],
+    "upgradeHistory": [
+      {
+        "from": "4.19.10",
+        "to": "4.19.11",
+        "status": "completed",
+        "timestamp": "{{daysAgo:6}}"
+      }
+    ]
+  },
+  "platformContext": {
+    "machineNames": [
+      "master-eastus2-0",
+      "master-eastus2-1",
+      "master-eastus2-2"
+    ],
+    "routeNames": [
+      "api",
+      "oauth-openshift"
+    ],
+    "clusterOperatorHints": [
+      "cluster-etcd-operator",
+      "machine-api",
+      "kube-apiserver"
+    ]
+  }
+}

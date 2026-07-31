@@ -232,6 +232,7 @@ export function useChat() {
           feature: "chat",
           phase: currentPhase,
           difficulty: scenario?.difficulty,
+          platform: scenario?.platform,
           requestId: telemetryHeaders[REQUEST_ID_HEADER],
           actorRef: telemetryHeaders[ACTOR_REF_HEADER],
           gameSessionRef: telemetryHeaders[GAME_SESSION_REF_HEADER],

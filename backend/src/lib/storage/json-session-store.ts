@@ -1,4 +1,5 @@
 import type { Difficulty } from "../../../../shared/types/game";
+import { DEFAULT_PLATFORM_ID } from "../../../../shared/types/platform";
 import type { CreateGameSessionInput, ISessionStore, GameSession, TrafficSource } from "./types";
 
 const sessions = new Map<string, GameSession>();
@@ -27,6 +28,7 @@ export class JsonSessionStore implements ISessionStore {
     const input: CreateGameSessionInput =
       typeof difficultyOrInput === "string"
         ? {
+            platform: DEFAULT_PLATFORM_ID,
             difficulty: difficultyOrInput,
             scenarioTitle: scenarioTitle ?? "Unknown Scenario",
             trafficSource,
@@ -39,6 +41,7 @@ export class JsonSessionStore implements ISessionStore {
         : difficultyOrInput;
     sessions.set(token, {
       token,
+      platform: input.platform,
       difficulty: input.difficulty,
       scenarioId: input.scenarioId ?? null,
       scenarioTitle: input.scenarioTitle,

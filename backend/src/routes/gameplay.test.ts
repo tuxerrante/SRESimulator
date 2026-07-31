@@ -216,6 +216,7 @@ describe("gameplay routes", () => {
 
   it("POST /api/gameplay records the session traffic source", async () => {
     const token = await getSessionStore().create({
+      platform: "aro-classic",
       difficulty: "easy",
       scenarioTitle: "The Sleeping Cluster",
       trafficSource: "automated",
@@ -238,6 +239,33 @@ describe("gameplay routes", () => {
     const history = await getMetricsStore().getPlayerHistory("traffic-player");
     expect(history).toHaveLength(1);
     expect(history[0]?.trafficSource).toBe("automated");
+  });
+
+  it("POST /api/gameplay records platform from the active session", async () => {
+    const token = await getSessionStore().create({
+      platform: "aro-hcp",
+      difficulty: "medium",
+      scenarioTitle: "NodePool Config Drift",
+      identityKind: "github",
+      githubUserId: "platform-gh",
+      githubLogin: "platform-gh",
+      anonymousClaimKey: null,
+      persistentScoreEligible: true,
+    });
+    const app = createApp();
+
+    const response = await httpRequest(app, "POST", "/api/gameplay", {
+      sessionToken: token,
+      platform: "aro-hcp",
+      lifecycleState: "completed",
+      nickname: "platform-player",
+    });
+
+    expect(response.status).toBe(202);
+
+    const history = await getMetricsStore().getPlayerHistory("platform-player");
+    expect(history).toHaveLength(1);
+    expect(history[0]?.platform).toBe("aro-hcp");
   });
 
   it("GET /api/gameplay/admin rejects requests without the admin bearer token", async () => {
@@ -273,9 +301,64 @@ describe("gameplay routes", () => {
     expect(varyHeader.toLowerCase()).toContain("x-gameplay-admin-token");
   });
 
+  it("GET /api/gameplay/admin filters analytics by platform when requested", async () => {
+    process.env.GAMEPLAY_ADMIN_TOKEN = "gameplay-admin-secret";
+    const classicToken = await getSessionStore().create({
+      platform: "aro-classic",
+      difficulty: "easy",
+      scenarioTitle: "Classic Session",
+      identityKind: "github",
+      githubUserId: "classic-gh",
+      githubLogin: "classic-gh",
+      anonymousClaimKey: null,
+      persistentScoreEligible: true,
+    });
+    const aksToken = await getSessionStore().create({
+      platform: "aks",
+      difficulty: "easy",
+      scenarioTitle: "AKS Session",
+      identityKind: "github",
+      githubUserId: "aks-gh",
+      githubLogin: "aks-gh",
+      anonymousClaimKey: null,
+      persistentScoreEligible: true,
+    });
+    const app = createApp();
+
+    expect((await httpRequest(app, "POST", "/api/gameplay", {
+      sessionToken: classicToken,
+      lifecycleState: "completed",
+      nickname: "classic-admin",
+    })).status).toBe(202);
+    expect((await httpRequest(app, "POST", "/api/gameplay", {
+      sessionToken: aksToken,
+      lifecycleState: "completed",
+      nickname: "aks-admin",
+    })).status).toBe(202);
+
+    const response = await httpRequest(
+      app,
+      "GET",
+      "/api/gameplay/admin?platform=aro-classic",
+      undefined,
+      {
+        authorization: "Bearer gameplay-admin-secret",
+      },
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.body.recentSessions).toEqual([
+      expect.objectContaining({
+        platform: "aro-classic",
+        nickname: "classic-admin",
+      }),
+    ]);
+  });
+
   it("GET /api/gameplay/admin summarizes the latest player-only session state without exposing session tokens", async () => {
     process.env.GAMEPLAY_ADMIN_TOKEN = "gameplay-admin-secret";
     const playerToken = await getSessionStore().create({
+      platform: "aro-classic",
       difficulty: "hard",
       scenarioTitle: "Etcd Quorum Loss",
       trafficSource: "player",
@@ -286,6 +369,7 @@ describe("gameplay routes", () => {
       persistentScoreEligible: true,
     });
     const automatedToken = await getSessionStore().create({
+      platform: "aro-classic",
       difficulty: "easy",
       scenarioTitle: "Synthetic Smoke",
       trafficSource: "automated",

@@ -34,6 +34,7 @@ describe("JsonLeaderboardStore", () => {
           {
             id: crypto.randomUUID(),
             nickname: "alice-renamed",
+            platform: "aro-classic",
             difficulty: "medium",
             score: {
               efficiency: 18,
@@ -54,6 +55,7 @@ describe("JsonLeaderboardStore", () => {
           {
             id: crypto.randomUUID(),
             nickname: "alice",
+            platform: "aro-classic",
             difficulty: "easy",
             score: {
               efficiency: 20,
@@ -78,7 +80,51 @@ describe("JsonLeaderboardStore", () => {
       "utf8"
     );
 
-    const hallOfFame = await store.getHallOfFame();
+    const hallOfFame = await store.getHallOfFame("aro-classic");
     expect(hallOfFame[0]?.nickname).toBe("alice-renamed");
+    expect(hallOfFame[0]?.platform).toBe("aro-classic");
+  });
+
+  it("keeps separate persistent leaderboard rows per platform", async () => {
+    const store = new JsonLeaderboardStore();
+    const baseEntry = {
+      nickname: "player",
+      score: {
+        efficiency: 20,
+        safety: 20,
+        documentation: 20,
+        accuracy: 20,
+        total: 80,
+      },
+      grade: "B",
+      commandCount: 6,
+      durationMs: 90_000,
+      scenarioTitle: "Platform Scenario",
+      identityKind: "github" as const,
+      githubUserId: "gh-player",
+      githubLogin: "player",
+      trafficSource: "player" as const,
+      timestamp: Date.now(),
+    };
+
+    await store.addEntry({
+      ...baseEntry,
+      id: "aro-entry",
+      platform: "aro-classic",
+      difficulty: "easy",
+    });
+    await store.addEntry({
+      ...baseEntry,
+      id: "aks-entry",
+      platform: "aks",
+      difficulty: "easy",
+    });
+
+    expect(
+      await store.getLeaderboard({ platform: "aro-classic", difficulty: "easy" }),
+    ).toHaveLength(1);
+    expect(
+      await store.getLeaderboard({ platform: "aks", difficulty: "easy" }),
+    ).toHaveLength(1);
   });
 });

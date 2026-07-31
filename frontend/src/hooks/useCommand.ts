@@ -10,6 +10,7 @@ import {
   GAME_SESSION_REF_HEADER,
   REQUEST_ID_HEADER,
 } from "@shared/telemetry/constants";
+import type { CompatibleCommandType } from "@shared/types/platform";
 import type { TerminalEntry } from "@shared/types/terminal";
 
 const MAX_COMMAND_HISTORY = 24;
@@ -26,7 +27,7 @@ export function useCommand() {
     useGameStore();
 
   const executeCommand = useCallback(
-    async (command: string, type: "oc" | "kql" | "geneva") => {
+    async (command: string, type: CompatibleCommandType) => {
       if (useGameStore.getState().isExecuting) return;
       const state = useGameStore.getState();
       const activeSessionToken = state.sessionToken;
@@ -73,6 +74,7 @@ export function useCommand() {
         feature: "command",
         phase: state.currentPhase,
         difficulty: scenario?.difficulty,
+        platform: scenario?.platform,
         requestId: telemetryHeaders[REQUEST_ID_HEADER],
         actorRef: telemetryHeaders[ACTOR_REF_HEADER],
         gameSessionRef: telemetryHeaders[GAME_SESSION_REF_HEADER],

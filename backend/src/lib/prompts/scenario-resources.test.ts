@@ -9,6 +9,7 @@ import {
 function makeScenario(overrides?: Partial<Scenario>): Scenario {
   return {
     id: "scenario_test",
+    platform: "aro-classic",
     title: "Worker Node NotReady",
     difficulty: "easy",
     description: "A worker node has gone NotReady due to DiskPressure",

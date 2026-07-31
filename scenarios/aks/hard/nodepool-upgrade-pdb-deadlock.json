@@ -1,0 +1,64 @@
+{
+  "id": "aks-hard-nodepool-upgrade-pdb-deadlock",
+  "platform": "aks",
+  "title": "NodePool Upgrade PDB Deadlock",
+  "difficulty": "hard",
+  "description": "An AKS node pool upgrade is deadlocked by tight PodDisruptionBudgets and workload placement constraints, creating version skew and stalled rollouts.",
+  "incidentTicket": {
+    "id": "IcM-260108",
+    "severity": "Sev2",
+    "title": "AKS node pool upgrade stuck with no safe eviction path",
+    "description": "An AKS worker pool upgrade has stalled for hours while workloads with strict disruption budgets refuse eviction.",
+    "customerImpact": "Node maintenance is blocked and the cluster risks prolonged skew between desired and actual worker versions.",
+    "reportedTime": "{{daysAgo:3}}",
+    "clusterName": "aks-prod-centralus-05",
+    "region": "centralus"
+  },
+  "clusterContext": {
+    "name": "aks-prod-centralus-05",
+    "version": "1.31.2",
+    "region": "centralus",
+    "nodeCount": 12,
+    "status": "Critical",
+    "recentEvents": [
+      "{{minutesAgo:220}} - aks upgrade controller: nodepool apps stuck waiting for safe pod eviction",
+      "{{minutesAgo:145}} - kube-scheduler: replicas remain pinned and anti-affinity reduces alternate placement",
+      "{{minutesAgo:18}} - disruption controller: PDB budget exhausted for stateful workload during drain attempts"
+    ],
+    "alerts": [
+      {
+        "name": "NodePoolUpgradeStalled",
+        "severity": "critical",
+        "message": "The AKS node pool upgrade cannot progress because workloads cannot be safely evicted.",
+        "firingTime": "{{minutesAgo:15}}"
+      },
+      {
+        "name": "VersionSkewWindowExtended",
+        "severity": "warning",
+        "message": "Worker nodes remain on mixed versions longer than expected while upgrade drains fail.",
+        "firingTime": "{{minutesAgo:10}}"
+      }
+    ],
+    "upgradeHistory": [
+      {
+        "from": "1.31.1",
+        "to": "1.31.2",
+        "status": "in_progress",
+        "timestamp": "{{daysAgo:2}}"
+      }
+    ]
+  },
+  "platformContext": {
+    "nodePoolNames": [
+      "systempool",
+      "apps",
+      "batch"
+    ],
+    "managedResourceGroupHint": "MC_aks-prod-centralus-05_rg_centralus",
+    "addonContext": [
+      "coredns",
+      "metrics-server",
+      "azure-monitor-agent"
+    ]
+  }
+}

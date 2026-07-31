@@ -21,11 +21,12 @@ export default function AboutPage() {
           <div className="space-y-6 text-zinc-400 text-sm leading-relaxed">
             <p>
               <span className="text-zinc-200 font-semibold">SRE Simulator</span>{" "}
-              is a break-fix training game for Azure Red Hat OpenShift. An AI
-              Dungeon Master breaks your cluster in creative ways, then judges
-              your investigation skills while you frantically type{" "}
+              is a break-fix training game for ARO Classic, ARO HCP, and AKS.
+              An AI Dungeon Master breaks your session in creative ways, then
+              judges your investigation skills while you frantically type{" "}
               <code className="text-amber-400 bg-zinc-900 px-1 rounded">oc get nodes</code>{" "}
-              and pretend you know what you&apos;re doing.
+              or{" "}
+              <code className="text-amber-400 bg-zinc-900 px-1 rounded">kubectl get nodes</code>.
             </p>
 
             <p>
@@ -53,7 +54,7 @@ export default function AboutPage() {
       </div>
 
       <footer className="text-center text-zinc-700 text-xs py-4">
-        ARO SRE Simulator &mdash; Investigation training powered by AI
+        SRE Simulator &mdash; Investigation training powered by AI
         <span className="mx-2">&middot;</span>
         <span>{APP_VERSION}</span>
       </footer>

@@ -1,5 +1,6 @@
 import type sql from "mssql";
 import type { Difficulty } from "../../../../shared/types/game";
+import { DEFAULT_PLATFORM_ID } from "../../../../shared/types/platform";
 import type { CreateGameSessionInput, ISessionStore, GameSession, TrafficSource } from "./types";
 
 const SESSION_TTL_MS = 24 * 60 * 60 * 1000;
@@ -20,6 +21,7 @@ export class MssqlSessionStore implements ISessionStore {
     const input: CreateGameSessionInput =
       typeof difficultyOrInput === "string"
         ? {
+            platform: DEFAULT_PLATFORM_ID,
             difficulty: difficultyOrInput,
             scenarioTitle: scenarioTitle ?? "Unknown Scenario",
             trafficSource,
@@ -33,6 +35,7 @@ export class MssqlSessionStore implements ISessionStore {
 
     await this.pool.request()
       .input("token", token)
+      .input("platform", input.platform)
       .input("difficulty", input.difficulty)
       .input("scenarioId", input.scenarioId ?? null)
       .input("scenarioTitle", input.scenarioTitle)
@@ -47,6 +50,7 @@ export class MssqlSessionStore implements ISessionStore {
       .query(`
         INSERT INTO sessions (
           token,
+          platform,
           difficulty,
           scenario_id,
           scenario_title,
@@ -61,6 +65,7 @@ export class MssqlSessionStore implements ISessionStore {
         )
         VALUES (
           @token,
+          @platform,
           @difficulty,
           @scenarioId,
           @scenarioTitle,
@@ -93,6 +98,7 @@ export class MssqlSessionStore implements ISessionStore {
       .input("cutoff", cutoff)
       .query<{
         token: string;
+        platform: "aro-classic" | "aro-hcp" | "aks";
         difficulty: Difficulty;
         scenario_id: string | null;
         scenario_title: string;
@@ -108,6 +114,7 @@ export class MssqlSessionStore implements ISessionStore {
       }>(`
         SELECT
           token,
+          platform,
           difficulty,
           scenario_id,
           scenario_title,
@@ -130,6 +137,7 @@ export class MssqlSessionStore implements ISessionStore {
     const row = result.recordset[0];
     return {
       token: row.token,
+      platform: row.platform,
       difficulty: row.difficulty,
       scenarioId: row.scenario_id,
       scenarioTitle: row.scenario_title,
@@ -156,6 +164,7 @@ export class MssqlSessionStore implements ISessionStore {
       .input("cutoff", cutoff)
       .query<{
         token: string;
+        platform: "aro-classic" | "aro-hcp" | "aks";
         difficulty: Difficulty;
         scenario_id: string | null;
         scenario_title: string;
@@ -173,6 +182,7 @@ export class MssqlSessionStore implements ISessionStore {
         SET used = 1
         OUTPUT
           INSERTED.token,
+          INSERTED.platform,
           INSERTED.difficulty,
           INSERTED.scenario_id,
           INSERTED.scenario_title,
@@ -195,6 +205,7 @@ export class MssqlSessionStore implements ISessionStore {
     const row = result.recordset[0];
     return {
       token: row.token,
+      platform: row.platform,
       difficulty: row.difficulty,
       scenarioId: row.scenario_id,
       scenarioTitle: row.scenario_title,

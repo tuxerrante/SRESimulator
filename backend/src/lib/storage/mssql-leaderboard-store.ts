@@ -1,7 +1,8 @@
 import type sql from "mssql";
 import type { Difficulty } from "../../../../shared/types/game";
+import type { PlatformId } from "../../../../shared/types/platform";
 import type { LeaderboardEntry, HallOfFameEntry } from "../../../../shared/types/leaderboard";
-import type { ILeaderboardStore } from "./types";
+import type { ILeaderboardStore, LeaderboardFilters } from "./types";
 
 const MAX_ENTRIES_PER_DIFFICULTY = 10;
 const MAX_HALL_OF_FAME = 10;
@@ -9,6 +10,7 @@ const MAX_HALL_OF_FAME = 10;
 interface LeaderboardRow {
   id: string;
   nickname: string;
+  platform: PlatformId;
   difficulty: Difficulty;
   score_efficiency: number;
   score_safety: number;
@@ -30,6 +32,7 @@ function rowToEntry(row: LeaderboardRow): LeaderboardEntry {
   return {
     id: row.id,
     nickname: row.nickname,
+    platform: row.platform,
     difficulty: row.difficulty,
     score: {
       efficiency: row.score_efficiency,
@@ -53,9 +56,12 @@ function rowToEntry(row: LeaderboardRow): LeaderboardEntry {
 export class MssqlLeaderboardStore implements ILeaderboardStore {
   constructor(private pool: sql.ConnectionPool) {}
 
-  async getLeaderboard(difficulty?: Difficulty): Promise<LeaderboardEntry[]> {
+  async getLeaderboard(filters?: LeaderboardFilters): Promise<LeaderboardEntry[]> {
     const req = this.pool.request()
       .input("limit", MAX_ENTRIES_PER_DIFFICULTY);
+    const difficulty = filters?.difficulty;
+    const platform = filters?.platform;
+    req.input("platform", platform ?? null);
 
     let query: string;
     if (difficulty) {
@@ -63,6 +69,7 @@ export class MssqlLeaderboardStore implements ILeaderboardStore {
       query = `
         SELECT TOP (@limit) * FROM leaderboard_entries
         WHERE difficulty = @difficulty
+          AND (@platform IS NULL OR platform = @platform)
           AND traffic_source = 'player'
           AND identity_kind = 'github'
           AND github_user_id IS NOT NULL
@@ -71,7 +78,8 @@ export class MssqlLeaderboardStore implements ILeaderboardStore {
     } else {
       query = `
         SELECT TOP (@limit) * FROM leaderboard_entries
-        WHERE traffic_source = 'player'
+        WHERE (@platform IS NULL OR platform = @platform)
+          AND traffic_source = 'player'
           AND identity_kind = 'github'
           AND github_user_id IS NOT NULL
         ORDER BY score_total DESC, duration_ms ASC
@@ -82,8 +90,9 @@ export class MssqlLeaderboardStore implements ILeaderboardStore {
     return result.recordset.map(rowToEntry);
   }
 
-  async getHallOfFame(): Promise<HallOfFameEntry[]> {
+  async getHallOfFame(platform: PlatformId): Promise<HallOfFameEntry[]> {
     const result = await this.pool.request()
+      .input("platform", platform)
       .input("limit", MAX_HALL_OF_FAME)
       .query<{
         nickname: string;
@@ -103,7 +112,8 @@ export class MssqlLeaderboardStore implements ILeaderboardStore {
               ORDER BY created_at DESC, id DESC
             ) AS nickname_rank
           FROM leaderboard_entries
-          WHERE traffic_source = 'player'
+          WHERE platform = @platform
+            AND traffic_source = 'player'
             AND identity_kind = 'github'
             AND github_user_id IS NOT NULL
         ),
@@ -133,6 +143,7 @@ export class MssqlLeaderboardStore implements ILeaderboardStore {
 
     return result.recordset.map((r) => ({
       nickname: r.nickname,
+      platform,
       compositeScore: Number(r.composite),
       scores: {
         ...(r.easy != null ? { easy: r.easy } : {}),
@@ -151,6 +162,7 @@ export class MssqlLeaderboardStore implements ILeaderboardStore {
     await this.pool.request()
       .input("id", entry.id)
       .input("nickname", entry.nickname)
+      .input("platform", entry.platform)
       .input("difficulty", entry.difficulty)
       .input("scoreEfficiency", entry.score.efficiency)
       .input("scoreSafety", entry.score.safety)
@@ -170,16 +182,19 @@ export class MssqlLeaderboardStore implements ILeaderboardStore {
         USING (
           SELECT
             @githubUserId AS github_user_id,
+            @platform AS platform,
             @difficulty AS difficulty,
             @trafficSource AS traffic_source
         ) AS source
         ON target.github_user_id = source.github_user_id
+          AND target.platform = source.platform
           AND target.difficulty = source.difficulty
           AND target.traffic_source = source.traffic_source
         WHEN MATCHED AND (@scoreTotal > target.score_total OR (@scoreTotal = target.score_total AND @durationMs < target.duration_ms)) THEN
           UPDATE SET
             id = @id,
             nickname = @nickname,
+            platform = @platform,
             score_efficiency = @scoreEfficiency,
             score_safety = @scoreSafety,
             score_documentation = @scoreDocumentation,
@@ -195,33 +210,40 @@ export class MssqlLeaderboardStore implements ILeaderboardStore {
             github_login = @githubLogin,
             created_at = SYSDATETIMEOFFSET()
         WHEN NOT MATCHED THEN
-          INSERT (id, nickname, difficulty, score_efficiency, score_safety,
+          INSERT (id, nickname, platform, difficulty, score_efficiency, score_safety,
                   score_documentation, score_accuracy, score_total,
                   grade, command_count, duration_ms, scenario_title,
                   traffic_source, identity_kind, github_user_id, github_login)
-          VALUES (@id, @nickname, @difficulty, @scoreEfficiency, @scoreSafety,
+          VALUES (@id, @nickname, @platform, @difficulty, @scoreEfficiency, @scoreSafety,
                   @scoreDocumentation, @scoreAccuracy, @scoreTotal,
                   @grade, @commandCount, @durationMs, @scenarioTitle,
                   @trafficSource, @identityKind, @githubUserId, @githubLogin);
       `);
 
-    await this.trimPerDifficulty(entry.difficulty, trafficSource);
+    await this.trimPerDifficulty(entry.platform, entry.difficulty, trafficSource);
 
     return entry;
   }
 
-  private async trimPerDifficulty(difficulty: Difficulty, trafficSource: NonNullable<LeaderboardEntry["trafficSource"]>): Promise<void> {
+  private async trimPerDifficulty(
+    platform: PlatformId,
+    difficulty: Difficulty,
+    trafficSource: NonNullable<LeaderboardEntry["trafficSource"]>,
+  ): Promise<void> {
     await this.pool.request()
+      .input("platform", platform)
       .input("difficulty", difficulty)
       .input("trafficSource", trafficSource)
       .input("keepCount", MAX_ENTRIES_PER_DIFFICULTY)
       .query(`
         DELETE FROM leaderboard_entries
-        WHERE difficulty = @difficulty
+        WHERE platform = @platform
+          AND difficulty = @difficulty
           AND traffic_source = @trafficSource
           AND id NOT IN (
             SELECT TOP (@keepCount) id FROM leaderboard_entries
-            WHERE difficulty = @difficulty
+            WHERE platform = @platform
+              AND difficulty = @difficulty
               AND traffic_source = @trafficSource
             ORDER BY score_total DESC, duration_ms ASC
           )

@@ -7,16 +7,12 @@ import {
   buildChatBody,
   getBackendUrl,
   isExternalTarget,
+  ensureExternalSessionTokens,
   startLocalServer,
 } from "./helpers";
 
 let baseUrl: string;
 let localServer: Server | null = null;
-const externalSessionToken = process.env.E2E_SESSION_TOKEN?.trim();
-const externalSessionTokens = (process.env.E2E_SESSION_TOKENS ?? "")
-  .split(",")
-  .map((token) => token.trim())
-  .filter((token) => token.length > 0);
 let chatSessionTokens: string[] = [];
 
 function sessionTokenFor(index: number): string {
@@ -53,16 +49,8 @@ async function createLocalApp(withRateLimit: boolean) {
 
 beforeAll(async () => {
   if (isExternalTarget()) {
-    if (externalSessionTokens.length > 0) {
-      chatSessionTokens = externalSessionTokens;
-    } else if (externalSessionToken) {
-      chatSessionTokens = [externalSessionToken];
-    } else {
-      throw new Error(
-        "E2E_SESSION_TOKEN or E2E_SESSION_TOKENS is required when E2E_BACKEND_URL is set.",
-      );
-    }
     baseUrl = getBackendUrl();
+    chatSessionTokens = await ensureExternalSessionTokens(baseUrl, 24);
     return;
   }
 
@@ -74,7 +62,16 @@ beforeAll(async () => {
   const sessionStore = getSessionStore();
   chatSessionTokens = await Promise.all(
     Array.from({ length: 24 }, (_, index) =>
-      sessionStore.create("easy", `Concurrent Chat ${index + 1}`),
+      sessionStore.create({
+        platform: "aro-classic",
+        difficulty: "easy",
+        scenarioTitle: `Concurrent Chat ${index + 1}`,
+        identityKind: "github",
+        githubUserId: `local-${index + 1}`,
+        githubLogin: `local-${index + 1}`,
+        anonymousClaimKey: null,
+        persistentScoreEligible: true,
+      }),
     ),
   );
 }, 120000);

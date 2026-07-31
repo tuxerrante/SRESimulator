@@ -42,12 +42,21 @@ const MOCK_COMMUNITY = `## Networking
 - Symptoms: node NotReady
 - Root Cause: kubelet crash`;
 
+const MOCK_AKS_PLATFORM = `## AKS Investigation Notes
+
+### AKS managed cluster boundaries
+- Focus on AKS nodepool evidence and managed cluster symptoms.
+
+### kubectl guidance
+- Use kubectl against workloads and nodes first.`;
+
 function setupMocks() {
   mockedReadFile.mockImplementation(async (filePath) => {
-    const p = String(filePath);
+    const p = String(filePath).replace(/\\/g, "/");
     if (p.includes("sre-investigation-techniques")) return MOCK_INVESTIGATION;
     if (p.includes("Openshift-clusters-alerts-resolutions")) return MOCK_ALERTS;
     if (p.includes("Community-reported-issues")) return MOCK_COMMUNITY;
+    if (p.includes("platforms/aks/platform-operations.md")) return MOCK_AKS_PLATFORM;
     throw new Error("Unknown file");
   });
 }
@@ -62,12 +71,13 @@ describe("loadKnowledgeBase", () => {
     setupMocks();
 
     const { loadKnowledgeBase: freshLoad } = await import("./knowledge");
-    const result = await freshLoad();
+    const result = await freshLoad("aks");
 
     expect(result).toContain("sre investigation techniques");
     expect(result).toContain("The Five Phases");
     expect(result).toContain("Cluster Availability");
     expect(result).toContain("Route Returns 503");
+    expect(result).toContain("AKS Investigation Notes");
   });
 
   it("handles missing files gracefully", async () => {
@@ -90,7 +100,7 @@ describe("loadKnowledgeSections", () => {
     setupMocks();
 
     const { loadKnowledgeSections } = await import("./knowledge");
-    const sections = await loadKnowledgeSections();
+    const sections = await loadKnowledgeSections("aks");
 
     expect(sections.length).toBeGreaterThan(0);
 
@@ -98,14 +108,15 @@ describe("loadKnowledgeSections", () => {
     expect(titles).toContain("The Five Phases");
     expect(titles).toContain("Cluster Shutdown & Failed Restart");
     expect(titles).toContain("Route Returns 503 After Applying NetworkPolicy");
+    expect(titles).toContain("AKS managed cluster boundaries");
   });
 
   it("caches sections after first load", async () => {
     setupMocks();
 
     const { loadKnowledgeSections } = await import("./knowledge");
-    const first = await loadKnowledgeSections();
-    const second = await loadKnowledgeSections();
+    const first = await loadKnowledgeSections("aks");
+    const second = await loadKnowledgeSections("aks");
 
     expect(first).toBe(second);
   });
@@ -121,7 +132,7 @@ describe("queryKnowledgeSections", () => {
     setupMocks();
 
     const { loadKnowledgeSections, queryKnowledgeSections } = await import("./knowledge");
-    const sections = await loadKnowledgeSections();
+    const sections = await loadKnowledgeSections("aks");
     const result = queryKnowledgeSections(sections, ["unrelated query"], 8000);
 
     expect(result).toContain("The Five Phases");
@@ -132,7 +143,7 @@ describe("queryKnowledgeSections", () => {
     setupMocks();
 
     const { loadKnowledgeSections, queryKnowledgeSections } = await import("./knowledge");
-    const sections = await loadKnowledgeSections();
+    const sections = await loadKnowledgeSections("aks");
     const result = queryKnowledgeSections(
       sections,
       ["NetworkPolicy route 503"],
@@ -142,11 +153,22 @@ describe("queryKnowledgeSections", () => {
     expect(result).toContain("Route Returns 503");
   });
 
+  it("combines shared and platform-specific knowledge files for aks sessions", async () => {
+    setupMocks();
+
+    const { loadKnowledgeSections, queryKnowledgeSections } = await import("./knowledge");
+    const sections = await loadKnowledgeSections("aks");
+    const result = queryKnowledgeSections(sections, ["nodepool", "managed cluster"], 8000);
+
+    expect(result).toContain("The Five Phases");
+    expect(result).toContain("AKS");
+  });
+
   it("respects maxChars limit", async () => {
     setupMocks();
 
     const { loadKnowledgeSections, queryKnowledgeSections } = await import("./knowledge");
-    const sections = await loadKnowledgeSections();
+    const sections = await loadKnowledgeSections("aks");
     const result = queryKnowledgeSections(sections, ["everything"], 500);
 
     expect(result.length).toBeLessThanOrEqual(500);
@@ -156,7 +178,7 @@ describe("queryKnowledgeSections", () => {
     setupMocks();
 
     const { loadKnowledgeSections, queryKnowledgeSections } = await import("./knowledge");
-    const sections = await loadKnowledgeSections();
+    const sections = await loadKnowledgeSections("aks");
     const result = queryKnowledgeSections(sections, ["NetworkPolicy 503"], 30);
 
     expect(result.length).toBeLessThanOrEqual(30);

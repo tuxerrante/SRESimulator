@@ -1,9 +1,9 @@
 import { readFile, writeFile, mkdir, rename } from "fs/promises";
 import { existsSync } from "fs";
 import path from "path";
-import type { Difficulty } from "../../../../shared/types/game";
+import type { PlatformId } from "../../../../shared/types/platform";
 import type { LeaderboardEntry, HallOfFameEntry } from "../../../../shared/types/leaderboard";
-import type { ILeaderboardStore } from "./types";
+import type { ILeaderboardStore, LeaderboardFilters } from "./types";
 
 const MAX_ENTRIES_PER_DIFFICULTY = 10;
 const MAX_HALL_OF_FAME = 10;
@@ -61,20 +61,25 @@ export class JsonLeaderboardStore implements ILeaderboardStore {
     await rename(tmpFile, this.filePath);
   }
 
-  async getLeaderboard(difficulty?: Difficulty): Promise<LeaderboardEntry[]> {
+  async getLeaderboard(filters?: LeaderboardFilters): Promise<LeaderboardEntry[]> {
     const entries = await this.readEntries();
-    const filtered = difficulty
+    const difficulty = filters?.difficulty;
+    const platform = filters?.platform;
+    const filtered = difficulty || platform
       ? entries.filter(
           (e) =>
-            e.difficulty === difficulty &&
+            (!difficulty || e.difficulty === difficulty) &&
+            (!platform || e.platform === platform) &&
             isPublicPlayerEntry(e)
         )
       : entries.filter(isPublicPlayerEntry);
     return sortEntries(filtered).slice(0, MAX_ENTRIES_PER_DIFFICULTY);
   }
 
-  async getHallOfFame(): Promise<HallOfFameEntry[]> {
-    const entries = (await this.readEntries()).filter(isPublicPlayerEntry);
+  async getHallOfFame(platform: PlatformId): Promise<HallOfFameEntry[]> {
+    const entries = (await this.readEntries()).filter(
+      (entry) => entry.platform === platform && isPublicPlayerEntry(entry),
+    );
 
     const playerMap = new Map<
       string,
@@ -109,7 +114,12 @@ export class JsonLeaderboardStore implements ILeaderboardStore {
       const scores = player.scores;
       const compositeScore =
         (scores.easy ?? 0) + (scores.medium ?? 0) + (scores.hard ?? 0);
-      hallOfFame.push({ nickname: player.nickname, compositeScore, scores });
+      hallOfFame.push({
+        nickname: player.nickname,
+        platform,
+        compositeScore,
+        scores,
+      });
     }
 
     hallOfFame.sort((a, b) => b.compositeScore - a.compositeScore);
@@ -127,6 +137,7 @@ export class JsonLeaderboardStore implements ILeaderboardStore {
       const existingIdx = entries.findIndex(
         (e) =>
           e.githubUserId === entry.githubUserId &&
+          e.platform === entry.platform &&
           e.difficulty === entry.difficulty &&
           (e.trafficSource ?? "player") === (entry.trafficSource ?? "player")
       );
@@ -147,7 +158,7 @@ export class JsonLeaderboardStore implements ILeaderboardStore {
 
       const grouped: Record<string, LeaderboardEntry[]> = {};
       for (const e of entries) {
-        const key = `${e.difficulty}:${e.trafficSource ?? "player"}`;
+        const key = `${e.platform}:${e.difficulty}:${e.trafficSource ?? "player"}`;
         if (!grouped[key]) grouped[key] = [];
         grouped[key].push(e);
       }

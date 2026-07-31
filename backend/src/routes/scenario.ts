@@ -14,8 +14,11 @@ import {
   isCatalogScenarioSource,
   ScenarioCatalogError,
 } from "../lib/scenario-catalog";
+import { getRuntimePlatformProfile } from "../lib/platform-profiles";
+import { buildScenarioGenerationPrompt } from "../lib/prompts/scenario-generator";
 import { utcNow } from "../lib/sim-clock";
 import { verifyTurnstileToken } from "../lib/turnstile";
+import { isPlatformContext } from "../lib/scenario-validation";
 import {
   readAnonymousProofFromCookieHeader,
   readViewerFromCookieHeader,
@@ -28,6 +31,11 @@ import { parsePositiveIntEnv } from "../lib/env";
 import { withAbortTimeout } from "../lib/timeout";
 import { verifySignedClientIp } from "../../../shared/auth/client-ip";
 import type { Difficulty, Scenario } from "../../../shared/types/game";
+import {
+  DEFAULT_PLATFORM_ID,
+  PLATFORM_IDS,
+  type PlatformId,
+} from "../../../shared/types/platform";
 import type { TrafficSource } from "../../../shared/types/leaderboard";
 
 export const scenarioRouter = Router();
@@ -35,6 +43,7 @@ const VALID_DIFFICULTIES: Difficulty[] = ["easy", "medium", "hard"];
 const ANONYMOUS_TRIAL_TTL_MS = 24 * 60 * 60 * 1000;
 
 interface ScenarioRequestBody {
+  platform?: PlatformId;
   difficulty: Difficulty;
   turnstileToken?: string;
 }
@@ -73,6 +82,15 @@ function getScenarioTimeoutMs(): number {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
+}
+
+function parsePlatform(value: unknown): PlatformId | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+  return PLATFORM_IDS.includes(value as PlatformId)
+    ? (value as PlatformId)
+    : null;
 }
 
 function assertNonEmptyString(value: unknown, field: string): asserts value is string {
@@ -131,12 +149,19 @@ function assertStringArray(
   }
 }
 
-function validateScenarioPayload(payload: unknown, difficulty: Difficulty): Scenario {
+function validateScenarioPayload(
+  payload: unknown,
+  platform: PlatformId,
+  difficulty: Difficulty,
+): Scenario {
   if (!isRecord(payload)) {
     throw new InvalidScenarioPayloadError("AI scenario payload must be a JSON object");
   }
 
   assertNonEmptyString(payload.id, "id");
+  if (payload.platform !== platform) {
+    throw new InvalidScenarioPayloadError(`AI scenario platform must be ${platform}`);
+  }
   assertNonEmptyString(payload.title, "title");
   assertNonEmptyString(payload.description, "description");
   if (payload.difficulty !== difficulty) {
@@ -262,6 +287,15 @@ function validateScenarioPayload(payload: unknown, difficulty: Difficulty): Scen
     }
   }
 
+  if (
+    payload.platformContext !== undefined &&
+    !isPlatformContext(payload.platformContext)
+  ) {
+    throw new InvalidScenarioPayloadError(
+      "AI scenario field platformContext must use only supported platform metadata with non-empty string values",
+    );
+  }
+
   return payload as unknown as Scenario;
 }
 
@@ -310,6 +344,7 @@ function getDecisionStatus(
 
 async function recordStartedTelemetry(
   sessionToken: string,
+  platform: PlatformId,
   difficulty: Difficulty,
   scenarioTitle: string,
   trafficSource: TrafficSource,
@@ -318,6 +353,7 @@ async function recordStartedTelemetry(
   try {
     await getMetricsStore().recordGameplay({
       sessionToken,
+      platform,
       trafficSource,
       difficulty,
       scenarioTitle,
@@ -328,6 +364,7 @@ async function recordStartedTelemetry(
   } catch (error) {
     console.warn("Failed to record scenario gameplay telemetry", {
       sessionTokenPrefix: sessionToken.slice(0, 8),
+      platform,
       difficulty,
       scenarioTitle,
       error,
@@ -341,10 +378,26 @@ scenarioRouter.post("/", async (req: Request, res: Response) => {
   try {
     const body: ScenarioRequestBody = req.body;
     const { difficulty, turnstileToken } = body;
+    const platform =
+      body.platform === undefined
+        ? DEFAULT_PLATFORM_ID
+        : parsePlatform(body.platform);
 
     if (!VALID_DIFFICULTIES.includes(difficulty)) {
       res.status(400).json({
         error: "Invalid difficulty. Must be easy, medium, or hard.",
+      });
+      return;
+    }
+    if (body.platform !== undefined && !platform) {
+      res.status(400).json({
+        error: `Invalid platform. Must be ${PLATFORM_IDS.join(", ")}.`,
+      });
+      return;
+    }
+    if (!platform) {
+      res.status(400).json({
+        error: `Invalid platform. Must be ${PLATFORM_IDS.join(", ")}.`,
       });
       return;
     }
@@ -441,6 +494,7 @@ scenarioRouter.post("/", async (req: Request, res: Response) => {
     }> => {
       const trafficSource = getTrafficSource(req);
       const sessionToken = await getSessionStore().create({
+        platform,
         difficulty,
         scenarioId: scenario.id,
         scenarioTitle: scenario.title,
@@ -455,6 +509,7 @@ scenarioRouter.post("/", async (req: Request, res: Response) => {
       claimReservationCommitted = true;
       void recordStartedTelemetry(
         sessionToken,
+        platform,
         difficulty,
         scenario.title,
         trafficSource,
@@ -469,7 +524,7 @@ scenarioRouter.post("/", async (req: Request, res: Response) => {
 
     if (isCatalogScenarioSource()) {
       reservedClaimKeys = await reserveAnonymousClaimKeys();
-      const catalogScenario = await getCatalogScenario(difficulty);
+      const catalogScenario = await getCatalogScenario({ platform, difficulty });
       const session = await createSessionForScenario(catalogScenario, "scenario-catalog");
       res.json({
         scenario: catalogScenario,
@@ -482,7 +537,7 @@ scenarioRouter.post("/", async (req: Request, res: Response) => {
     const readiness = getAiReadiness();
     if (readiness.mockMode) {
       reservedClaimKeys = await reserveAnonymousClaimKeys();
-      const scenario = generateMockScenario(difficulty);
+      const scenario = generateMockScenario(difficulty, platform);
       const session = await createSessionForScenario(scenario);
       res.json({ scenario, sessionToken: session.sessionToken, identityKind: session.identityKind });
       return;
@@ -496,7 +551,8 @@ scenarioRouter.post("/", async (req: Request, res: Response) => {
     }
 
     reservedClaimKeys = await reserveAnonymousClaimKeys();
-    const knowledgeBase = await loadKnowledgeBase();
+    const knowledgeBase = await loadKnowledgeBase(platform);
+    const profile = getRuntimePlatformProfile(platform);
 
     // Extract only scenario-relevant context from the knowledge base
     const scenarioContext = knowledgeBase
@@ -532,53 +588,16 @@ scenarioRouter.post("/", async (req: Request, res: Response) => {
           route: "scenario",
           _reasoningEffortOverride: "low",
           signal,
-          system: `You are a scenario generator for an ARO (Azure Red Hat OpenShift) SRE training simulator.
-Generate a realistic incident scenario. Be concise.
-The scenario should be appropriate for the "${difficulty}" difficulty level.
-
-Difficulty guidelines:
-- easy: Single-component failures, obvious symptoms (e.g., node down, pods crashlooping, simple resource issues)
-- medium: Networking, permissions, configuration drift, multi-component interactions
-- hard: Deep obscure bugs, race conditions, distributed system failures, cascading failures
-
-Use currently supported ARO versions (4.16–4.20). For easy scenarios, you may use 4.15 (EOL) to test "upgrade your cluster" awareness.
-
-IMPORTANT — timestamps: The current date/time is ${currentDate}. Generate realistic ISO 8601 timestamps — the incident reportedTime should be within the past 1–7 days, while recentEvents and alert firingTimes should be more recent (minutes to hours ago) to feel like a live incident. Upgrade history timestamps can be older. Do NOT use placeholder or obviously fake dates.
-
-IMPORTANT: Respond with ONLY valid JSON matching this exact structure (no markdown, no code fences):
-{
-  "id": "scenario_xxx",
-  "title": "Short descriptive title",
-  "difficulty": "${difficulty}",
-  "description": "Brief description of what's wrong (for AI context, not shown to user directly)",
-  "incidentTicket": {
-    "id": "IcM-XXXXXX",
-    "severity": "Sev1|Sev2|Sev3|Sev4",
-    "title": "Customer-facing incident title",
-    "description": "What the customer or monitoring reported",
-    "customerImpact": "Description of impact",
-    "reportedTime": "ISO 8601 timestamp within the past 1–7 days",
-    "clusterName": "realistic-cluster-name",
-    "region": "azure-region"
-  },
-  "clusterContext": {
-    "name": "same-cluster-name",
-    "version": "4.x.x",
-    "region": "same-azure-region",
-    "nodeCount": number,
-    "status": "current status",
-    "recentEvents": ["array of recent cluster events with ISO timestamps"],
-    "alerts": [{"name": "alert name", "severity": "critical|warning|info", "message": "alert message", "firingTime": "ISO timestamp"}],
-    "upgradeHistory": [{"from": "4.x.x", "to": "4.x.x", "status": "completed|failed|in_progress", "timestamp": "ISO timestamp"}]
-  }
-}
-
-Reference incidents and alerts:
-${scenarioContext}`,
+          system: buildScenarioGenerationPrompt({
+            platform,
+            difficulty,
+            currentDate,
+            scenarioContext,
+          }),
           messages: [
             {
               role: "user",
-              content: `Generate a ${difficulty} difficulty ARO incident scenario.`,
+              content: `Generate a ${difficulty} difficulty ${profile.label} incident scenario.`,
             },
           ],
         }),
@@ -597,7 +616,7 @@ ${scenarioContext}`,
     } catch {
       throw new InvalidScenarioPayloadError("AI scenario response was not valid JSON");
     }
-    const scenario = validateScenarioPayload(rawScenario, difficulty);
+    const scenario = validateScenarioPayload(rawScenario, platform, difficulty);
 
     const session = await createSessionForScenario(scenario);
 

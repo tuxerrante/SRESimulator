@@ -1,6 +1,7 @@
 import "./instrument";
 import { getAiReadiness } from "./lib/ai-config";
 import { initStorage, shutdownStorage, getStorageBackend } from "./lib/storage";
+import { assertCatalogCoverage, isCatalogScenarioSource } from "./lib/scenario-catalog";
 import { createApp } from "./app";
 
 async function main() {
@@ -14,6 +15,11 @@ async function main() {
 
   await initStorage();
   console.log(`[startup] storage backend: ${getStorageBackend()}`);
+
+  if (isCatalogScenarioSource()) {
+    await assertCatalogCoverage();
+    console.log("[startup] scenario catalog coverage verified");
+  }
 
   const app = createApp();
   const PORT = parseInt(process.env.PORT || "8080", 10);

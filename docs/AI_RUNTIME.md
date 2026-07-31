@@ -121,9 +121,11 @@ Instead of sending the entire knowledge base (~75 KB, ~18K tokens) on
 every chat request, the backend parses KB files into sections at startup
 and selects only the sections relevant to the current scenario and user
 message. The investigation methodology (`sre-investigation-techniques.md`)
-is always included. Relevant sections are selected by keyword scoring
-against the scenario title, description, alerts, and the user's latest
-message, capped at 8000 characters (~2K tokens).
+is always included. Platform-specific sessions then add the matching
+`knowledge_base/platforms/<platform>/platform-operations.md` bundle before
+retrieval ranking runs. Relevant sections are selected by keyword scoring
+against the scenario title, description, platform context, alerts, and the
+user's latest message, capped at 8000 characters (~2K tokens).
 
 This reduces per-request *prompt* tokens from ~32K to ~2.5K (measured on
 gpt-5.2 with prompt caching active), enabling roughly 10x more concurrent
@@ -138,6 +140,16 @@ scenario and KB content) to maximize cache hits. The runtime also sends
 `prompt_cache_key` keyed by scenario title so all players on the same
 scenario share the same cache bucket. Cached tokens appear in the
 `[token-usage]` log lines.
+
+### Prompt composition order
+
+Runtime prompt builders compose platform sessions in this order:
+
+1. Shared investigation methodology bundle
+2. Shared simulator instruction fragments
+3. Platform-specific knowledge bundle
+4. Platform-specific prompt fragments
+5. Scenario-specific context
 
 ---
 
@@ -203,7 +215,9 @@ keywords with the question.
 The command route (`/api/command`) builds system prompts from extracted
 helper functions rather than inline string literals. Only the scenario
 context and temporal rules are sent as dynamic content; the static
-instruction layer is shared across calls.
+instruction layer is shared across calls. The command prompt now resolves
+the active gameplay platform before simulation, which is what allows AKS
+sessions to emit `kubectl` output while ARO sessions continue to emit `oc`.
 
 ### Fallback behavior
 

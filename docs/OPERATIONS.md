@@ -232,6 +232,7 @@ make dev
 For provider options, environment variables, and runtime behavior, use:
 
 - [docs/AI_RUNTIME.md](AI_RUNTIME.md)
+- [docs/CONTENT_BOUNDARY.md](CONTENT_BOUNDARY.md)
 - [docs/ARO_AI_CONNECTIVITY_SPIKE.md](ARO_AI_CONNECTIVITY_SPIKE.md)
 
 ## Useful Make targets
@@ -241,6 +242,7 @@ For provider options, environment variables, and runtime behavior, use:
 | `make validate` | Lint + typecheck validation |
 | `make test` | Unit tests with coverage |
 | `make test-integration` | Integration tests |
+| `make env-check` | Verify required local env/bootstrap settings before live e2e |
 | `make security` | Security checks |
 | `make aro-login` | Authenticate Azure CLI if needed and log `oc` into the configured ARO cluster |
 | `make e2e-azure-route-up` | Create temporary Azure e2e namespace |
@@ -277,3 +279,23 @@ The canonical public URL for the AKS production path is
 For AKS, `publicService` remains the rollback exposure mode when operators need
 to temporarily expose only the frontend through a `LoadBalancer` service. ARO
 still uses the Route-based fallback described in the architecture doc.
+
+## Live platform-session verification
+
+For impactful gameplay changes, run the full deployed platform-session probe:
+
+1. Bootstrap local gitignored env files into the worktree when they exist:
+   `backend/.env.local`, `infra/.tf-backend.env`, and (only when intentionally
+   reusing a namespace) `data/e2e-azure-route.env`.
+2. Verify required local settings:
+   `make env-check`
+3. Deploy the temporary environment:
+   `make e2e-azure-route`
+4. Load local secrets into the shell without printing them and source the
+   route metadata from `data/e2e-azure-route.env`.
+5. Run deployed integration coverage with:
+   `E2E_BACKEND_URL="$URL" E2E_AUTH_SESSION_SECRET="$AUTH_SESSION_SECRET" E2E_GAMEPLAY_ADMIN_TOKEN="$GAMEPLAY_ADMIN_TOKEN" make test-integration`
+6. Confirm the platform-session suite covers `aro-classic`, `aro-hcp`, and
+   `aks`, including score submission and platform-filtered analytics.
+7. Keep the temporary namespace until reviewer signoff, then tear it down with
+   `NS="$NS" make e2e-azure-route-down`.

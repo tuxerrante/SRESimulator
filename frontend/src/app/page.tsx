@@ -4,9 +4,11 @@ import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useGameStore } from "@/stores/gameStore";
 import type { Difficulty, Scenario } from "@shared/types/game";
+import { PLATFORM_PROFILES } from "@shared/types/platform";
 import { Shield, Loader2, Trophy, Heart, User, LogOut } from "lucide-react";
 import { Github } from "@/components/icons/Github";
 import { DifficultyGrid } from "@/components/home/DifficultyGrid";
+import { PlatformSelector } from "@/components/home/PlatformSelector";
 import { TurnstileWidget } from "@/components/home/TurnstileWidget";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
@@ -31,6 +33,9 @@ export default function HomePage() {
   const nickname = useGameStore((s) => s.nickname);
   const setNickname = useGameStore((s) => s.setNickname);
   const hydrateNickname = useGameStore((s) => s.hydrateNickname);
+  const selectedPlatform = useGameStore((s) => s.selectedPlatform);
+  const setSelectedPlatform = useGameStore((s) => s.setSelectedPlatform);
+  const hydrateSelectedPlatform = useGameStore((s) => s.hydrateSelectedPlatform);
   const viewer = useGameStore((s) => s.viewer);
   const setViewer = useGameStore((s) => s.setViewer);
   const clearViewer = useGameStore((s) => s.clearViewer);
@@ -54,6 +59,7 @@ export default function HomePage() {
 
   useEffect(() => {
     hydrateNickname();
+    hydrateSelectedPlatform();
 
     void (async () => {
       try {
@@ -110,7 +116,7 @@ export default function HomePage() {
       window.history.replaceState({}, "", "/");
       return () => window.clearTimeout(timeoutId);
     }
-  }, [clearViewer, hydrateNickname, setViewer]);
+  }, [clearViewer, hydrateNickname, hydrateSelectedPlatform, setViewer]);
 
   useEffect(() => {
     if (!sessionReady || viewer) {
@@ -172,6 +178,7 @@ export default function HomePage() {
           },
           body: JSON.stringify(
             buildScenarioRequestBody({
+              platform: selectedPlatform,
               difficulty,
               viewer,
               fingerprintHash,
@@ -225,9 +232,9 @@ export default function HomePage() {
           Learn to investigate outages before they hit production.
         </p>
         <p className="text-zinc-300 text-sm text-center mb-10 max-w-lg leading-relaxed">
-          An AI Dungeon Master will break a cluster. Your job is to investigate
-          and fix it using the proper SRE methodology for Azure Red Hat
-          OpenShift.
+          Select a platform, then a difficulty. The AI Dungeon Master will break
+          the session, and your job is to investigate and fix it using the
+          proper SRE methodology.
         </p>
 
         <div className="flex items-center gap-2 mb-8 w-full max-w-xs">
@@ -344,7 +351,13 @@ export default function HomePage() {
           </div>
         )}
 
+        <PlatformSelector
+          value={selectedPlatform}
+          onChange={setSelectedPlatform}
+        />
+
         <DifficultyGrid
+          platform={selectedPlatform}
           viewer={viewer}
           hasCallsign={hasCallsign && sessionReady && !sessionLoadError}
           loadingDifficulty={loading}
@@ -362,7 +375,7 @@ export default function HomePage() {
         {loading && (
           <div className="mt-6 flex items-center gap-2 text-zinc-500 text-sm">
             <Loader2 size={14} className="animate-spin" />
-            Generating scenario...
+            Generating {PLATFORM_PROFILES[selectedPlatform].label} scenario...
           </div>
         )}
 
@@ -395,7 +408,7 @@ export default function HomePage() {
         </a>
 
         <div className="text-zinc-500 text-xs text-center">
-          ARO SRE Simulator &mdash; Investigation training powered by AI
+          SRE Simulator &mdash; Investigation training powered by AI
           <span className="mx-2">&middot;</span>
           <a
             aria-label={`View GitHub release ${APP_VERSION}`}

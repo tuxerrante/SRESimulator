@@ -10,6 +10,7 @@ interface CommandBlockProps {
 
 const TYPE_COLORS: Record<string, string> = {
   oc: "text-emerald-400",
+  kubectl: "text-cyan-400",
   kql: "text-blue-400",
   geneva: "text-purple-400",
 };

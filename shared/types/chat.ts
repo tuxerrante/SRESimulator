@@ -1,3 +1,5 @@
+import type { CompatibleCommandType } from "./platform";
+
 export type MessageRole = "user" | "assistant";
 
 export interface ChatMessage {
@@ -10,7 +12,7 @@ export interface ChatMessage {
 }
 
 export interface ExtractedCommand {
-  type: "oc" | "kql" | "geneva";
+  type: CompatibleCommandType;
   command: string;
   executed: boolean;
 }

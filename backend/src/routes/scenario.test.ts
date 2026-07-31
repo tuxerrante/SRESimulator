@@ -206,8 +206,9 @@ describe("POST /api/scenario", () => {
     expect(res.body.scenario).toBeDefined();
     expect(res.body.sessionToken).toBeDefined();
     const scenario = res.body.scenario as Record<string, unknown>;
+    expect(scenario.platform).toBe("aro-classic");
     expect(scenario.difficulty).toBe("easy");
-    expect(scenario.id).toBe("scenario_mock_easy");
+    expect(scenario.id).toBe("aro-classic-scenario-mock-easy");
   });
 
   it("ignores an automated traffic header without the matching server token", async () => {

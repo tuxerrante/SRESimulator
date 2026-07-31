@@ -1,5 +1,6 @@
 import { Router, type Request, type Response } from "express";
 import { loadKnowledgeSections, queryKnowledgeSections } from "../lib/knowledge";
+import { getRuntimePlatformProfile } from "../lib/platform-profiles";
 import { buildSystemPrompt } from "../lib/prompts/system";
 import { getAiReadiness } from "../lib/ai-config";
 import { generateMockChatResponse } from "../lib/mock-ai";
@@ -112,6 +113,7 @@ chatRouter.post("/", async (req: Request, res: Response) => {
       return;
     }
     const scenario = scenarioResult.scenario;
+    const profile = getRuntimePlatformProfile(session.platform);
 
     const readiness = getAiReadiness();
     if (readiness.mockMode) {
@@ -133,7 +135,7 @@ chatRouter.post("/", async (req: Request, res: Response) => {
       return;
     }
 
-    const sections = await loadKnowledgeSections();
+    const sections = await loadKnowledgeSections(session.platform);
     const queryTerms = [
       scenario?.title,
       scenario?.description,
@@ -141,7 +143,12 @@ chatRouter.post("/", async (req: Request, res: Response) => {
       messages[messages.length - 1]?.content,
     ].filter(Boolean) as string[];
     const knowledgeBase = queryKnowledgeSections(sections, queryTerms, 8000);
-    const systemPrompt = buildSystemPrompt(knowledgeBase, scenario, currentPhase);
+    const systemPrompt = buildSystemPrompt(
+      knowledgeBase,
+      scenario,
+      currentPhase,
+      profile,
+    );
     const systemPromptTokens = estimateTokens(systemPrompt);
 
     const rawMessages = messages.map((m) => ({ role: m.role as "user" | "assistant", content: m.content }));

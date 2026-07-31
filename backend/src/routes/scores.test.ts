@@ -117,6 +117,7 @@ describe("scores routes", () => {
   async function recordCompletedTelemetry(
     sessionToken: string,
     overrides?: {
+      platform?: "aro-classic" | "aro-hcp" | "aks";
       commandCount?: number;
       durationMs?: number;
       scoringEvents?: ScoringEvent[];
@@ -158,6 +159,7 @@ describe("scores routes", () => {
 
     await getMetricsStore().recordGameplay({
       sessionToken,
+      platform: overrides?.platform ?? "aro-classic",
       lifecycleState: overrides?.lifecycleState ?? "completed",
       difficulty: overrides?.difficulty ?? "easy",
       scenarioTitle: overrides?.scenarioTitle ?? "Test Scenario",
@@ -189,6 +191,63 @@ describe("scores routes", () => {
 
     expect(res.status).toBe(400);
     expect(res.body.error).toContain("Invalid difficulty");
+  });
+
+  it("GET /api/scores filters to the requested gameplay platform", async () => {
+    const classicToken = await getSessionStore().create({
+      platform: "aro-classic",
+      difficulty: "easy",
+      scenarioTitle: "Classic Score",
+      identityKind: "github",
+      githubUserId: "classic-score",
+      githubLogin: "classic-score",
+      anonymousClaimKey: null,
+      persistentScoreEligible: true,
+    });
+    const aksToken = await getSessionStore().create({
+      platform: "aks",
+      difficulty: "easy",
+      scenarioTitle: "AKS Score",
+      identityKind: "github",
+      githubUserId: "aks-score",
+      githubLogin: "aks-score",
+      anonymousClaimKey: null,
+      persistentScoreEligible: true,
+    });
+
+    await recordCompletedTelemetry(classicToken, {
+      platform: "aro-classic",
+      difficulty: "easy",
+      scenarioTitle: "Classic Score",
+    });
+    await recordCompletedTelemetry(aksToken, {
+      platform: "aks",
+      difficulty: "easy",
+      scenarioTitle: "AKS Score",
+    });
+
+    const app = createApp();
+    expect((await httpRequest(app, "POST", "/api/scores", {
+      sessionToken: classicToken,
+      nickname: "classic-user",
+    })).status).toBe(201);
+    expect((await httpRequest(app, "POST", "/api/scores", {
+      sessionToken: aksToken,
+      nickname: "aks-user",
+    })).status).toBe(201);
+
+    const response = await httpRequest(
+      app,
+      "GET",
+      "/api/scores?platform=aks&difficulty=easy",
+    );
+
+    expect(response.status).toBe(200);
+    expect(
+      (response.body.entries as Array<{ platform: string }>).every(
+        (entry) => entry.platform === "aks",
+      ),
+    ).toBe(true);
   });
 
   it("POST /api/scores rejects missing session token", async () => {
@@ -235,6 +294,7 @@ describe("scores routes", () => {
 
   it("POST /api/scores preserves token when completion telemetry is missing", async () => {
     const token = await getSessionStore().create({
+      platform: "aro-classic",
       difficulty: "easy",
       scenarioTitle: "Retry Scenario",
       identityKind: "github",
@@ -265,6 +325,7 @@ describe("scores routes", () => {
 
   it("POST /api/scores accepts empty scoring events as a zero score", async () => {
     const token = await getSessionStore().create({
+      platform: "aro-classic",
       difficulty: "easy",
       scenarioTitle: "No Scoring Scenario",
       identityKind: "github",
@@ -293,6 +354,7 @@ describe("scores routes", () => {
 
   it("POST /api/scores uses completed telemetry when abandoned telemetry arrives later", async () => {
     const token = await getSessionStore().create({
+      platform: "aro-classic",
       difficulty: "easy",
       scenarioTitle: "Lifecycle Ordering",
       identityKind: "github",
@@ -358,6 +420,7 @@ describe("scores routes", () => {
 
   it("POST /api/scores saves a valid GitHub-backed entry and returns 201", async () => {
     const token = await getSessionStore().create({
+      platform: "aro-classic",
       difficulty: "easy",
       scenarioTitle: "Test Scenario",
       identityKind: "github",
@@ -398,6 +461,7 @@ describe("scores routes", () => {
 
   it("POST /api/scores keeps anonymous scores ephemeral", async () => {
     const token = await getSessionStore().create({
+      platform: "aro-classic",
       difficulty: "easy",
       scenarioTitle: "Anonymous Trial",
       identityKind: "anonymous",
@@ -439,6 +503,7 @@ describe("scores routes", () => {
 
   it("GET /api/scores excludes automated GitHub-backed runs from the public leaderboard", async () => {
     const token = await getSessionStore().create({
+      platform: "aro-classic",
       difficulty: "easy",
       scenarioTitle: "Automated Regression",
       trafficSource: "automated",
@@ -473,6 +538,7 @@ describe("scores routes", () => {
 
   it("POST /api/scores rejects telemetry/session mismatch", async () => {
     const token = await getSessionStore().create({
+      platform: "aro-classic",
       difficulty: "easy",
       scenarioTitle: "Expected Scenario",
       identityKind: "github",

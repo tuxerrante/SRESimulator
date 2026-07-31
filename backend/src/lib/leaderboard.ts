@@ -1,8 +1,9 @@
 import { readFile, writeFile, mkdir, rename } from "fs/promises";
 import { existsSync } from "fs";
 import path from "path";
-import type { Difficulty } from "../../../shared/types/game";
+import type { PlatformId } from "../../../shared/types/platform";
 import type { LeaderboardEntry, HallOfFameEntry } from "../../../shared/types/leaderboard";
+import type { LeaderboardFilters } from "./storage/types";
 
 const DATA_DIR = process.env.DATA_DIR || path.join(process.cwd(), "data");
 const LEADERBOARD_FILE = path.join(DATA_DIR, "leaderboard.json");
@@ -47,13 +48,16 @@ function sortEntries(entries: LeaderboardEntry[]): LeaderboardEntry[] {
 }
 
 export async function getLeaderboard(
-  difficulty?: Difficulty
+  filters?: LeaderboardFilters,
 ): Promise<LeaderboardEntry[]> {
   const entries = await readEntries();
-  const filtered = difficulty
+  const difficulty = filters?.difficulty;
+  const platform = filters?.platform;
+  const filtered = difficulty || platform
     ? entries.filter(
         (e) =>
-          e.difficulty === difficulty &&
+          (!platform || e.platform === platform) &&
+          (!difficulty || e.difficulty === difficulty) &&
           e.identityKind === "github" &&
           Boolean(e.githubUserId)
       )
@@ -61,8 +65,8 @@ export async function getLeaderboard(
   return sortEntries(filtered).slice(0, MAX_ENTRIES_PER_DIFFICULTY);
 }
 
-export async function getHallOfFame(): Promise<HallOfFameEntry[]> {
-  const entries = await readEntries();
+export async function getHallOfFame(platform: PlatformId): Promise<HallOfFameEntry[]> {
+  const entries = (await readEntries()).filter((entry) => entry.platform === platform);
 
   const playerMap = new Map<
     string,
@@ -98,6 +102,7 @@ export async function getHallOfFame(): Promise<HallOfFameEntry[]> {
       (scores.easy ?? 0) + (scores.medium ?? 0) + (scores.hard ?? 0);
     hallOfFame.push({
       nickname: scores.latestNickname || githubUserId,
+      platform,
       compositeScore,
       scores: {
         ...(scores.easy !== undefined ? { easy: scores.easy } : {}),
@@ -122,7 +127,11 @@ export function addEntry(
     const entries = await readEntries();
 
     const existingIdx = entries.findIndex(
-      (e) => e.githubUserId === entry.githubUserId && e.difficulty === entry.difficulty
+      (e) =>
+        e.githubUserId === entry.githubUserId &&
+        e.platform === entry.platform &&
+        e.difficulty === entry.difficulty &&
+        (e.trafficSource ?? "player") === (entry.trafficSource ?? "player")
     );
 
     if (existingIdx !== -1) {
@@ -141,8 +150,9 @@ export function addEntry(
 
     const grouped: Record<string, LeaderboardEntry[]> = {};
     for (const e of entries) {
-      if (!grouped[e.difficulty]) grouped[e.difficulty] = [];
-      grouped[e.difficulty].push(e);
+      const key = `${e.platform}:${e.difficulty}:${e.trafficSource ?? "player"}`;
+      if (!grouped[key]) grouped[key] = [];
+      grouped[key].push(e);
     }
 
     const trimmed: LeaderboardEntry[] = [];

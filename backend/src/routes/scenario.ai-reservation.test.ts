@@ -94,6 +94,7 @@ describe("scenario reservation before AI generation", () => {
   function createValidAiScenario() {
     return {
       id: "scenario_slow",
+      platform: "aro-classic",
       title: "Slow AI Scenario",
       difficulty: "easy",
       description: "desc",
@@ -351,6 +352,36 @@ describe("scenario reservation before AI generation", () => {
     expect(response.body.error).toBe("Scenario generation returned an invalid payload.");
   });
 
+  it("rejects AI scenarios when platformContext fields are structurally invalid", async () => {
+    const invalidScenario = {
+      ...createValidAiScenario(),
+      platformContext: {
+        machineNames: ["worker-a", ""],
+      },
+    };
+    generateAiTextMock.mockResolvedValueOnce(JSON.stringify(invalidScenario));
+
+    const storageModule = await import("../lib/storage");
+    await storageModule.initStorage();
+    const scenarioModule = await import("./scenario");
+    const app = createApp(scenarioModule.scenarioRouter);
+    const headers = {
+      cookie: createAnonymousProofCookie("fp_invalid_platform_context"),
+      "user-agent": anonymousUserAgent,
+      ...createSignedClientIpHeaders("203.0.113.93"),
+    };
+
+    const response = await postJson(
+      app,
+      "/api/scenario",
+      { difficulty: "easy", turnstileToken: "pass" },
+      headers,
+    );
+
+    expect(response.status).toBe(502);
+    expect(response.body.error).toBe("Scenario generation returned an invalid payload.");
+  });
+
   it("rejects AI scenarios when timestamps are parseable but not strict ISO 8601", async () => {
     const invalidScenario = createValidAiScenario();
     invalidScenario.incidentTicket.reportedTime = "03/07/2026 12:34:56";
@@ -425,7 +456,7 @@ describe("scenario reservation before AI generation", () => {
 
     expect(response.status).toBe(200);
     const scenario = response.body.scenario as Record<string, unknown>;
-    expect(scenario.id).toBe("scenario_sleeping_cluster");
+    expect(scenario.id).toBe("aro-classic-easy-master-node-deleted");
     expect(JSON.stringify(scenario)).not.toContain("{{minutesAgo:");
     expect(JSON.stringify(scenario)).not.toContain("{{daysAgo:");
     expect(generateAiTextMock).not.toHaveBeenCalled();
@@ -453,18 +484,19 @@ describe("scenario reservation before AI generation", () => {
     );
 
     expect(response.status).toBe(503);
-    expect(response.body.error).toBe("Scenario catalog is not available for easy difficulty.");
+    expect(response.body.error).toBe("Scenario catalog is not available for aro-classic/easy.");
     expect(generateAiTextMock).not.toHaveBeenCalled();
   });
 
   it("returns a client-safe error when a catalog file is invalid", async () => {
     process.env.SCENARIO_SOURCE = "catalog";
     process.env.SCENARIO_CATALOG_DIR = tmpDir;
-    await mkdir(join(tmpDir, "easy"), { recursive: true });
+    await mkdir(join(tmpDir, "aro-classic", "easy"), { recursive: true });
     await writeFile(
-      join(tmpDir, "easy", "broken.json"),
+      join(tmpDir, "aro-classic", "easy", "broken.json"),
       JSON.stringify({
         id: "scenario_broken",
+        platform: "aro-classic",
         difficulty: "easy",
         description: "broken",
         incidentTicket: { id: "IcM-1", title: "broken" },
@@ -499,11 +531,12 @@ describe("scenario reservation before AI generation", () => {
   it("rejects catalog scenarios that omit required nested arrays", async () => {
     process.env.SCENARIO_SOURCE = "catalog";
     process.env.SCENARIO_CATALOG_DIR = tmpDir;
-    await mkdir(join(tmpDir, "easy"), { recursive: true });
+    await mkdir(join(tmpDir, "aro-classic", "easy"), { recursive: true });
     await writeFile(
-      join(tmpDir, "easy", "missing-alerts.json"),
+      join(tmpDir, "aro-classic", "easy", "missing-alerts.json"),
       JSON.stringify({
         id: "scenario_missing_alerts",
+        platform: "aro-classic",
         title: "Missing alerts",
         difficulty: "easy",
         description: "broken",
@@ -554,8 +587,8 @@ describe("scenario reservation before AI generation", () => {
   it("returns a client-safe error when a catalog file contains invalid JSON syntax", async () => {
     process.env.SCENARIO_SOURCE = "catalog";
     process.env.SCENARIO_CATALOG_DIR = tmpDir;
-    await mkdir(join(tmpDir, "easy"), { recursive: true });
-    await writeFile(join(tmpDir, "easy", "invalid-json.json"), "{");
+    await mkdir(join(tmpDir, "aro-classic", "easy"), { recursive: true });
+    await writeFile(join(tmpDir, "aro-classic", "easy", "invalid-json.json"), "{");
 
     const storageModule = await import("../lib/storage");
     await storageModule.initStorage();
@@ -584,7 +617,7 @@ describe("scenario reservation before AI generation", () => {
   it("returns a client-safe error when catalog file reads fail before JSON parsing", async () => {
     process.env.SCENARIO_SOURCE = "catalog";
     process.env.SCENARIO_CATALOG_DIR = tmpDir;
-    await mkdir(join(tmpDir, "easy", "directory.json"), { recursive: true });
+    await mkdir(join(tmpDir, "aro-classic", "easy", "directory.json"), { recursive: true });
 
     const storageModule = await import("../lib/storage");
     await storageModule.initStorage();
@@ -613,8 +646,8 @@ describe("scenario reservation before AI generation", () => {
   it("returns the anonymous daily-limit response before validating catalog files", async () => {
     process.env.SCENARIO_SOURCE = "catalog";
     process.env.SCENARIO_CATALOG_DIR = tmpDir;
-    await mkdir(join(tmpDir, "easy"), { recursive: true });
-    await writeFile(join(tmpDir, "easy", "invalid-json.json"), "{");
+    await mkdir(join(tmpDir, "aro-classic", "easy"), { recursive: true });
+    await writeFile(join(tmpDir, "aro-classic", "easy", "invalid-json.json"), "{");
 
     const storageModule = await import("../lib/storage");
     await storageModule.initStorage();

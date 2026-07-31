@@ -33,7 +33,7 @@ export function DashboardPanel() {
     );
   }
 
-  const { clusterContext } = scenario;
+  const { clusterContext, platform, platformContext } = scenario;
 
   return (
     <div className="h-full overflow-y-auto bg-zinc-950 p-4 space-y-4">
@@ -54,6 +54,36 @@ export function DashboardPanel() {
             valueClass={statusColor(clusterContext.status)}
             className="col-span-2"
           />
+        </div>
+      </section>
+
+      <section>
+        <h3 className="text-xs font-semibold text-zinc-500 uppercase mb-2">
+          Platform Context
+        </h3>
+        <div className="rounded-lg border border-zinc-800 bg-zinc-900 p-3 text-xs text-zinc-400 space-y-2">
+          <div>
+            <span className="text-zinc-500 uppercase mr-2">Platform</span>
+            <span className="text-zinc-200">{platform}</span>
+          </div>
+          {platformContext?.guestClusterName ? (
+            <div>Guest cluster: {platformContext.guestClusterName}</div>
+          ) : null}
+          {platformContext?.hostedControlPlaneNamespace ? (
+            <div>Hosted control plane namespace: {platformContext.hostedControlPlaneNamespace}</div>
+          ) : null}
+          {platformContext?.nodePoolNames?.length ? (
+            <div>Node pools: {platformContext.nodePoolNames.join(", ")}</div>
+          ) : null}
+          {platformContext?.machineNames?.length ? (
+            <div>Machines: {platformContext.machineNames.join(", ")}</div>
+          ) : null}
+          {platformContext?.routeNames?.length ? (
+            <div>Routes: {platformContext.routeNames.join(", ")}</div>
+          ) : null}
+          {platformContext?.managedResourceGroupHint ? (
+            <div>Managed RG hint: {platformContext.managedResourceGroupHint}</div>
+          ) : null}
         </div>
       </section>
 

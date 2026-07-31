@@ -46,6 +46,7 @@ export function buildGameplayTelemetryPayload(
 
   const payload: GameplayTelemetryEvent = {
     sessionToken: state.sessionToken,
+    platform: state.scenario?.platform ?? "aro-classic",
     lifecycleState,
     nickname: state.nickname ?? undefined,
     commandCount: state.commandCount,

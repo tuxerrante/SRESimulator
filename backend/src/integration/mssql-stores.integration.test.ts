@@ -164,6 +164,7 @@ describe.skipIf(SKIP)("MssqlLeaderboardStore (real SQL)", () => {
     const entry = {
       id: crypto.randomUUID(),
       nickname: trackNickname(shortId("t")),
+      platform: "aro-classic" as const,
       difficulty: "easy" as const,
       score: {
         efficiency: 20,
@@ -183,7 +184,7 @@ describe.skipIf(SKIP)("MssqlLeaderboardStore (real SQL)", () => {
     const returned = await store.addEntry(entry);
     expect(returned.id).toBe(entry.id);
 
-    const entries = await store.getLeaderboard("easy");
+    const entries = await store.getLeaderboard({ difficulty: "easy" });
     const found = entries.find(
       (e) => e.id.toLowerCase() === entry.id.toLowerCase(),
     );
@@ -203,6 +204,7 @@ describe.skipIf(SKIP)("MssqlLeaderboardStore (real SQL)", () => {
     await store.addEntry({
       id: crypto.randomUUID(),
       nickname: nick,
+      platform: "aro-classic",
       difficulty: "hard",
       score: {
         efficiency: 10,
@@ -223,6 +225,7 @@ describe.skipIf(SKIP)("MssqlLeaderboardStore (real SQL)", () => {
     await store.addEntry({
       id: upgradedId,
       nickname: nick,
+      platform: "aro-classic",
       difficulty: "hard",
       score: {
         efficiency: 25,
@@ -239,7 +242,7 @@ describe.skipIf(SKIP)("MssqlLeaderboardStore (real SQL)", () => {
       timestamp: Date.now(),
     });
 
-    const entries = await store.getLeaderboard("hard");
+    const entries = await store.getLeaderboard({ difficulty: "hard" });
     const found = entries.find((e) => e.nickname === nick);
     expect(found).toBeDefined();
     expect(found!.score.total).toBe(100);
@@ -258,6 +261,7 @@ describe.skipIf(SKIP)("MssqlLeaderboardStore (real SQL)", () => {
       await store.addEntry({
         id: crypto.randomUUID(),
         nickname: nick,
+        platform: "aro-classic",
         difficulty: diff,
         score: {
           efficiency: 20,
@@ -275,7 +279,7 @@ describe.skipIf(SKIP)("MssqlLeaderboardStore (real SQL)", () => {
       });
     }
 
-    const fame = await store.getHallOfFame();
+    const fame = await store.getHallOfFame("aro-classic");
     const found = fame.find((f) => f.nickname === nick);
     expect(found).toBeDefined();
     expect(found!.compositeScore).toBe(160);
@@ -295,6 +299,7 @@ describe.skipIf(SKIP)("MssqlLeaderboardStore (real SQL)", () => {
     await store.addEntry({
       id: crypto.randomUUID(),
       nickname: nick,
+      platform: "aro-classic",
       difficulty: "hard",
       score: {
         efficiency: 25,
@@ -315,6 +320,7 @@ describe.skipIf(SKIP)("MssqlLeaderboardStore (real SQL)", () => {
     await store.addEntry({
       id: crypto.randomUUID(),
       nickname: nick,
+      platform: "aro-classic",
       difficulty: "hard",
       score: {
         efficiency: 10,
@@ -332,7 +338,7 @@ describe.skipIf(SKIP)("MssqlLeaderboardStore (real SQL)", () => {
       timestamp: Date.now(),
     });
 
-    const entries = await store.getLeaderboard("hard");
+    const entries = await store.getLeaderboard({ difficulty: "hard" });
     const found = entries.find((e) => e.nickname === nick);
     expect(found).toBeDefined();
     expect(found!.trafficSource).toBe("player");

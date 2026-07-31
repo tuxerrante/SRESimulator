@@ -30,6 +30,7 @@ describe("LeaderboardPage", () => {
           hallOfFame: [
             {
               nickname: "operator",
+              platform: "aro-classic",
               compositeScore: 95,
               scores: { easy: 98, medium: 92, hard: 88 },
             },
@@ -50,7 +51,10 @@ describe("LeaderboardPage", () => {
     render(<LeaderboardPage />);
 
     await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledWith("/api/scores", undefined);
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/scores?platform=aro-classic",
+        undefined,
+      );
     });
 
     expect(await screen.findByText("operator")).toBeTruthy();
@@ -67,11 +71,16 @@ describe("LeaderboardPage", () => {
     render(<LeaderboardPage />);
 
     await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledWith("/api/scores", undefined);
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/scores?platform=aro-classic",
+        undefined,
+      );
     });
 
     expect(
-      await screen.findByText("No scores yet. Complete a scenario to appear here."),
+      await screen.findByText(
+        "No ARO Classic scores yet. Complete a scenario to appear here.",
+      ),
     ).toBeTruthy();
     expect(captureFrontendErrorMock).toHaveBeenCalledTimes(1);
   });

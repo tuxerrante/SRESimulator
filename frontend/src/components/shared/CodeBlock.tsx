@@ -4,17 +4,19 @@ import { Play, Copy, Check, CheckCircle } from "lucide-react";
 import { useState } from "react";
 import { useGameStore } from "@/stores/gameStore";
 import { cn } from "@/lib/utils";
+import type { CompatibleCommandType } from "@shared/types/platform";
 
 interface CodeBlockProps {
   code: string;
   language: string;
-  onRun?: (command: string, type: "oc" | "kql" | "geneva") => void;
+  onRun?: (command: string, type: CompatibleCommandType) => void;
 }
 
 const LANGUAGE_LABELS: Record<string, string> = {
   oc: "OpenShift CLI",
+  kubectl: "Kubernetes CLI",
   kql: "KQL Query",
-  geneva: "Geneva",
+  geneva: "Dashboard (legacy alias)",
   bash: "Bash",
 };
 
@@ -22,7 +24,7 @@ export function CodeBlock({ code, language, onRun }: CodeBlockProps) {
   const [copied, setCopied] = useState(false);
   const [hasRun, setHasRun] = useState(false);
   const isExecuting = useGameStore((s) => s.isExecuting);
-  const isRunnable = ["oc", "kql", "geneva"].includes(language);
+  const isRunnable = ["oc", "kubectl", "kql", "geneva"].includes(language);
 
   const handleCopy = async () => {
     await navigator.clipboard.writeText(code);
@@ -33,7 +35,7 @@ export function CodeBlock({ code, language, onRun }: CodeBlockProps) {
   const handleRun = () => {
     if (onRun && isRunnable && !hasRun && !isExecuting) {
       setHasRun(true);
-      onRun(code, language as "oc" | "kql" | "geneva");
+      onRun(code, language as CompatibleCommandType);
     }
   };
 

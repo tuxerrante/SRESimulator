@@ -6,11 +6,18 @@ import { Trophy, ArrowLeft, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { Difficulty } from "@shared/types/game";
 import type { LeaderboardEntry, HallOfFameEntry } from "@shared/types/leaderboard";
+import {
+  DEFAULT_PLATFORM_ID,
+  PLATFORM_IDS,
+  PLATFORM_PROFILES,
+  type PlatformId,
+} from "@shared/types/platform";
 import { fetchJsonObject } from "@/lib/api-client";
 import { captureFrontendError } from "@/lib/telemetry/capture";
 import { buildSafeRequestId } from "@/lib/telemetry/request-context";
 
 type Tab = "all" | Difficulty;
+const PLATFORM_TABS: PlatformId[] = [...PLATFORM_IDS];
 
 const TABS: { value: Tab; label: string }[] = [
   { value: "all", label: "All" },
@@ -66,6 +73,7 @@ function DifficultyScore({ value }: { value?: number }) {
 }
 
 export default function LeaderboardPage() {
+  const [activePlatform, setActivePlatform] = useState<PlatformId>(DEFAULT_PLATFORM_ID);
   const [activeTab, setActiveTab] = useState<Tab>("all");
   const [entries, setEntries] = useState<LeaderboardEntry[]>([]);
   const [hallOfFame, setHallOfFame] = useState<HallOfFameEntry[]>([]);
@@ -75,9 +83,13 @@ export default function LeaderboardPage() {
     const fetchScores = async () => {
       setLoading(true);
       try {
-        const param = activeTab === "all" ? "" : `?difficulty=${activeTab}`;
+        const params = new URLSearchParams();
+        params.set("platform", activePlatform);
+        if (activeTab !== "all") {
+          params.set("difficulty", activeTab);
+        }
         const data = await fetchJsonObject(
-          `/api/scores${param}`,
+          `/api/scores?${params.toString()}`,
           undefined,
           "Failed to load scores",
         );
@@ -87,6 +99,7 @@ export default function LeaderboardPage() {
         captureFrontendError(error, {
           feature: "scores",
           difficulty: activeTab === "all" ? undefined : activeTab,
+          platform: activePlatform,
           requestId: buildSafeRequestId(),
         });
         setEntries([]);
@@ -96,7 +109,7 @@ export default function LeaderboardPage() {
       }
     };
     fetchScores();
-  }, [activeTab]);
+  }, [activePlatform, activeTab]);
 
   const isEmpty = activeTab === "all" ? hallOfFame.length === 0 : entries.length === 0;
 
@@ -113,6 +126,23 @@ export default function LeaderboardPage() {
             </Link>
             <Trophy size={24} className="text-amber-500" />
             <h1 className="text-2xl font-bold tracking-tight">Hall of Fame</h1>
+          </div>
+
+          <div className="mb-4 flex gap-1 rounded-lg border border-zinc-800 bg-zinc-900 p-1">
+            {PLATFORM_TABS.map((platform) => (
+              <button
+                key={platform}
+                onClick={() => setActivePlatform(platform)}
+                className={cn(
+                  "flex-1 rounded-md px-3 py-2 text-sm font-medium transition-colors",
+                  activePlatform === platform
+                    ? "bg-zinc-800 text-zinc-100"
+                    : "text-zinc-500 hover:text-zinc-300",
+                )}
+              >
+                {PLATFORM_PROFILES[platform].label}
+              </button>
+            ))}
           </div>
 
           <div className="flex gap-1 mb-6 bg-zinc-900 rounded-lg p-1 border border-zinc-800">
@@ -138,7 +168,7 @@ export default function LeaderboardPage() {
             </div>
           ) : isEmpty ? (
             <div className="text-center py-16 text-zinc-600 text-sm">
-              No scores yet. Complete a scenario to appear here.
+              No {PLATFORM_PROFILES[activePlatform].label} scores yet. Complete a scenario to appear here.
             </div>
           ) : activeTab === "all" ? (
             /* Aggregated Hall of Fame table */
@@ -171,6 +201,9 @@ export default function LeaderboardPage() {
                       </td>
                       <td className="px-4 py-3 text-sm font-medium text-zinc-200">
                         {entry.nickname}
+                        <div className="mt-1 text-[10px] uppercase tracking-wide text-zinc-600">
+                          {PLATFORM_PROFILES[entry.platform].label}
+                        </div>
                       </td>
                       <td className="px-4 py-3 text-sm font-mono font-bold text-zinc-200 text-right">
                         {entry.compositeScore}
@@ -259,7 +292,7 @@ export default function LeaderboardPage() {
       </div>
 
       <footer className="text-center text-zinc-700 text-xs py-4">
-        ARO SRE Simulator &mdash; Investigation training powered by AI
+        SRE Simulator &mdash; Investigation training powered by AI
         <span className="mx-2">&middot;</span>
         <Link href="/about" className="hover:text-zinc-400 transition-colors">
           About

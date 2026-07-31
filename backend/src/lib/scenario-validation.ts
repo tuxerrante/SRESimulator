@@ -1,9 +1,15 @@
 import type { Scenario } from "../../../shared/types/game";
+import type { PlatformContext } from "../../../shared/types/platform";
 
 const VALID_DIFFICULTIES = new Set<Scenario["difficulty"]>([
   "easy",
   "medium",
   "hard",
+]);
+const VALID_PLATFORMS = new Set<Scenario["platform"]>([
+  "aro-classic",
+  "aro-hcp",
+  "aks",
 ]);
 const VALID_ALERT_SEVERITIES = new Set<Scenario["clusterContext"]["alerts"][number]["severity"]>([
   "critical",
@@ -30,6 +36,56 @@ function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((entry) => typeof entry === "string");
 }
 
+const PLATFORM_CONTEXT_STRING_ARRAY_KEYS = [
+  "machineNames",
+  "routeNames",
+  "clusterOperatorHints",
+  "controlPlaneBoundaryNotes",
+  "nodePoolNames",
+  "addonContext",
+] as const;
+
+const PLATFORM_CONTEXT_STRING_KEYS = [
+  "guestClusterName",
+  "hostedControlPlaneNamespace",
+  "managedResourceGroupHint",
+] as const;
+
+const PLATFORM_CONTEXT_KEYS = new Set<string>([
+  ...PLATFORM_CONTEXT_STRING_ARRAY_KEYS,
+  ...PLATFORM_CONTEXT_STRING_KEYS,
+]);
+
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
+export function isPlatformContext(value: unknown): value is PlatformContext {
+  if (!isRecord(value)) {
+    return false;
+  }
+
+  if (Object.keys(value).some((key) => !PLATFORM_CONTEXT_KEYS.has(key))) {
+    return false;
+  }
+
+  for (const key of PLATFORM_CONTEXT_STRING_ARRAY_KEYS) {
+    const field = value[key];
+    if (field !== undefined && (!isStringArray(field) || !field.every(isNonEmptyString))) {
+      return false;
+    }
+  }
+
+  for (const key of PLATFORM_CONTEXT_STRING_KEYS) {
+    const field = value[key];
+    if (field !== undefined && !isNonEmptyString(field)) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
 export function isScenario(value: unknown): value is Scenario {
   if (!isRecord(value)) {
     return false;
@@ -43,10 +99,19 @@ export function isScenario(value: unknown): value is Scenario {
 
   if (
     typeof value.id !== "string" ||
+    typeof value.platform !== "string" ||
+    !VALID_PLATFORMS.has(value.platform as Scenario["platform"]) ||
     typeof value.title !== "string" ||
     typeof value.description !== "string" ||
     typeof value.difficulty !== "string" ||
     !VALID_DIFFICULTIES.has(value.difficulty as Scenario["difficulty"])
+  ) {
+    return false;
+  }
+
+  if (
+    value.platformContext !== undefined &&
+    !isPlatformContext(value.platformContext)
   ) {
     return false;
   }

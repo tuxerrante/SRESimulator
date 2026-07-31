@@ -6,9 +6,10 @@ import { ChatInput } from "./ChatInput";
 import { useChat } from "@/hooks/useChat";
 import { useGameStore } from "@/stores/gameStore";
 import { Loader2 } from "lucide-react";
+import type { CompatibleCommandType } from "@shared/types/platform";
 
 interface ChatPanelProps {
-  onRunCommand?: (command: string, type: "oc" | "kql" | "geneva") => void;
+  onRunCommand?: (command: string, type: CompatibleCommandType) => void;
 }
 
 export function ChatPanel({ onRunCommand }: ChatPanelProps) {

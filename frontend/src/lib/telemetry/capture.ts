@@ -1,9 +1,11 @@
 import * as Sentry from "@sentry/nextjs";
+import type { PlatformId } from "@shared/types/platform";
 
 export interface FrontendTelemetryContext {
   feature: string;
   phase?: string;
   difficulty?: string;
+  platform?: PlatformId;
   requestId?: string;
   actorRef?: string;
   gameSessionRef?: string;
@@ -80,6 +82,7 @@ export function captureFrontendError(
       scope.setTag("feature", context.feature);
       if (context.phase) scope.setTag("phase", context.phase);
       if (context.difficulty) scope.setTag("difficulty", context.difficulty);
+      if (context.platform) scope.setTag("platform", context.platform);
       if (context.requestId) scope.setTag("requestId", context.requestId);
       if (context.actorRef) scope.setTag("actorRef", context.actorRef);
       if (context.gameSessionRef) scope.setTag("gameSessionRef", context.gameSessionRef);

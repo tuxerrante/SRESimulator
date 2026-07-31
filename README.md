@@ -23,6 +23,7 @@ structured SRE method.
 
 ## Main product features
 
+- Platform-aware session paths for `aro-classic`, `aro-hcp`, and `aks`.
 - AI-generated break-fix scenarios at three difficulty levels.
 - Guided investigation workflow:
   Reading -> Context -> Facts -> Theory -> Action.
@@ -33,11 +34,11 @@ structured SRE method.
 
 ## How a session works
 
-1. Choose a difficulty and get an incident ticket.
-2. Investigate via chat, commands, and dashboard context.
-3. Build and test hypotheses using observed evidence.
-4. Apply the fix and complete the scenario.
-5. Review score quality and improvement areas.
+1. Choose a platform.
+2. Choose a difficulty and get an incident ticket.
+3. Investigate via chat, commands, and dashboard context.
+4. Build and test hypotheses using observed evidence.
+5. Apply the fix and review score quality and improvement areas.
 
 ## Quick start
 
@@ -117,7 +118,10 @@ deployed same-origin proxy path.
 
 - Product architecture: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 - Runtime internals: [docs/AI_RUNTIME.md](docs/AI_RUNTIME.md)
+- Content boundary: [docs/CONTENT_BOUNDARY.md](docs/CONTENT_BOUNDARY.md)
 - Setup, production operations, and post-apply checklist:
+  [docs/OPERATIONS.md](docs/OPERATIONS.md)
+- Infra post-apply checklist:
   [infra/POST_APPLY_CHECKLIST.md](infra/POST_APPLY_CHECKLIST.md)
 - Release and versioning policy:
   [docs/RELEASES.md](docs/RELEASES.md)

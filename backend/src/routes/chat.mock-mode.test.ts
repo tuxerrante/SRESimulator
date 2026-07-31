@@ -76,6 +76,7 @@ describe("POST /api/chat mock mode", () => {
     process.env.AI_MOCK_MODE = "true";
     const sessionScenario = {
       id: "scenario_mock_easy",
+      platform: "aro-classic",
       title: "Test Scenario",
       difficulty: "easy",
       description: "Mock scenario",
@@ -105,6 +106,7 @@ describe("POST /api/chat mock mode", () => {
     });
     mocks.sessionGet.mockResolvedValue({
       token: "session-123",
+      platform: "aro-classic",
       difficulty: "easy",
       scenarioId: "scenario_mock_easy",
       scenarioTitle: "Test Scenario",

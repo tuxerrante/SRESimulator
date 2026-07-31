@@ -1,0 +1,64 @@
+{
+  "id": "aro-hcp-hard-guest-cluster-upgrade-boundary-stall",
+  "platform": "aro-hcp",
+  "title": "Guest Cluster Upgrade Boundary Stall",
+  "difficulty": "hard",
+  "description": "An upgrade in a hosted cluster is stuck at a guest/control-plane boundary condition, with guest operators waiting on signals that hosted control plane ownership must satisfy.",
+  "incidentTicket": {
+    "id": "IcM-260105",
+    "severity": "Sev2",
+    "title": "Hosted cluster upgrade stalled at boundary condition",
+    "description": "The hosted cluster upgrade has not progressed for hours and guest operators show contradictory signals about what remains blocked.",
+    "customerImpact": "The cluster is unavailable for normal upgrade operations and there is risk of prolonged control plane / worker version skew.",
+    "reportedTime": "{{daysAgo:3}}",
+    "clusterName": "hcp-prod-centralus-02",
+    "region": "centralus"
+  },
+  "clusterContext": {
+    "name": "hcp-prod-centralus-02",
+    "version": "4.20.2",
+    "region": "centralus",
+    "nodeCount": 10,
+    "status": "Critical",
+    "recentEvents": [
+      "{{minutesAgo:240}} - cluster-version: update stalled waiting on hosted control plane boundary acknowledgement",
+      "{{minutesAgo:150}} - guest operators report progressing while node pool rollout remains blocked",
+      "{{minutesAgo:25}} - canary upgrade checks remain inconclusive across worker-b pool"
+    ],
+    "alerts": [
+      {
+        "name": "HostedClusterUpgradeStalled",
+        "severity": "critical",
+        "message": "The hosted cluster upgrade has not advanced and ownership boundaries are unclear.",
+        "firingTime": "{{minutesAgo:20}}"
+      },
+      {
+        "name": "VersionSkewRisk",
+        "severity": "warning",
+        "message": "Worker pools and guest operators risk remaining on incompatible upgrade states if recovery is mis-sequenced.",
+        "firingTime": "{{minutesAgo:16}}"
+      }
+    ],
+    "upgradeHistory": [
+      {
+        "from": "4.20.1",
+        "to": "4.20.2",
+        "status": "in_progress",
+        "timestamp": "{{daysAgo:2}}"
+      }
+    ]
+  },
+  "platformContext": {
+    "guestClusterName": "hcp-prod-centralus-02",
+    "hostedControlPlaneNamespace": "hcp-prod-centralus-02-hcp",
+    "controlPlaneBoundaryNotes": [
+      "Do not recommend unsupported control plane mutations from the guest cluster.",
+      "Separate guest evidence gathering from management-plane ownership decisions."
+    ],
+    "nodePoolNames": [
+      "worker-a",
+      "worker-b",
+      "infra"
+    ]
+  }
+}

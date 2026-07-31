@@ -3,13 +3,14 @@
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { ChatMessage as ChatMessageType } from "@shared/types/chat";
+import type { CompatibleCommandType } from "@shared/types/platform";
 import { CodeBlock } from "@/components/shared/CodeBlock";
 import { cn } from "@/lib/utils";
 import { User, Bot, ExternalLink } from "lucide-react";
 
 interface ChatMessageProps {
   message: ChatMessageType;
-  onRunCommand?: (command: string, type: "oc" | "kql" | "geneva") => void;
+  onRunCommand?: (command: string, type: CompatibleCommandType) => void;
 }
 
 export function ChatMessage({ message, onRunCommand }: ChatMessageProps) {
@@ -76,7 +77,7 @@ export function ChatMessage({ message, onRunCommand }: ChatMessageProps) {
                 const lang = match ? match[1] : "";
                 const codeStr = String(children).replace(/\n$/, "");
 
-                if (lang && ["oc", "kql", "geneva", "bash"].includes(lang)) {
+                if (lang && ["oc", "kubectl", "kql", "geneva", "bash"].includes(lang)) {
                   return (
                     <CodeBlock
                       code={codeStr}

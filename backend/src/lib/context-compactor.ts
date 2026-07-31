@@ -47,7 +47,7 @@ export function estimateMessagesTokens(messages: AiTextMessage[]): number {
   return total;
 }
 
-const CMD_PATTERN = /```(?:oc|kql|geneva)\n([\s\S]*?)```/g;
+const CMD_PATTERN = /```(?:oc|kubectl|kql|geneva)\n([\s\S]*?)```/g;
 
 function extractCommandsFromContent(content: string, cmdSet: Set<string>): void {
   let cmdMatch;

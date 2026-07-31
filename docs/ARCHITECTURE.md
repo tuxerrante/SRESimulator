@@ -19,6 +19,20 @@
 - **Markdown:** react-markdown + remark-gfm
 - **Icons:** Lucide React
 
+## Gameplay Platform Boundary
+
+`PlatformId` is a gameplay dimension stored on each simulated session. Supported
+gameplay platforms are:
+
+- `aro-classic`
+- `aro-hcp`
+- `aks`
+
+This is intentionally separate from deployment concerns like
+`CLUSTER_FLAVOR` or `PROD_CLUSTER_FLAVOR`. The simulator can run on AKS while
+presenting an ARO Classic or ARO HCP session, and no runtime path should infer
+gameplay platform from host cluster flavor.
+
 ---
 
 ## Project Structure
@@ -34,14 +48,19 @@ SRESimulator/
 │   ├── sre-investigation-techniques.md
 │   ├── Openshift-clusters-alerts-resolutions.md
 │   └── Community-reported-issues.md
+│   └── platforms/                        # Platform-specific gameplay bundles
+│       ├── aro-classic/
+│       ├── aro-hcp/
+│       └── aks/
 ├── docs/
 │   ├── ARCHITECTURE.md                   # This file
 │   ├── AI_RUNTIME.md                     # AI provider, compaction, token management
+│   ├── CONTENT_BOUNDARY.md               # Repo-owned runtime content contract
 │   └── DNS_REGISTRATION.md               # Public site DNS name criteria & checklist
 ├── frontend/                             # Next.js application (UI only)
 │   ├── src/
 │   │   ├── app/
-│   │   │   ├── page.tsx                  # Landing page (scenario selection)
+│   │   │   ├── page.tsx                  # Landing page (platform + difficulty selection)
 │   │   │   ├── game/page.tsx             # Main game page
 │   │   │   ├── leaderboard/page.tsx      # Hall of fame view
 │   │   │   └── api/[...path]/route.ts    # Internal BFF proxy to backend service
@@ -322,7 +341,7 @@ as the source of truth for GitHub-authenticated access.
 
 ### `POST /api/scenario`
 
-Generates a scenario for the given difficulty. Access is now gated by player
+Generates a scenario for the given platform and difficulty. Access is now gated by player
 identity:
 
 - **GitHub-authenticated players** can request `easy`, `medium`, and `hard`
@@ -331,9 +350,12 @@ identity:
 - Anonymous Easy mode is limited to one run per 24 hours via a salted server-side
   claim key derived from browser fingerprint, IP, and user-agent signals
 
-After access is approved, the route calls the configured AI provider with
+After access is approved, the route binds the session to a `PlatformId`, then
+either selects a repo-owned scenario from `scenarios/<platform>/<difficulty>/`
+or calls the configured AI provider with shared + platform-specific
 knowledge-base context to produce a realistic incident ticket and cluster
-context. In `AI_MOCK_MODE=true`, it returns a deterministic mock scenario.
+context. In `AI_MOCK_MODE=true`, it returns a deterministic platform-aware mock
+scenario.
 
 ### `POST /api/chat`
 
@@ -341,7 +363,12 @@ Streaming chat endpoint. Builds a system prompt with Dungeon Master persona, met
 
 ### `POST /api/command`
 
-Simulates command execution. Given an `oc`, KQL, or Geneva command and the current scenario, the configured provider generates realistic output consistent with the incident. In `AI_MOCK_MODE=true`, returns mock command output. Falls back to mock output when reasoning models exhaust the completion budget.
+Simulates command execution. Given an `oc`, `kubectl`, KQL, or legacy Geneva
+command alias and the current scenario, the configured provider generates
+realistic output consistent with the incident. The stored session platform is
+the source of truth for which cluster CLI is allowed. In `AI_MOCK_MODE=true`,
+the route returns platform-aware mock command output. Falls back to mock output
+when reasoning models exhaust the completion budget.
 
 ### `GET /api/ai/readiness`
 
@@ -368,15 +395,15 @@ Azure SQL (`mssql`) is the intended deployed and production storage path.
 Best for local development and test runs only.
 
 - **Sessions**: In-memory `Map` with 24h TTL, now tagged with identity kind
-  (`github` vs `anonymous`) plus score persistence eligibility. Lost on pod
-  restart.
+  (`github` vs `anonymous`), selected gameplay platform, and score persistence
+  eligibility. Lost on pod restart.
 - **Players**: JSON file (`data/players.json`) storing GitHub player metadata
   used to normalize persistent identities locally.
 - **Anonymous trials**: JSON file (`data/anonymous-trial-claims.json`) storing
   salted daily claim keys and expiry timestamps for guest-rate limiting.
 - **Leaderboard**: JSON file on PVC (`data/leaderboard.json`). Writes are
   serialized through an in-process async mutex and keyed by GitHub user id per
-  difficulty.
+  platform + difficulty.
 - **Metrics**: Log-only (no persistent storage).
 
 Constraints:
@@ -394,20 +421,22 @@ Database free tier (100K vCore-seconds/month, 32 GB storage, $0/month).
 
 - **Sessions**: Stored in `sessions` table. Shared across replicas.
   Stale entries (>24h) are cleaned up opportunistically. Session rows now record
-  identity kind, GitHub identity, anonymous claim key, and whether the run is
-  eligible for persistent score submission.
+  identity kind, GitHub identity, anonymous claim key, selected gameplay
+  platform, and whether the run is eligible for persistent score submission.
 - **Players**: Stored in `players` and upserted by GitHub user id so nickname
   changes do not create duplicate persistent identities.
 - **Anonymous trials**: Stored in `anonymous_trial_claims`, keyed by salted
   claim digest with 24h expiry for free-trial enforcement.
 - **Leaderboard**: Stored in `leaderboard_entries` table. Uses `MERGE`
-  to atomically keep the best score per (GitHub user id, difficulty). The
-  stored callsign/nickname corresponds to the best recorded run for that
-  entry, not necessarily the player's latest callsign change.
+  to atomically keep the best score per (GitHub user id, platform, difficulty,
+  traffic source). The stored callsign/nickname corresponds to the best
+  recorded run for that entry, not necessarily the player's latest callsign
+  change.
   Per-difficulty trim to 10 entries happens after each insert.
 - **Metrics**: Stored in `gameplay_metrics` table. Captures per-session
-  analytics (commands executed, scoring events, AI token consumption) with
-  an open JSON `metadata` column for future extensibility.
+  analytics (commands executed, scoring events, AI token consumption) together
+  with platform-aware session slices and an open JSON `metadata` column for
+  future extensibility.
 
 To enable:
 

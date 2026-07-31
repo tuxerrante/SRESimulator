@@ -1,0 +1,63 @@
+{
+  "id": "aks-medium-coredns-egress-break",
+  "platform": "aks",
+  "title": "CoreDNS Egress Break",
+  "difficulty": "medium",
+  "description": "An outbound networking change has broken DNS resolution from CoreDNS, creating broad but diagnosable service lookup failures across the cluster.",
+  "incidentTicket": {
+    "id": "IcM-260107",
+    "severity": "Sev3",
+    "title": "AKS workloads failing DNS lookups after egress change",
+    "description": "Multiple namespaces report timeouts and service discovery failures after an egress policy adjustment in the cluster network path.",
+    "customerImpact": "Applications cannot reliably resolve upstream dependencies and some pods fail readiness because DNS is timing out.",
+    "reportedTime": "{{daysAgo:2}}",
+    "clusterName": "aks-stage-northeurope-02",
+    "region": "northeurope"
+  },
+  "clusterContext": {
+    "name": "aks-stage-northeurope-02",
+    "version": "1.31.2",
+    "region": "northeurope",
+    "nodeCount": 9,
+    "status": "Degraded",
+    "recentEvents": [
+      "{{minutesAgo:150}} - coredns: upstream queries timing out toward external resolver",
+      "{{minutesAgo:62}} - kubelet: readiness probes failing for services that depend on DNS resolution",
+      "{{minutesAgo:14}} - cluster network team notes egress path change before error burst"
+    ],
+    "alerts": [
+      {
+        "name": "CoreDNSLatencyHigh",
+        "severity": "critical",
+        "message": "CoreDNS request latency has crossed the critical threshold after upstream timeouts.",
+        "firingTime": "{{minutesAgo:11}}"
+      },
+      {
+        "name": "ServiceResolutionErrors",
+        "severity": "warning",
+        "message": "Pods are reporting intermittent DNS lookup failures across multiple namespaces.",
+        "firingTime": "{{minutesAgo:8}}"
+      }
+    ],
+    "upgradeHistory": [
+      {
+        "from": "1.31.1",
+        "to": "1.31.2",
+        "status": "completed",
+        "timestamp": "{{daysAgo:5}}"
+      }
+    ]
+  },
+  "platformContext": {
+    "nodePoolNames": [
+      "systempool",
+      "apps"
+    ],
+    "managedResourceGroupHint": "MC_aks-stage-northeurope-02_rg_northeurope",
+    "addonContext": [
+      "coredns",
+      "azure-cni",
+      "kube-proxy"
+    ]
+  }
+}

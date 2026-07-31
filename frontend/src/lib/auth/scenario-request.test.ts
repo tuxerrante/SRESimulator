@@ -5,12 +5,14 @@ describe("buildScenarioRequestBody", () => {
   it("includes Turnstile and fingerprint signals for anonymous easy mode", () => {
     expect(
       buildScenarioRequestBody({
+        platform: "aks",
         difficulty: "easy",
         viewer: null,
         fingerprintHash: "fp_hash",
         turnstileToken: "ts_token",
       })
     ).toEqual({
+      platform: "aks",
       difficulty: "easy",
       fingerprintHash: "fp_hash",
       turnstileToken: "ts_token",
@@ -20,6 +22,7 @@ describe("buildScenarioRequestBody", () => {
   it("omits anonymous verification fields for GitHub viewers", () => {
     expect(
       buildScenarioRequestBody({
+        platform: "aro-hcp",
         difficulty: "hard",
         viewer: {
           kind: "github",
@@ -32,6 +35,7 @@ describe("buildScenarioRequestBody", () => {
         turnstileToken: "ts_token",
       })
     ).toEqual({
+      platform: "aro-hcp",
       difficulty: "hard",
     });
   });
