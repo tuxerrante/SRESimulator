@@ -98,4 +98,25 @@ describe("scenario catalog", () => {
       clientMessage: "Scenario catalog is invalid.",
     });
   });
+
+  it("rejects catalog platformContext keys that are not part of the runtime schema", async () => {
+    await mkdir(join(tmpDir, "aks", "easy"), { recursive: true });
+    await writeFile(
+      join(tmpDir, "aks", "easy", "invalid-platform-context.json"),
+      JSON.stringify({
+        ...JSON.parse(validScenarioJson("aks")),
+        platformContext: {
+          nodePools: ["pool-a"],
+        },
+      }),
+    );
+
+    const catalogModule = await import("./scenario-catalog");
+
+    await expect(
+      catalogModule.getCatalogScenario({ platform: "aks", difficulty: "easy" }),
+    ).rejects.toMatchObject({
+      clientMessage: "Scenario catalog is invalid.",
+    });
+  });
 });

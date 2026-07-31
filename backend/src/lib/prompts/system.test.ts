@@ -209,7 +209,8 @@ describe("buildSystemPrompt", () => {
     expect(aksPrompt).toContain("kubectl");
     expect(aksPrompt).toContain("AKS");
     expect(aksPrompt).not.toContain("```oc```");
-    expect(aksPrompt).not.toContain("```geneva```");
+    expect(aksPrompt).toContain("```geneva```");
+    expect(aksPrompt).toContain("Dashboard");
     expect(aksPrompt).not.toContain("Collect evidence with `oc` commands");
   });
 });

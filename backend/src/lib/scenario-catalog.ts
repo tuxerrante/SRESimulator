@@ -3,6 +3,7 @@ import { access, readdir, readFile } from "fs/promises";
 import { join, resolve } from "path";
 import type { Difficulty, Scenario } from "../../../shared/types/game";
 import { PLATFORM_IDS, type PlatformId } from "../../../shared/types/platform";
+import { isPlatformContext } from "./scenario-validation";
 import { utcOffsetMinutes } from "./sim-clock";
 
 const DIFFICULTIES: Difficulty[] = ["easy", "medium", "hard"];
@@ -179,22 +180,10 @@ function assertScenarioTemplate(
   }
 
   if (value.platformContext !== undefined) {
-    if (!isRecord(value.platformContext)) {
+    if (!isPlatformContext(value.platformContext)) {
       throw invalidCatalog(
-        `Catalog scenario ${filePath} platformContext must be an object when provided`,
+        `Catalog scenario ${filePath} platformContext must use only supported platform metadata with non-empty string values`,
       );
-    }
-    for (const [key, entry] of Object.entries(value.platformContext)) {
-      if (entry === undefined) {
-        continue;
-      }
-      if (Array.isArray(entry)) {
-        for (const [index, item] of entry.entries()) {
-          assertString(item, `platformContext.${key}[${index}]`);
-        }
-        continue;
-      }
-      assertString(entry, `platformContext.${key}`);
     }
   }
 

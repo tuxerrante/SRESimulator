@@ -1,11 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { JsonPlayerStore } from "./json-player-store";
 
 describe("JsonPlayerStore", () => {
   const originalDataDir = process.env.DATA_DIR;
+  const originalLockTimeoutMs = process.env.JSON_PLAYER_STORE_LOCK_TIMEOUT_MS;
   let dataDir: string;
 
   beforeEach(async () => {
@@ -18,6 +19,11 @@ describe("JsonPlayerStore", () => {
       delete process.env.DATA_DIR;
     } else {
       process.env.DATA_DIR = originalDataDir;
+    }
+    if (originalLockTimeoutMs === undefined) {
+      delete process.env.JSON_PLAYER_STORE_LOCK_TIMEOUT_MS;
+    } else {
+      process.env.JSON_PLAYER_STORE_LOCK_TIMEOUT_MS = originalLockTimeoutMs;
     }
     await rm(dataDir, { recursive: true, force: true });
   });
@@ -45,5 +51,22 @@ describe("JsonPlayerStore", () => {
       githubUserIds.map((githubUserId) => verifyingStore.getByGithubUserId(githubUserId)),
     );
     expect(persistedPlayers.every((player) => player?.githubUserId)).toBe(true);
+  });
+
+  it("fails fast when a stale cross-process lock never clears", async () => {
+    process.env.JSON_PLAYER_STORE_LOCK_TIMEOUT_MS = "30";
+    await mkdir(join(dataDir, ".players.lock"), { recursive: true });
+
+    const store = new JsonPlayerStore();
+
+    await expect(
+      store.upsertGithubViewer({
+        kind: "github",
+        githubUserId: "stale-lock-user",
+        githubLogin: "stale-lock-user",
+        displayName: "Stale Lock User",
+        avatarUrl: null,
+      }),
+    ).rejects.toThrow(/Timed out waiting for players lock/);
   });
 });

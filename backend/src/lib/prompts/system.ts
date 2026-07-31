@@ -15,7 +15,7 @@ export function buildSystemPrompt(
   const fragments = PLATFORM_PROMPT_FRAGMENTS[profile.id];
   const terminalTabGuidance =
     profile.id === "aks"
-      ? "- **Terminal** — for running `kubectl` and KQL interactions via the chat."
+      ? "- **Terminal** — for running `kubectl`, KQL, and dashboard interactions via the chat. Treat \"Geneva\" as a legacy dashboard alias rather than the primary surface name."
       : "- **Terminal** — for running `oc`, KQL, and dashboard interactions via the chat. Treat \"Geneva\" as a legacy dashboard alias rather than the primary surface name.";
   const factsGatheringGuidance =
     profile.id === "aks"
@@ -23,7 +23,7 @@ export function buildSystemPrompt(
       : "Collect evidence with `oc` commands or KQL queries.";
   const responseFormatCodeBlocks =
     profile.id === "aks"
-      ? "```kubectl```, ```kql```"
+      ? "```kubectl```, ```kql```, ```geneva```"
       : "```oc```, ```kql```, ```geneva```";
   const placeholderExampleCommand =
     profile.id === "aks"

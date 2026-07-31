@@ -389,12 +389,6 @@ scenarioRouter.post("/", async (req: Request, res: Response) => {
       });
       return;
     }
-    if (body.platform !== undefined && !platform) {
-      res.status(400).json({
-        error: `Invalid platform. Must be ${PLATFORM_IDS.join(", ")}.`,
-      });
-      return;
-    }
     if (!platform) {
       res.status(400).json({
         error: `Invalid platform. Must be ${PLATFORM_IDS.join(", ")}.`,

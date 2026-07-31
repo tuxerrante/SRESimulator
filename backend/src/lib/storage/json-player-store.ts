@@ -4,6 +4,19 @@ import path from "path";
 import type { GithubViewer } from "../../../../shared/auth/viewer";
 import type { IPlayerStore, PlayerRecord } from "./types";
 
+const DEFAULT_LOCK_WAIT_TIMEOUT_MS = 5000;
+const LOCK_RETRY_DELAY_MS = 10;
+
+function getLockWaitTimeoutMs(): number {
+  const parsed = Number.parseInt(
+    process.env.JSON_PLAYER_STORE_LOCK_TIMEOUT_MS ?? "",
+    10,
+  );
+  return Number.isFinite(parsed) && parsed > 0
+    ? parsed
+    : DEFAULT_LOCK_WAIT_TIMEOUT_MS;
+}
+
 export class JsonPlayerStore implements IPlayerStore {
   private readonly dataDir: string;
   private readonly filePath: string;
@@ -38,6 +51,9 @@ export class JsonPlayerStore implements IPlayerStore {
   }
 
   private async acquireProcessLock(): Promise<() => Promise<void>> {
+    const timeoutMs = getLockWaitTimeoutMs();
+    const deadline = Date.now() + timeoutMs;
+
     for (;;) {
       try {
         await mkdir(this.lockPath);
@@ -48,7 +64,14 @@ export class JsonPlayerStore implements IPlayerStore {
         if (!(error instanceof Error) || !("code" in error) || error.code !== "EEXIST") {
           throw error;
         }
-        await new Promise((resolve) => setTimeout(resolve, 10));
+        if (Date.now() >= deadline) {
+          const timeoutError = new Error(
+            `Timed out waiting for players lock after ${timeoutMs}ms`,
+          ) as Error & { cause?: unknown };
+          timeoutError.cause = error;
+          throw timeoutError;
+        }
+        await new Promise((resolve) => setTimeout(resolve, LOCK_RETRY_DELAY_MS));
       }
     }
   }
