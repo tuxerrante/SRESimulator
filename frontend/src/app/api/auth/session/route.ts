@@ -13,7 +13,9 @@ function readTurnstileConfig(): {
   turnstileSiteKey: string | null;
   turnstileTestMode: boolean;
 } {
-  const turnstileTestMode = process.env.TURNSTILE_TEST_MODE === "true";
+  const turnstileTestMode =
+    process.env.TURNSTILE_TEST_MODE === "true" &&
+    process.env.LOCAL_TEST_VERIFICATION_ENABLED === "true";
   const turnstileSiteKey =
     process.env.TURNSTILE_SITE_KEY?.trim() ||
     process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY?.trim() ||

@@ -4,7 +4,9 @@ export async function verifyTurnstileToken(
 ): Promise<boolean> {
   const secret = process.env.TURNSTILE_SECRET_KEY;
   const expectedHostname = process.env.TURNSTILE_EXPECTED_HOSTNAME?.trim();
-  const testMode = process.env.TURNSTILE_TEST_MODE === "true";
+  const testMode =
+    process.env.TURNSTILE_TEST_MODE === "true" &&
+    process.env.LOCAL_TEST_VERIFICATION_ENABLED === "true";
   if (!secret || !token) {
     return false;
   }

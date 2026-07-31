@@ -7,6 +7,7 @@ describe("verifyTurnstileToken", () => {
     delete process.env.TURNSTILE_SECRET_KEY;
     delete process.env.TURNSTILE_EXPECTED_HOSTNAME;
     delete process.env.TURNSTILE_TEST_MODE;
+    delete process.env.LOCAL_TEST_VERIFICATION_ENABLED;
     delete process.env.NODE_ENV;
   });
 
@@ -40,9 +41,27 @@ describe("verifyTurnstileToken", () => {
     await expect(verifyTurnstileToken("pass", undefined)).resolves.toBe(true);
   });
 
-  it("accepts non-empty tokens in explicit Turnstile test mode", async () => {
+  it("does not enable the local token bypass from generic Turnstile test mode alone", async () => {
     process.env.TURNSTILE_SECRET_KEY = "local-test-secret";
     process.env.TURNSTILE_TEST_MODE = "true";
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ success: false }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        })
+      )
+    );
+
+    await expect(verifyTurnstileToken("local-token", undefined)).resolves.toBe(false);
+  });
+
+  it("accepts non-empty tokens only when local verification is explicitly enabled", async () => {
+    process.env.TURNSTILE_SECRET_KEY = "local-test-secret";
+    process.env.TURNSTILE_TEST_MODE = "true";
+    process.env.LOCAL_TEST_VERIFICATION_ENABLED = "true";
 
     await expect(verifyTurnstileToken("local-token", undefined)).resolves.toBe(true);
     await expect(verifyTurnstileToken("", undefined)).resolves.toBe(false);

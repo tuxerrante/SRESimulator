@@ -142,6 +142,17 @@ Resolve the externally visible origin used by the backend for same-origin checks
 {{- end }}
 
 {{/*
+Render bool-like values safely even when they arrive via --set-string.
+*/}}
+{{- define "sre-simulator.boolString" -}}
+{{- if eq (lower (printf "%v" .)) "true" -}}
+true
+{{- else -}}
+false
+{{- end -}}
+{{- end }}
+
+{{/*
 Optional image pull secrets for private registries.
 */}}
 {{- define "sre-simulator.imagePullSecrets" -}}
