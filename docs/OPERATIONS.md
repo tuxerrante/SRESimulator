@@ -206,6 +206,17 @@ For namespace-only rollback:
 
 If GHCR `latest` still serves an older frontend footer than expected, the public E2E host is not on the intended release build even if routing is correct. In that case the blocker is artifact publication, not namespace wiring.
 
+## Observed Shared-Edge Findings
+
+The July 2026 shared-edge E2E run established the following durable, non-secret facts:
+
+- The direct shared-edge hostname `https://e2e-20260731-153322.sresimulator.osadev.cloud` successfully routed to the E2E namespace while the stable host `https://play.sresimulator.osadev.cloud` stayed healthy.
+- A `200` response from the direct E2E hostname did not imply the intended release artifact was live. During that run, both the stable host and the direct E2E host still rendered footer version `v0.2.1`.
+- When both hosts show the same older footer, treat that as an artifact/publication problem, not a Gateway, DNS, or namespace-routing problem.
+- `data/e2e-azure-route.env` can remain pointed at the original local port-forward URL (`AKS_E2E_EXPOSURE_MODE=none`) even after separate additive shared-edge hostname work. Do not treat that file as the source of truth for public shared-edge hostnames; hand off the public hostname explicitly in docs or issue comments.
+- The local dev-image fallback is the intended escape hatch when GHCR release tags are missing, but it requires a real local builder (`docker` or `podman`). On the investigation machine used for this run, `docker`, `podman`, `buildah`, and `nerdctl` were all absent, so the fallback could not publish a fresh E2E tag.
+- As of the same investigation point, public GHCR `latest` manifests existed for both frontend and backend, while `v0.3.0` manifests returned `404`. That combination explains why the public E2E host could be reachable yet still unable to serve the intended `v0.3.0` build.
+
 ## Setup and Operations
 
 Technical setup and operational commands are documented here so
