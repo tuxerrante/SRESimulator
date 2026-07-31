@@ -14,7 +14,7 @@
     "@sentry/nextjs": "^10.63.0",
     "clsx": "^2.1.1",
     "lucide-react": "^1.14.0",
-    "next": "16.2.9",
+    "next": "^16.2.12",
     "react": "19.2.7",
     "react-dom": "19.2.7",
     "react-markdown": "^10.1.0",
@@ -30,8 +30,8 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "@vitest/coverage-v8": "^4.1.4",
-    "eslint": "^9",
-    "eslint-config-next": "16.2.9",
+    "eslint": "^9.39.5",
+    "eslint-config-next": "^16.2.12",
     "happy-dom": "^20.9.0",
     "playwright": "^1.61.1",
     "tailwindcss": "^4",
@@ -39,6 +39,8 @@
     "vitest": "^4.1.5"
   },
   "overrides": {
-    "esbuild": "0.28.1"
+    "esbuild": "0.28.1",
+    "postcss": "8.5.25",
+    "sharp": "0.35.3"
   }
 }
