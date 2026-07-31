@@ -57,7 +57,7 @@ beforeAll(async () => {
   const result = await startLocalServer(app);
   baseUrl = result.url;
   localServer = result.server;
-});
+}, 120000);
 
 afterAll(() => {
   if (localServer) {

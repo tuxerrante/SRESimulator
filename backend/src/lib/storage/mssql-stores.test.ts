@@ -574,6 +574,90 @@ describe("MssqlMetricsStore", () => {
     expect(sql).toContain("AND lifecycle_state = @lifecycleState");
   });
 
+  it("getGameplayAnalytics() renders the analytics temp table before consuming the CTE", async () => {
+    const summaryRow = {
+      total_sessions: 1,
+      completed_sessions: 1,
+      abandoned_sessions: 0,
+      in_progress_sessions: 0,
+      avg_completion_duration_ms: 120000,
+      avg_completion_command_count: 3,
+      avg_completion_chat_message_count: 2,
+      avg_completion_score_total: 90,
+    };
+    const platformRow = {
+      platform: "aks",
+      total_sessions: 1,
+      completed_sessions: 1,
+      abandoned_sessions: 0,
+      in_progress_sessions: 0,
+    };
+    const difficultyRow = {
+      difficulty: "easy",
+      total_sessions: 1,
+      completed_sessions: 1,
+      abandoned_sessions: 0,
+      in_progress_sessions: 0,
+    };
+    const scenarioRow = {
+      platform: "aks",
+      scenario_title: "AKS ImagePullBackOff",
+      difficulty: "easy",
+      total_sessions: 1,
+      completed_sessions: 1,
+      abandoned_sessions: 0,
+      in_progress_sessions: 0,
+    };
+    const recentRow = {
+      platform: "aks",
+      lifecycle_state: "completed",
+      nickname: "aks-admin",
+      difficulty: "easy",
+      scenario_title: "AKS ImagePullBackOff",
+      command_count: 3,
+      chat_message_count: 2,
+      duration_ms: 120000,
+      score_total: 90,
+      grade: "A",
+      created_at: new Date("2026-07-31T12:00:00Z"),
+    };
+    const req = {
+      input: vi.fn().mockReturnThis(),
+      query: vi.fn().mockResolvedValue({
+        recordset: [summaryRow],
+        recordsets: [[summaryRow], [platformRow], [difficultyRow], [scenarioRow], [recentRow]],
+      }),
+    };
+    const pool = {
+      request: vi.fn().mockReturnValue(req),
+    } as unknown as sql.ConnectionPool;
+    const store = new MssqlMetricsStore(pool);
+
+    const analytics = await store.getGameplayAnalytics({ platform: "aks" });
+
+    expect(req.input).toHaveBeenCalledWith("platform", "aks");
+    expect(analytics.byPlatform).toEqual([
+      expect.objectContaining({
+        platform: "aks",
+        totalSessions: 1,
+        completedSessions: 1,
+      }),
+    ]);
+    expect(analytics.recentSessions[0]).toEqual(
+      expect.objectContaining({
+        platform: "aks",
+        nickname: "aks-admin",
+      }),
+    );
+
+    const sqlText = req.query.mock.calls[0][0] as string;
+    expect(sqlText).toContain("CREATE TABLE #latest_sessions");
+    expect(sqlText).toContain(";WITH ranked_sessions AS");
+    expect(sqlText.indexOf("CREATE TABLE #latest_sessions")).toBeLessThan(
+      sqlText.indexOf(";WITH ranked_sessions AS"),
+    );
+  });
+
   it("getLatestBySessionToken() returns the newest record for a session", async () => {
     const row = {
       id: "latest-1",

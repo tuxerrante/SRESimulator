@@ -302,8 +302,22 @@ export class MssqlMetricsStore implements IMetricsStore {
 
     const request = this.pool.request().input("platform", filters?.platform ?? null);
 
-    const latestSessionCte = `
-      WITH ranked_sessions AS (
+    const analyticsResult = await request.query<SummaryRow>(`
+      CREATE TABLE #latest_sessions (
+        platform VARCHAR(16) NULL,
+        lifecycle_state VARCHAR(16) NULL,
+        nickname NVARCHAR(20) NULL,
+        difficulty VARCHAR(10) NULL,
+        scenario_title NVARCHAR(255) NULL,
+        command_count INT NULL,
+        chat_message_count INT NULL,
+        duration_ms BIGINT NULL,
+        score_total INT NULL,
+        grade VARCHAR(5) NULL,
+        created_at DATETIMEOFFSET NOT NULL
+      );
+
+      ;WITH ranked_sessions AS (
         SELECT
           platform,
           lifecycle_state,
@@ -361,24 +375,6 @@ export class MssqlMetricsStore implements IMetricsStore {
           AND session_token IS NULL
           AND (@platform IS NULL OR platform = @platform)
       )
-    `;
-
-    const analyticsResult = await request.query<SummaryRow>(`
-      ${latestSessionCte}
-      CREATE TABLE #latest_sessions (
-        platform VARCHAR(16) NULL,
-        lifecycle_state VARCHAR(16) NULL,
-        nickname NVARCHAR(20) NULL,
-        difficulty VARCHAR(10) NULL,
-        scenario_title NVARCHAR(255) NULL,
-        command_count INT NULL,
-        chat_message_count INT NULL,
-        duration_ms BIGINT NULL,
-        score_total INT NULL,
-        grade VARCHAR(5) NULL,
-        created_at DATETIMEOFFSET NOT NULL
-      );
-
       INSERT INTO #latest_sessions (
         platform,
         lifecycle_state,
