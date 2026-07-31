@@ -2,34 +2,72 @@
   "policyName": "stable-frontend-lint-stack-exception",
   "approvedOn": "2026-07-31",
   "reviewBy": "upstream-compatible package movement",
-  "expectedHighCount": 9,
-  "packages": {
-    "@eslint/config-array": {
+  "expectedCounts": {
+    "high": 9
+  },
+  "exceptions": [
+    {
+      "name": "@eslint/config-array",
+      "severity": "high",
+      "range": "<=0.22.0",
+      "via": ["minimatch"],
       "reason": "Current stable eslint 9 stack still pulls vulnerable minimatch/brace-expansion transitives."
     },
-    "@eslint/eslintrc": {
+    {
+      "name": "@eslint/eslintrc",
+      "severity": "high",
+      "range": "0.0.1 || >=0.1.1",
+      "via": ["minimatch"],
       "reason": "Current stable eslint 9 stack still pulls vulnerable minimatch/brace-expansion transitives."
     },
-    "brace-expansion": {
+    {
+      "name": "brace-expansion",
+      "severity": "high",
+      "range": "<=5.0.7",
+      "via": ["brace-expansion"],
       "reason": "Residual advisory is isolated to the stable eslint/eslint-config-next chain."
     },
-    "eslint": {
+    {
+      "name": "eslint",
+      "severity": "high",
+      "range": "0.12.0 - 2.0.0-rc.1 || 4.1.0 - 10.0.0-rc.2",
+      "via": ["@eslint/config-array", "@eslint/eslintrc", "minimatch"],
       "reason": "The only npm-proposed remediation is eslint@10, which breaks make validate with the current stable eslint-config-next stack."
     },
-    "eslint-config-next": {
+    {
+      "name": "eslint-config-next",
+      "severity": "high",
+      "range": ">=10.2.1-canary.2",
+      "via": ["eslint-plugin-import", "eslint-plugin-jsx-a11y", "eslint-plugin-react"],
       "reason": "Latest published stable release still resolves the minimatch/brace-expansion chain."
     },
-    "eslint-plugin-import": {
+    {
+      "name": "eslint-plugin-import",
+      "severity": "high",
+      "range": ">=1.15.0",
+      "via": ["minimatch"],
       "reason": "Transitive dependency of eslint-config-next in the stable lint stack."
     },
-    "eslint-plugin-jsx-a11y": {
+    {
+      "name": "eslint-plugin-jsx-a11y",
+      "severity": "high",
+      "range": ">=6.5.0",
+      "via": ["minimatch"],
       "reason": "Transitive dependency of eslint-config-next in the stable lint stack."
     },
-    "eslint-plugin-react": {
+    {
+      "name": "eslint-plugin-react",
+      "severity": "high",
+      "range": ">=7.23.0",
+      "via": ["minimatch"],
       "reason": "Transitive dependency of eslint-config-next in the stable lint stack."
     },
-    "minimatch": {
+    {
+      "name": "minimatch",
+      "severity": "high",
+      "range": "2.0.0 - 10.0.2",
+      "via": ["brace-expansion"],
       "reason": "Residual advisory is isolated to the stable eslint/eslint-config-next chain."
     }
-  }
+  ]
 }

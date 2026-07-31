@@ -100,12 +100,62 @@ This keeps the shared public IP reusable while preventing accidental takeover of
 
 AKS deploys consume GHCR images directly. The current helper behavior is important:
 
-- `scripts/aks-deploy.sh` does **not** build images from the local checkout during `make e2e-azure-route-up` or `make e2e-azure-route-refresh`.
-- `prepare_release_images()` is a no-op on AKS because the cluster deploys directly from GHCR.
+- By default, `scripts/aks-deploy.sh` consumes GHCR images directly during `make e2e-azure-route-up` and `make e2e-azure-route-refresh`.
 - `TAG=latest` uses whatever GHCR currently serves as `latest`.
 - `TAG=vX.Y.Z` requires those semver-tagged GHCR images to exist first.
+- If `AKS_E2E_PUSH_DEV_IMAGES=true`, the E2E targets switch to a dev-only GHCR publish path before Helm runs.
 
 This means a repo merge alone does not guarantee E2E will run the new app build. Always verify the required GHCR tags first.
+
+## AKS Dev-Image Fallback
+
+Use the dev-image fallback when:
+
+- GitHub workflows cannot yet be trusted to publish the build you need for E2E
+- you need a fresh non-prod image without overwriting `latest`
+- you want the E2E namespace to consume a clearly non-production tag
+
+Prerequisites:
+
+- `gh` authenticated for a user that can push to `ghcr.io/tuxerrante/*`
+- a local container CLI in PATH: `docker` or `podman`
+- enough local resources to build both `frontend/Dockerfile` and `backend/Dockerfile`
+
+Opt-in knobs:
+
+- `AKS_E2E_PUSH_DEV_IMAGES=true`
+- optional `AKS_E2E_DEV_IMAGE_TAG=<custom-nonprod-tag>`
+- optional `AKS_E2E_DEV_IMAGE_TAG_SUFFIX=dev` when you want a different required suffix such as `preview` or `alpha`
+- optional `GHCR_USERNAME=<github-login>` if GHCR login should not be inferred from `gh api user`
+
+Default generated tag format:
+
+- `e2e-<timestamp>-<shortsha>-dev`
+- if git metadata is unavailable in the shell, the fallback uses `manual` in the tag rather than failing
+
+Safety rules enforced by the helper:
+
+- it refuses to publish `latest`
+- it refuses to publish a production-looking semver tag such as `v0.3.0`
+- the tag must end in the configured dev suffix
+
+Examples:
+
+```bash
+AKS_E2E_PUSH_DEV_IMAGES=true make e2e-azure-route-up
+
+AKS_E2E_PUSH_DEV_IMAGES=true \
+NS=sre-manual-e2e-20260731-153322 \
+make e2e-azure-route-refresh
+
+AKS_E2E_PUSH_DEV_IMAGES=true \
+AKS_E2E_DEV_IMAGE_TAG=e2e-20260731-225500-preview \
+AKS_E2E_DEV_IMAGE_TAG_SUFFIX=preview \
+NS=sre-manual-e2e-20260731-153322 \
+make e2e-azure-route-refresh
+```
+
+If the machine does not have `docker` or `podman`, the Make target now fails early with a clear prerequisite error instead of silently reusing stale `latest`.
 
 ## Safe E2E Refresh Procedure
 
@@ -113,6 +163,7 @@ Use this order for a real AKS E2E refresh:
 
 1. `make env-check`
 2. Confirm the GHCR tags you plan to deploy actually exist.
+   If you are using the local dev-image fallback, this means confirming the freshly pushed dev tag rather than `latest`.
 3. Confirm the stable public host still returns healthy responses.
 4. Reuse the current namespace when possible:
    `NS=<existing-namespace> make e2e-azure-route-refresh`

@@ -44,6 +44,9 @@ AKS_EXPOSURE_MODE ?= gateway
 AKS_E2E_EXPOSURE_MODE ?= none
 AKS_SKIP_GATEWAY_BOOTSTRAP ?= false
 AKS_LOCAL_PORT_FORWARD_PORT ?= 38080
+AKS_E2E_PUSH_DEV_IMAGES ?= false
+AKS_E2E_DEV_IMAGE_TAG ?=
+AKS_E2E_DEV_IMAGE_TAG_SUFFIX ?= dev
 AKS_GATEWAY_HOST ?= play.sresimulator.osadev.cloud
 AKS_GATEWAY_CLASS_NAME ?= eg
 AKS_GATEWAY_TLS_SECRET_NAME ?= sre-simulator-gateway-tls
@@ -83,6 +86,7 @@ export AKS_GATEWAY_TLS_SECRET_NAME AKS_CLUSTER_ISSUER_NAME
 export AKS_DNS_ZONE_NAME AKS_DNS_ZONE_RESOURCE_GROUP
 export AKS_CERT_MANAGER_IDENTITY_NAME AKS_CERT_MANAGER_ACME_EMAIL
 export AKS_SKIP_GATEWAY_BOOTSTRAP AKS_LOCAL_PORT_FORWARD_PORT
+export AKS_E2E_PUSH_DEV_IMAGES AKS_E2E_DEV_IMAGE_TAG AKS_E2E_DEV_IMAGE_TAG_SUFFIX
 export AOAI_RG AOAI_ACCOUNT AOAI_DEPLOYMENT
 export AOAI_DEPLOYMENT_CHAT AOAI_DEPLOYMENT_COMMAND AOAI_DEPLOYMENT_SCENARIO AOAI_DEPLOYMENT_PROBE
 export E2E_RELEASE NPM_VERSION
@@ -280,6 +284,7 @@ test-shell: ## Run shell regression tests
 	env -i PATH="$$PATH" HOME="$$HOME" TMPDIR="$${TMPDIR:-/tmp}" bash scripts/cleanup-old-worktrees.test.sh
 	env -i PATH="$$PATH" HOME="$$HOME" TMPDIR="$${TMPDIR:-/tmp}" bash scripts/docker-image-slimming.test.sh
 	env -i PATH="$$PATH" HOME="$$HOME" TMPDIR="$${TMPDIR:-/tmp}" bash scripts/e2e-env-file.test.sh
+	env -i PATH="$$PATH" HOME="$$HOME" TMPDIR="$${TMPDIR:-/tmp}" bash scripts/frontend-audit-check.test.sh
 	env -i PATH="$$PATH" HOME="$$HOME" TMPDIR="$${TMPDIR:-/tmp}" bash scripts/helm-integration-trigger.test.sh
 	env -i PATH="$$PATH" HOME="$$HOME" TMPDIR="$${TMPDIR:-/tmp}" bash scripts/helm-platform.test.sh
 	env -i PATH="$$PATH" HOME="$$HOME" TMPDIR="$${TMPDIR:-/tmp}" bash scripts/install-worktree-cleanup-launchd.test.sh
@@ -528,7 +533,16 @@ e2e-azure-route-up: env-check ## Deploy frontend/backend to the selected cluster
 	fi; \
 	TS=$$(date +%Y%m%d-%H%M%S); \
 	NS="$(E2E_NAMESPACE_PREFIX)-$$TS"; \
-	if [ "$(CLUSTER_FLAVOR)" = "aks" ]; then TAG="$${TAG:-latest}"; else TAG="e2e$$TS"; fi; \
+	if [ "$(CLUSTER_FLAVOR)" = "aks" ]; then \
+		TAG="$${TAG:-latest}"; \
+		if [ "$(AKS_E2E_PUSH_DEV_IMAGES)" = "true" ] && [ "$$TAG" = "latest" ]; then \
+			SHORT_SHA="$${GIT_SHORT_SHA:-$$(git rev-parse --short=12 HEAD 2>/dev/null || printf manual)}"; \
+			TAG="$${AKS_E2E_DEV_IMAGE_TAG:-e2e-$$TS-$$SHORT_SHA-$(AKS_E2E_DEV_IMAGE_TAG_SUFFIX)}"; \
+			echo "AKS E2E dev-image fallback enabled; using GHCR tag $$TAG"; \
+		fi; \
+	else \
+		TAG="e2e$$TS"; \
+	fi; \
 	if [ "$(CLUSTER_FLAVOR)" = "aks" ] && [ "$$TAG" = "latest" ]; then \
 		echo "WARNING: TAG=latest uses GHCR latest, which only updates on semver tag publish."; \
 		echo "Publish a fresh semver release tag before e2e when you need the newest main changes."; \
@@ -618,7 +632,16 @@ e2e-azure-route-refresh: env-check ## Refresh the selected e2e namespace (NS=...
 	fi; \
 	. scripts/select-deploy.sh; \
 	TS=$$(date +%Y%m%d-%H%M%S); \
-	if [ "$(CLUSTER_FLAVOR)" = "aks" ]; then TAG="$${TAG:-latest}"; else TAG="e2e$$TS"; fi; \
+	if [ "$(CLUSTER_FLAVOR)" = "aks" ]; then \
+		TAG="$${TAG:-latest}"; \
+		if [ "$(AKS_E2E_PUSH_DEV_IMAGES)" = "true" ] && [ "$$TAG" = "latest" ]; then \
+			SHORT_SHA="$${GIT_SHORT_SHA:-$$(git rev-parse --short=12 HEAD 2>/dev/null || printf manual)}"; \
+			TAG="$${AKS_E2E_DEV_IMAGE_TAG:-e2e-$$TS-$$SHORT_SHA-$(AKS_E2E_DEV_IMAGE_TAG_SUFFIX)}"; \
+			echo "AKS E2E dev-image fallback enabled; using GHCR tag $$TAG"; \
+		fi; \
+	else \
+		TAG="e2e$$TS"; \
+	fi; \
 	if [ "$(CLUSTER_FLAVOR)" = "aks" ] && [ "$$TAG" = "latest" ]; then \
 		echo "WARNING: TAG=latest uses GHCR latest, which only updates on semver tag publish."; \
 		echo "Publish a fresh semver release tag before e2e when you need the newest main changes."; \

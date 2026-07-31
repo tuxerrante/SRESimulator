@@ -12,6 +12,14 @@ const severityRank = {
   critical: 4,
 };
 
+function requireArgValue(argv, index, flag) {
+  const value = argv[index + 1];
+  if (!value || value.startsWith("--")) {
+    throw new Error(`Missing value for ${flag}`);
+  }
+  return value;
+}
+
 function parseArgs(argv) {
   const options = {
     root: process.cwd(),
@@ -22,17 +30,17 @@ function parseArgs(argv) {
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
     if (arg === "--root") {
-      options.root = path.resolve(argv[index + 1]);
+      options.root = path.resolve(requireArgValue(argv, index, arg));
       index += 1;
       continue;
     }
     if (arg === "--frontend-dir") {
-      options.frontendDir = argv[index + 1];
+      options.frontendDir = requireArgValue(argv, index, arg);
       index += 1;
       continue;
     }
     if (arg === "--audit-level") {
-      options.auditLevel = argv[index + 1];
+      options.auditLevel = requireArgValue(argv, index, arg);
       index += 1;
       continue;
     }
@@ -51,6 +59,33 @@ function parseArgs(argv) {
 function loadPolicy(root, frontendDir) {
   const policyPath = path.join(root, frontendDir, "audit-policy-exceptions.json");
   return JSON.parse(readFileSync(policyPath, "utf8"));
+}
+
+function normalizeVia(via) {
+  if (!Array.isArray(via)) {
+    return [];
+  }
+
+  return via
+    .map((item) =>
+      typeof item === "string" ? item : item?.name ?? item?.title ?? "unknown"
+    )
+    .sort();
+}
+
+function findMatchingException(vulnerability, policy) {
+  const actualVia = normalizeVia(vulnerability.via);
+
+  return (policy.exceptions ?? []).find((entry) => {
+    const expectedVia = normalizeVia(entry.via);
+    return (
+      entry.name === vulnerability.name &&
+      (entry.severity === undefined || entry.severity === vulnerability.severity) &&
+      (entry.range === undefined || entry.range === (vulnerability.range ?? "")) &&
+      expectedVia.length === actualVia.length &&
+      expectedVia.every((item, index) => item === actualVia[index])
+    );
+  });
 }
 
 function runAudit(frontendPath) {
@@ -87,7 +122,6 @@ function runAudit(frontendPath) {
 }
 
 function summarizeVulnerabilities(report, policy, minimumSeverity) {
-  const allowedPackages = new Map(Object.entries(policy.packages ?? {}));
   const considered = [];
   const excepted = [];
   const blocking = [];
@@ -109,20 +143,17 @@ function summarizeVulnerabilities(report, policy, minimumSeverity) {
     const entry = {
       name,
       severity,
-      via: Array.isArray(vulnerability.via)
-        ? vulnerability.via
-            .map((item) => (typeof item === "string" ? item : item?.name ?? item?.title ?? "unknown"))
-            .join(", ")
-        : "",
+      via: normalizeVia(vulnerability.via).join(", "),
       range: vulnerability.range ?? "",
       fixAvailable: vulnerability.fixAvailable ?? false,
     };
     considered.push(entry);
 
-    if (allowedPackages.has(name)) {
+    const matchingException = findMatchingException(vulnerability, policy);
+    if (matchingException) {
       excepted.push({
         ...entry,
-        reason: allowedPackages.get(name)?.reason ?? "No reason recorded.",
+        reason: matchingException.reason ?? "No reason recorded.",
       });
       continue;
     }
@@ -187,14 +218,11 @@ function main() {
     process.exit(1);
   }
 
-  const expectedHighCount = policy.expectedHighCount;
-  if (
-    typeof expectedHighCount === "number" &&
-    Number.isFinite(expectedHighCount) &&
-    (report.metadata?.vulnerabilities?.high ?? 0) !== expectedHighCount
-  ) {
+  const expectedCount = policy.expectedCounts?.[auditLevel];
+  const actualCount = report.metadata?.vulnerabilities?.[auditLevel] ?? 0;
+  if (typeof expectedCount === "number" && Number.isFinite(expectedCount) && actualCount !== expectedCount) {
     console.error(
-      `Expected ${expectedHighCount} high vulnerabilities in the approved frontend exception set, found ${report.metadata?.vulnerabilities?.high ?? 0}.`
+      `Expected ${expectedCount} ${auditLevel} vulnerabilities in the approved frontend exception set, found ${actualCount}.`
     );
     process.exit(1);
   }
