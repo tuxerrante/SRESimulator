@@ -5,6 +5,7 @@ import { getScenarioRateLimitKey, gameplayTelemetryRateLimit } from "../lib/rate
 import { matchesSharedSecret } from "../lib/shared-secret";
 import { captureBackendRouteError } from "../lib/telemetry/capture";
 import type { GameplayLifecycleState } from "../../../shared/types/gameplay";
+import { PLATFORM_IDS, type PlatformId } from "../../../shared/types/platform";
 
 export const gameplayRouter = Router();
 
@@ -28,6 +29,7 @@ const VALID_LIFECYCLE_STATES: GameplayLifecycleState[] = [
 
 interface GameplayEventBody {
   sessionToken?: string;
+  platform?: PlatformId;
   lifecycleState?: GameplayLifecycleState;
   nickname?: unknown;
   commandCount?: unknown;
@@ -38,6 +40,15 @@ interface GameplayEventBody {
   scoreTotal?: unknown;
   grade?: unknown;
   metadata?: unknown;
+}
+
+function parsePlatformQuery(value: unknown): PlatformId | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+  return PLATFORM_IDS.includes(value as PlatformId)
+    ? (value as PlatformId)
+    : null;
 }
 
 function sanitizeString(value: unknown, maxLength: number): string | undefined {
@@ -186,6 +197,10 @@ gameplayRouter.post("/", gameplayTelemetryRateLimit, async (req: Request, res: R
       res.status(403).json({ error: "Invalid session token" });
       return;
     }
+    if (body.platform !== undefined && body.platform !== session.platform) {
+      res.status(409).json({ error: "Session telemetry mismatch" });
+      return;
+    }
 
     if (await getMetricsStore().hasLifecycleEvent(body.sessionToken, body.lifecycleState)) {
       res.status(202).json({ ok: true, deduped: true });
@@ -194,6 +209,7 @@ gameplayRouter.post("/", gameplayTelemetryRateLimit, async (req: Request, res: R
 
     await getMetricsStore().recordGameplay({
       sessionToken: body.sessionToken,
+      platform: session.platform,
       trafficSource: session.trafficSource,
       nickname: sanitizeString(body.nickname, 20),
       difficulty: session.difficulty,
@@ -230,7 +246,19 @@ gameplayRouter.get(
       return;
     }
 
-    const analytics = await getMetricsStore().getGameplayAnalytics();
+    const platformQuery = req.query.platform;
+    const platform =
+      platformQuery === undefined ? undefined : parsePlatformQuery(platformQuery);
+    if (platformQuery !== undefined && platform === null) {
+      res.status(400).json({
+        error: `Invalid platform. Must be ${PLATFORM_IDS.join(", ")}.`,
+      });
+      return;
+    }
+
+    const analytics = await getMetricsStore().getGameplayAnalytics(
+      platform ? { platform } : undefined,
+    );
     res.json(analytics);
   } catch (error) {
     captureBackendRouteError(req, error);

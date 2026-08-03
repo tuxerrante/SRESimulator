@@ -7,10 +7,16 @@ import { cn, formatShortDateTime } from "@/lib/utils";
 import type {
   GameplayAnalytics,
   GameplayDifficultyAnalytics,
+  GameplayPlatformAnalytics,
   GameplayScenarioAnalytics,
   RecentGameplaySession,
 } from "@shared/types/gameplay";
 import type { Difficulty } from "@shared/types/game";
+import {
+  PLATFORM_IDS,
+  PLATFORM_PROFILES,
+  type PlatformId,
+} from "@shared/types/platform";
 
 const DIFFICULTY_COLORS: Record<Difficulty, string> = {
   easy: "bg-emerald-900/50 text-emerald-400 border-emerald-800/50",
@@ -66,7 +72,16 @@ function DifficultyBadge({ difficulty }: { difficulty: Difficulty }) {
   );
 }
 
+function PlatformPill({ platform }: { platform: PlatformId }) {
+  return (
+    <span className="rounded-full border border-zinc-700 px-2 py-0.5 text-xs text-zinc-400">
+      {PLATFORM_PROFILES[platform].label}
+    </span>
+  );
+}
+
 export default function AdminAnalyticsPage() {
+  const [activePlatform, setActivePlatform] = useState<"all" | PlatformId>("all");
   const [analytics, setAnalytics] = useState<GameplayAnalytics | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -101,9 +116,17 @@ export default function AdminAnalyticsPage() {
       setError(null);
 
       try {
+        const params = new URLSearchParams();
+        if (activePlatform !== "all") {
+          params.set("platform", activePlatform);
+        }
+        const url = params.size > 0
+          ? `/api/gameplay/admin?${params.toString()}`
+          : "/api/gameplay/admin";
+
         let token = loadStoredToken();
         let didPromptToken = false;
-        let response = await fetch("/api/gameplay/admin", {
+        let response = await fetch(url, {
           headers: token ? { "x-gameplay-admin-token": token } : undefined,
         });
         if (response.status === 401 && token) {
@@ -114,7 +137,7 @@ export default function AdminAnalyticsPage() {
           if (promptedValue?.trim()) {
             token = promptedValue.trim();
             didPromptToken = true;
-            response = await fetch("/api/gameplay/admin", {
+            response = await fetch(url, {
               headers: { "x-gameplay-admin-token": token },
             });
           }
@@ -128,14 +151,12 @@ export default function AdminAnalyticsPage() {
         const raw = await response.text();
         let parsed: GameplayAnalytics | { error?: string } = {};
         if (raw.trim()) {
-          try {
-            parsed = JSON.parse(raw) as GameplayAnalytics | { error?: string };
-          } catch {
-            throw new Error("Failed to load gameplay analytics");
-          }
+          parsed = JSON.parse(raw) as GameplayAnalytics | { error?: string };
         }
         if (!response.ok) {
-          throw new Error("error" in parsed ? parsed.error : "Failed to load gameplay analytics");
+          throw new Error(
+            "error" in parsed ? parsed.error : "Failed to load gameplay analytics",
+          );
         }
         setAnalytics(parsed as GameplayAnalytics);
       } catch (err) {
@@ -146,7 +167,7 @@ export default function AdminAnalyticsPage() {
     };
 
     void fetchAnalytics();
-  }, []);
+  }, [activePlatform]);
 
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100">
@@ -165,6 +186,34 @@ export default function AdminAnalyticsPage() {
               Gameplay lifecycle telemetry across started, completed, and abandoned sessions.
             </p>
           </div>
+        </div>
+
+        <div className="flex flex-wrap gap-1 rounded-lg border border-zinc-800 bg-zinc-900 p-1">
+          <button
+            onClick={() => setActivePlatform("all")}
+            className={cn(
+              "rounded-md px-3 py-2 text-sm font-medium transition-colors",
+              activePlatform === "all"
+                ? "bg-zinc-800 text-zinc-100"
+                : "text-zinc-500 hover:text-zinc-300",
+            )}
+          >
+            All platforms
+          </button>
+          {PLATFORM_IDS.map((platform) => (
+            <button
+              key={platform}
+              onClick={() => setActivePlatform(platform)}
+              className={cn(
+                "rounded-md px-3 py-2 text-sm font-medium transition-colors",
+                activePlatform === platform
+                  ? "bg-zinc-800 text-zinc-100"
+                  : "text-zinc-500 hover:text-zinc-300",
+              )}
+            >
+              {PLATFORM_PROFILES[platform].label}
+            </button>
+          ))}
         </div>
 
         {loading ? (
@@ -200,7 +249,35 @@ export default function AdminAnalyticsPage() {
               />
             </section>
 
-            <section className="grid gap-6 xl:grid-cols-[1.15fr_1fr]">
+            <section className="grid gap-6 xl:grid-cols-[0.9fr_1fr_1fr]">
+              <div className="rounded-xl border border-zinc-800 bg-zinc-900/70 p-4">
+                <h2 className="mb-4 text-sm font-semibold text-zinc-100">
+                  Platform Breakdown
+                </h2>
+                <div className="space-y-3">
+                  {analytics.byPlatform.map((bucket: GameplayPlatformAnalytics) => (
+                    <div
+                      key={bucket.platform}
+                      className="rounded-lg border border-zinc-800 bg-zinc-950/40 p-4"
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className="text-sm font-medium text-zinc-200">
+                          {PLATFORM_PROFILES[bucket.platform].label}
+                        </div>
+                        <span className="text-sm font-mono text-zinc-400">
+                          {formatRate(bucket.completionRate)}
+                        </span>
+                      </div>
+                      <div className="mt-3 flex gap-4 text-xs text-zinc-500">
+                        <span>Total {bucket.totalSessions}</span>
+                        <span>Completed {bucket.completedSessions}</span>
+                        <span>Abandoned {bucket.abandonedSessions}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
               <div className="rounded-xl border border-zinc-800 bg-zinc-900/70 p-4">
                 <h2 className="mb-4 text-sm font-semibold text-zinc-100">
                   Difficulty Breakdown
@@ -247,7 +324,7 @@ export default function AdminAnalyticsPage() {
                 <div className="space-y-3">
                   {analytics.byScenario.map((bucket: GameplayScenarioAnalytics) => (
                     <div
-                      key={`${bucket.difficulty ?? "unknown"}-${bucket.scenarioTitle}`}
+                      key={`${bucket.platform ?? "unknown"}-${bucket.difficulty ?? "unknown"}-${bucket.scenarioTitle}`}
                       className="rounded-lg border border-zinc-800 bg-zinc-950/40 p-4"
                     >
                       <div className="flex items-center justify-between gap-3">
@@ -255,11 +332,10 @@ export default function AdminAnalyticsPage() {
                           <div className="truncate text-sm font-medium text-zinc-200">
                             {bucket.scenarioTitle}
                           </div>
-                          {bucket.difficulty ? (
-                            <div className="mt-2">
-                              <DifficultyBadge difficulty={bucket.difficulty} />
-                            </div>
-                          ) : null}
+                          <div className="mt-2 flex flex-wrap gap-2">
+                            {bucket.platform ? <PlatformPill platform={bucket.platform} /> : null}
+                            {bucket.difficulty ? <DifficultyBadge difficulty={bucket.difficulty} /> : null}
+                          </div>
                         </div>
                         <div className="text-right text-sm font-mono text-zinc-400">
                           {formatRate(bucket.completionRate)}
@@ -281,11 +357,12 @@ export default function AdminAnalyticsPage() {
                 Recent Sessions
               </h2>
               <div className="overflow-x-auto">
-                <table className="w-full min-w-[760px]">
+                <table className="w-full min-w-[860px]">
                   <thead>
                     <tr className="border-b border-zinc-800 text-left text-xs uppercase text-zinc-500">
                       <th className="px-3 py-2">When</th>
                       <th className="px-3 py-2">State</th>
+                      <th className="px-3 py-2">Platform</th>
                       <th className="px-3 py-2">Scenario</th>
                       <th className="px-3 py-2">Callsign</th>
                       <th className="px-3 py-2 text-right">Score</th>
@@ -317,6 +394,9 @@ export default function AdminAnalyticsPage() {
                           >
                             {session.lifecycleState}
                           </span>
+                        </td>
+                        <td className="px-3 py-3 text-zinc-400">
+                          {session.platform ? PLATFORM_PROFILES[session.platform].label : "-"}
                         </td>
                         <td className="px-3 py-3">
                           <div className="font-medium text-zinc-200">

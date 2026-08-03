@@ -1,0 +1,57 @@
+{
+  "id": "aks-easy-image-pull-backoff",
+  "platform": "aks",
+  "title": "ImagePullBackOff in AKS",
+  "difficulty": "easy",
+  "description": "A workload in AKS is failing to start because its image can no longer be pulled, producing obvious pod and event clues.",
+  "incidentTicket": {
+    "id": "IcM-260106",
+    "severity": "Sev4",
+    "title": "New deployment stuck in ImagePullBackOff on AKS",
+    "description": "A recently rolled deployment is not becoming ready and users report the service never came up after release.",
+    "customerImpact": "The affected application remains unavailable because new pods cannot pull their container image.",
+    "reportedTime": "{{daysAgo:1}}",
+    "clusterName": "aks-prod-westus3-01",
+    "region": "westus3"
+  },
+  "clusterContext": {
+    "name": "aks-prod-westus3-01",
+    "version": "1.31.2",
+    "region": "westus3",
+    "nodeCount": 6,
+    "status": "Degraded",
+    "recentEvents": [
+      "{{minutesAgo:95}} - kubelet: back-off pulling image ghcr.io/example/payments:2026.07.31",
+      "{{minutesAgo:40}} - deployment/payments-api failed to progress because pods are stuck in ImagePullBackOff",
+      "{{minutesAgo:12}} - namespace payments reports repeated ErrImagePull events"
+    ],
+    "alerts": [
+      {
+        "name": "ImagePullBackOffBurst",
+        "severity": "warning",
+        "message": "One deployment in AKS is repeatedly failing to pull its image.",
+        "firingTime": "{{minutesAgo:10}}"
+      }
+    ],
+    "upgradeHistory": [
+      {
+        "from": "1.31.1",
+        "to": "1.31.2",
+        "status": "completed",
+        "timestamp": "{{daysAgo:4}}"
+      }
+    ]
+  },
+  "platformContext": {
+    "nodePoolNames": [
+      "systempool",
+      "userpool"
+    ],
+    "managedResourceGroupHint": "MC_aks-prod-westus3-01_rg_westus3",
+    "addonContext": [
+      "azure-cni",
+      "coredns",
+      "metrics-server"
+    ]
+  }
+}

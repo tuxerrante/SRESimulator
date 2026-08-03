@@ -1,10 +1,12 @@
 import type {
   GameplayAnalytics,
   GameplayDifficultyAnalytics,
+  GameplayPlatformAnalytics,
   GameplayScenarioAnalytics,
   RecentGameplaySession,
 } from "../../../../shared/types/gameplay";
-import type { IMetricsStore, GameplayRecord } from "./types";
+import { DEFAULT_PLATFORM_ID } from "../../../../shared/types/platform";
+import type { IMetricsStore, GameplayRecord, GameplayAnalyticsFilters } from "./types";
 
 const MAX_RECORDS = 10000;
 
@@ -57,6 +59,7 @@ export class JsonMetricsStore implements IMetricsStore {
     const record: GameplayRecord = {
       ...data,
       id: data.id ?? crypto.randomUUID(),
+      platform: data.platform ?? DEFAULT_PLATFORM_ID,
       lifecycleState,
       trafficSource: data.trafficSource ?? "player",
       commandCount: data.commandCount ?? data.commandsExecuted?.length ?? 0,
@@ -123,11 +126,17 @@ export class JsonMetricsStore implements IMetricsStore {
     return latestCompleted;
   }
 
-  async getGameplayAnalytics(): Promise<GameplayAnalytics> {
+  async getGameplayAnalytics(
+    filters?: GameplayAnalyticsFilters,
+  ): Promise<GameplayAnalytics> {
     const latestBySession = new Map<string, GameplayRecord>();
+    const platformFilter = filters?.platform;
 
     for (const record of this.records) {
       if ((record.trafficSource ?? "player") !== "player") {
+        continue;
+      }
+      if (platformFilter && record.platform !== platformFilter) {
         continue;
       }
 
@@ -150,10 +159,17 @@ export class JsonMetricsStore implements IMetricsStore {
       return values.reduce((sum, value) => sum + value, 0) / values.length;
     };
 
+    const byPlatformMap = new Map<string, GameplayRecord[]>();
     const byDifficultyMap = new Map<string, GameplayRecord[]>();
     const byScenarioMap = new Map<string, GameplayRecord[]>();
 
     for (const record of latestSessions) {
+      if (record.platform) {
+        const entries = byPlatformMap.get(record.platform) ?? [];
+        entries.push(record);
+        byPlatformMap.set(record.platform, entries);
+      }
+
       if (record.difficulty) {
         const entries = byDifficultyMap.get(record.difficulty) ?? [];
         entries.push(record);
@@ -161,7 +177,7 @@ export class JsonMetricsStore implements IMetricsStore {
       }
 
       if (record.scenarioTitle) {
-        const key = `${record.scenarioTitle}::${record.difficulty ?? ""}`;
+        const key = `${record.platform ?? DEFAULT_PLATFORM_ID}::${record.scenarioTitle}::${record.difficulty ?? ""}`;
         const entries = byScenarioMap.get(key) ?? [];
         entries.push(record);
         byScenarioMap.set(key, entries);
@@ -210,6 +226,12 @@ export class JsonMetricsStore implements IMetricsStore {
             .filter((value): value is number => typeof value === "number"),
         ),
       },
+      byPlatform: Array.from(byPlatformMap.entries())
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([platform, records]): GameplayPlatformAnalytics => ({
+          platform: platform as GameplayPlatformAnalytics["platform"],
+          ...summarizeRecords(records),
+        })),
       byDifficulty: Array.from(byDifficultyMap.entries())
         .sort(([left], [right]) => left.localeCompare(right))
         .map(([difficulty, records]): GameplayDifficultyAnalytics => ({
@@ -219,6 +241,7 @@ export class JsonMetricsStore implements IMetricsStore {
       byScenario: Array.from(byScenarioMap.entries())
         .map(([, records]): GameplayScenarioAnalytics => ({
           scenarioTitle: records[0]?.scenarioTitle ?? "Unknown",
+          platform: records[0]?.platform,
           difficulty: records[0]?.difficulty,
           ...summarizeRecords(records),
         }))
@@ -231,6 +254,7 @@ export class JsonMetricsStore implements IMetricsStore {
         .slice(0, 10),
       recentSessions: latestSessions.slice(0, 20).map(
         (record): RecentGameplaySession => ({
+          platform: record.platform,
           lifecycleState: record.lifecycleState ?? "completed",
           nickname: record.nickname,
           difficulty: record.difficulty,

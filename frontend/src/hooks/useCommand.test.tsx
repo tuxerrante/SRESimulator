@@ -17,6 +17,7 @@ vi.mock("@/lib/telemetry/capture", () => ({
 function createScenario(): Scenario {
   return {
     id: "scenario-504",
+    platform: "aro-classic",
     title: "Gateway timeout scenario",
     difficulty: "easy",
     description: "Testing command timeout handling",

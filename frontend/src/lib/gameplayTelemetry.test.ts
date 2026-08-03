@@ -32,6 +32,7 @@ interface GameplayTelemetryStateFixture {
 
 const mockScenario: Scenario = {
   id: "scenario_test",
+  platform: "aro-classic",
   title: "The Sleeping Cluster",
   difficulty: "easy",
   description: "A test incident",
@@ -123,6 +124,7 @@ describe("buildGameplayTelemetryPayload", () => {
 
     expect(payload).toMatchObject({
       sessionToken: "session-123",
+      platform: "aro-classic",
       lifecycleState: "completed",
       nickname: "player1",
       commandCount: 1,
@@ -151,6 +153,15 @@ describe("buildGameplayTelemetryPayload", () => {
     expect(payload.scoreTotal).toBeUndefined();
     expect(payload.grade).toBeUndefined();
     expect(payload.durationMs).toBe(1_500);
+  });
+
+  it("refuses to invent a platform when the active scenario is missing", () => {
+    expect(() =>
+      buildGameplayTelemetryPayload(
+        makeState({ scenario: null }),
+        "abandoned",
+      ),
+    ).toThrow("without an active scenario");
   });
 });
 
@@ -187,6 +198,7 @@ describe("sendGameplayTelemetryEvent", () => {
 
     sendGameplayTelemetryEvent({
       sessionToken: "session-123",
+      platform: "aro-classic",
       lifecycleState: "abandoned",
     });
 
@@ -211,6 +223,7 @@ describe("sendGameplayTelemetryEvent", () => {
 
     await expect(sendGameplayTelemetryEvent({
       sessionToken: "session-123",
+      platform: "aro-classic",
       lifecycleState: "completed",
     })).resolves.toBe(true);
 
@@ -235,6 +248,7 @@ describe("sendGameplayTelemetryEvent", () => {
       sendGameplayTelemetryEvent(
         {
           sessionToken: "session-123",
+          platform: "aro-classic",
           lifecycleState: "completed",
         },
         { preferBeacon: false },
@@ -260,6 +274,7 @@ describe("sendGameplayTelemetryEvent", () => {
 
     await expect(sendGameplayTelemetryEvent({
       sessionToken: "session-123",
+      platform: "aro-classic",
       lifecycleState: "completed",
     })).resolves.toBe(false);
   });

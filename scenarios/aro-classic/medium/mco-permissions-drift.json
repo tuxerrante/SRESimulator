@@ -1,0 +1,63 @@
+{
+  "id": "aro-classic-medium-mco-permissions-drift",
+  "platform": "aro-classic",
+  "title": "MCO Permissions Drift",
+  "difficulty": "medium",
+  "description": "A manual permissions change on a worker host has broken Machine Config Daemon reconciliation, leaving nodes degraded and preventing config rollout.",
+  "incidentTicket": {
+    "id": "IcM-260102",
+    "severity": "Sev3",
+    "title": "Machine config rollout stuck after node-level permissions drift",
+    "description": "Cluster operators report machine config degradation after a manual hardening attempt on one worker node.",
+    "customerImpact": "New configuration cannot converge and some workloads are landing on nodes with inconsistent host state.",
+    "reportedTime": "{{daysAgo:1}}",
+    "clusterName": "aro-stage-westeurope-02",
+    "region": "westeurope"
+  },
+  "clusterContext": {
+    "name": "aro-stage-westeurope-02",
+    "version": "4.18.14",
+    "region": "westeurope",
+    "nodeCount": 9,
+    "status": "Degraded",
+    "recentEvents": [
+      "{{minutesAgo:155}} - machine-config-daemon: error reconciling filesystem permissions under /etc",
+      "{{minutesAgo:92}} - machine-config-operator: pool worker degraded because one or more nodes are out of sync",
+      "{{minutesAgo:24}} - kubelet: node worker-weu-1 remains Ready but config drift persists"
+    ],
+    "alerts": [
+      {
+        "name": "MachineConfigPoolDegraded",
+        "severity": "critical",
+        "message": "Worker machine config pool reports degraded due to host permissions drift.",
+        "firingTime": "{{minutesAgo:20}}"
+      },
+      {
+        "name": "MachineConfigDaemonErrors",
+        "severity": "warning",
+        "message": "Machine Config Daemon reconciliation is failing on at least one worker.",
+        "firingTime": "{{minutesAgo:16}}"
+      }
+    ],
+    "upgradeHistory": [
+      {
+        "from": "4.18.13",
+        "to": "4.18.14",
+        "status": "completed",
+        "timestamp": "{{daysAgo:4}}"
+      }
+    ]
+  },
+  "platformContext": {
+    "machineNames": [
+      "worker-weu-0",
+      "worker-weu-1",
+      "worker-weu-2"
+    ],
+    "clusterOperatorHints": [
+      "machine-config",
+      "node-tuning",
+      "kubelet"
+    ]
+  }
+}

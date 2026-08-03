@@ -34,6 +34,7 @@ function createApp() {
 function makeScenario(): Scenario {
   return {
     id: "scenario_test",
+    platform: "aro-classic",
     title: "Worker Node NotReady",
     difficulty: "easy",
     description: "A worker node has gone NotReady due to DiskPressure",
@@ -142,6 +143,7 @@ describe("POST /api/command", () => {
     const storedScenario = makeScenario();
     storageMocks.sessionGet.mockResolvedValue({
       token: "session-123",
+      platform: "aro-classic",
       difficulty: "easy",
       scenarioId: storedScenario.id,
       scenarioTitle: "Worker Node NotReady",
@@ -228,6 +230,7 @@ describe("POST /api/command", () => {
 
     expect(res.status).toBe(400);
     expect(res.body.error).toContain("Invalid command type");
+    expect(res.body.error).toContain("kubectl");
   });
 
   it("rejects requests missing session tokens", async () => {

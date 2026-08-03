@@ -2,14 +2,19 @@ import { constants } from "fs";
 import { access, readdir, readFile } from "fs/promises";
 import { join, resolve } from "path";
 import type { Difficulty, Scenario } from "../../../shared/types/game";
+import { PLATFORM_IDS, type PlatformId } from "../../../shared/types/platform";
+import {
+  getPlatformContentViolation,
+  isPlatformContextForPlatform,
+} from "./scenario-validation";
 import { utcOffsetMinutes } from "./sim-clock";
 
 const DIFFICULTIES: Difficulty[] = ["easy", "medium", "hard"];
 const CATALOG_SOURCE = "catalog";
 
-type ScenarioCatalog = Record<Difficulty, Scenario[]>;
+type ScenarioCatalogIndex = Record<PlatformId, Record<Difficulty, Scenario[]>>;
 
-let cachedCatalogPromise: Promise<ScenarioCatalog> | null = null;
+let cachedCatalogPromise: Promise<ScenarioCatalogIndex> | null = null;
 
 export class ScenarioCatalogError extends Error {
   constructor(
@@ -26,10 +31,13 @@ function invalidCatalog(message: string): ScenarioCatalogError {
   return new ScenarioCatalogError(message, "Scenario catalog is invalid.", 500);
 }
 
-function unavailableCatalog(difficulty: Difficulty): ScenarioCatalogError {
+function unavailableCatalog(
+  platform: PlatformId,
+  difficulty: Difficulty,
+): ScenarioCatalogError {
   return new ScenarioCatalogError(
-    `Scenario catalog is not available for ${difficulty} difficulty.`,
-    `Scenario catalog is not available for ${difficulty} difficulty.`,
+    `Scenario catalog is not available for ${platform}/${difficulty}.`,
+    `Scenario catalog is not available for ${platform}/${difficulty}.`,
     503,
   );
 }
@@ -75,8 +83,20 @@ const INCIDENT_SEVERITIES = ["Sev1", "Sev2", "Sev3", "Sev4"] as const;
 const ALERT_SEVERITIES = ["critical", "warning", "info"] as const;
 const UPGRADE_STATUSES = ["completed", "failed", "in_progress"] as const;
 
+function createEmptyCatalog(): ScenarioCatalogIndex {
+  return Object.fromEntries(
+    PLATFORM_IDS.map((platform) => [
+      platform,
+      Object.fromEntries(
+        DIFFICULTIES.map((difficulty) => [difficulty, [] as Scenario[]]),
+      ),
+    ]),
+  ) as ScenarioCatalogIndex;
+}
+
 function assertScenarioTemplate(
   value: unknown,
+  platform: PlatformId,
   difficulty: Difficulty,
   filePath: string,
 ): Scenario {
@@ -87,6 +107,11 @@ function assertScenarioTemplate(
   }
 
   assertString(value.id, "id");
+  if (value.platform !== platform) {
+    throw invalidCatalog(
+      `Catalog scenario ${filePath} must declare platform ${platform}`,
+    );
+  }
   assertString(value.title, "title");
   assertString(value.description, "description");
   if (value.difficulty !== difficulty) {
@@ -157,6 +182,20 @@ function assertScenarioTemplate(
     );
   }
 
+  if (value.platformContext !== undefined) {
+    if (!isPlatformContextForPlatform(value.platformContext, platform)) {
+      throw invalidCatalog(
+        `Catalog scenario ${filePath} platformContext contains keys that are invalid for ${platform}`,
+      );
+    }
+  }
+  const contentViolation = getPlatformContentViolation(value, platform);
+  if (contentViolation) {
+    throw invalidCatalog(
+      `Catalog scenario ${filePath} contains ${contentViolation} content that is invalid for ${platform}`,
+    );
+  }
+
   return value as unknown as Scenario;
 }
 
@@ -220,9 +259,10 @@ async function resolveCatalogRoot(): Promise<string | null> {
 
 async function loadCatalogDirectory(
   rootDir: string,
+  platform: PlatformId,
   difficulty: Difficulty,
 ): Promise<Scenario[]> {
-  const difficultyDir = join(rootDir, difficulty);
+  const difficultyDir = join(rootDir, platform, difficulty);
   let fileNames: string[];
   try {
     fileNames = await readdir(difficultyDir);
@@ -257,27 +297,34 @@ async function loadCatalogDirectory(
           }`,
         );
       }
-      return assertScenarioTemplate(parsed, difficulty, filePath);
+      return assertScenarioTemplate(parsed, platform, difficulty, filePath);
     }),
   );
 
   return scenarios;
 }
 
-async function loadCatalog(): Promise<ScenarioCatalog> {
+async function loadCatalog(): Promise<ScenarioCatalogIndex> {
   const rootDir = await resolveCatalogRoot();
   if (!rootDir) {
-    return { easy: [], medium: [], hard: [] };
+    return createEmptyCatalog();
   }
 
-  const entries = await Promise.all(
-    DIFFICULTIES.map(async (difficulty) => [
-      difficulty,
-      await loadCatalogDirectory(rootDir, difficulty),
-    ] as const),
-  );
+  const catalog = createEmptyCatalog();
+  for (const platform of PLATFORM_IDS) {
+    const difficultyEntries = await Promise.all(
+      DIFFICULTIES.map(async (difficulty) => [
+        difficulty,
+        await loadCatalogDirectory(rootDir, platform, difficulty),
+      ] as const),
+    );
+    catalog[platform] = Object.fromEntries(difficultyEntries) as Record<
+      Difficulty,
+      Scenario[]
+    >;
+  }
 
-  return Object.fromEntries(entries) as ScenarioCatalog;
+  return catalog;
 }
 
 export function isCatalogScenarioSource(): boolean {
@@ -286,9 +333,7 @@ export function isCatalogScenarioSource(): boolean {
   );
 }
 
-export async function getCatalogScenario(
-  difficulty: Difficulty,
-): Promise<Scenario> {
+async function getCachedCatalog(): Promise<ScenarioCatalogIndex> {
   if (!cachedCatalogPromise) {
     cachedCatalogPromise = loadCatalog().catch((error) => {
       cachedCatalogPromise = null;
@@ -296,11 +341,43 @@ export async function getCatalogScenario(
     });
   }
 
-  const catalog = await cachedCatalogPromise;
-  const template = catalog[difficulty][0];
-  if (!template) {
-    throw unavailableCatalog(difficulty);
+  return cachedCatalogPromise;
+}
+
+export async function getCatalogScenario(input: {
+  platform: PlatformId;
+  difficulty: Difficulty;
+  scenarioId?: string;
+}): Promise<Scenario> {
+  const catalog = await getCachedCatalog();
+  const candidates = catalog[input.platform][input.difficulty];
+  if (candidates.length === 0) {
+    throw unavailableCatalog(input.platform, input.difficulty);
   }
 
-  return hydrateScenarioTemplate(template);
+  if (input.scenarioId) {
+    const exact = candidates.find((scenario) => scenario.id === input.scenarioId);
+    if (!exact) {
+      throw invalidCatalog(
+        `No catalog scenario ${input.scenarioId} for ${input.platform}/${input.difficulty}`,
+      );
+    }
+    return hydrateScenarioTemplate(exact);
+  }
+
+  const picked = candidates[Math.floor(Math.random() * candidates.length)];
+  return hydrateScenarioTemplate(picked);
+}
+
+export async function assertCatalogCoverage(): Promise<void> {
+  const catalog = await getCachedCatalog();
+  for (const platform of PLATFORM_IDS) {
+    for (const difficulty of DIFFICULTIES) {
+      if (catalog[platform][difficulty].length === 0) {
+        throw invalidCatalog(
+          `Missing scenario coverage for ${platform}/${difficulty}`,
+        );
+      }
+    }
+  }
 }

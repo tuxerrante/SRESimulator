@@ -18,6 +18,7 @@ Object.defineProperty(globalThis, "localStorage", { value: localStorageMock, wri
 
 const mockScenario: Scenario = {
   id: "scenario_test",
+  platform: "aro-classic",
   title: "Test Scenario",
   difficulty: "easy",
   description: "A test scenario",
@@ -69,10 +70,12 @@ describe("gameStore", () => {
 
   describe("startGame", () => {
     it("sets playing status and initializes game state", () => {
+      useGameStore.getState().setSelectedPlatform("aks");
       useGameStore.getState().startGame(mockScenario, "token-123");
       const state = useGameStore.getState();
 
       expect(state.status).toBe("playing");
+      expect(state.selectedPlatform).toBe("aro-classic");
       expect(state.scenario).toEqual(mockScenario);
       expect(state.sessionToken).toBe("token-123");
       expect(state.startTime).not.toBeNull();
@@ -96,11 +99,13 @@ describe("gameStore", () => {
 
   describe("resetGame", () => {
     it("returns to idle state", () => {
+      useGameStore.getState().setSelectedPlatform("aro-hcp");
       useGameStore.getState().startGame(mockScenario, "token-123");
       useGameStore.getState().resetGame();
       const state = useGameStore.getState();
 
       expect(state.status).toBe("idle");
+      expect(state.selectedPlatform).toBe("aro-classic");
       expect(state.scenario).toBeNull();
       expect(state.messages).toEqual([]);
     });
@@ -339,6 +344,27 @@ describe("gameStore", () => {
 
       expect(useGameStore.getState().nickname).toBe("player1");
       expect(useGameStore.getState().status).toBe("playing");
+    });
+  });
+
+  describe("selected platform", () => {
+    beforeEach(() => {
+      mockStorage.clear();
+      useGameStore.setState({ selectedPlatform: "aro-classic" });
+    });
+
+    it("persists the selected platform in the store", () => {
+      useGameStore.getState().setSelectedPlatform("aro-hcp");
+
+      expect(useGameStore.getState().selectedPlatform).toBe("aro-hcp");
+      expect(mockStorage.get("sre-platform")).toBe("aro-hcp");
+    });
+
+    it("hydrates a stored platform value", () => {
+      mockStorage.set("sre-platform", "aks");
+      useGameStore.getState().hydrateSelectedPlatform();
+
+      expect(useGameStore.getState().selectedPlatform).toBe("aks");
     });
   });
 

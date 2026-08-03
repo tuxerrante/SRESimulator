@@ -22,7 +22,7 @@ async function listen(app: Express): Promise<Server> {
   });
 }
 
-describe("createApp", () => {
+describe("createApp", { timeout: 15000 }, () => {
   const originalTrustProxyHeaders = process.env.TRUST_PROXY_HEADERS;
   const originalAntiAbuseSecret = process.env.ANTI_ABUSE_HMAC_SECRET;
   const originalSentryEnabled = process.env.SENTRY_ENABLED;

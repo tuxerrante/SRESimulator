@@ -1,5 +1,9 @@
 import type { Server } from "http";
 import type { Express } from "express";
+import { VIEWER_SESSION_COOKIE } from "../../../shared/auth/constants";
+import { createViewerSessionToken } from "../../../shared/auth/session";
+import type { Difficulty, Scenario } from "../../../shared/types/game";
+import type { PlatformId } from "../../../shared/types/platform";
 
 export interface SSEResult {
   status: number;
@@ -18,6 +22,11 @@ export interface ChatRequestBody {
   messages: ChatMessage[];
   scenario: unknown | null;
   currentPhase: string;
+}
+
+export interface ScenarioResponse {
+  scenario: Scenario;
+  sessionToken: string;
 }
 
 export function getAutomatedTrafficHeaders(): Record<string, string> {
@@ -44,6 +53,39 @@ export function getExpectedScenarioTrafficSource(): "player" | "automated" {
   }
 
   return process.env.AUTOMATED_TRAFFIC_TOKEN?.trim() ? "automated" : "player";
+}
+
+export function getViewerAuthCookie(): string | undefined {
+  const secret = (
+    process.env.E2E_AUTH_SESSION_SECRET ??
+    process.env.AUTH_SESSION_SECRET ??
+    ""
+  ).trim();
+  if (!secret) {
+    return undefined;
+  }
+
+  return `${VIEWER_SESSION_COOKIE}=${createViewerSessionToken(
+    {
+      kind: "github",
+      githubUserId: "e2e-platform-user",
+      githubLogin: "e2e-platform-user",
+      displayName: "E2E Platform User",
+      avatarUrl: null,
+      issuedAt: Date.now(),
+      expiresAt: Date.now() + 5 * 60 * 1000,
+    },
+    secret,
+  )}`;
+}
+
+export function getGameplayAdminHeaders(): Record<string, string> {
+  const token = (
+    process.env.E2E_GAMEPLAY_ADMIN_TOKEN ??
+    process.env.GAMEPLAY_ADMIN_TOKEN ??
+    ""
+  ).trim();
+  return token ? { authorization: `Bearer ${token}` } : {};
 }
 
 /**
@@ -108,6 +150,42 @@ export async function postChatSSE(
   }
 
   return { status: response.status, chunks, done, rawBody };
+}
+
+export async function createScenarioSession(
+  baseUrl: string,
+  platform: PlatformId,
+  difficulty: Difficulty,
+): Promise<ScenarioResponse> {
+  const cookie = getViewerAuthCookie();
+  const response = await fetch(`${baseUrl}/api/scenario`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...getScenarioRequestHeaders(),
+      ...(cookie ? { cookie } : {}),
+    },
+    body: JSON.stringify({ platform, difficulty }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Scenario bootstrap failed (${response.status})`);
+  }
+
+  return (await response.json()) as ScenarioResponse;
+}
+
+export async function ensureExternalSessionTokens(
+  baseUrl: string,
+  count: number,
+): Promise<string[]> {
+  const sessions = await Promise.all(
+    Array.from({ length: count }, () =>
+      createScenarioSession(baseUrl, "aro-classic", "easy"),
+    ),
+  );
+
+  return sessions.map((session) => session.sessionToken);
 }
 
 /**

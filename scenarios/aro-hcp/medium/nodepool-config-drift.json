@@ -1,0 +1,63 @@
+{
+  "id": "aro-hcp-medium-nodepool-config-drift",
+  "platform": "aro-hcp",
+  "title": "NodePool Config Drift",
+  "difficulty": "medium",
+  "description": "A guest-cluster node pool was updated with an unsupported setting, causing rollouts to stall while workloads see uneven scheduling and degraded pool health.",
+  "incidentTicket": {
+    "id": "IcM-260104",
+    "severity": "Sev3",
+    "title": "Hosted cluster node pool rollout stalled after config change",
+    "description": "A worker node pool in the hosted cluster began cycling after a configuration update and now shows mixed readiness.",
+    "customerImpact": "Some workloads remain pending or rescheduled unevenly while the guest cluster attempts to reconcile node pool state.",
+    "reportedTime": "{{daysAgo:2}}",
+    "clusterName": "hcp-stage-westeurope-03",
+    "region": "westeurope"
+  },
+  "clusterContext": {
+    "name": "hcp-stage-westeurope-03",
+    "version": "4.20.1",
+    "region": "westeurope",
+    "nodeCount": 8,
+    "status": "Degraded",
+    "recentEvents": [
+      "{{minutesAgo:160}} - nodepool/worker-b: rollout paused after the NodePool controller rejected an unsupported setting",
+      "{{minutesAgo:55}} - scheduler: several workloads remain pending because one pool is unschedulable",
+      "{{minutesAgo:15}} - hosted cluster worker rollout remains paused while guest workloads rebalance"
+    ],
+    "alerts": [
+      {
+        "name": "NodePoolRolloutStalled",
+        "severity": "critical",
+        "message": "A hosted cluster node pool is not converging after a configuration drift event.",
+        "firingTime": "{{minutesAgo:12}}"
+      },
+      {
+        "name": "WorkloadSchedulingSkew",
+        "severity": "warning",
+        "message": "Guest workloads are over-concentrated on one worker pool while another remains unavailable.",
+        "firingTime": "{{minutesAgo:9}}"
+      }
+    ],
+    "upgradeHistory": [
+      {
+        "from": "4.20.0",
+        "to": "4.20.1",
+        "status": "completed",
+        "timestamp": "{{daysAgo:6}}"
+      }
+    ]
+  },
+  "platformContext": {
+    "guestClusterName": "hcp-stage-westeurope-03",
+    "hostedControlPlaneNamespace": "hcp-stage-westeurope-03-hcp",
+    "controlPlaneBoundaryNotes": [
+      "Guest node pool tuning is customer-owned.",
+      "Hosted control plane pods are not the first remediation target for guest scheduling drift."
+    ],
+    "nodePoolNames": [
+      "worker-a",
+      "worker-b"
+    ]
+  }
+}

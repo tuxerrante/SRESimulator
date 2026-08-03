@@ -1,0 +1,60 @@
+{
+  "id": "aro-hcp-easy-guest-router-503-networkpolicy",
+  "platform": "aro-hcp",
+  "title": "Guest Route 503",
+  "difficulty": "easy",
+  "description": "A deny-by-default NetworkPolicy in the guest cluster has cut router-to-backend traffic, surfacing as 503 responses while the hosted control plane remains healthy.",
+  "incidentTicket": {
+    "id": "IcM-260103",
+    "severity": "Sev4",
+    "title": "Application route returns 503 in hosted cluster",
+    "description": "Customers report that the route for a guest-cluster application returns 503 immediately after a namespace policy change.",
+    "customerImpact": "Users cannot reach the affected application through the route, but cluster login and hosted control plane health remain normal.",
+    "reportedTime": "{{daysAgo:1}}",
+    "clusterName": "hcp-prod-eastus2-01",
+    "region": "eastus2"
+  },
+  "clusterContext": {
+    "name": "hcp-prod-eastus2-01",
+    "version": "4.19.9",
+    "region": "eastus2",
+    "nodeCount": 6,
+    "status": "Degraded",
+    "recentEvents": [
+      "{{minutesAgo:140}} - router-default: upstream connection failures increased after namespace network policy update",
+      "{{minutesAgo:70}} - application namespace: deny-all policy applied without explicit ingress allow rules",
+      "{{minutesAgo:12}} - route canary checks return 503 while guest API remains healthy"
+    ],
+    "alerts": [
+      {
+        "name": "RouteHealthDegraded",
+        "severity": "warning",
+        "message": "Route health checks are failing with 503 responses for one hosted application.",
+        "firingTime": "{{minutesAgo:10}}"
+      }
+    ],
+    "upgradeHistory": [
+      {
+        "from": "4.19.8",
+        "to": "4.19.9",
+        "status": "completed",
+        "timestamp": "{{daysAgo:5}}"
+      }
+    ]
+  },
+  "platformContext": {
+    "guestClusterName": "hcp-prod-eastus2-01",
+    "hostedControlPlaneNamespace": "hcp-prod-eastus2-01-hcp",
+    "controlPlaneBoundaryNotes": [
+      "Ingress and namespace policies are guest-cluster concerns.",
+      "Hosted control plane remediation should not be proposed without evidence."
+    ],
+    "routeNames": [
+      "payments-ui"
+    ],
+    "nodePoolNames": [
+      "worker-a",
+      "worker-b"
+    ]
+  }
+}

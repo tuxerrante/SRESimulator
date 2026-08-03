@@ -70,6 +70,7 @@ describe("commandRouter", () => {
   beforeEach(() => {
     const sessionScenario = {
       id: "scenario_test_easy",
+      platform: "aro-classic",
       title: "Test Scenario",
       difficulty: "easy",
       description: "Test scenario description",
@@ -106,6 +107,7 @@ describe("commandRouter", () => {
     });
     mocks.sessionGet.mockResolvedValue({
       token: "session-123",
+      platform: "aro-classic",
       difficulty: "easy",
       scenarioId: "scenario_test_easy",
       scenarioTitle: "Test Scenario",
@@ -206,6 +208,7 @@ describe("commandRouter", () => {
   it("rejects invalid stored session scenario payloads", async () => {
     mocks.sessionGet.mockResolvedValueOnce({
       token: "session-123",
+      platform: "aro-classic",
       difficulty: "easy",
       scenarioId: "scenario_test_easy",
       scenarioTitle: "Test Scenario",

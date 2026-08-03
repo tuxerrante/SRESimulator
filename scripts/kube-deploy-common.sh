@@ -109,6 +109,18 @@ upsert_secret_literal_key() {
     -p "{\"data\":{\"${key}\":\"${encoded}\"}}" >/dev/null
 }
 
+secret_exists_in_namespace() {
+  local ns=$1 secret_name=$2
+  "$KUBE_CLI" -n "$ns" get "secret/$secret_name" >/dev/null 2>&1
+}
+
+secret_has_key() {
+  local ns=$1 secret_name=$2 key=$3 value
+  value="$("$KUBE_CLI" -n "$ns" get "secret/$secret_name" \
+    -o "go-template={{if index .data \"$key\"}}present{{end}}" 2>/dev/null || true)"
+  [ "$value" = "present" ]
+}
+
 # Usage: sanitize_single_line_value <raw_value>
 # Returns the first non-empty trimmed line to avoid accidental multiline
 # values from CI/runtime env expansion.
@@ -137,17 +149,12 @@ ensure_auth_secret_for_e2e_namespace() {
   local github_auth_secret_name e2e_auth_secret_name secret_name
   local src_ns turnstile_site_key has_runtime_values=false
 
+  src_ns="${AUTH_SECRET_SOURCE_NAMESPACE:-${PROD_NAMESPACE:-sre-simulator}}"
   github_auth_secret_name="$(sanitize_single_line_value "${GITHUB_AUTH_SECRET_NAME:-}")"
   e2e_auth_secret_name="$(sanitize_single_line_value "${E2E_AUTH_SECRET_NAME:-}")"
   secret_name="${github_auth_secret_name:-${e2e_auth_secret_name}}"
-
-  if [ -n "$github_auth_secret_name" ]; then
-    src_ns="${AUTH_SECRET_SOURCE_NAMESPACE:-${PROD_NAMESPACE:-sre-simulator}}"
-    echo "Ensuring auth secret in '$dst_ns' (from namespace '$src_ns', secret '${github_auth_secret_name}'; payload not logged)." >&2
-    copy_secret_across_namespaces "$src_ns" "$dst_ns" "$github_auth_secret_name" || return 1
-  fi
-
   turnstile_site_key="${TURNSTILE_SITE_KEY:-${NEXT_PUBLIC_TURNSTILE_SITE_KEY:-}}"
+
   if [ -n "${GITHUB_CLIENT_ID:-}" ] || \
      [ -n "${GITHUB_CLIENT_SECRET:-}" ] || \
      [ -n "${AUTH_SESSION_SECRET:-}" ] || \
@@ -156,6 +163,17 @@ ensure_auth_secret_for_e2e_namespace() {
      [ -n "${TURNSTILE_EXPECTED_HOSTNAME:-}" ] || \
      [ -n "$turnstile_site_key" ]; then
     has_runtime_values=true
+  fi
+
+  if [ -z "$secret_name" ] && [ "$has_runtime_values" = false ] && \
+     secret_exists_in_namespace "$src_ns" "sre-auth-secrets"; then
+    github_auth_secret_name="sre-auth-secrets"
+    secret_name="$github_auth_secret_name"
+  fi
+
+  if [ -n "$github_auth_secret_name" ]; then
+    echo "Ensuring auth secret in '$dst_ns' (from namespace '$src_ns', secret '${github_auth_secret_name}'; payload not logged)." >&2
+    copy_secret_across_namespaces "$src_ns" "$dst_ns" "$github_auth_secret_name" || return 1
   fi
 
   if [ -z "$secret_name" ] && [ "$has_runtime_values" = true ]; then

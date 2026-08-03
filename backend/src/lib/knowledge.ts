@@ -1,20 +1,23 @@
 import { readFile } from "fs/promises";
 import { join } from "path";
+import {
+  DEFAULT_PLATFORM_ID,
+  type PlatformId,
+} from "../../../shared/types/platform";
+import { getRuntimePlatformProfile } from "./platform-profiles";
 
 const KNOWLEDGE_BASE_DIR =
   process.env.KNOWLEDGE_BASE_DIR || join(process.cwd(), "..", "knowledge_base");
 
-const FILES = [
+const SHARED_FILES = [
   "sre-investigation-techniques.md",
-  "Openshift-clusters-alerts-resolutions.md",
-  "Community-reported-issues.md",
 ] as const;
 
-const INVESTIGATION_FILE = FILES[0];
+const INVESTIGATION_FILE = SHARED_FILES[0];
 
-let cachedKnowledge: string | null = null;
+const cachedKnowledge = new Map<PlatformId, string>();
+const cachedSections = new Map<PlatformId, KBSection[]>();
 let cachedGuide: string | null = null;
-let cachedSections: KBSection[] | null = null;
 
 export interface KBSection {
   title: string;
@@ -23,12 +26,24 @@ export interface KBSection {
   keywords: string[];
 }
 
-export async function loadKnowledgeBase(): Promise<string> {
-  if (cachedKnowledge) return cachedKnowledge;
+function getKnowledgeFiles(platform: PlatformId): string[] {
+  return [
+    ...SHARED_FILES,
+    ...getRuntimePlatformProfile(platform).knowledgeFiles,
+  ];
+}
+
+export async function loadKnowledgeBase(
+  platform: PlatformId = DEFAULT_PLATFORM_ID,
+): Promise<string> {
+  const cached = cachedKnowledge.get(platform);
+  if (cached) {
+    return cached;
+  }
 
   const sections: string[] = [];
 
-  for (const file of FILES) {
+  for (const file of getKnowledgeFiles(platform)) {
     try {
       const content = await readFile(join(KNOWLEDGE_BASE_DIR, file), "utf-8");
       const label = file.replace(".md", "").replace(/-/g, " ");
@@ -38,8 +53,9 @@ export async function loadKnowledgeBase(): Promise<string> {
     }
   }
 
-  cachedKnowledge = sections.join("\n\n---\n\n");
-  return cachedKnowledge;
+  const result = sections.join("\n\n---\n\n");
+  cachedKnowledge.set(platform, result);
+  return result;
 }
 
 const KB_TECH_TERMS: readonly string[] = [
@@ -53,7 +69,8 @@ const KB_TECH_TERMS: readonly string[] = [
   "networking", "storage", "registry", "authentication",
   "control[\\s-]?plane", "upgrade", "install", "certificate",
   "compliance", "partition", "cosmos[\\s-]?db", "monitor", "alert",
-  "operator", "deployment", "route", "ingress",
+  "operator", "deployment", "route", "ingress", "nodepool", "aks",
+  "kubectl", "guest[\\s-]?cluster",
   "503", "429", "137", "410",
 ];
 
@@ -65,7 +82,7 @@ const KB_TERMS_REGEX = new RegExp(
 function extractKeywords(title: string, content: string): string[] {
   const combined = `${title} ${content}`.toLowerCase();
   const techTerms = combined.match(KB_TERMS_REGEX) ?? [];
-  const uniqueTerms = [...new Set(techTerms.map((t) => t.toLowerCase()))];
+  const uniqueTerms = [...new Set(techTerms.map((term) => term.toLowerCase()))];
   return uniqueTerms;
 }
 
@@ -107,12 +124,17 @@ function parseFileIntoSections(content: string, source: string): KBSection[] {
   return sections;
 }
 
-export async function loadKnowledgeSections(): Promise<KBSection[]> {
-  if (cachedSections) return cachedSections;
+export async function loadKnowledgeSections(
+  platform: PlatformId = DEFAULT_PLATFORM_ID,
+): Promise<KBSection[]> {
+  const cached = cachedSections.get(platform);
+  if (cached) {
+    return cached;
+  }
 
   const allSections: KBSection[] = [];
 
-  for (const file of FILES) {
+  for (const file of getKnowledgeFiles(platform)) {
     try {
       const content = await readFile(join(KNOWLEDGE_BASE_DIR, file), "utf-8");
       allSections.push(...parseFileIntoSections(content, file));
@@ -121,15 +143,10 @@ export async function loadKnowledgeSections(): Promise<KBSection[]> {
     }
   }
 
-  cachedSections = allSections;
-  return cachedSections;
+  cachedSections.set(platform, allSections);
+  return allSections;
 }
 
-/**
- * Score and select KB sections relevant to the given query terms.
- * Always includes the investigation methodology file sections.
- * Returns concatenated markdown capped at maxChars.
- */
 export function queryKnowledgeSections(
   sections: KBSection[],
   queryTerms: string[],
@@ -137,9 +154,9 @@ export function queryKnowledgeSections(
 ): string {
   const queryLower = queryTerms
     .filter(Boolean)
-    .map((t) => t.toLowerCase())
+    .map((term) => term.toLowerCase())
     .join(" ");
-  const queryWords = queryLower.split(/\s+/).filter((w) => w.length > 2);
+  const queryWords = queryLower.split(/\s+/).filter((word) => word.length > 2);
 
   const investigationSections: KBSection[] = [];
   const scoredSections: Array<{ section: KBSection; score: number }> = [];
@@ -165,11 +182,11 @@ export function queryKnowledgeSections(
     }
   }
 
-  scoredSections.sort((a, b) => b.score - a.score);
+  scoredSections.sort((left, right) => right.score - left.score);
 
-  const SEPARATOR = "\n\n---\n\n";
+  const separator = "\n\n---\n\n";
   const investigationText = investigationSections
-    .map((s) => s.content)
+    .map((section) => section.content)
     .join("\n\n");
 
   if (investigationText.length >= maxChars) {
@@ -185,7 +202,7 @@ export function queryKnowledgeSections(
 
   for (const { section } of scoredSections) {
     if (remaining <= 0) break;
-    const separatorCost = selectedParts.length > 0 ? SEPARATOR.length : 0;
+    const separatorCost = selectedParts.length > 0 ? separator.length : 0;
     const totalCost = section.content.length + separatorCost;
     if (totalCost <= remaining) {
       selectedParts.push(section.content);
@@ -193,25 +210,23 @@ export function queryKnowledgeSections(
     }
   }
 
-  return selectedParts.join(SEPARATOR);
+  return selectedParts.join(separator);
 }
 
 const GUIDE_FILE = INVESTIGATION_FILE;
 
 export async function loadGuideContent(): Promise<string> {
-  if (cachedGuide !== null) return cachedGuide;
+  if (cachedGuide !== null) {
+    return cachedGuide;
+  }
 
-  cachedGuide = await readFile(
-    join(KNOWLEDGE_BASE_DIR, GUIDE_FILE),
-    "utf-8"
-  );
-
+  cachedGuide = await readFile(join(KNOWLEDGE_BASE_DIR, GUIDE_FILE), "utf-8");
   return cachedGuide;
 }
 
 // ts-unused-exports:disable-next-line
 export function _resetCacheForTests(): void {
-  cachedKnowledge = null;
+  cachedKnowledge.clear();
+  cachedSections.clear();
   cachedGuide = null;
-  cachedSections = null;
 }

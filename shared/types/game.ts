@@ -1,12 +1,16 @@
+import type { PlatformContext, PlatformId } from "./platform";
+
 export type Difficulty = "easy" | "medium" | "hard";
 
 export interface Scenario {
   id: string;
+  platform: PlatformId;
   title: string;
   difficulty: Difficulty;
   description: string;
   incidentTicket: IncidentTicket;
   clusterContext: ClusterContext;
+  platformContext?: PlatformContext;
 }
 
 export interface IncidentTicket {

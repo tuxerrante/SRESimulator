@@ -1,10 +1,12 @@
 import type { Difficulty } from "./game";
 import type { TrafficSource } from "./leaderboard";
+import type { PlatformId } from "./platform";
 
 export type GameplayLifecycleState = "started" | "completed" | "abandoned";
 
 export interface GameplayTelemetryEvent {
   sessionToken: string;
+  platform: PlatformId;
   lifecycleState: GameplayLifecycleState;
   trafficSource?: TrafficSource;
   nickname?: string;
@@ -42,8 +44,18 @@ export interface GameplayDifficultyAnalytics {
   completionRate: number;
 }
 
+export interface GameplayPlatformAnalytics {
+  platform: PlatformId;
+  totalSessions: number;
+  completedSessions: number;
+  abandonedSessions: number;
+  inProgressSessions: number;
+  completionRate: number;
+}
+
 export interface GameplayScenarioAnalytics {
   scenarioTitle: string;
+  platform?: PlatformId;
   difficulty?: Difficulty;
   totalSessions: number;
   completedSessions: number;
@@ -53,6 +65,7 @@ export interface GameplayScenarioAnalytics {
 }
 
 export interface RecentGameplaySession {
+  platform?: PlatformId;
   lifecycleState: GameplayLifecycleState;
   nickname?: string;
   difficulty?: Difficulty;
@@ -67,6 +80,7 @@ export interface RecentGameplaySession {
 
 export interface GameplayAnalytics {
   summary: GameplayAnalyticsSummary;
+  byPlatform: GameplayPlatformAnalytics[];
   byDifficulty: GameplayDifficultyAnalytics[];
   byScenario: GameplayScenarioAnalytics[];
   recentSessions: RecentGameplaySession[];

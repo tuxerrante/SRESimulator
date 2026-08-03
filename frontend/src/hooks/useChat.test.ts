@@ -45,6 +45,7 @@ const localStorageMock: Storage = {
 function createScenario(): Scenario {
   return {
     id: "scenario-1",
+    platform: "aro-classic",
     title: "Test scenario",
     difficulty: "easy",
     description: "Test description",
@@ -104,6 +105,7 @@ describe("useChat", () => {
       feature: "chat",
       phase: "reading",
       difficulty: "easy",
+      platform: "aro-classic",
       requestId: "req-123",
       actorRef: "actor-123",
       gameSessionRef: "gsr-123",

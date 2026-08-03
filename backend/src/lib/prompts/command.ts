@@ -1,11 +1,14 @@
 import { utcNow } from "../sim-clock";
 import type { Scenario } from "../../../../shared/types/game";
+import type { CompatibleCommandType } from "../../../../shared/types/platform";
+import type { RuntimePlatformProfile } from "../platform-profiles";
 import { formatResourceHintsForPrompt } from "./scenario-resources";
+import { PLATFORM_PROMPT_FRAGMENTS } from "./platform";
 
 export interface CommandHistoryEntry {
   command: string;
   output: string;
-  type: "oc" | "kql" | "geneva";
+  type: CompatibleCommandType;
 }
 
 const MAX_HISTORY_ENTRIES = 24;
@@ -57,29 +60,42 @@ export function buildSimNow(reportedTime: string | undefined): string {
 }
 
 export function buildCommandSystemPrompt(
-  type: string,
+  type: CompatibleCommandType,
   scenarioContext: string,
   simNow: string,
   commandHistory?: CommandHistoryEntry[],
+  profile?: RuntimePlatformProfile,
 ): string {
   const historyBlock = formatCommandHistory(commandHistory);
+  const commandLabel =
+    type === "oc"
+      ? "OpenShift CLI (oc)"
+      : type === "kubectl"
+        ? "Kubernetes CLI (kubectl)"
+        : type === "kql"
+          ? "Kusto Query Language (KQL)"
+          : "Dashboard (legacy Geneva alias)";
+  const platformGuidance = profile
+    ? PLATFORM_PROMPT_FRAGMENTS[profile.id].commandGuidance
+    : "Preferred cluster CLI comes from the active session.";
   return `You are a command output simulator for an SRE training tool.
-Given a command and scenario context, generate realistic output that would be seen on an Azure Red Hat OpenShift cluster experiencing the described incident.
+Given a command and scenario context, generate realistic output that would be seen on the active cluster platform experiencing the described incident.
 
 Rules:
 - Output ONLY the command output, no explanations or commentary.
 - Do not echo the command line, a shell prompt (e.g. starting with "$ "), a line like "[oc]" / "[kql]" / "[geneva]", or repeat the command text — the UI shows the command separately. Begin with the first line of real tool output.
 - Make the output realistic and consistent with the scenario.
 - Include realistic timestamps, pod names, node names, and IP addresses.
-- For ${type === "oc" ? "OpenShift CLI (oc)" : type === "kql" ? "Kusto Query Language (KQL)" : "Geneva"} commands, format output appropriately.
+- For ${commandLabel} commands, format output appropriately.
 - If the command would reveal the root cause, include subtle clues but don't make it too obvious.
 - Use consistent naming: cluster name, node names, etc. from the scenario context.
 - For KQL queries, format as a table with headers and rows.
-- For Geneva commands, format as structured dashboard output.
+- For dashboard/geneva commands, format as structured dashboard output.
 - EXIT CODES AND SYSTEM OUTPUT: Use real Linux/OpenShift conventions. For systemctl status, use the actual format: "Active: active (running)" or "Active: failed" with a real numeric exit code in the "Main PID" line (e.g. "status=143/TERM", "status=1/FAILURE", "code=exited, status=1/FAILURE"). Exit codes must be integers (0=success, 1=general error, 2=misuse, 127=not found, 137=SIGKILL, 143=SIGTERM). Never use placeholder strings like "exit-status" — always use the actual numeric code.
 - TEMPORAL CONSISTENCY: ${simNow} If a time range is shown (e.g. "11:00 - 13:00"), the "Last Updated" or "as of" timestamp must be at or after the end of that range. Never show a "Last Updated" time that falls before the end of the displayed time range.
 - STATE CONTINUITY: If a previous command mutated cluster state (e.g. delete, scale, patch, cordon, drain, apply), subsequent command output MUST reflect that mutation. For example, if a Machine was deleted, it should not appear in a later "oc get machines" listing, or should show a "Deleting"/"Terminating" phase.
 - PLACEHOLDER RESOLUTION: The user may paste angle-bracket placeholders from documentation (e.g. <machine-name>, <node>). Never echo those placeholders in simulated output. Use concrete resource names from the scenario context and the "Named resources" line below.
+- PLATFORM GUIDANCE: ${platformGuidance}
 
 Scenario Context:
 ${scenarioContext}${historyBlock}`;
@@ -88,12 +104,17 @@ ${scenarioContext}${historyBlock}`;
 export function buildScenarioContext(scenario: Scenario | null): string {
   if (!scenario) return "No specific scenario context available.";
   const resourceHints = formatResourceHintsForPrompt(scenario);
-  return `Title: ${scenario.title} (${scenario.difficulty})
+  const platformNotes = scenario.platformContext
+    ? `Platform context: ${JSON.stringify(scenario.platformContext)}`
+    : "Platform context: none";
+  return `Platform: ${scenario.platform}
+Title: ${scenario.title} (${scenario.difficulty})
 Description: ${scenario.description}
 Cluster: ${scenario.clusterContext.name}, version ${scenario.clusterContext.version}
 Status: ${scenario.clusterContext.status}
 Nodes: ${scenario.clusterContext.nodeCount}
 Ticket reported: ${scenario.incidentTicket.reportedTime}
 Alerts: ${scenario.clusterContext.alerts.map((a) => `${a.name} (firing since ${a.firingTime}): ${a.message}`).join("; ")}
-Recent Events: ${scenario.clusterContext.recentEvents.join("; ")}${resourceHints}`;
+Recent Events: ${scenario.clusterContext.recentEvents.join("; ")}
+${platformNotes}${resourceHints}`;
 }

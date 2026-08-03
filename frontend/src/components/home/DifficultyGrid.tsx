@@ -1,6 +1,7 @@
 import type { Difficulty } from "@shared/types/game";
 import { canAccessDifficulty } from "@shared/auth/access";
 import type { Viewer } from "@shared/auth/viewer";
+import { PLATFORM_PROFILES, type PlatformId } from "@shared/types/platform";
 import { AlertTriangle, Flame, Loader2, Zap } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -45,6 +46,7 @@ const DIFFICULTIES: {
 ];
 
 interface DifficultyGridProps {
+  platform: PlatformId;
   viewer: Viewer;
   hasCallsign: boolean;
   loadingDifficulty: Difficulty | null;
@@ -52,11 +54,13 @@ interface DifficultyGridProps {
 }
 
 export function DifficultyGrid({
+  platform,
   viewer,
   hasCallsign,
   loadingDifficulty,
   onSelect,
 }: DifficultyGridProps) {
+  const platformLabel = PLATFORM_PROFILES[platform].label;
   return (
     <div className="grid grid-cols-1 md:grid-cols-3 gap-4 w-full max-w-3xl">
       {DIFFICULTIES.map((difficulty) => {
@@ -109,6 +113,9 @@ export function DifficultyGrid({
             </div>
             <div className="text-xs text-zinc-500 leading-relaxed">
               {allowed ? difficulty.description : difficulty.lockedDescription}
+            </div>
+            <div className="mt-3 text-[11px] uppercase tracking-wide text-zinc-600">
+              {platformLabel}
             </div>
           </button>
         );

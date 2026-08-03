@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import {
   Shield,
   AlertTriangle,
@@ -11,6 +11,11 @@ import {
   ArrowLeft,
   X,
 } from "lucide-react";
+import { useGameStore } from "@/stores/gameStore";
+import {
+  PLATFORM_PROFILES,
+  type PlatformId,
+} from "@shared/types/platform";
 
 export const ONBOARDING_STORAGE_KEY = "sre-sim-onboarding-seen";
 
@@ -27,12 +32,12 @@ interface TourStep {
   iconColor: string;
 }
 
-const STEPS: TourStep[] = [
-  {
+export function getOnboardingSteps(platform: PlatformId): TourStep[] {
+  const profile = PLATFORM_PROFILES[platform];
+  return [{
     target: null,
     title: "Welcome to SRE Simulator",
-    message:
-      "You're about to investigate a live incident on an OpenShift cluster. Let's take a quick tour of the cockpit so you know where everything is.",
+    message: `You're about to investigate a live incident on ${profile.label}. Let's take a quick tour of the cockpit so you know where everything is.`,
     icon: Shield,
     iconColor: "text-amber-400",
   },
@@ -47,8 +52,7 @@ const STEPS: TourStep[] = [
   {
     target: '[data-tour="chat-panel"]',
     title: "Investigation Chat",
-    message:
-      "Chat with the AI mentor here. Describe what you want to investigate and it will translate your intent into oc/KQL commands.",
+    message: `Chat with the AI mentor here. Describe what you want to investigate and it will translate your intent into ${profile.primaryCli}/KQL commands.`,
     icon: MessageSquare,
     iconColor: "text-emerald-400",
   },
@@ -67,8 +71,8 @@ const STEPS: TourStep[] = [
       "The Guide tab explains the 5-phase investigation method (Reading, Context, Facts, Theory, Action). Follow it for a higher score!",
     icon: BookOpen,
     iconColor: "text-purple-400",
-  },
-];
+  }];
+}
 
 interface SpotlightRect {
   top: number;
@@ -82,13 +86,17 @@ interface OnboardingTourProps {
 }
 
 export function OnboardingTour({ onComplete }: OnboardingTourProps) {
+  const platform = useGameStore(
+    (state) => state.scenario?.platform ?? state.selectedPlatform,
+  );
+  const steps = useMemo(() => getOnboardingSteps(platform), [platform]);
   const [step, setStep] = useState(0);
   const [spotlight, setSpotlight] = useState<SpotlightRect | null>(null);
   const tooltipRef = useRef<HTMLDivElement>(null);
   const rafRef = useRef<number>(0);
 
   const computeSpotlight = useCallback(() => {
-    const { target } = STEPS[step];
+    const { target } = steps[step];
     if (!target) return null;
     const el = document.querySelector(target);
     if (!el) return null;
@@ -100,7 +108,7 @@ export function OnboardingTour({ onComplete }: OnboardingTourProps) {
       width: rect.width + pad * 2,
       height: rect.height + pad * 2,
     };
-  }, [step]);
+  }, [step, steps]);
 
   useEffect(() => {
     const update = () => {
@@ -125,7 +133,7 @@ export function OnboardingTour({ onComplete }: OnboardingTourProps) {
   );
 
   const next = () => {
-    if (step < STEPS.length - 1) {
+    if (step < steps.length - 1) {
       setStep(step + 1);
     } else {
       finish(true);
@@ -136,9 +144,9 @@ export function OnboardingTour({ onComplete }: OnboardingTourProps) {
     if (step > 0) setStep(step - 1);
   };
 
-  const current = STEPS[step];
+  const current = steps[step];
   const Icon = current.icon;
-  const isLast = step === STEPS.length - 1;
+  const isLast = step === steps.length - 1;
   const isFirst = step === 0;
 
   const tooltipPosition = getTooltipPosition(spotlight);
@@ -208,7 +216,7 @@ export function OnboardingTour({ onComplete }: OnboardingTourProps) {
           {/* Footer */}
           <div className="flex items-center justify-between px-4 py-3 border-t border-zinc-800 bg-zinc-800/30">
             <div className="flex items-center gap-1.5">
-              {STEPS.map((_, i) => (
+              {steps.map((_, i) => (
                 <span
                   key={i}
                   className={`w-1.5 h-1.5 rounded-full transition-colors ${
@@ -221,7 +229,7 @@ export function OnboardingTour({ onComplete }: OnboardingTourProps) {
                 />
               ))}
               <span className="text-[10px] text-zinc-500 ml-1.5">
-                {step + 1}/{STEPS.length}
+                {step + 1}/{steps.length}
               </span>
             </div>
             <div className="flex items-center gap-2">

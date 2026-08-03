@@ -1,4 +1,5 @@
 import type { Difficulty } from "./game";
+import type { PlatformId } from "./platform";
 import type { Score } from "./scoring";
 
 export type TrafficSource = "player" | "automated";
@@ -6,6 +7,7 @@ export type TrafficSource = "player" | "automated";
 export interface LeaderboardEntry {
   id: string;
   nickname: string;
+  platform: PlatformId;
   difficulty: Difficulty;
   score: Score;
   grade: string;
@@ -21,6 +23,7 @@ export interface LeaderboardEntry {
 
 export interface HallOfFameEntry {
   nickname: string;
+  platform: PlatformId;
   compositeScore: number;
   scores: {
     easy?: number;

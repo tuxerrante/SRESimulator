@@ -456,8 +456,13 @@ login_ghcr_with_local_cli() {
 
 build_and_push_ghcr_image() {
   local container_cli=$1 image_repo=$2 image_tag=$3 dockerfile=$4
+  local image_platform="${AKS_E2E_DEV_IMAGE_PLATFORM:-linux/amd64}"
 
-  "$container_cli" build -f "$dockerfile" -t "${image_repo}:${image_tag}" . >/dev/null
+  "$container_cli" build \
+    --platform "$image_platform" \
+    -f "$dockerfile" \
+    -t "${image_repo}:${image_tag}" \
+    . >/dev/null
   "$container_cli" push "${image_repo}:${image_tag}" >/dev/null
 }
 
@@ -488,6 +493,13 @@ image_pull_policy_for_tag() {
       printf '%s\n' "IfNotPresent"
       ;;
   esac
+}
+
+helm_supports_server_side_conflicts() {
+  local upgrade_help
+  upgrade_help="$(helm upgrade --help 2>/dev/null)" || return 1
+  printf '%s\n' "$upgrade_help" | grep -Fq -- "--server-side" && \
+    printf '%s\n' "$upgrade_help" | grep -Fq -- "--force-conflicts"
 }
 
 # Usage: helm_deploy_sre <namespace> <tag> <probe-token>
@@ -531,10 +543,39 @@ helm_deploy_sre() {
   local auth_flags=()
   local image_pull_flags=()
   local aoai_route_flags=()
+  local helm_upgrade_flags=()
+  local public_origin_flags=()
   local image_pull_policy
   local aoai_model
   local resolved_auth_secret
   local turnstile_site_key
+
+  if [ -n "${AKS_PUBLIC_ORIGIN_OVERRIDE:-}" ]; then
+    if [[ ! "${AKS_PUBLIC_ORIGIN_OVERRIDE}" =~ ^https?://[^[:space:]]+$ ]]; then
+      echo "error: AKS_PUBLIC_ORIGIN_OVERRIDE must be an absolute http(s) origin" >&2
+      rm -f "$exposure_values_file"
+      return 1
+    fi
+    public_origin_flags+=(--set-string "publicOrigin=${AKS_PUBLIC_ORIGIN_OVERRIDE}")
+  fi
+
+  case "${AKS_HELM_FORCE_CONFLICTS:-false}" in
+    1|true|TRUE|yes|YES)
+      if ! helm_supports_server_side_conflicts; then
+        echo "error: AKS_HELM_FORCE_CONFLICTS requires Helm support for --server-side and --force-conflicts (Helm 4+)" >&2
+        rm -f "$exposure_values_file"
+        return 1
+      fi
+      helm_upgrade_flags+=(--server-side=true --force-conflicts)
+      ;;
+    0|false|FALSE|no|NO|"")
+      ;;
+    *)
+      echo "error: AKS_HELM_FORCE_CONFLICTS must be true or false" >&2
+      rm -f "$exposure_values_file"
+      return 1
+      ;;
+  esac
 
   image_pull_policy="$(image_pull_policy_for_tag "$tag")"
   aoai_model="${AOAI_MODEL:-${AOAI_DEPLOYMENT}}"
@@ -554,20 +595,24 @@ helm_deploy_sre() {
     auth_flags+=(--set-string "backend.auth.existingSecretName=${resolved_auth_secret}")
     auth_flags+=(--set-string "backend.auth.authSessionSecretKey=auth-session-secret")
 
-    if [ -n "${ANTI_ABUSE_HMAC_SECRET:-}" ]; then
+    if [ -n "${ANTI_ABUSE_HMAC_SECRET:-}" ] || \
+       secret_has_key "$ns" "$resolved_auth_secret" "anti-abuse-hmac-secret"; then
       auth_flags+=(--set-string "frontend.auth.antiAbuseHmacSecretKey=anti-abuse-hmac-secret")
       auth_flags+=(--set-string "backend.auth.antiAbuseHmacSecretKey=anti-abuse-hmac-secret")
     fi
 
-    if [ -n "$turnstile_site_key" ]; then
+    if [ -n "$turnstile_site_key" ] || \
+       secret_has_key "$ns" "$resolved_auth_secret" "turnstile-site-key"; then
       auth_flags+=(--set-string "frontend.auth.turnstileSiteKeyKey=turnstile-site-key")
     fi
 
-    if [ -n "${TURNSTILE_SECRET_KEY:-}" ]; then
+    if [ -n "${TURNSTILE_SECRET_KEY:-}" ] || \
+       secret_has_key "$ns" "$resolved_auth_secret" "turnstile-secret-key"; then
       auth_flags+=(--set-string "backend.auth.turnstileSecretKey=turnstile-secret-key")
     fi
 
-    if [ -n "${TURNSTILE_EXPECTED_HOSTNAME:-}" ]; then
+    if [ -n "${TURNSTILE_EXPECTED_HOSTNAME:-}" ] || \
+       secret_has_key "$ns" "$resolved_auth_secret" "turnstile-expected-hostname"; then
       auth_flags+=(
         --set-string "backend.auth.turnstileExpectedHostnameKey=turnstile-expected-hostname"
       )
@@ -641,6 +686,8 @@ helm_deploy_sre() {
     "${image_pull_flags[@]}" \
     "${auth_flags[@]}" \
     "${db_flags[@]}" \
+    "${public_origin_flags[@]}" \
+    "${helm_upgrade_flags[@]}" \
     --wait --timeout 15m >/dev/null; then
     rm -f "$exposure_values_file"
     return 1

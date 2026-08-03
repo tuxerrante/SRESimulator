@@ -10,6 +10,7 @@ import { ScoreBreakdown } from "@/components/scoring/ScoreBreakdown";
 import { IncidentTicket } from "@/components/shared/IncidentTicket";
 import { OnboardingTour, resetOnboardingTour, hasSeenOnboardingTour } from "@/components/onboarding/OnboardingTour";
 import { useCommand } from "@/hooks/useCommand";
+import type { CompatibleCommandType } from "@shared/types/platform";
 import {
   buildGameplayTelemetryPayload,
   sendCompletionTelemetryIfNeeded,
@@ -66,7 +67,7 @@ export default function GamePage() {
 
   if (!scenario) return null;
 
-  const handleRunCommand = (command: string, type: "oc" | "kql" | "geneva") => {
+  const handleRunCommand = (command: string, type: CompatibleCommandType) => {
     executeCommand(command, type);
   };
 

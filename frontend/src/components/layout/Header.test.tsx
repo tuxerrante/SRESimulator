@@ -15,6 +15,7 @@ vi.mock("next/link", () => ({
 
 const scenarioFixture: Scenario = {
   id: "scenario-1",
+  platform: "aro-classic",
   title: "One worker node NotReady causing pod disruptions with long title text",
   difficulty: "easy",
   description: "desc",

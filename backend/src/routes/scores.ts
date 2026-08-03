@@ -3,6 +3,11 @@ import { getLeaderboardStore, getMetricsStore, getSessionStore } from "../lib/st
 import { isCleanNickname } from "../lib/profanity";
 import { captureBackendRouteError } from "../lib/telemetry/capture";
 import type { Difficulty } from "../../../shared/types/game";
+import {
+  DEFAULT_PLATFORM_ID,
+  PLATFORM_IDS,
+  type PlatformId,
+} from "../../../shared/types/platform";
 import type { LeaderboardEntry } from "../../../shared/types/leaderboard";
 import {
   MAX_SCORE_PER_DIMENSION,
@@ -29,6 +34,15 @@ const isBoundedScoreValue = (value: number, max: number): boolean =>
 
 function isScoreDimension(value: unknown): value is ScoreDimension {
   return typeof value === "string" && SCORE_DIMENSIONS.includes(value as ScoreDimension);
+}
+
+function parsePlatformQuery(value: unknown): PlatformId | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+  return PLATFORM_IDS.includes(value as PlatformId)
+    ? (value as PlatformId)
+    : null;
 }
 
 function calculateScoreFromEvents(rawEvents: unknown): Score | null {
@@ -79,6 +93,11 @@ function calculateScoreFromEvents(rawEvents: unknown): Score | null {
 scoresRouter.get("/", async (req: Request, res: Response) => {
   try {
     const difficulty = req.query.difficulty as Difficulty | undefined;
+    const requestedPlatform =
+      req.query.platform === undefined
+        ? undefined
+        : parsePlatformQuery(req.query.platform);
+    const platform = requestedPlatform ?? DEFAULT_PLATFORM_ID;
 
     if (difficulty && !VALID_DIFFICULTIES.includes(difficulty)) {
       res.status(400).json({
@@ -86,10 +105,19 @@ scoresRouter.get("/", async (req: Request, res: Response) => {
       });
       return;
     }
+    if (req.query.platform !== undefined && requestedPlatform === null) {
+      res.status(400).json({
+        error: `Invalid platform. Must be ${PLATFORM_IDS.join(", ")}.`,
+      });
+      return;
+    }
 
     const leaderboard = getLeaderboardStore();
-    const entries = await leaderboard.getLeaderboard(difficulty);
-    const hallOfFame = await leaderboard.getHallOfFame();
+    const entries = await leaderboard.getLeaderboard({
+      platform,
+      ...(difficulty ? { difficulty } : {}),
+    });
+    const hallOfFame = await leaderboard.getHallOfFame(platform);
 
     res.json({ entries, hallOfFame });
   } catch (error) {
@@ -139,6 +167,13 @@ scoresRouter.post("/", async (req: Request, res: Response) => {
       return;
     }
     if (
+      gameplayRecord.platform &&
+      gameplayRecord.platform !== existingSession.platform
+    ) {
+      res.status(409).json({ error: "Session telemetry mismatch" });
+      return;
+    }
+    if (
       gameplayRecord.difficulty &&
       gameplayRecord.difficulty !== existingSession.difficulty
     ) {
@@ -183,6 +218,7 @@ scoresRouter.post("/", async (req: Request, res: Response) => {
         saved: false,
         mode: "ephemeral",
         nickname: nickname.trim(),
+        platform: session.platform,
         difficulty: session.difficulty,
         score,
         grade,
@@ -197,6 +233,7 @@ scoresRouter.post("/", async (req: Request, res: Response) => {
     const entry: LeaderboardEntry = {
       id: crypto.randomUUID(),
       nickname: nickname.trim(),
+      platform: session.platform,
       difficulty: session.difficulty,
       score,
       grade,

@@ -41,6 +41,7 @@ describe("MssqlSessionStore", () => {
       /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
     );
     expect(req.input).toHaveBeenCalledWith("token", token);
+    expect(req.input).toHaveBeenCalledWith("platform", "aro-classic");
     expect(req.input).toHaveBeenCalledWith("difficulty", "easy");
     expect(req.input).toHaveBeenCalledWith("scenarioTitle", "Test Scenario");
     expect(req.input).toHaveBeenCalledWith("trafficSource", "player");
@@ -51,6 +52,7 @@ describe("MssqlSessionStore", () => {
 
   it("create() stores identity columns for GitHub-backed sessions", async () => {
     await store.create({
+      platform: "aro-classic",
       difficulty: "hard",
       scenarioTitle: "Etcd Quorum Loss",
       identityKind: "github",
@@ -66,10 +68,26 @@ describe("MssqlSessionStore", () => {
     expect(req.input).toHaveBeenCalledWith("persistentScoreEligible", 1);
   });
 
+  it("create() stores platform on a session row", async () => {
+    await store.create({
+      platform: "aks",
+      difficulty: "easy",
+      scenarioTitle: "AKS ImagePullBackOff",
+      identityKind: "github",
+      githubUserId: "12345",
+      githubLogin: "octocat",
+      anonymousClaimKey: null,
+      persistentScoreEligible: true,
+    });
+
+    expect(req.input).toHaveBeenCalledWith("platform", "aks");
+  });
+
   it("validateAndConsume() returns mapped session on match", async () => {
     const validUuid = "a1b2c3d4-e5f6-7890-abcd-ef1234567890";
     const row = {
       token: validUuid,
+      platform: "aro-hcp" as const,
       difficulty: "hard" as const,
       scenario_id: "scenario_hard_001",
       scenario_title: "Etcd Quorum Loss",
@@ -90,6 +108,7 @@ describe("MssqlSessionStore", () => {
 
     expect(result).toEqual({
       token: validUuid,
+      platform: "aro-hcp",
       difficulty: "hard",
       scenarioId: "scenario_hard_001",
       scenarioTitle: "Etcd Quorum Loss",
@@ -109,6 +128,7 @@ describe("MssqlSessionStore", () => {
     const validUuid = "a1b2c3d4-e5f6-7890-abcd-ef1234567890";
     const row = {
       token: validUuid,
+      platform: "aro-classic" as const,
       difficulty: "medium" as const,
       scenario_id: "scenario_medium_001",
       scenario_title: "Bad Egress",
@@ -129,6 +149,7 @@ describe("MssqlSessionStore", () => {
 
     expect(result).toEqual({
       token: validUuid,
+      platform: "aro-classic",
       difficulty: "medium",
       scenarioId: "scenario_medium_001",
       scenarioTitle: "Bad Egress",
@@ -160,10 +181,11 @@ describe("MssqlLeaderboardStore", () => {
     const { pool, req } = createMockPool([]);
     const store = new MssqlLeaderboardStore(pool);
 
-    await store.getLeaderboard();
+    await store.getLeaderboard({ platform: "aro-classic" });
 
     const inputCalls = req.input.mock.calls.map((c: unknown[]) => c[0]);
     expect(inputCalls).toContain("limit");
+    expect(inputCalls).toContain("platform");
     expect(inputCalls).not.toContain("difficulty");
   });
 
@@ -171,11 +193,13 @@ describe("MssqlLeaderboardStore", () => {
     const { pool, req } = createMockPool([]);
     const store = new MssqlLeaderboardStore(pool);
 
-    await store.getLeaderboard("medium");
+    await store.getLeaderboard({ platform: "aks", difficulty: "medium" });
 
     expect(req.input).toHaveBeenCalledWith("difficulty", "medium");
+    expect(req.input).toHaveBeenCalledWith("platform", "aks");
     const sql = req.query.mock.calls[0][0] as string;
     expect(sql).toContain("WHERE difficulty = @difficulty");
+    expect(sql).toContain("platform = @platform");
     expect(sql).toContain("identity_kind = 'github'");
     expect(sql).toContain("github_user_id IS NOT NULL");
   });
@@ -184,9 +208,10 @@ describe("MssqlLeaderboardStore", () => {
     const { pool, req } = createMockPool([]);
     const store = new MssqlLeaderboardStore(pool);
 
-    await store.getLeaderboard();
+    await store.getLeaderboard({ platform: "aro-classic" });
 
     const sql = req.query.mock.calls[0][0] as string;
+    expect(sql).toContain("platform = @platform");
     expect(sql).toContain("traffic_source = 'player'");
     expect(sql).toContain("identity_kind = 'github'");
     expect(sql).toContain("github_user_id IS NOT NULL");
@@ -196,6 +221,7 @@ describe("MssqlLeaderboardStore", () => {
     const row = {
       id: "entry-1",
       nickname: "tester",
+      platform: "aro-classic" as const,
       difficulty: "easy" as const,
       score_efficiency: 20,
       score_safety: 22,
@@ -214,12 +240,13 @@ describe("MssqlLeaderboardStore", () => {
     const { pool } = createMockPool([row]);
     const store = new MssqlLeaderboardStore(pool);
 
-    const entries = await store.getLeaderboard();
+    const entries = await store.getLeaderboard({ platform: "aro-classic" });
 
     expect(entries).toHaveLength(1);
     expect(entries[0]).toEqual({
       id: "entry-1",
       nickname: "tester",
+      platform: "aro-classic",
       difficulty: "easy",
       score: {
         efficiency: 20,
@@ -250,11 +277,12 @@ describe("MssqlLeaderboardStore", () => {
     const { pool } = createMockPool([row]);
     const store = new MssqlLeaderboardStore(pool);
 
-    const fame = await store.getHallOfFame();
+    const fame = await store.getHallOfFame("aks");
 
     expect(fame).toEqual([
       {
         nickname: "pro",
+        platform: "aks",
         compositeScore: 170,
         scores: { easy: 90, medium: 80 },
       },
@@ -265,9 +293,10 @@ describe("MssqlLeaderboardStore", () => {
     const { pool, req } = createMockPool([]);
     const store = new MssqlLeaderboardStore(pool);
 
-    await store.getHallOfFame();
+    await store.getHallOfFame("aro-hcp");
 
     const sql = req.query.mock.calls[0][0] as string;
+    expect(req.input).toHaveBeenCalledWith("platform", "aro-hcp");
     expect(sql).toContain("ROW_NUMBER()");
     expect(sql).not.toContain("MAX(nickname)");
     expect(sql).toContain("ORDER BY created_at DESC, id DESC");
@@ -278,6 +307,7 @@ describe("MssqlLeaderboardStore", () => {
     const entry = {
       id: "e1",
       nickname: "player",
+      platform: "aro-classic" as const,
       difficulty: "easy" as const,
       score: { efficiency: 20, safety: 20, documentation: 20, accuracy: 20, total: 80 },
       grade: "B",
@@ -296,6 +326,7 @@ describe("MssqlLeaderboardStore", () => {
     const result = await store.addEntry(entry);
 
     expect(result).toBe(entry);
+    expect(req.input).toHaveBeenCalledWith("platform", "aro-classic");
     expect(req.input).toHaveBeenCalledWith("trafficSource", "automated");
     const queries = req.query.mock.calls.map((c: unknown[]) => c[0] as string);
     expect(queries.some((q: string) => q.includes("MERGE"))).toBe(true);
@@ -307,6 +338,7 @@ describe("MssqlLeaderboardStore", () => {
     const entry = {
       id: "e3",
       nickname: "player",
+      platform: "aks" as const,
       difficulty: "hard" as const,
       score: { efficiency: 20, safety: 20, documentation: 20, accuracy: 20, total: 80 },
       grade: "B",
@@ -329,6 +361,7 @@ describe("MssqlLeaderboardStore", () => {
       .filter((sql: string) => sql.includes("DELETE FROM leaderboard_entries"));
 
     expect(trimQueries).toHaveLength(1);
+    expect(req.input).toHaveBeenCalledWith("platform", "aks");
     expect(req.input).toHaveBeenCalledWith("trafficSource", "automated");
   });
 });
@@ -394,6 +427,7 @@ describe("MssqlMetricsStore", () => {
 
     await store.recordGameplay({
       sessionToken: "tok-1",
+      platform: "aro-hcp",
       nickname: "tester",
       difficulty: "hard",
       scenarioTitle: "Cosmos DB Flood",
@@ -413,6 +447,7 @@ describe("MssqlMetricsStore", () => {
     });
 
     expect(req.input).toHaveBeenCalledWith("sessionToken", "tok-1");
+    expect(req.input).toHaveBeenCalledWith("platform", "aro-hcp");
     expect(req.input).toHaveBeenCalledWith("nickname", "tester");
     expect(req.input).toHaveBeenCalledWith("lifecycleState", "completed");
     expect(req.input).toHaveBeenCalledWith("commandCount", 1);
@@ -437,6 +472,7 @@ describe("MssqlMetricsStore", () => {
     await store.recordGameplay({});
 
     expect(req.input).toHaveBeenCalledWith("sessionToken", null);
+    expect(req.input).toHaveBeenCalledWith("platform", "aro-classic");
     expect(req.input).toHaveBeenCalledWith("nickname", null);
     expect(req.input).toHaveBeenCalledWith("lifecycleState", "completed");
     expect(req.input).toHaveBeenCalledWith("commandCount", 0);
@@ -489,6 +525,7 @@ describe("MssqlMetricsStore", () => {
     const row = {
       id: "m1",
       session_token: "tok-1",
+      platform: "aro-classic",
       nickname: "tester",
       difficulty: "easy",
       scenario_title: "Master Down",
@@ -514,6 +551,7 @@ describe("MssqlMetricsStore", () => {
 
     expect(history).toHaveLength(1);
     expect(history[0].commandsExecuted).toEqual(["oc get nodes"]);
+    expect(history[0].platform).toBe("aro-classic");
     expect(history[0].scoringEvents).toEqual([{ type: "accuracy", points: 10 }]);
     expect(history[0].metadata).toEqual({ v: 2 });
     expect(history[0].lifecycleState).toBe("abandoned");
@@ -536,10 +574,95 @@ describe("MssqlMetricsStore", () => {
     expect(sql).toContain("AND lifecycle_state = @lifecycleState");
   });
 
+  it("getGameplayAnalytics() renders the analytics temp table before consuming the CTE", async () => {
+    const summaryRow = {
+      total_sessions: 1,
+      completed_sessions: 1,
+      abandoned_sessions: 0,
+      in_progress_sessions: 0,
+      avg_completion_duration_ms: 120000,
+      avg_completion_command_count: 3,
+      avg_completion_chat_message_count: 2,
+      avg_completion_score_total: 90,
+    };
+    const platformRow = {
+      platform: "aks",
+      total_sessions: 1,
+      completed_sessions: 1,
+      abandoned_sessions: 0,
+      in_progress_sessions: 0,
+    };
+    const difficultyRow = {
+      difficulty: "easy",
+      total_sessions: 1,
+      completed_sessions: 1,
+      abandoned_sessions: 0,
+      in_progress_sessions: 0,
+    };
+    const scenarioRow = {
+      platform: "aks",
+      scenario_title: "AKS ImagePullBackOff",
+      difficulty: "easy",
+      total_sessions: 1,
+      completed_sessions: 1,
+      abandoned_sessions: 0,
+      in_progress_sessions: 0,
+    };
+    const recentRow = {
+      platform: "aks",
+      lifecycle_state: "completed",
+      nickname: "aks-admin",
+      difficulty: "easy",
+      scenario_title: "AKS ImagePullBackOff",
+      command_count: 3,
+      chat_message_count: 2,
+      duration_ms: 120000,
+      score_total: 90,
+      grade: "A",
+      created_at: new Date("2026-07-31T12:00:00Z"),
+    };
+    const req = {
+      input: vi.fn().mockReturnThis(),
+      query: vi.fn().mockResolvedValue({
+        recordset: [summaryRow],
+        recordsets: [[summaryRow], [platformRow], [difficultyRow], [scenarioRow], [recentRow]],
+      }),
+    };
+    const pool = {
+      request: vi.fn().mockReturnValue(req),
+    } as unknown as sql.ConnectionPool;
+    const store = new MssqlMetricsStore(pool);
+
+    const analytics = await store.getGameplayAnalytics({ platform: "aks" });
+
+    expect(req.input).toHaveBeenCalledWith("platform", "aks");
+    expect(analytics.byPlatform).toEqual([
+      expect.objectContaining({
+        platform: "aks",
+        totalSessions: 1,
+        completedSessions: 1,
+      }),
+    ]);
+    expect(analytics.recentSessions[0]).toEqual(
+      expect.objectContaining({
+        platform: "aks",
+        nickname: "aks-admin",
+      }),
+    );
+
+    const sqlText = req.query.mock.calls[0][0] as string;
+    expect(sqlText).toContain("CREATE TABLE #latest_sessions");
+    expect(sqlText).toContain(";WITH ranked_sessions AS");
+    expect(sqlText.indexOf("CREATE TABLE #latest_sessions")).toBeLessThan(
+      sqlText.indexOf(";WITH ranked_sessions AS"),
+    );
+  });
+
   it("getLatestBySessionToken() returns the newest record for a session", async () => {
     const row = {
       id: "latest-1",
       session_token: "tok-latest",
+      platform: "aks",
       traffic_source: "player",
       nickname: "tester",
       difficulty: "easy",
@@ -565,6 +688,7 @@ describe("MssqlMetricsStore", () => {
 
     expect(result).toMatchObject({
       sessionToken: "tok-latest",
+      platform: "aks",
       lifecycleState: "completed",
       scoreTotal: 80,
       grade: "B",
@@ -582,6 +706,7 @@ describe("MssqlMetricsStore", () => {
     const row = {
       id: "latest-completed-1",
       session_token: "tok-latest",
+      platform: "aro-hcp",
       traffic_source: "player",
       nickname: "tester",
       difficulty: "easy",
@@ -607,6 +732,7 @@ describe("MssqlMetricsStore", () => {
 
     expect(result).toMatchObject({
       sessionToken: "tok-latest",
+      platform: "aro-hcp",
       lifecycleState: "completed",
       scoreTotal: 80,
       grade: "B",
@@ -631,7 +757,7 @@ describe("MssqlMetricsStore", () => {
       input: vi.fn().mockReturnThis(),
       query: vi.fn().mockResolvedValue({
         recordset: [summaryRow],
-        recordsets: [[summaryRow], [], [], []],
+        recordsets: [[summaryRow], [], [], [], []],
       }),
     };
     const pool = {
@@ -674,7 +800,7 @@ describe("MssqlMetricsStore", () => {
       input: vi.fn().mockReturnThis(),
       query: vi.fn().mockResolvedValue({
         recordset: [summaryRow],
-        recordsets: [[summaryRow], [], [], []],
+        recordsets: [[summaryRow], [], [], [], []],
       }),
     };
     const pool = {
@@ -692,5 +818,47 @@ describe("MssqlMetricsStore", () => {
     expect(sql).toContain("CREATE TABLE #latest_sessions");
     expect(sql).toContain("INSERT INTO #latest_sessions");
     expect(sql).toContain("DROP TABLE #latest_sessions");
+  });
+
+  it("getGameplayAnalytics() accepts a platform filter and returns byPlatform rows", async () => {
+    const summaryRow = {
+      total_sessions: 1,
+      completed_sessions: 1,
+      abandoned_sessions: 0,
+      in_progress_sessions: 0,
+      avg_completion_duration_ms: 120000,
+      avg_completion_command_count: 5,
+      avg_completion_chat_message_count: 4,
+      avg_completion_score_total: 80,
+    };
+    const platformRow = {
+      platform: "aro-hcp",
+      total_sessions: 1,
+      completed_sessions: 1,
+      abandoned_sessions: 0,
+      in_progress_sessions: 0,
+    };
+    const req = {
+      input: vi.fn().mockReturnThis(),
+      query: vi.fn().mockResolvedValue({
+        recordset: [summaryRow],
+        recordsets: [[summaryRow], [platformRow], [], [], []],
+      }),
+    };
+    const pool = {
+      request: vi.fn().mockReturnValue(req),
+    } as unknown as sql.ConnectionPool;
+    const store = new MssqlMetricsStore(pool);
+
+    const analytics = await store.getGameplayAnalytics({ platform: "aro-hcp" });
+
+    expect(req.input).toHaveBeenCalledWith("platform", "aro-hcp");
+    expect(analytics.byPlatform).toEqual([
+      expect.objectContaining({
+        platform: "aro-hcp",
+        totalSessions: 1,
+        completedSessions: 1,
+      }),
+    ]);
   });
 });

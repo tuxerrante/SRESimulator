@@ -8,9 +8,10 @@ import {
 describe("generateMockScenario", () => {
   it("returns a valid scenario for each difficulty", () => {
     for (const difficulty of ["easy", "medium", "hard"] as const) {
-      const scenario = generateMockScenario(difficulty);
+      const scenario = generateMockScenario(difficulty, "aro-classic");
 
-      expect(scenario.id).toBe(`scenario_mock_${difficulty}`);
+      expect(scenario.id).toBe(`aro-classic-scenario-mock-${difficulty}`);
+      expect(scenario.platform).toBe("aro-classic");
       expect(scenario.difficulty).toBe(difficulty);
       expect(scenario.incidentTicket.clusterName).toBe(
         scenario.clusterContext.name
@@ -21,20 +22,20 @@ describe("generateMockScenario", () => {
   });
 
   it("uses Sev4 for easy, Sev3 for medium, Sev2 for hard", () => {
-    expect(generateMockScenario("easy").incidentTicket.severity).toBe("Sev4");
-    expect(generateMockScenario("medium").incidentTicket.severity).toBe("Sev3");
-    expect(generateMockScenario("hard").incidentTicket.severity).toBe("Sev2");
+    expect(generateMockScenario("easy", "aro-classic").incidentTicket.severity).toBe("Sev4");
+    expect(generateMockScenario("medium", "aro-classic").incidentTicket.severity).toBe("Sev3");
+    expect(generateMockScenario("hard", "aro-classic").incidentTicket.severity).toBe("Sev2");
   });
 
   it("scales node count by difficulty", () => {
-    expect(generateMockScenario("easy").clusterContext.nodeCount).toBe(6);
-    expect(generateMockScenario("medium").clusterContext.nodeCount).toBe(9);
-    expect(generateMockScenario("hard").clusterContext.nodeCount).toBe(12);
+    expect(generateMockScenario("easy", "aro-classic").clusterContext.nodeCount).toBe(6);
+    expect(generateMockScenario("medium", "aro-classic").clusterContext.nodeCount).toBe(9);
+    expect(generateMockScenario("hard", "aro-classic").clusterContext.nodeCount).toBe(12);
   });
 
   it("generates reportedTime within the past 1-7 days", () => {
     const before = Date.now();
-    const scenario = generateMockScenario("easy");
+    const scenario = generateMockScenario("easy", "aro-classic");
     const after = Date.now();
     const reported = new Date(scenario.incidentTicket.reportedTime).getTime();
     const oneDayMs = 86_400_000;
@@ -44,12 +45,20 @@ describe("generateMockScenario", () => {
   });
 
   it("uses critical severity alert for hard difficulty", () => {
-    expect(generateMockScenario("hard").clusterContext.alerts[0].severity).toBe(
+    expect(generateMockScenario("hard", "aro-classic").clusterContext.alerts[0].severity).toBe(
       "critical"
     );
     expect(
-      generateMockScenario("easy").clusterContext.alerts[0].severity
+      generateMockScenario("easy", "aro-classic").clusterContext.alerts[0].severity
     ).toBe("warning");
+  });
+
+  it("uses kubectl-oriented mock metadata for aks", () => {
+    const scenario = generateMockScenario("easy", "aks");
+
+    expect(scenario.platform).toBe("aks");
+    expect(scenario.clusterContext.version).toBe("1.31.2");
+    expect(scenario.platformContext?.nodePoolNames).toContain("systempool");
   });
 });
 
@@ -170,7 +179,7 @@ describe("generateMockCommandOutput", () => {
   });
 
   it("keeps the mock machine list aligned with the mock scenario region", () => {
-    const scenario = generateMockScenario("medium");
+    const scenario = generateMockScenario("medium", "aro-classic");
     const output = generateMockCommandOutput("oc get machines -A", "oc");
     const region = scenario.incidentTicket.region;
 
@@ -195,5 +204,11 @@ describe("generateMockCommandOutput", () => {
     const output = generateMockCommandOutput("dashboard", "geneva");
     expect(output).toContain("Dashboard: Mock Geneva View");
     expect(output).toContain("mock command received: dashboard");
+  });
+
+  it("returns kubectl-style node output for aks commands", () => {
+    const output = generateMockCommandOutput("kubectl get nodes", "kubectl");
+    expect(output).toContain("aks-systempool-000001");
+    expect(output).toContain("v1.31.2");
   });
 });

@@ -1,6 +1,11 @@
 import { Router, type Request, type Response } from "express";
 import { getAiReadiness } from "../lib/ai-config";
 import { generateMockCommandOutput } from "../lib/mock-ai";
+import {
+  getCommandScopeViolation,
+  getRuntimePlatformProfile,
+  isCommandTypeAllowedForPlatform,
+} from "../lib/platform-profiles";
 import { generateAiText, AiThrottledError } from "../lib/ai-runtime";
 import {
   buildScenarioContext,
@@ -16,15 +21,19 @@ import { getRequestSession } from "../lib/rate-limit";
 import { validateSessionScenario } from "../lib/session-scenario";
 import { withAbortTimeout } from "../lib/timeout";
 import type { Scenario } from "../../../shared/types/game";
+import type {
+  CompatibleCommandType,
+  PlatformId,
+} from "../../../shared/types/platform";
 import { stripTerminalCommandEcho } from "../../../shared/stripTerminalCommandEcho";
 
 export const commandRouter = Router();
-const VALID_COMMAND_TYPES = ["oc", "kql", "geneva"] as const;
+const VALID_COMMAND_TYPES = ["oc", "kubectl", "kql", "geneva"] as const;
 
 interface CommandRequestBody {
   sessionToken: string;
   command: string;
-  type: "oc" | "kql" | "geneva";
+  type: CompatibleCommandType;
   scenario: Scenario | null;
   commandHistory?: unknown;
 }
@@ -36,7 +45,7 @@ type LooseHistoryEntry = {
 };
 
 const DEFAULT_MAX_COMMAND_TOKENS = 8192;
-const DEFAULT_COMMAND_TIMEOUT_MS = 20000;
+const DEFAULT_COMMAND_TIMEOUT_MS = 12000;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -59,7 +68,7 @@ class CommandGenerationTimeoutError extends Error {
 
 function buildMockCommandResponse(
   command: string,
-  type: "oc" | "kql" | "geneva",
+  type: CompatibleCommandType,
   options?: { degradedReason?: string },
 ) {
   const degradedReason = options?.degradedReason;
@@ -96,6 +105,8 @@ export function resolveCommandHistoryPlaceholders(
 
 commandRouter.post("/", async (req: Request, res: Response) => {
   let requestScenario: Scenario | null = null;
+  let requestPlatform: PlatformId | null = null;
+  let requestType: CompatibleCommandType | null = null;
   try {
     if (!isRecord(req.body)) {
       res.status(400).json({ error: "Invalid request body" });
@@ -119,16 +130,18 @@ commandRouter.post("/", async (req: Request, res: Response) => {
     }
     if (!VALID_COMMAND_TYPES.includes(type)) {
       res.status(400).json({
-        error: "Invalid command type. Must be oc, kql, or geneva.",
+        error: "Invalid command type. Must be oc, kubectl, kql, or geneva.",
       });
       return;
     }
+    requestType = type;
 
     const session = await getRequestSession(req, body.sessionToken);
     if (!session || session.used) {
       res.status(403).json({ error: "Invalid or expired session token" });
       return;
     }
+    requestPlatform = session.platform;
     const scenarioResult = validateSessionScenario(session, rawScenario);
     if (!scenarioResult.ok) {
       res.status(409).json({ error: scenarioResult.error });
@@ -136,6 +149,25 @@ commandRouter.post("/", async (req: Request, res: Response) => {
     }
     const scenario = scenarioResult.scenario;
     requestScenario = scenario;
+    const profile = getRuntimePlatformProfile(session.platform);
+
+    if (!isCommandTypeAllowedForPlatform(session.platform, type)) {
+      res.status(409).json({
+        error: `Command type ${type} does not match platform ${session.platform}`,
+      });
+      return;
+    }
+    const scopeViolation = getCommandScopeViolation(
+      session.platform,
+      type,
+      command,
+    );
+    if (scopeViolation) {
+      res.status(409).json({
+        error: `${scopeViolation} does not match platform ${session.platform}`,
+      });
+      return;
+    }
 
     const commandResolved = resolveAngleBracketPlaceholders(command, scenario);
     const commandHistoryResolved = resolveCommandHistoryPlaceholders(commandHistory, scenario);
@@ -160,6 +192,7 @@ commandRouter.post("/", async (req: Request, res: Response) => {
       scenarioContext,
       simNow,
       commandHistoryResolved,
+      profile,
     );
 
     const responseText = await withAbortTimeout(
@@ -200,7 +233,10 @@ commandRouter.post("/", async (req: Request, res: Response) => {
       const fallbackType = typeof requestBody.type === "string" &&
           VALID_COMMAND_TYPES.includes(requestBody.type as (typeof VALID_COMMAND_TYPES)[number])
         ? (requestBody.type as (typeof VALID_COMMAND_TYPES)[number])
-        : "oc";
+        : requestType ??
+          (requestPlatform
+            ? getRuntimePlatformProfile(requestPlatform).primaryCli
+            : "oc");
       const fallbackCommandRaw = typeof requestBody.command === "string" ? requestBody.command : "";
       const fallbackScenario = requestScenario ?? (isScenario(requestBody.scenario)
         ? requestBody.scenario

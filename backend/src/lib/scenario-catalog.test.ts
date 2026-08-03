@@ -3,9 +3,10 @@ import { mkdir, mkdtemp, rm, writeFile } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
 
-function validScenarioJson() {
+function validScenarioJson(platform: "aro-classic" | "aro-hcp" | "aks" = "aks") {
   return JSON.stringify({
     id: "scenario_retryable",
+    platform,
     title: "Retryable catalog scenario",
     difficulty: "easy",
     description: "A valid scenario after a failed catalog load.",
@@ -61,21 +62,61 @@ describe("scenario catalog", () => {
   });
 
   it("retries loading after an initial catalog failure is fixed", async () => {
-    await mkdir(join(tmpDir, "easy"), { recursive: true });
-    const scenarioPath = join(tmpDir, "easy", "retryable.json");
+    await mkdir(join(tmpDir, "aks", "easy"), { recursive: true });
+    const scenarioPath = join(tmpDir, "aks", "easy", "retryable.json");
     await writeFile(scenarioPath, "{");
 
     const catalogModule = await import("./scenario-catalog");
 
-    await expect(catalogModule.getCatalogScenario("easy")).rejects.toMatchObject({
+    await expect(
+      catalogModule.getCatalogScenario({ platform: "aks", difficulty: "easy" }),
+    ).rejects.toMatchObject({
       clientMessage: "Scenario catalog is invalid.",
     });
 
-    await writeFile(scenarioPath, validScenarioJson());
+    await writeFile(scenarioPath, validScenarioJson("aks"));
 
-    await expect(catalogModule.getCatalogScenario("easy")).resolves.toMatchObject({
+    await expect(
+      catalogModule.getCatalogScenario({ platform: "aks", difficulty: "easy" }),
+    ).resolves.toMatchObject({
       id: "scenario_retryable",
+      platform: "aks",
       difficulty: "easy",
+    });
+  });
+
+  it("fails startup validation when any supported platform/difficulty pair has zero scenarios", async () => {
+    await mkdir(join(tmpDir, "aro-classic", "easy"), { recursive: true });
+    await writeFile(
+      join(tmpDir, "aro-classic", "easy", "retryable.json"),
+      validScenarioJson("aro-classic"),
+    );
+
+    const catalogModule = await import("./scenario-catalog");
+
+    await expect(catalogModule.assertCatalogCoverage()).rejects.toMatchObject({
+      clientMessage: "Scenario catalog is invalid.",
+    });
+  });
+
+  it("rejects catalog platformContext keys that are not part of the runtime schema", async () => {
+    await mkdir(join(tmpDir, "aks", "easy"), { recursive: true });
+    await writeFile(
+      join(tmpDir, "aks", "easy", "invalid-platform-context.json"),
+      JSON.stringify({
+        ...JSON.parse(validScenarioJson("aks")),
+        platformContext: {
+          nodePools: ["pool-a"],
+        },
+      }),
+    );
+
+    const catalogModule = await import("./scenario-catalog");
+
+    await expect(
+      catalogModule.getCatalogScenario({ platform: "aks", difficulty: "easy" }),
+    ).rejects.toMatchObject({
+      clientMessage: "Scenario catalog is invalid.",
     });
   });
 });

@@ -156,6 +156,19 @@ describe("compactHistory", () => {
     expect(result.retainedState?.mentionedCommands).toContain("oc get nodes");
   });
 
+  it("extracts kubectl commands from code blocks", () => {
+    const messages: AiTextMessage[] = [
+      {
+        role: "assistant",
+        content: "Try running:\n```kubectl\nkubectl get nodes\n```\n[PHASE:facts]",
+      },
+      ...makeMessages(18, 2000),
+    ];
+    const result = compactHistory(messages, 0, 3000);
+
+    expect(result.retainedState?.mentionedCommands).toContain("kubectl get nodes");
+  });
+
   it("extracts hypotheses from user messages", () => {
     const messages: AiTextMessage[] = [
       { role: "user", content: "I think the root cause is a failed etcd member." },

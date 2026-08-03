@@ -10,6 +10,7 @@ describe("DifficultyGrid", () => {
   it("locks medium and hard for anonymous players", () => {
     render(
       <DifficultyGrid
+        platform="aro-classic"
         viewer={null}
         hasCallsign
         loadingDifficulty={null}
@@ -26,6 +27,7 @@ describe("DifficultyGrid", () => {
   it("unlocks all difficulties for GitHub players", () => {
     render(
       <DifficultyGrid
+        platform="aro-classic"
         viewer={{
           kind: "github",
           githubUserId: "12345",
@@ -47,6 +49,7 @@ describe("DifficultyGrid", () => {
   it("keeps all difficulties disabled until the player adds a callsign", () => {
     render(
       <DifficultyGrid
+        platform="aro-classic"
         viewer={null}
         hasCallsign={false}
         loadingDifficulty={null}
@@ -64,6 +67,7 @@ describe("DifficultyGrid", () => {
 
     render(
       <DifficultyGrid
+        platform="aro-classic"
         viewer={{
           kind: "github",
           githubUserId: "12345",

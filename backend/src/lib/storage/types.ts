@@ -1,6 +1,7 @@
 import type { Difficulty } from "../../../../shared/types/game";
 import type { LeaderboardEntry, HallOfFameEntry, TrafficSource } from "../../../../shared/types/leaderboard";
 import type { GameplayAnalytics, GameplayLifecycleState } from "../../../../shared/types/gameplay";
+import type { PlatformId } from "../../../../shared/types/platform";
 import type { GithubViewer } from "../../../../shared/auth/viewer";
 
 export type SessionIdentityKind = "github" | "anonymous";
@@ -8,6 +9,7 @@ export type { TrafficSource } from "../../../../shared/types/leaderboard";
 
 export interface GameSession {
   token: string;
+  platform: PlatformId;
   difficulty: Difficulty;
   scenarioId: string | null;
   scenarioTitle: string;
@@ -23,6 +25,7 @@ export interface GameSession {
 }
 
 export interface CreateGameSessionInput {
+  platform: PlatformId;
   difficulty: Difficulty;
   scenarioId?: string | null;
   scenarioTitle: string;
@@ -53,6 +56,7 @@ export interface AnonymousTrialClaim {
 export interface GameplayRecord {
   id?: string;
   sessionToken?: string;
+  platform?: PlatformId;
   trafficSource?: TrafficSource;
   nickname?: string;
   difficulty?: Difficulty;
@@ -80,10 +84,19 @@ export interface ISessionStore {
   validateAndConsume(token: string): Promise<GameSession | null>;
 }
 
+export interface LeaderboardFilters {
+  difficulty?: Difficulty;
+  platform?: PlatformId;
+}
+
 export interface ILeaderboardStore {
-  getLeaderboard(difficulty?: Difficulty): Promise<LeaderboardEntry[]>;
-  getHallOfFame(): Promise<HallOfFameEntry[]>;
+  getLeaderboard(filters?: LeaderboardFilters): Promise<LeaderboardEntry[]>;
+  getHallOfFame(platform: PlatformId): Promise<HallOfFameEntry[]>;
   addEntry(entry: LeaderboardEntry): Promise<LeaderboardEntry>;
+}
+
+export interface GameplayAnalyticsFilters {
+  platform?: PlatformId;
 }
 
 export interface IMetricsStore {
@@ -95,7 +108,7 @@ export interface IMetricsStore {
   getLatestBySessionToken(sessionToken: string): Promise<GameplayRecord | null>;
   getLatestCompletedBySessionToken(sessionToken: string): Promise<GameplayRecord | null>;
   getPlayerHistory(nickname: string): Promise<GameplayRecord[]>;
-  getGameplayAnalytics(): Promise<GameplayAnalytics>;
+  getGameplayAnalytics(filters?: GameplayAnalyticsFilters): Promise<GameplayAnalytics>;
 }
 
 export interface IPlayerStore {

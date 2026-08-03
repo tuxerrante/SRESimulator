@@ -1,5 +1,6 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import type { Scenario } from "../../../../shared/types/game";
+import { getRuntimePlatformProfile } from "../platform-profiles";
 import { buildScenarioContext, buildSimNow, buildCommandSystemPrompt } from "./command";
 
 const FIXED_NOW = new Date("2026-03-27T14:00:00.000Z");
@@ -7,6 +8,7 @@ const FIXED_NOW = new Date("2026-03-27T14:00:00.000Z");
 function makeScenario(overrides?: Partial<Scenario>): Scenario {
   return {
     id: "scenario_test",
+    platform: "aro-classic",
     title: "Worker Node NotReady",
     difficulty: "easy",
     description: "A worker node has gone NotReady due to DiskPressure",
@@ -161,41 +163,94 @@ describe("buildSimNow", () => {
 describe("buildCommandSystemPrompt", () => {
   it("embeds simNow in the TEMPORAL CONSISTENCY rule", () => {
     const simNow = "The current UTC time is 2026-03-27T14:00:00.000Z.";
-    const prompt = buildCommandSystemPrompt("oc", "ctx", simNow);
+    const prompt = buildCommandSystemPrompt(
+      "oc",
+      "ctx",
+      simNow,
+      undefined,
+      getRuntimePlatformProfile("aro-classic"),
+    );
     expect(prompt).toContain("TEMPORAL CONSISTENCY: The current UTC time is 2026-03-27T14:00:00.000Z.");
   });
 
   it("embeds scenario context at the end", () => {
-    const prompt = buildCommandSystemPrompt("oc", "Title: Test (easy)", "simNow");
+    const prompt = buildCommandSystemPrompt(
+      "oc",
+      "Title: Test (easy)",
+      "simNow",
+      undefined,
+      getRuntimePlatformProfile("aro-classic"),
+    );
     expect(prompt).toContain("Scenario Context:\nTitle: Test (easy)");
   });
 
   it("instructs the model not to echo angle-bracket placeholders in output", () => {
-    const prompt = buildCommandSystemPrompt("oc", "ctx", "now");
+    const prompt = buildCommandSystemPrompt(
+      "oc",
+      "ctx",
+      "now",
+      undefined,
+      getRuntimePlatformProfile("aro-classic"),
+    );
     expect(prompt).toContain("PLACEHOLDER RESOLUTION");
   });
 
   it("labels oc commands as OpenShift CLI", () => {
-    const prompt = buildCommandSystemPrompt("oc", "ctx", "now");
+    const prompt = buildCommandSystemPrompt(
+      "oc",
+      "ctx",
+      "now",
+      undefined,
+      getRuntimePlatformProfile("aro-classic"),
+    );
     expect(prompt).toContain("OpenShift CLI (oc)");
     expect(prompt).not.toContain("Kusto Query Language");
   });
 
   it("labels kql commands as Kusto Query Language", () => {
-    const prompt = buildCommandSystemPrompt("kql", "ctx", "now");
+    const prompt = buildCommandSystemPrompt(
+      "kql",
+      "ctx",
+      "now",
+      undefined,
+      getRuntimePlatformProfile("aro-classic"),
+    );
     expect(prompt).toContain("Kusto Query Language (KQL)");
   });
 
   it("labels geneva commands as Geneva", () => {
-    const prompt = buildCommandSystemPrompt("geneva", "ctx", "now");
-    expect(prompt).toContain("Geneva commands");
+    const prompt = buildCommandSystemPrompt(
+      "geneva",
+      "ctx",
+      "now",
+      undefined,
+      getRuntimePlatformProfile("aro-classic"),
+    );
+    expect(prompt).toContain("Dashboard (legacy Geneva alias)");
+  });
+
+  it("labels kubectl commands as Kubernetes CLI for aks", () => {
+    const prompt = buildCommandSystemPrompt(
+      "kubectl",
+      "ctx",
+      "now",
+      undefined,
+      getRuntimePlatformProfile("aks"),
+    );
+    expect(prompt).toContain("Kubernetes CLI (kubectl)");
   });
 
   it("includes command history when provided", () => {
     const history = [
       { command: "oc get nodes", output: "master-0 Ready", type: "oc" as const },
     ];
-    const prompt = buildCommandSystemPrompt("oc", "ctx", "now", history);
+    const prompt = buildCommandSystemPrompt(
+      "oc",
+      "ctx",
+      "now",
+      history,
+      getRuntimePlatformProfile("aro-classic"),
+    );
     expect(prompt).toContain("Previously Executed Commands");
     expect(prompt).toContain("$ oc get nodes");
     expect(prompt).toContain("master-0 Ready");
@@ -208,7 +263,13 @@ describe("buildCommandSystemPrompt", () => {
       type: "oc" as const,
     }));
 
-    const prompt = buildCommandSystemPrompt("oc", "ctx", "now", history);
+    const prompt = buildCommandSystemPrompt(
+      "oc",
+      "ctx",
+      "now",
+      history,
+      getRuntimePlatformProfile("aro-classic"),
+    );
 
     expect(prompt).toContain("$ oc get pods -n ns-0");
     expect(prompt).toContain("$ oc get pods -n ns-19");
@@ -221,19 +282,37 @@ describe("buildCommandSystemPrompt", () => {
       type: "oc" as const,
     }));
 
-    const prompt = buildCommandSystemPrompt("oc", "ctx", "now", history);
+    const prompt = buildCommandSystemPrompt(
+      "oc",
+      "ctx",
+      "now",
+      history,
+      getRuntimePlatformProfile("aro-classic"),
+    );
 
     expect(prompt).toContain("$ oc get machines -n openshift-machine-api batch-23");
     expect(prompt).not.toContain("$ oc get machines -n openshift-machine-api batch-0");
   });
 
   it("omits history section when no history provided", () => {
-    const prompt = buildCommandSystemPrompt("oc", "ctx", "now");
+    const prompt = buildCommandSystemPrompt(
+      "oc",
+      "ctx",
+      "now",
+      undefined,
+      getRuntimePlatformProfile("aro-classic"),
+    );
     expect(prompt).not.toContain("Previously Executed Commands");
   });
 
   it("instructs the model not to echo the command or prompt lines", () => {
-    const prompt = buildCommandSystemPrompt("oc", "ctx", "now");
+    const prompt = buildCommandSystemPrompt(
+      "oc",
+      "ctx",
+      "now",
+      undefined,
+      getRuntimePlatformProfile("aro-classic"),
+    );
     expect(prompt).toContain("Do not echo the command line");
     expect(prompt).toContain('"[oc]"');
   });

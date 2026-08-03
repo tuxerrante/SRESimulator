@@ -24,7 +24,7 @@ function parseSessionScenario(sessionPayload: string | null): ParsedSessionScena
 }
 
 export function validateSessionScenario(
-  session: Pick<GameSession, "scenarioPayload" | "scenarioTitle" | "difficulty" | "scenarioId">,
+  session: Pick<GameSession, "platform" | "scenarioPayload" | "scenarioTitle" | "difficulty" | "scenarioId">,
   rawScenario: Scenario | null,
 ): SessionScenarioValidationResult {
   const parsedSessionScenario = parseSessionScenario(session.scenarioPayload);
@@ -36,6 +36,7 @@ export function validateSessionScenario(
 
   if (storedScenario) {
     if (
+      storedScenario.platform !== session.platform ||
       storedScenario.title !== session.scenarioTitle ||
       storedScenario.difficulty !== session.difficulty ||
       (session.scenarioId && storedScenario.id !== session.scenarioId)
@@ -44,7 +45,8 @@ export function validateSessionScenario(
     }
     if (
       rawScenario &&
-      (rawScenario.id !== storedScenario.id ||
+      (rawScenario.platform !== storedScenario.platform ||
+        rawScenario.id !== storedScenario.id ||
         rawScenario.title !== storedScenario.title ||
         rawScenario.difficulty !== storedScenario.difficulty)
     ) {
@@ -55,7 +57,8 @@ export function validateSessionScenario(
 
   if (
     rawScenario &&
-    (rawScenario.difficulty !== session.difficulty ||
+    (rawScenario.platform !== session.platform ||
+      rawScenario.difficulty !== session.difficulty ||
       rawScenario.title !== session.scenarioTitle ||
       (session.scenarioId && rawScenario.id !== session.scenarioId))
   ) {

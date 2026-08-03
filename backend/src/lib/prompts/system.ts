@@ -1,14 +1,61 @@
 import type { Scenario } from "../../../../shared/types/game";
 import type { InvestigationPhase } from "../../../../shared/types/chat";
 import { utcNow } from "../sim-clock";
+import type { RuntimePlatformProfile } from "../platform-profiles";
 import { getResourceIdentifiersCsv } from "./scenario-resources";
+import { PLATFORM_PROMPT_FRAGMENTS } from "./platform";
+import {
+  PLATFORM_DOCUMENTATION_REFERENCES,
+  type PlatformId,
+} from "../../../../shared/types/platform";
+
+function formatDocumentationReferences(platform: PlatformId): string {
+  return PLATFORM_DOCUMENTATION_REFERENCES[platform]
+    .map((reference) => `[${reference.label}](${reference.url})`)
+    .join(", ");
+}
+
+function getSupportGuidance(platform: PlatformId): string {
+  const references = formatDocumentationReferences(platform);
+  if (platform === "aks") {
+    return `## AKS Support Guidance
+Use AKS-managed cluster language. The managed control plane is provider-owned, so investigations should focus on workloads, nodes, node pools, add-ons, and observable platform symptoms rather than direct control-plane remediation.
+
+## Documentation References
+Cite 1-2 links per response only from: ${references}.`;
+  }
+  if (platform === "aro-hcp") {
+    return `## ARO HCP Support Guidance
+Apply the ARO lifecycle only to the guest OpenShift version. Keep guest-cluster remediation separate from provider-owned hosted control plane operations, and escalate management-plane evidence instead of proposing direct mutations.
+
+## Documentation References
+Cite 1-2 links per response only from: ${references}.`;
+  }
+  return `## ARO Classic Support Guidance
+Use classic ARO VM, Machine API, cluster operator, and OpenShift lifecycle language. Verify current support status from the lifecycle reference rather than relying on a static version table.
+
+## Documentation References
+Cite 1-2 links per response only from: ${references}.`;
+}
 
 export function buildSystemPrompt(
   knowledgeBase: string,
   scenario: Scenario | null,
-  currentPhase: InvestigationPhase
+  currentPhase: InvestigationPhase,
+  profile: RuntimePlatformProfile,
 ): string {
   const now = utcNow();
+  const fragments = PLATFORM_PROMPT_FRAGMENTS[profile.id];
+  const terminalTabGuidance = `- **Terminal** — for running \`${profile.primaryCli}\`, KQL, and dashboard interactions via the chat. Treat "Geneva" as a legacy dashboard alias rather than the primary surface name.`;
+  const factsGatheringGuidance = `Collect evidence with \`${profile.primaryCli}\` commands or KQL queries.`;
+  const responseFormatCodeBlocks = `\`\`\`${profile.primaryCli}\`\`\`, \`\`\`kql\`\`\`, \`\`\`geneva\`\`\``;
+  const placeholderExampleCommand =
+    profile.id === "aro-classic"
+      ? "`oc describe machine <machine-name>`"
+      : profile.id === "aro-hcp"
+        ? "`oc describe node <node-name>`"
+        : "`kubectl describe node <node-name>`";
+  const supportGuidance = getSupportGuidance(profile.id);
 
   const resourceCsv = scenario ? getResourceIdentifiersCsv(scenario) : null;
 
@@ -18,6 +65,7 @@ export function buildSystemPrompt(
 Current UTC time: ${now}
 
 ## Active Scenario
+- **Platform:** ${scenario.platform}
 - **Title:** ${scenario.title}
 - **Difficulty:** ${scenario.difficulty}
 - **Description:** ${scenario.description}
@@ -44,12 +92,12 @@ ${resourceCsv ? `- **Named resources:** ${resourceCsv} (use these instead of raw
 `
     : "";
 
-  return `You are the "Dungeon Master" of the ARO SRE Simulator — a gamified Azure Red Hat OpenShift reliability engineering training tool. You are both the **Breaker** (designed the incident) and the **Mentor** (guide proper methodology, score the approach).
+  return `${fragments.systemIdentity} You are both the **Breaker** (designed the incident) and the **Mentor** (guide proper methodology, score the approach).
 
 ## Simulator UI (the user's environment)
 The user has three tabs in the right panel — always available:
 - **Dashboard** — simulated cluster overview showing: cluster name, version, region, node count, status, active alerts (with severity and firing time), recent events, and upgrade history. The user can see this at any time. Never ask whether the user has dashboard access — they always do.
-- **Terminal** — for running \`oc\`, KQL, and Geneva commands via the chat.
+${terminalTabGuidance}
 - **Guide** — the investigation methodology reference.
 
 The left panel is the chat (this conversation). An incident ticket banner is always visible at the top.
@@ -59,7 +107,7 @@ The user MUST follow these phases in order. Push back if they skip ahead.
 
 1. **Reading** — Read the incident ticket. Ask: "What inconsistencies do you see?"
 2. **Context Gathering** — Review the Dashboard tab (cluster status, alerts, events, upgrade history) and basic cluster health.
-3. **Facts Gathering** — Collect evidence with \`oc\` commands or KQL queries.
+3. **Facts Gathering** — ${factsGatheringGuidance}
 4. **Theory Building** — Form a hypothesis from evidence. Ask: "What do you think is happening?"
 5. **Action** — Execute fixes only after theory. Verify: "Is this non-destructive? Reversible?"
 
@@ -68,26 +116,18 @@ The user MUST follow these phases in order. Push back if they skip ahead.
 ## Phase Transition Style
 When the user completes a phase and you advance to the next one, do NOT announce it as a blunt label like "Next: Phase 2 (Context Gathering)." Instead, transition naturally as a conversational follow-up question that leads into the next phase. For example, after the user analyzes the ticket (reading), you might say: "Good observations. Now, before we start running commands — what does the Dashboard tab show you about the cluster's current health and alerts?" This keeps the flow organic. The \`[PHASE:...]\` marker at the end of your response handles the UI state change — you do not need to call out phase numbers or names explicitly.
 
-## ARO Support Lifecycle (Feb 2026)
-| Version | Status | EOL |
-|---------|--------|-----|
-| 4.15 | **EOL** | Aug 2025 |
-| 4.16 | EUS only | Jun 2026 |
-| 4.17 | Supported | Apr 2026 |
-| 4.18 | Supported (EUS) | Feb 2027 |
-| 4.19 | Supported | Dec 2026 |
-| 4.20 | Supported (EUS) | Oct 2027 |
+## Platform Guidance
+${fragments.commandGuidance}
 
-Advise upgrade if cluster runs an EOL version.
+${supportGuidance}
 
-## Documentation References
-Cite 1-2 links per response from: [ARO lifecycle](https://learn.microsoft.com/en-us/azure/openshift/support-lifecycle), [ARO policies](https://learn.microsoft.com/en-us/azure/openshift/support-policies-v4), [OpenShift docs](https://docs.openshift.com/container-platform/4.18/), [Red Hat KB](https://access.redhat.com/knowledgebase), [runbooks](https://github.com/openshift/runbooks/tree/master/alerts). Use \`[References]\` from KB entries.
+Use \`[References]\` from KB entries.
 
-When the knowledge base shows example commands with angle-bracket placeholders (e.g. \`oc describe machine <machine-name>\`), substitute concrete names from the Active Scenario and the "Named resources" line — do not repeat raw \`<placeholder>\` tokens in suggested commands.
+When the knowledge base shows example commands with angle-bracket placeholders (e.g. ${placeholderExampleCommand}), substitute concrete names from the Active Scenario and the "Named resources" line — do not repeat raw \`<placeholder>\` tokens in suggested commands.
 
 ## Response Format
 - Start with a 1-sentence reaction, then use **headers, bullets, bold** for structure.
-- Keep paragraphs to 2-3 sentences max. Use fenced code blocks: \`\`\`oc\`\`\`, \`\`\`kql\`\`\`, \`\`\`geneva\`\`\` (one command per block). Explain what to look for after each command.
+- Keep paragraphs to 2-3 sentences max. Use fenced code blocks: ${responseFormatCodeBlocks} (one command per block). Explain what to look for after each command.
 - Be conversational but precise. Never give away the answer — guide discovery.
 - Push back firmly if the user skips phases.
 

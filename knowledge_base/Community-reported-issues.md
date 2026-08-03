@@ -1,5 +1,9 @@
 # Community-Reported OpenShift Issues: Reproducible Scenarios
 
+> **Platform scope:** ARO Classic only. Machine API, Hive, master VM, and direct
+> etcd recovery procedures in this file must not be used for ARO HCP or AKS
+> sessions.
+
 **References:**
 
 - [ARO Support Lifecycle & Release Calendar](https://learn.microsoft.com/en-us/azure/openshift/support-lifecycle)
@@ -299,7 +303,7 @@ Real-world OpenShift issues collected from r/openshift, Stack Overflow, GitHub i
   3. The node goes `NotReady` and pods are evicted
   4. For deeper simulation: corrupt files in `/var/lib/containers/storage/overlay/`
 - **References:**
-  - [OpenShift 4.16 Docs: Troubleshooting CRI-O](https://docs.openshift.com/container-platform/4.16/support/troubleshooting/troubleshooting-crio-issues.html)
+  - [OpenShift 4.18 Docs: Troubleshooting CRI-O](https://docs.openshift.com/container-platform/4.18/support/troubleshooting/troubleshooting-crio-issues.html)
   - [Red Hat Solution 6427321: CRI-O and kubelet stuck in dead status](https://access.redhat.com/solutions/6427321)
   - [Red Hat Solution 7070514: kubelet and crio do not start after reboot](https://access.redhat.com/solutions/7070514)
 
@@ -410,7 +414,7 @@ Real-world OpenShift issues collected from r/openshift, Stack Overflow, GitHub i
   2. The pod starts, the probe fails with 404, kubelet kills it, and it enters CrashLoopBackOff
 
 - **References:**
-  - [OpenShift 4.8 Docs: Application Health](https://docs.openshift.com/container-platform/4.18/applications/application-health.html)
+  - [OpenShift 4.18 Docs: Application Health](https://docs.openshift.com/container-platform/4.18/applications/application-health.html)
 
 ## Control Plane
 
@@ -438,7 +442,7 @@ Real-world OpenShift issues collected from r/openshift, Stack Overflow, GitHub i
 
 - **References:**
   - [Red Hat Article: ETCD performance troubleshooting](https://access.redhat.com/articles/6271341)
-  - [OKD Docs: Recommended etcd practices](https://docs.okd.io/4.18/scalability_and_performance/recommended-performance-scale-practices/recommended-etcd-practices.html)
+  - [OpenShift 4.18 Docs: Recommended etcd practices](https://docs.openshift.com/container-platform/4.18/scalability_and_performance/recommended-performance-scale-practices/recommended-etcd-practices.html)
   - [OpenShift Runbooks: etcdHighFsyncDurations](https://github.com/openshift/runbooks/blob/master/alerts/cluster-etcd-operator/etcdHighFsyncDurations.md)
 
 ### etcd Insufficient Members
@@ -456,7 +460,7 @@ Real-world OpenShift issues collected from r/openshift, Stack Overflow, GitHub i
   3. API becomes read-only
 - **References:**
   - [OpenShift Runbooks: etcdInsufficientMembers](https://github.com/openshift/runbooks/blob/master/alerts/cluster-etcd-operator/etcdInsufficientMembers.md)
-  - [OKD Docs: Quorum Restoration](https://docs.okd.io/latest/backup_and_restore/control_plane_backup_and_restore/disaster_recovery/quorum-restoration.html)
+  - [OpenShift 4.18 Docs: Quorum Restoration](https://docs.openshift.com/container-platform/4.18/backup_and_restore/control_plane_backup_and_restore/disaster_recovery/quorum-restoration.html)
 
 ### kube-apiserver Restarts Due to Webhook Misconfiguration
 

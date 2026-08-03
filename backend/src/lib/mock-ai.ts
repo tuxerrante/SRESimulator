@@ -1,5 +1,10 @@
 import type { InvestigationPhase } from "../../../shared/types/chat";
 import type { Difficulty, Scenario } from "../../../shared/types/game";
+import {
+  PLATFORM_PROFILES,
+  type CompatibleCommandType,
+  type PlatformId,
+} from "../../../shared/types/platform";
 import { utcOffsetMinutes, utcDaysAgo } from "./sim-clock";
 
 const REGION = "westus3";
@@ -10,20 +15,51 @@ function severityForDifficulty(difficulty: Difficulty): "Sev2" | "Sev3" | "Sev4"
   return "Sev4";
 }
 
-export function generateMockScenario(difficulty: Difficulty): Scenario {
-  const clusterName = `aro-${difficulty}-mock`;
+export function generateMockScenario(
+  difficulty: Difficulty,
+  platform: PlatformId,
+): Scenario {
+  const primaryCli = PLATFORM_PROFILES[platform].primaryCli;
+  const clusterName =
+    platform === "aks" ? `aks-${difficulty}-mock` : `${platform}-${difficulty}-mock`;
+  const platformContext =
+    platform === "aro-classic"
+      ? {
+          machineNames: [
+            `${clusterName}-master-0`,
+            `${clusterName}-master-1`,
+            `${clusterName}-worker-0`,
+          ],
+          routeNames: ["console-openshift-console", "oauth-openshift"],
+        }
+      : platform === "aro-hcp"
+        ? {
+            guestClusterName: clusterName,
+            hostedControlPlaneNamespace: `${clusterName}-hcp`,
+            nodePoolNames: ["worker-a", "worker-b"],
+            controlPlaneBoundaryNotes: [
+              "Guest cluster workloads can be inspected with oc.",
+              "Hosted control plane remediation is management-plane owned.",
+            ],
+          }
+        : {
+            nodePoolNames: ["systempool", "userpool"],
+            managedResourceGroupHint: `MC_${clusterName}_westus3`,
+            addonContext: ["coredns", "metrics-server", "azure-cni"],
+          };
   return {
-    id: `scenario_mock_${difficulty}`,
-    title: `Mock ${difficulty.toUpperCase()} scenario`,
+    id: `${platform}-scenario-mock-${difficulty}`,
+    platform,
+    title: `Mock ${platform} ${difficulty.toUpperCase()} scenario`,
     difficulty,
     description:
-      "Mock AI mode scenario used to validate cluster deployment wiring.",
+      `Mock ${platform} scenario used to validate ${primaryCli} platform flows.`,
     incidentTicket: {
-      id: `IcM-MOCK-${difficulty.toUpperCase()}`,
+      id: `IcM-MOCK-${platform.toUpperCase()}-${difficulty.toUpperCase()}`,
       severity: severityForDifficulty(difficulty),
-      title: `Mock incident for ${difficulty} difficulty`,
+      title: `Mock ${platform} incident`,
       description:
-        "This ticket is generated in AI mock mode to validate end-to-end plumbing.",
+        `This ticket is generated in AI mock mode to validate ${platform} end-to-end plumbing.`,
       customerImpact:
         "No customer impact. This is a non-production mock validation scenario.",
       reportedTime: utcDaysAgo(),
@@ -32,19 +68,19 @@ export function generateMockScenario(difficulty: Difficulty): Scenario {
     },
     clusterContext: {
       name: clusterName,
-      version: "4.19.9",
+      version: platform === "aks" ? "1.31.2" : "4.19.9",
       region: REGION,
       nodeCount: difficulty === "easy" ? 6 : difficulty === "medium" ? 9 : 12,
       status: "Degraded (mock)",
       recentEvents: [
-        `${utcOffsetMinutes(-40)} - monitor: mock alert triggered`,
+        `${utcOffsetMinutes(-40)} - ${primaryCli}: mock alert triggered`,
         `${utcOffsetMinutes(-35)} - kubelet: probe timeout observed`,
       ],
       alerts: [
         {
-          name: "MockProbeFailure",
+          name: "MockPlatformAlert",
           severity: difficulty === "hard" ? "critical" : "warning",
-          message: "Mock AI mode alert to validate UI and command path.",
+          message: `Mock ${platform} alert to validate UI and command path.`,
           firingTime: utcOffsetMinutes(-25),
         },
       ],
@@ -57,6 +93,7 @@ export function generateMockScenario(difficulty: Difficulty): Scenario {
         },
       ],
     },
+    platformContext,
   };
 }
 
@@ -127,8 +164,9 @@ function extractDeleteTarget(trimmed: string): { resource: string; name: string 
   };
 }
 
-function mockOcOutput(command: string): string {
-  const trimmed = command.replace(/^oc\s+/, "");
+function mockClusterCliOutput(command: string, type: "oc" | "kubectl"): string {
+  const trimmed = command.replace(/^(?:oc|kubectl)\s+/, "");
+  const isKubectl = type === "kubectl";
   const commandTokens = command
     .toLowerCase()
     .split(/\s+/)
@@ -136,14 +174,14 @@ function mockOcOutput(command: string): string {
 
   if (/^describe\s+node/i.test(trimmed)) {
     const nameMatch = trimmed.match(/^describe\s+node\s+(\S+)/i);
-    const nodeName = nameMatch?.[1] ?? "master-0";
+    const nodeName = nameMatch?.[1] ?? (isKubectl ? "aks-systempool-000001" : "master-0");
     return [
       `Name:               ${nodeName}`,
-      `Roles:              master`,
+      `Roles:              ${isKubectl ? "<none>" : "master"}`,
       `Labels:             kubernetes.io/hostname=${nodeName}`,
-      `                    node-role.kubernetes.io/master=`,
-      `                    node.openshift.io/os_id=rhcos`,
-      `Annotations:        machineconfiguration.openshift.io/state: Done`,
+      `                    ${isKubectl ? "agentpool=systempool" : "node-role.kubernetes.io/master="}`,
+      `                    ${isKubectl ? "kubernetes.azure.com/cluster=aks-mock" : "node.openshift.io/os_id=rhcos"}`,
+      `Annotations:        ${isKubectl ? "volumes.kubernetes.io/controller-managed-attach-detach=true" : "machineconfiguration.openshift.io/state: Done"}`,
       `CreationTimestamp:   ${utcOffsetMinutes(-90 * 24 * 60)}`,
       `Taints:             <none>`,
       `Unschedulable:      false`,
@@ -155,7 +193,7 @@ function mockOcOutput(command: string): string {
       `  PIDPressure          False   ${utcOffsetMinutes(-2)}   KubeletHasSufficientPID      kubelet has sufficient PID available`,
       `  Ready                True    ${utcOffsetMinutes(-2)}   KubeletReady                 kubelet is posting ready status`,
       `Addresses:`,
-      `  InternalIP:  10.0.1.4`,
+      `  InternalIP:  ${isKubectl ? "10.240.0.4" : "10.0.1.4"}`,
       `  Hostname:    ${nodeName}`,
       `Capacity:`,
       `  cpu:                8`,
@@ -173,6 +211,9 @@ function mockOcOutput(command: string): string {
   }
 
   if (/^describe\s+machine\b/i.test(trimmed)) {
+    if (isKubectl) {
+      return 'error: the server doesn\'t have a resource type "machines"';
+    }
     const withNs = trimmed.match(/^describe\s+machine\s+-n\s+\S+\s+(\S+)/i);
     let name = withNs?.[1];
     if (!name) {
@@ -205,13 +246,13 @@ function mockOcOutput(command: string): string {
     const podName = nameMatch?.[1] ?? "example-pod-abc12";
     return [
       `Name:         ${podName}`,
-      `Namespace:    openshift-monitoring`,
-      `Node:         worker-0/10.0.2.4`,
+      `Namespace:    ${isKubectl ? "kube-system" : "openshift-monitoring"}`,
+      `Node:         ${isKubectl ? "aks-systempool-000001/10.240.0.4" : "worker-0/10.0.2.4"}`,
       `Status:       Running`,
-      `IP:           10.128.0.15`,
+      `IP:           ${isKubectl ? "10.244.0.15" : "10.128.0.15"}`,
       `Containers:`,
       `  main:`,
-      `    Image:          quay.io/openshift/mock-image:v4.19`,
+      `    Image:          ${isKubectl ? "mcr.microsoft.com/oss/kubernetes/mock-image:v1.31" : "quay.io/openshift/mock-image:v4.19"}`,
       `    State:          Running`,
       `      Started:      ${utcOffsetMinutes(-60)}`,
       `    Ready:          True`,
@@ -231,7 +272,7 @@ function mockOcOutput(command: string): string {
     const name = parts?.[2] || `${resource}-mock-0`;
     return [
       `Name:         ${name}`,
-      `Namespace:    openshift-cluster`,
+      `Namespace:    ${isKubectl ? "kube-system" : "openshift-cluster"}`,
       `Labels:       app=${resource}`,
       `Annotations:  <none>`,
       `Status:       Active`,
@@ -265,6 +306,9 @@ function mockOcOutput(command: string): string {
   }
 
   if (/^get\s+machine/i.test(trimmed)) {
+    if (isKubectl) {
+      return 'error: the server doesn\'t have a resource type "machines"';
+    }
     return [
       "NAME                                   PHASE         TYPE              REGION    ZONE   AGE",
       `aro-mock-master-0                      Running       Standard_D8s_v3   ${REGION}    1      90d`,
@@ -278,7 +322,7 @@ function mockOcOutput(command: string): string {
   if (/^get\s+events/i.test(trimmed)) {
     return [
       `LAST SEEN   TYPE      REASON    OBJECT               MESSAGE`,
-      `${utcOffsetMinutes(-10)}   Normal    Pulling   pod/monitor-abc12    Pulling image "quay.io/openshift/mock:v4.19"`,
+      `${utcOffsetMinutes(-10)}   Normal    Pulling   pod/monitor-abc12    Pulling image "${isKubectl ? "mcr.microsoft.com/oss/kubernetes/mock:v1.31" : "quay.io/openshift/mock:v4.19"}"`,
       `${utcOffsetMinutes(-8)}    Normal    Pulled    pod/monitor-abc12    Successfully pulled image`,
       `${utcOffsetMinutes(-5)}    Warning   Unhealthy pod/monitor-abc12    Readiness probe failed: connection refused`,
       `${utcOffsetMinutes(-2)}    Normal    Scheduled pod/api-server-xyz   Successfully assigned pod`,
@@ -287,9 +331,17 @@ function mockOcOutput(command: string): string {
 
   return [
     "NAME                                   STATUS   ROLES    AGE   VERSION",
-    "master-0                               Ready    master   90d   v1.30.4+mock",
-    "master-1                               Ready    master   90d   v1.30.4+mock",
-    "worker-0                               Ready    worker   90d   v1.30.4+mock",
+    ...(isKubectl
+      ? [
+          "aks-systempool-000001                  Ready    <none>   90d   v1.31.2",
+          "aks-systempool-000002                  Ready    <none>   90d   v1.31.2",
+          "aks-userpool-000001                    Ready    <none>   90d   v1.31.2",
+        ]
+      : [
+          "master-0                               Ready    master   90d   v1.30.4+mock",
+          "master-1                               Ready    master   90d   v1.30.4+mock",
+          "worker-0                               Ready    worker   90d   v1.30.4+mock",
+        ]),
     "",
     `# mock command received: ${command}`,
   ].join("\n");
@@ -297,10 +349,10 @@ function mockOcOutput(command: string): string {
 
 export function generateMockCommandOutput(
   command: string,
-  type: "oc" | "kql" | "geneva"
+  type: CompatibleCommandType,
 ): string {
-  if (type === "oc") {
-    return mockOcOutput(command);
+  if (type === "oc" || type === "kubectl") {
+    return mockClusterCliOutput(command, type);
   }
 
   if (type === "kql") {

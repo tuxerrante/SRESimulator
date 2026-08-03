@@ -580,6 +580,59 @@ run_none_deploy_path_check() {
   assert_not_contains 'loadBalancerIP:' "$TMP_DIR/captured-values.yaml"
 }
 
+run_none_deploy_public_origin_conflict_override_check() {
+  # shellcheck disable=SC1091
+  source "$ROOT_DIR/scripts/aks-deploy.sh"
+  stub_cluster_helpers
+  capture_helm_invocation
+  helm_supports_server_side_conflicts() { return 0; }
+
+  unset DEPLOY_HOST DEPLOY_SCHEME || true
+  E2E_RELEASE="sre-simulator"
+  AKS_RG="example-aks-rg"
+  AKS_CLUSTER="example-aks"
+  AKS_EXPOSURE_MODE="none"
+  AKS_LOCAL_PORT_FORWARD_PORT="38080"
+  AKS_PUBLIC_ORIGIN_OVERRIDE="https://e2e.example.test"
+  AKS_HELM_FORCE_CONFLICTS="true"
+  AOAI_DEPLOYMENT="gpt-4o-mini"
+
+  if ! helm_deploy_sre "sre-e2e" "e2e-test-dev" "probe-token" >"$TMP_DIR/none-override.txt" 2>&1; then
+    cat "$TMP_DIR/none-override.txt" >&2 || true
+    fail "helm_deploy_sre should support an explicit public origin and conflict takeover"
+  fi
+
+  assert_contains "publicOrigin=https://e2e.example.test" "$TMP_DIR/helm-args.txt"
+  assert_contains "--server-side=true" "$TMP_DIR/helm-args.txt"
+  assert_contains "--force-conflicts" "$TMP_DIR/helm-args.txt"
+  assert_contains 'mode: "none"' "$TMP_DIR/captured-values.yaml"
+
+  unset AKS_PUBLIC_ORIGIN_OVERRIDE AKS_HELM_FORCE_CONFLICTS || true
+}
+
+run_force_conflicts_requires_supported_helm_check() {
+  # shellcheck disable=SC1091
+  source "$ROOT_DIR/scripts/aks-deploy.sh"
+  stub_cluster_helpers
+  capture_helm_invocation
+  helm_supports_server_side_conflicts() { return 1; }
+
+  E2E_RELEASE="sre-simulator"
+  AKS_RG="example-aks-rg"
+  AKS_CLUSTER="example-aks"
+  AKS_EXPOSURE_MODE="none"
+  AKS_LOCAL_PORT_FORWARD_PORT="38080"
+  AKS_HELM_FORCE_CONFLICTS="true"
+  AOAI_DEPLOYMENT="gpt-4o-mini"
+
+  if helm_deploy_sre "sre-e2e" "e2e-test-dev" "probe-token" >"$TMP_DIR/unsupported-helm.out" 2>&1; then
+    fail "helm_deploy_sre should reject conflict takeover when Helm lacks the required flags"
+  fi
+
+  assert_contains "AKS_HELM_FORCE_CONFLICTS requires Helm support" "$TMP_DIR/unsupported-helm.out"
+  unset AKS_HELM_FORCE_CONFLICTS || true
+}
+
 run_immutable_tag_check() {
   # shellcheck disable=SC1091
   source "$ROOT_DIR/scripts/aks-deploy.sh"
@@ -710,6 +763,95 @@ run_optional_auth_verification_flag_check() {
   assert_contains "backend.auth.turnstileExpectedHostnameKey=turnstile-expected-hostname" "$TMP_DIR/helm-args.txt"
   assert_contains "backend.auth.turnstileTestMode=true" "$TMP_DIR/helm-args.txt"
   assert_contains "backend.auth.localTestVerificationEnabled=true" "$TMP_DIR/helm-args.txt"
+}
+
+run_default_copied_auth_secret_wires_anonymous_easy_keys_check() {
+  # shellcheck disable=SC1091
+  source "$ROOT_DIR/scripts/aks-deploy.sh"
+  capture_helm_invocation
+
+  require_cli() { :; }
+  ensure_namespace() { :; }
+  resolve_aks_public_endpoint() {
+    AKS_FRONTEND_PUBLIC_IP_NAME="example-frontend-pip"
+    AKS_FRONTEND_PUBLIC_IP="203.0.113.10"
+    AKS_FRONTEND_PUBLIC_FQDN="aks.example.test"
+    AKS_FRONTEND_PUBLIC_ENDPOINT_HOST="aks.example.test"
+  }
+  copy_secret_across_namespaces() {
+    printf '%s|%s|%s\n' "$1" "$2" "$3" >"$TMP_DIR/default-auth-secret-copy.txt"
+  }
+  upsert_secret_literal_key() { :; }
+  secret_exists_in_namespace() {
+    [ "$1" = "sre-simulator" ] && [ "$2" = "sre-auth-secrets" ]
+  }
+  secret_has_key() {
+    case "$3" in
+      anti-abuse-hmac-secret|turnstile-site-key|turnstile-secret-key|turnstile-expected-hostname)
+        return 0
+        ;;
+      *)
+        return 1
+        ;;
+    esac
+  }
+
+  unset AKS_GATEWAY_HOST AKS_GATEWAY_CLASS_NAME \
+    AKS_CLUSTER_ISSUER_NAME AKS_GATEWAY_TLS_SECRET_NAME || true
+  unset GITHUB_AUTH_SECRET_NAME E2E_AUTH_SECRET_NAME AUTH_SECRET_SOURCE_NAMESPACE || true
+  unset GITHUB_CLIENT_ID GITHUB_CLIENT_SECRET AUTH_SESSION_SECRET ANTI_ABUSE_HMAC_SECRET || true
+  unset TURNSTILE_SECRET_KEY TURNSTILE_EXPECTED_HOSTNAME TURNSTILE_SITE_KEY NEXT_PUBLIC_TURNSTILE_SITE_KEY || true
+  unset TURNSTILE_TEST_MODE || true
+  E2E_RELEASE="sre-simulator"
+  AKS_RG="example-aks-rg"
+  AKS_CLUSTER="example-aks"
+  AKS_EXPOSURE_MODE="publicService"
+  AOAI_DEPLOYMENT="gpt-4o-mini"
+
+  if ! helm_deploy_sre "sre-e2e" "latest" "probe-token" >"$TMP_DIR/default-auth-secret.out" 2>&1; then
+    cat "$TMP_DIR/default-auth-secret.out" >&2 || true
+    fail "helm_deploy_sre should reuse the default copied auth secret for anonymous Easy verification"
+  fi
+
+  assert_contains "frontend.auth.existingSecretName=sre-auth-secrets" "$TMP_DIR/helm-args.txt"
+  assert_contains "backend.auth.existingSecretName=sre-auth-secrets" "$TMP_DIR/helm-args.txt"
+  assert_contains "backend.auth.authSessionSecretKey=auth-session-secret" "$TMP_DIR/helm-args.txt"
+  assert_contains "frontend.auth.antiAbuseHmacSecretKey=anti-abuse-hmac-secret" "$TMP_DIR/helm-args.txt"
+  assert_contains "frontend.auth.turnstileSiteKeyKey=turnstile-site-key" "$TMP_DIR/helm-args.txt"
+  assert_contains "backend.auth.antiAbuseHmacSecretKey=anti-abuse-hmac-secret" "$TMP_DIR/helm-args.txt"
+  assert_contains "backend.auth.turnstileSecretKey=turnstile-secret-key" "$TMP_DIR/helm-args.txt"
+  assert_contains "backend.auth.turnstileExpectedHostnameKey=turnstile-expected-hostname" "$TMP_DIR/helm-args.txt"
+  assert_contains "sre-simulator|sre-e2e|sre-auth-secrets" "$TMP_DIR/default-auth-secret-copy.txt"
+}
+
+run_runtime_auth_values_skip_default_secret_copy_check() {
+  local resolved_secret
+
+  # shellcheck disable=SC1091
+  source "$ROOT_DIR/scripts/kube-deploy-common.sh"
+
+  copy_secret_across_namespaces() {
+    fail "runtime auth values should not copy the default source secret"
+  }
+  upsert_secret_literal_key() {
+    printf '%s|%s|%s\n' "$1" "$2" "$3" >>"$TMP_DIR/runtime-auth-upserts.txt"
+  }
+  secret_exists_in_namespace() {
+    [ "$1" = "sre-simulator" ] && [ "$2" = "sre-auth-secrets" ]
+  }
+
+  unset GITHUB_AUTH_SECRET_NAME E2E_AUTH_SECRET_NAME AUTH_SECRET_SOURCE_NAMESPACE || true
+  unset GITHUB_CLIENT_ID GITHUB_CLIENT_SECRET ANTI_ABUSE_HMAC_SECRET || true
+  unset TURNSTILE_SECRET_KEY TURNSTILE_EXPECTED_HOSTNAME TURNSTILE_SITE_KEY NEXT_PUBLIC_TURNSTILE_SITE_KEY || true
+  AUTH_SESSION_SECRET="runtime-auth-secret"
+
+  resolved_secret="$(ensure_auth_secret_for_e2e_namespace "sre-e2e")"
+
+  [ "$resolved_secret" = "sre-auth-secrets" ] || \
+    fail "runtime auth values should create the default destination secret"
+  assert_contains "sre-e2e|sre-auth-secrets|auth-session-secret" "$TMP_DIR/runtime-auth-upserts.txt"
+
+  unset AUTH_SESSION_SECRET || true
 }
 
 run_clusterissuer_manifest_check() {
@@ -1498,9 +1640,9 @@ run_e2e_route_up_dev_image_fallback_check() {
   assert_contains "auth token" "$gh_log"
   assert_contains "api user --jq .login" "$gh_log"
   assert_contains "login ghcr.io -u fake-gh-user --password-stdin" "$docker_log"
-  assert_contains "build -f frontend/Dockerfile -t ghcr.io/tuxerrante/sre-simulator-frontend:${dev_tag} ." "$docker_log"
+  assert_contains "build --platform linux/amd64 -f frontend/Dockerfile -t ghcr.io/tuxerrante/sre-simulator-frontend:${dev_tag} ." "$docker_log"
   assert_contains "push ghcr.io/tuxerrante/sre-simulator-frontend:${dev_tag}" "$docker_log"
-  assert_contains "build -f backend/Dockerfile -t ghcr.io/tuxerrante/sre-simulator-backend:${dev_tag} ." "$docker_log"
+  assert_contains "build --platform linux/amd64 -f backend/Dockerfile -t ghcr.io/tuxerrante/sre-simulator-backend:${dev_tag} ." "$docker_log"
   assert_contains "push ghcr.io/tuxerrante/sre-simulator-backend:${dev_tag}" "$docker_log"
   assert_not_contains 'WARNING: TAG=latest uses GHCR latest' "$output_file"
 }
@@ -1523,6 +1665,7 @@ run_makefile_gateway_defaults_check() {
   assert_contains 'AKS_E2E_PUSH_DEV_IMAGES ?= false' "$makefile"
   assert_contains 'AKS_E2E_DEV_IMAGE_TAG ?=' "$makefile"
   assert_contains 'AKS_E2E_DEV_IMAGE_TAG_SUFFIX ?= dev' "$makefile"
+  assert_contains 'AKS_E2E_DEV_IMAGE_PLATFORM ?= linux/amd64' "$makefile"
   assert_contains 'export AKS_EXPOSURE_MODE AKS_E2E_EXPOSURE_MODE AKS_GATEWAY_HOST AKS_GATEWAY_CLASS_NAME' "$makefile"
   assert_contains 'export AKS_GATEWAY_TLS_SECRET_NAME AKS_CLUSTER_ISSUER_NAME' "$makefile"
   assert_contains 'export AKS_DNS_ZONE_NAME AKS_DNS_ZONE_RESOURCE_GROUP' "$makefile"
@@ -1551,7 +1694,7 @@ run_makefile_port_forward_e2e_targets_check() {
   assert_contains 'AKS_E2E_EXPOSURE_MODE ?= none' "$makefile"
   assert_contains 'AKS E2E dev-image fallback enabled; using GHCR tag $$TAG' "$makefile"
   assert_contains 'export AKS_SKIP_GATEWAY_BOOTSTRAP AKS_LOCAL_PORT_FORWARD_PORT' "$makefile"
-  assert_contains 'export AKS_E2E_PUSH_DEV_IMAGES AKS_E2E_DEV_IMAGE_TAG AKS_E2E_DEV_IMAGE_TAG_SUFFIX' "$makefile"
+  assert_contains 'export AKS_E2E_PUSH_DEV_IMAGES AKS_E2E_DEV_IMAGE_TAG AKS_E2E_DEV_IMAGE_TAG_SUFFIX AKS_E2E_DEV_IMAGE_PLATFORM' "$makefile"
   assert_contains 'echo "  AKS_EXPOSURE_MODE: $(call e2e_var_source,AKS_EXPOSURE_MODE)"' "$makefile"
   assert_contains 'echo "  AKS_E2E_EXPOSURE_MODE: $(call e2e_var_source,AKS_E2E_EXPOSURE_MODE)"' "$makefile"
   assert_contains 'if [ "$(CLUSTER_FLAVOR)" = "aks" ] && [ -z "$(AKS_EXPOSURE_MODE_EXPLICIT)" ]; then \' "$makefile"
@@ -1565,6 +1708,9 @@ run_makefile_port_forward_e2e_targets_check() {
   assert_contains 'KEEP_PORT_FORWARD=true' "$makefile"
   assert_contains 'ps -p "$$PORT_FORWARD_PID" -o args=' "$makefile"
   assert_contains 'Skipping stale or unexpected port-forward PID $$PORT_FORWARD_PID' "$makefile"
+  assert_contains 'METADATA_NS="$$(sed -n '\''s/^NS=//p'\'' "$(E2E_METADATA_FILE)")"' "$makefile"
+  assert_contains 'PORT_FORWARD_PID="$$(sed -n '\''s/^PORT_FORWARD_PID=//p'\'' "$(E2E_METADATA_FILE)")"' "$makefile"
+  assert_contains 'if [ "$$METADATA_NS" = "$$TARGET_NS" ]; then \' "$makefile"
   assert_contains 'port-forward "svc/$(E2E_RELEASE)-frontend" "$(AKS_LOCAL_PORT_FORWARD_PORT):$(FRONTEND_PORT)"' "$makefile"
   assert_contains 'Local frontend port-forward failed to start.' "$makefile"
 }
@@ -1606,10 +1752,14 @@ main() {
   run_gateway_deploy_skip_bootstrap_check
   run_none_values_check
   run_none_deploy_path_check
+  run_none_deploy_public_origin_conflict_override_check
+  run_force_conflicts_requires_supported_helm_check
   run_immutable_tag_check
   run_frontend_auth_secret_flag_check
   run_auth_secret_resolution_sanitizes_and_keeps_helm_args_clean_check
   run_optional_auth_verification_flag_check
+  run_default_copied_auth_secret_wires_anonymous_easy_keys_check
+  run_runtime_auth_values_skip_default_secret_copy_check
   run_clusterissuer_manifest_check
   run_clusterissuer_manifest_requires_email_check
   run_gatewayclass_manifest_check

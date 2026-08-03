@@ -121,9 +121,13 @@ Instead of sending the entire knowledge base (~75 KB, ~18K tokens) on
 every chat request, the backend parses KB files into sections at startup
 and selects only the sections relevant to the current scenario and user
 message. The investigation methodology (`sre-investigation-techniques.md`)
-is always included. Relevant sections are selected by keyword scoring
-against the scenario title, description, alerts, and the user's latest
-message, capped at 8000 characters (~2K tokens).
+is always included. ARO Classic additionally loads the two repo-owned
+OpenShift issue catalogs, while AKS and ARO HCP exclude those Classic-only
+files. Every session then adds the matching
+`knowledge_base/platforms/<platform>/platform-operations.md` bundle before
+retrieval ranking runs. Relevant sections are selected by keyword scoring
+against the scenario title, description, platform context, alerts, and the
+user's latest message, capped at 8000 characters (~2K tokens).
 
 This reduces per-request *prompt* tokens from ~32K to ~2.5K (measured on
 gpt-5.2 with prompt caching active), enabling roughly 10x more concurrent
@@ -138,6 +142,19 @@ scenario and KB content) to maximize cache hits. The runtime also sends
 `prompt_cache_key` keyed by scenario title so all players on the same
 scenario share the same cache bucket. Cached tokens appear in the
 `[token-usage]` log lines.
+
+### Prompt composition order
+
+Runtime prompt builders compose platform sessions in this order:
+
+1. Shared investigation methodology bundle
+2. Shared simulator instruction fragments
+3. Platform-specific knowledge bundle
+4. Platform-specific prompt fragments
+5. Scenario-specific context
+
+Scenario generation and catalog startup validation also reject platformContext
+keys and issue vocabulary that belong to another platform.
 
 ---
 
@@ -203,7 +220,9 @@ keywords with the question.
 The command route (`/api/command`) builds system prompts from extracted
 helper functions rather than inline string literals. Only the scenario
 context and temporal rules are sent as dynamic content; the static
-instruction layer is shared across calls.
+instruction layer is shared across calls. The command prompt now resolves
+the active gameplay platform before simulation, which is what allows AKS
+sessions to emit `kubectl` output while ARO sessions continue to emit `oc`.
 
 ### Fallback behavior
 
@@ -213,6 +232,9 @@ entire completion budget), the backend:
 1. Retries once with `reasoning_effort=low`.
 2. If still empty, the command route falls back to deterministic mock output
    so gameplay continues unblocked.
+
+Command generation has a 12-second default application timeout so the degraded
+mock response is returned before the public edge request budget can emit a 504.
 
 ---
 
@@ -360,14 +382,15 @@ metrics independently — there is no aggregated view across replicas.
 **Mitigation:** Export structured logs to an external observability stack
 (e.g., Azure Monitor, Prometheus) for durable, cross-replica metrics.
 
-### Leaderboard writes serialize on a single process
+### JSON stores are local-only
 
-The leaderboard JSON file on PVC uses an in-process async mutex. In a
-multi-replica deployment, concurrent writes from different pods can
-race. The current architecture expects a single backend replica.
+The JSON player and leaderboard stores use in-process queues, filesystem locks,
+and atomic renames for local development and tests. Startup refuses
+`STORAGE_BACKEND=json` under Kubernetes or production mode, so deployed
+replicas use MSSQL instead of sharing JSON files on a PVC.
 
-**Mitigation:** Move leaderboard storage to a shared database (e.g.,
-CosmosDB, Redis) or use a distributed lock.
+**Guardrail:** If deployed JSON storage is ever reintroduced, it must use a
+distributed datastore or lock rather than these local filesystem primitives.
 
 ### Context compaction is best-effort
 

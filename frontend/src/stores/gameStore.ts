@@ -1,12 +1,17 @@
 import { create } from "zustand";
 import type { ChatMessage, InvestigationPhase } from "@shared/types/chat";
 import type { Scenario, GameStatus } from "@shared/types/game";
+import {
+  DEFAULT_PLATFORM_ID,
+  type PlatformId,
+} from "@shared/types/platform";
 import type { TerminalEntry } from "@shared/types/terminal";
 import type { Score, ScoringEvent } from "@shared/types/scoring";
 import { getViewerAccessPolicy } from "@shared/auth/access";
 import type { GithubViewer, ViewerAccessPolicy } from "@shared/auth/viewer";
 
 const NICKNAME_KEY = "sre-nickname";
+const PLATFORM_KEY = "sre-platform";
 
 function loadNickname(): string | null {
   try {
@@ -30,10 +35,13 @@ interface GameState {
 
   // Session
   status: GameStatus;
+  selectedPlatform: PlatformId;
   scenario: Scenario | null;
   sessionToken: string | null;
   startTime: number | null;
   endTime: number | null;
+  setSelectedPlatform: (platform: PlatformId) => void;
+  hydrateSelectedPlatform: () => void;
 
   // Chat
   messages: ChatMessage[];
@@ -116,10 +124,29 @@ export const useGameStore = create<GameState>((set) => ({
     }),
 
   status: "idle",
+  selectedPlatform: DEFAULT_PLATFORM_ID,
   scenario: null,
   sessionToken: null,
   startTime: null,
   endTime: null,
+  setSelectedPlatform: (platform) => {
+    try {
+      globalThis.localStorage?.setItem(PLATFORM_KEY, platform);
+    } catch {
+      // Ignore restricted storage environments.
+    }
+    set({ selectedPlatform: platform });
+  },
+  hydrateSelectedPlatform: () => {
+    try {
+      const raw = globalThis.localStorage?.getItem(PLATFORM_KEY);
+      if (raw === "aro-classic" || raw === "aro-hcp" || raw === "aks") {
+        set({ selectedPlatform: raw });
+      }
+    } catch {
+      // Ignore restricted storage environments.
+    }
+  },
 
   messages: [],
   isStreaming: false,
@@ -142,6 +169,7 @@ export const useGameStore = create<GameState>((set) => ({
   startGame: (scenario, sessionToken) =>
     set({
       status: "playing",
+      selectedPlatform: scenario.platform,
       scenario,
       sessionToken,
       startTime: Date.now(),

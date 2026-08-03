@@ -33,6 +33,7 @@ describe("leaderboard", () => {
     return {
       id: crypto.randomUUID(),
       nickname,
+      platform: "aro-classic" as const,
       difficulty,
       score: {
         efficiency: total / 4,
@@ -64,7 +65,7 @@ describe("leaderboard", () => {
     await addEntry(makeEntry("alice", "easy", 80));
     await addEntry(makeEntry("bob", "easy", 90));
 
-    const entries = await getLeaderboard("easy");
+    const entries = await getLeaderboard({ difficulty: "easy" });
     expect(entries).toHaveLength(2);
     expect(entries[0].nickname).toBe("bob");
     expect(entries[1].nickname).toBe("alice");
@@ -76,7 +77,7 @@ describe("leaderboard", () => {
     await addEntry(makeEntry("alice", "easy", 60));
     await addEntry(makeEntry("alice", "easy", 90));
 
-    const entries = await getLeaderboard("easy");
+    const entries = await getLeaderboard({ difficulty: "easy" });
     expect(entries).toHaveLength(1);
     expect(entries[0].score.total).toBe(90);
   });
@@ -87,7 +88,7 @@ describe("leaderboard", () => {
     await addEntry(makeEntry("alice", "easy", 90));
     await addEntry(makeEntry("alice", "easy", 60));
 
-    const entries = await getLeaderboard("easy");
+    const entries = await getLeaderboard({ difficulty: "easy" });
     expect(entries).toHaveLength(1);
     expect(entries[0].score.total).toBe(90);
   });
@@ -99,7 +100,7 @@ describe("leaderboard", () => {
       await addEntry(makeEntry(`player-${i}`, "easy", 50 + i));
     }
 
-    const entries = await getLeaderboard("easy");
+    const entries = await getLeaderboard({ difficulty: "easy" });
     expect(entries.length).toBeLessThanOrEqual(10);
     expect(entries[0].score.total).toBe(61);
   });
@@ -110,9 +111,9 @@ describe("leaderboard", () => {
     await addEntry(makeEntry("alice", "easy", 80));
     await addEntry(makeEntry("bob", "medium", 70));
 
-    expect(await getLeaderboard("easy")).toHaveLength(1);
-    expect(await getLeaderboard("medium")).toHaveLength(1);
-    expect(await getLeaderboard("hard")).toHaveLength(0);
+    expect(await getLeaderboard({ difficulty: "easy" })).toHaveLength(1);
+    expect(await getLeaderboard({ difficulty: "medium" })).toHaveLength(1);
+    expect(await getLeaderboard({ difficulty: "hard" })).toHaveLength(0);
   });
 
   it("computes hall of fame with composite scores", async () => {
@@ -122,7 +123,7 @@ describe("leaderboard", () => {
     await addEntry(makeEntry("alice", "medium", 70));
     await addEntry(makeEntry("bob", "easy", 90));
 
-    const hall = await getHallOfFame();
+    const hall = await getHallOfFame("aro-classic");
     expect(hall).toHaveLength(2);
     expect(hall[0].nickname).toBe("alice");
     expect(hall[0].compositeScore).toBe(150);
@@ -136,7 +137,7 @@ describe("leaderboard", () => {
     await addEntry(makeEntry("alice", "easy", 60));
     await addEntry(makeEntry("alice", "easy", 90));
 
-    const hall = await getHallOfFame();
+    const hall = await getHallOfFame("aro-classic");
     expect(hall[0].scores.easy).toBe(90);
   });
 
@@ -153,7 +154,7 @@ describe("leaderboard", () => {
     await addEntry(first);
     await addEntry(renamed);
 
-    const hall = await getHallOfFame();
+    const hall = await getHallOfFame("aro-classic");
     expect(hall[0].nickname).toBe("alice-renamed");
   });
 });
