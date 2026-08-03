@@ -322,7 +322,7 @@ test-integration: test-shell ## Run backend integration tests (full API game flo
 playwright-install: ## Install Chromium used by live Playwright validation
 	cd $(FRONTEND_DIR) && npx playwright install --with-deps chromium
 
-test-e2e-live: ## Run mandatory live browser flows for every gameplay platform
+test-e2e-live: ## Run parallel live browser users across every platform path
 	@if [ -z "$(LIVE_E2E_BASE_URL)" ]; then \
 		echo "LIVE_E2E_BASE_URL is required."; \
 		exit 1; \

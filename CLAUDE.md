@@ -65,7 +65,8 @@ The game enforces the "Scientific Method of Investigation" as defined in the ARO
 
 - Every pull request must pass the `live-e2e` GitHub check before merge.
 - The check deploys the PR head to an isolated temporary namespace and runs
-  `make test-e2e-live` against AKS, ARO Classic, and ARO HCP.
+  `make test-e2e-live` with isolated AKS, ARO Classic, and ARO HCP users in
+  parallel. Each user must receive a distinct scenario.
 - Do not call a PR merge-ready when this check is skipped, pending, or failed.
 - The `live-e2e` GitHub Environment requires explicit approval before cluster
   and AI credentials are released to PR code. Review workflow, deploy, Helm,

@@ -17,6 +17,8 @@ assert_contains() {
 }
 
 node --check "$ROOT_DIR/scripts/playwright-live-e2e.mjs"
+assert_contains "Promise.allSettled" "$ROOT_DIR/scripts/playwright-live-e2e.mjs"
+assert_contains "Parallel users did not receive distinct scenarios" "$ROOT_DIR/scripts/playwright-live-e2e.mjs"
 
 assert_contains "live-e2e:" "$WORKFLOW"
 assert_contains "name: live-e2e" "$WORKFLOW"

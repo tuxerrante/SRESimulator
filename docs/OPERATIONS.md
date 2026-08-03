@@ -260,8 +260,9 @@ For provider options, environment variables, and runtime behavior, use:
 Every PR must pass the `live-e2e` CI job. The job is serialized, requires
 approval through the protected `live-e2e` GitHub Environment, creates an
 isolated `sre-pr-<number>-<timestamp>` namespace, publishes non-semver PR
-images, runs the three-platform Playwright suite, uploads screenshots/results,
-and removes the namespace in an `always()` cleanup step.
+images, runs three isolated platform users concurrently on distinct scenarios,
+uploads screenshots/results, and removes the namespace in an `always()` cleanup
+step.
 
 Local invocation against an existing environment:
 

@@ -143,6 +143,7 @@ async function sendChat(page, message) {
 }
 
 async function runPlatform(browser, platform) {
+  const startedAt = Date.now();
   const context = await browser.newContext({
     viewport: { width: 1800, height: 1100 },
   });
@@ -182,6 +183,11 @@ async function runPlatform(browser, platform) {
       .click();
     await page.getByRole("button", { name: /The Junior SRE/ }).click();
     await page.waitForURL("**/game", { timeout: 120_000 });
+    const incident = (
+      await page.locator('[data-tour="incident-ticket"]').innerText()
+    )
+      .replace(/\s+/g, " ")
+      .trim();
 
     await page
       .getByText(new RegExp(`live incident on ${platform.label}`))
@@ -293,13 +299,16 @@ async function runPlatform(browser, platform) {
     }
 
     return {
+      user: `${viewerPrefix}-${platform.id}`,
       platform: platform.id,
+      incident,
       scenario: "passed",
       onboarding: "passed",
       dashboard: "passed",
       chat: "passed",
       links: chatLinks,
       command: "passed",
+      durationMs: Date.now() - startedAt,
     };
   } catch (error) {
     await page.screenshot({
@@ -314,17 +323,49 @@ async function runPlatform(browser, platform) {
 
 await mkdir(artifactDir, { recursive: true });
 const browser = await chromium.launch({ headless: true });
-const results = [];
+let report;
 try {
-  for (const platform of platforms) {
-    results.push(await runPlatform(browser, platform));
-  }
+  const settled = await Promise.allSettled(
+    platforms.map((platform) => runPlatform(browser, platform)),
+  );
+  const results = settled
+    .filter((result) => result.status === "fulfilled")
+    .map((result) => result.value);
+  const failures = settled.flatMap((result, index) =>
+    result.status === "rejected"
+      ? [{
+          platform: platforms[index]?.id ?? "unknown",
+          error:
+            result.reason instanceof Error
+              ? result.reason.message
+              : String(result.reason),
+        }]
+      : [],
+  );
+  report = {
+    mode: "parallel",
+    simulatedUsers: platforms.length,
+    results,
+    failures,
+  };
+
 } finally {
   await browser.close();
 }
 
 await writeFile(
   path.join(artifactDir, "results.json"),
-  `${JSON.stringify(results, null, 2)}\n`,
+  `${JSON.stringify(report, null, 2)}\n`,
 );
-console.log(JSON.stringify(results));
+console.log(JSON.stringify(report));
+if (report.failures.length > 0) {
+  throw new Error(
+    `Parallel live E2E failures: ${JSON.stringify(report.failures)}`,
+  );
+}
+if (
+  new Set(report.results.map((result) => result.incident)).size !==
+  report.results.length
+) {
+  throw new Error("Parallel users did not receive distinct scenarios");
+}
