@@ -11,8 +11,6 @@ const KNOWLEDGE_BASE_DIR =
 
 const SHARED_FILES = [
   "sre-investigation-techniques.md",
-  "Openshift-clusters-alerts-resolutions.md",
-  "Community-reported-issues.md",
 ] as const;
 
 const INVESTIGATION_FILE = SHARED_FILES[0];

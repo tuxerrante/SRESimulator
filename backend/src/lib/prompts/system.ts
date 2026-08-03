@@ -4,6 +4,39 @@ import { utcNow } from "../sim-clock";
 import type { RuntimePlatformProfile } from "../platform-profiles";
 import { getResourceIdentifiersCsv } from "./scenario-resources";
 import { PLATFORM_PROMPT_FRAGMENTS } from "./platform";
+import {
+  PLATFORM_DOCUMENTATION_REFERENCES,
+  type PlatformId,
+} from "../../../../shared/types/platform";
+
+function formatDocumentationReferences(platform: PlatformId): string {
+  return PLATFORM_DOCUMENTATION_REFERENCES[platform]
+    .map((reference) => `[${reference.label}](${reference.url})`)
+    .join(", ");
+}
+
+function getSupportGuidance(platform: PlatformId): string {
+  const references = formatDocumentationReferences(platform);
+  if (platform === "aks") {
+    return `## AKS Support Guidance
+Use AKS-managed cluster language. The managed control plane is provider-owned, so investigations should focus on workloads, nodes, node pools, add-ons, and observable platform symptoms rather than direct control-plane remediation.
+
+## Documentation References
+Cite 1-2 links per response only from: ${references}.`;
+  }
+  if (platform === "aro-hcp") {
+    return `## ARO HCP Support Guidance
+Apply the ARO lifecycle only to the guest OpenShift version. Keep guest-cluster remediation separate from provider-owned hosted control plane operations, and escalate management-plane evidence instead of proposing direct mutations.
+
+## Documentation References
+Cite 1-2 links per response only from: ${references}.`;
+  }
+  return `## ARO Classic Support Guidance
+Use classic ARO VM, Machine API, cluster operator, and OpenShift lifecycle language. Verify current support status from the lifecycle reference rather than relying on a static version table.
+
+## Documentation References
+Cite 1-2 links per response only from: ${references}.`;
+}
 
 export function buildSystemPrompt(
   knowledgeBase: string,
@@ -13,43 +46,16 @@ export function buildSystemPrompt(
 ): string {
   const now = utcNow();
   const fragments = PLATFORM_PROMPT_FRAGMENTS[profile.id];
-  const terminalTabGuidance =
-    profile.id === "aks"
-      ? "- **Terminal** — for running `kubectl`, KQL, and dashboard interactions via the chat. Treat \"Geneva\" as a legacy dashboard alias rather than the primary surface name."
-      : "- **Terminal** — for running `oc`, KQL, and dashboard interactions via the chat. Treat \"Geneva\" as a legacy dashboard alias rather than the primary surface name.";
-  const factsGatheringGuidance =
-    profile.id === "aks"
-      ? "Collect evidence with `kubectl` commands or KQL queries."
-      : "Collect evidence with `oc` commands or KQL queries.";
-  const responseFormatCodeBlocks =
-    profile.id === "aks"
-      ? "```kubectl```, ```kql```, ```geneva```"
-      : "```oc```, ```kql```, ```geneva```";
+  const terminalTabGuidance = `- **Terminal** — for running \`${profile.primaryCli}\`, KQL, and dashboard interactions via the chat. Treat "Geneva" as a legacy dashboard alias rather than the primary surface name.`;
+  const factsGatheringGuidance = `Collect evidence with \`${profile.primaryCli}\` commands or KQL queries.`;
+  const responseFormatCodeBlocks = `\`\`\`${profile.primaryCli}\`\`\`, \`\`\`kql\`\`\`, \`\`\`geneva\`\`\``;
   const placeholderExampleCommand =
-    profile.id === "aks"
-      ? "`kubectl describe node <node-name>`"
-      : "`oc describe machine <machine-name>`";
-  const supportGuidance =
-    profile.id === "aks"
-      ? `## AKS Support Guidance
-Use AKS-managed cluster language. The managed control plane is provider-owned, so investigations should focus on workloads, nodes, node pools, add-ons, and observable platform symptoms rather than direct control-plane remediation.
-
-## Documentation References
-Cite 1-2 links per response from: [AKS docs](https://learn.microsoft.com/en-us/azure/aks/), [Kubernetes docs](https://kubernetes.io/docs/), [Azure Monitor / KQL docs](https://learn.microsoft.com/en-us/azure/azure-monitor/), [runbooks](https://github.com/openshift/runbooks/tree/master/alerts). ${fragments.docsReferences}`
-      : `## ARO Support Lifecycle (Feb 2026)
-| Version | Status | EOL |
-|---------|--------|-----|
-| 4.15 | **EOL** | Aug 2025 |
-| 4.16 | EUS only | Jun 2026 |
-| 4.17 | Supported | Apr 2026 |
-| 4.18 | Supported (EUS) | Feb 2027 |
-| 4.19 | Supported | Dec 2026 |
-| 4.20 | Supported (EUS) | Oct 2027 |
-
-Advise upgrade if cluster runs an EOL version.
-
-## Documentation References
-Cite 1-2 links per response from: [ARO lifecycle](https://learn.microsoft.com/en-us/azure/openshift/support-lifecycle), [ARO policies](https://learn.microsoft.com/en-us/azure/openshift/support-policies-v4), [OpenShift docs](https://docs.openshift.com/container-platform/4.18/), [Red Hat KB](https://access.redhat.com/knowledgebase), [runbooks](https://github.com/openshift/runbooks/tree/master/alerts). ${fragments.docsReferences}`;
+    profile.id === "aro-classic"
+      ? "`oc describe machine <machine-name>`"
+      : profile.id === "aro-hcp"
+        ? "`oc describe node <node-name>`"
+        : "`kubectl describe node <node-name>`";
+  const supportGuidance = getSupportGuidance(profile.id);
 
   const resourceCsv = scenario ? getResourceIdentifiersCsv(scenario) : null;
 

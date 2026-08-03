@@ -41,12 +41,15 @@ export function buildGameplayTelemetryPayload(
   if (!state.sessionToken) {
     throw new Error("Cannot build gameplay telemetry without a session token");
   }
+  if (!state.scenario) {
+    throw new Error("Cannot build gameplay telemetry without an active scenario");
+  }
 
   const durationMs = state.startTime != null ? Math.max(0, now - state.startTime) : undefined;
 
   const payload: GameplayTelemetryEvent = {
     sessionToken: state.sessionToken,
-    platform: state.scenario?.platform ?? "aro-classic",
+    platform: state.scenario.platform,
     lifecycleState,
     nickname: state.nickname ?? undefined,
     commandCount: state.commandCount,
@@ -58,8 +61,8 @@ export function buildGameplayTelemetryPayload(
       currentPhase: state.currentPhase,
       phaseHistory: state.phaseHistory,
       checkedDashboard: state.checkedDashboard,
-      scenarioId: state.scenario?.id,
-      scenarioTitle: state.scenario?.title,
+      scenarioId: state.scenario.id,
+      scenarioTitle: state.scenario.title,
     },
   };
 

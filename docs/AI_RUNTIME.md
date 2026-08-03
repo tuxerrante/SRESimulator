@@ -121,7 +121,9 @@ Instead of sending the entire knowledge base (~75 KB, ~18K tokens) on
 every chat request, the backend parses KB files into sections at startup
 and selects only the sections relevant to the current scenario and user
 message. The investigation methodology (`sre-investigation-techniques.md`)
-is always included. Platform-specific sessions then add the matching
+is always included. ARO Classic additionally loads the two repo-owned
+OpenShift issue catalogs, while AKS and ARO HCP exclude those Classic-only
+files. Every session then adds the matching
 `knowledge_base/platforms/<platform>/platform-operations.md` bundle before
 retrieval ranking runs. Relevant sections are selected by keyword scoring
 against the scenario title, description, platform context, alerts, and the
@@ -150,6 +152,9 @@ Runtime prompt builders compose platform sessions in this order:
 3. Platform-specific knowledge bundle
 4. Platform-specific prompt fragments
 5. Scenario-specific context
+
+Scenario generation and catalog startup validation also reject platformContext
+keys and issue vocabulary that belong to another platform.
 
 ---
 

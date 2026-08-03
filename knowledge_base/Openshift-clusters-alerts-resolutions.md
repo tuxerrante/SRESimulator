@@ -1,5 +1,9 @@
 # Openshift Clusters: Alerts/Symptoms and Possible Root Causes or Resolutions
 
+> **Platform scope:** ARO Classic only. Machine API, Hive, PUCM, master VM,
+> direct etcd recovery, and cluster control-plane procedures in this file must
+> not be used for ARO HCP or AKS sessions.
+
 **References:**
 
 - [ARO Support Lifecycle & Release Calendar](https://learn.microsoft.com/en-us/azure/openshift/support-lifecycle)
@@ -20,7 +24,7 @@
   2. **Restore from etcd backup:** Use `cluster-restore.sh` to restore etcd from a prior backup. Requires at least one healthy master host.
   3. After recovery, return to a three-node configuration by deleting and re-creating any offline nodes. A new revision is forced and etcd automatically scales up.
 - **References:**
-  - [OKD Docs: Quorum Restoration](https://docs.okd.io/latest/backup_and_restore/control_plane_backup_and_restore/disaster_recovery/quorum-restoration.html)
+  - [OpenShift 4.18 Docs: Quorum Restoration](https://docs.openshift.com/container-platform/4.18/backup_and_restore/control_plane_backup_and_restore/disaster_recovery/quorum-restoration.html)
   - [OpenShift Examples: Lost Quorum](https://examples.openshift.pub/control-plane/lost-quorum/)
 
 ### Missing Master Node / Disturbed Indexing
@@ -52,7 +56,7 @@
 
 - **References:**
   - [Machine API Operator Troubleshooting](https://github.com/openshift/machine-api-operator/blob/main/docs/user/TroubleShooting.md)
-  - [OKD: Troubleshooting Control Plane Machine Set](https://docs.okd.io/latest/machine_management/control_plane_machine_management/cpmso-troubleshooting.html)
+  - [OpenShift 4.18 Docs: Troubleshooting Control Plane Machine Set](https://docs.openshift.com/container-platform/4.18/machine_management/control_plane_machine_management/cpmso-troubleshooting.html)
 
 ### Kube-apiserver Hard Down
 
@@ -434,4 +438,4 @@
 - **References:**
   - [Red Hat Solution 7057169: Limited Live Migration from SDN to OVN-Kubernetes](https://access.redhat.com/solutions/7057169)
   - [Red Hat Solution 7005009: Migration breaks EgressNetworkPolicy](https://access.redhat.com/solutions/7005009)
-  - [OKD: Migrating from OpenShift SDN](https://docs.okd.io/latest/networking/ovn_kubernetes_network_provider/migrate-from-openshift-sdn.html)
+  - [OpenShift 4.18 Docs: Migrating from OpenShift SDN](https://docs.openshift.com/container-platform/4.18/networking/ovn_kubernetes_network_provider/migrate-from-openshift-sdn.html)

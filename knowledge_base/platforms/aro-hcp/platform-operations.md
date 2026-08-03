@@ -26,3 +26,13 @@ cluster, but not every symptom should lead to management-plane remediation.
   namespaces when the scenario provides them.
 - Make hosted control plane ownership explicit before suggesting escalations or
   non-customer remediations.
+
+## Escalation boundary
+
+- Continue in the guest cluster for workload, Route, NetworkPolicy, node, and
+  guest operator evidence.
+- Escalate when evidence points to the hosted control plane namespace,
+  management-cluster controllers, provider-owned API availability, or direct
+  etcd/control-plane remediation.
+- State which guest evidence justifies the escalation; never instruct the
+  player to mutate management-cluster resources from the guest session.

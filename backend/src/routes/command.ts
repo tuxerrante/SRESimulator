@@ -2,6 +2,7 @@ import { Router, type Request, type Response } from "express";
 import { getAiReadiness } from "../lib/ai-config";
 import { generateMockCommandOutput } from "../lib/mock-ai";
 import {
+  getCommandScopeViolation,
   getRuntimePlatformProfile,
   isCommandTypeAllowedForPlatform,
 } from "../lib/platform-profiles";
@@ -20,7 +21,10 @@ import { getRequestSession } from "../lib/rate-limit";
 import { validateSessionScenario } from "../lib/session-scenario";
 import { withAbortTimeout } from "../lib/timeout";
 import type { Scenario } from "../../../shared/types/game";
-import type { CompatibleCommandType } from "../../../shared/types/platform";
+import type {
+  CompatibleCommandType,
+  PlatformId,
+} from "../../../shared/types/platform";
 import { stripTerminalCommandEcho } from "../../../shared/stripTerminalCommandEcho";
 
 export const commandRouter = Router();
@@ -101,6 +105,8 @@ export function resolveCommandHistoryPlaceholders(
 
 commandRouter.post("/", async (req: Request, res: Response) => {
   let requestScenario: Scenario | null = null;
+  let requestPlatform: PlatformId | null = null;
+  let requestType: CompatibleCommandType | null = null;
   try {
     if (!isRecord(req.body)) {
       res.status(400).json({ error: "Invalid request body" });
@@ -128,12 +134,14 @@ commandRouter.post("/", async (req: Request, res: Response) => {
       });
       return;
     }
+    requestType = type;
 
     const session = await getRequestSession(req, body.sessionToken);
     if (!session || session.used) {
       res.status(403).json({ error: "Invalid or expired session token" });
       return;
     }
+    requestPlatform = session.platform;
     const scenarioResult = validateSessionScenario(session, rawScenario);
     if (!scenarioResult.ok) {
       res.status(409).json({ error: scenarioResult.error });
@@ -146,6 +154,17 @@ commandRouter.post("/", async (req: Request, res: Response) => {
     if (!isCommandTypeAllowedForPlatform(session.platform, type)) {
       res.status(409).json({
         error: `Command type ${type} does not match platform ${session.platform}`,
+      });
+      return;
+    }
+    const scopeViolation = getCommandScopeViolation(
+      session.platform,
+      type,
+      command,
+    );
+    if (scopeViolation) {
+      res.status(409).json({
+        error: `${scopeViolation} does not match platform ${session.platform}`,
       });
       return;
     }
@@ -214,7 +233,10 @@ commandRouter.post("/", async (req: Request, res: Response) => {
       const fallbackType = typeof requestBody.type === "string" &&
           VALID_COMMAND_TYPES.includes(requestBody.type as (typeof VALID_COMMAND_TYPES)[number])
         ? (requestBody.type as (typeof VALID_COMMAND_TYPES)[number])
-        : "oc";
+        : requestType ??
+          (requestPlatform
+            ? getRuntimePlatformProfile(requestPlatform).primaryCli
+            : "oc");
       const fallbackCommandRaw = typeof requestBody.command === "string" ? requestBody.command : "";
       const fallbackScenario = requestScenario ?? (isScenario(requestBody.scenario)
         ? requestBody.scenario

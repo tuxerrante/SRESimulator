@@ -4,11 +4,17 @@ import { Play, Copy, Check, CheckCircle } from "lucide-react";
 import { useState } from "react";
 import { useGameStore } from "@/stores/gameStore";
 import { cn } from "@/lib/utils";
-import type { CompatibleCommandType } from "@shared/types/platform";
+import {
+  PLATFORM_PROFILES,
+  isCommandTypeCompatibleWithPlatform,
+  type CompatibleCommandType,
+  type PlatformId,
+} from "@shared/types/platform";
 
 interface CodeBlockProps {
   code: string;
   language: string;
+  platform?: PlatformId;
   onRun?: (command: string, type: CompatibleCommandType) => void;
 }
 
@@ -20,11 +26,32 @@ const LANGUAGE_LABELS: Record<string, string> = {
   bash: "Bash",
 };
 
-export function CodeBlock({ code, language, onRun }: CodeBlockProps) {
+const COMMAND_TYPES: readonly CompatibleCommandType[] = [
+  "oc",
+  "kubectl",
+  "kql",
+  "geneva",
+];
+
+export function CodeBlock({
+  code,
+  language,
+  platform,
+  onRun,
+}: CodeBlockProps) {
   const [copied, setCopied] = useState(false);
   const [hasRun, setHasRun] = useState(false);
   const isExecuting = useGameStore((s) => s.isExecuting);
-  const isRunnable = ["oc", "kubectl", "kql", "geneva"].includes(language);
+  const commandType = COMMAND_TYPES.includes(language as CompatibleCommandType)
+    ? (language as CompatibleCommandType)
+    : null;
+  const isPlatformCompatible =
+    commandType !== null &&
+    platform !== undefined &&
+    isCommandTypeCompatibleWithPlatform(platform, commandType);
+  const isRunnable = commandType !== null && isPlatformCompatible;
+  const isPlatformMismatch =
+    commandType !== null && platform !== undefined && !isPlatformCompatible;
 
   const handleCopy = async () => {
     await navigator.clipboard.writeText(code);
@@ -33,9 +60,9 @@ export function CodeBlock({ code, language, onRun }: CodeBlockProps) {
   };
 
   const handleRun = () => {
-    if (onRun && isRunnable && !hasRun && !isExecuting) {
+    if (onRun && commandType && isRunnable && !hasRun && !isExecuting) {
       setHasRun(true);
-      onRun(code, language as CompatibleCommandType);
+      onRun(code, commandType);
     }
   };
 
@@ -46,6 +73,9 @@ export function CodeBlock({ code, language, onRun }: CodeBlockProps) {
       <div className="flex items-center justify-between px-3 py-1.5 bg-zinc-800 border-b border-zinc-700">
         <span className="text-xs text-zinc-400 font-mono">
           {LANGUAGE_LABELS[language] || language}
+          {isPlatformMismatch
+            ? ` (not valid for ${PLATFORM_PROFILES[platform].label})`
+            : ""}
         </span>
         <div className="flex items-center gap-1">
           <button

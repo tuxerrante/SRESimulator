@@ -28,30 +28,30 @@
 
 ### Shared contracts
 
-- Create: `shared/types/platform.ts`  
+- Create: `shared/types/platform.ts`
   Source of truth for `PlatformId`, `PlatformProfile`, `PlatformContext`, command-surface unions, `PLATFORM_IDS`, and `DEFAULT_PLATFORM_ID`.
-- Modify: `shared/types/game.ts`  
+- Modify: `shared/types/game.ts`
   Add `platform: PlatformId` and `platformContext?: PlatformContext` to `Scenario`.
-- Modify: `shared/types/chat.ts`  
+- Modify: `shared/types/chat.ts`
   Extend extracted command unions to include `kubectl`.
-- Modify: `shared/types/terminal.ts`  
+- Modify: `shared/types/terminal.ts`
   Extend terminal entry command type to include `kubectl`.
-- Modify: `shared/types/gameplay.ts`  
+- Modify: `shared/types/gameplay.ts`
   Add `platform` to telemetry payloads and analytics view models; add `byPlatform` analytics.
-- Modify: `shared/types/leaderboard.ts`  
+- Modify: `shared/types/leaderboard.ts`
   Add `platform` to leaderboard and Hall of Fame models.
 
 ### Backend runtime and persistence
 
-- Create: `backend/src/lib/platform-profiles.ts`  
+- Create: `backend/src/lib/platform-profiles.ts`
   Repo-owned runtime registry that maps each `PlatformId` to its primary CLI, allowed command surfaces, knowledge files, and prompt fragment selection.
-- Modify: `backend/src/lib/scenario-catalog.ts`  
+- Modify: `backend/src/lib/scenario-catalog.ts`
   Replace difficulty-only indexing with `(platform, difficulty)` indexing and optional `scenarioId` selection.
-- Modify: `backend/src/lib/knowledge.ts`  
+- Modify: `backend/src/lib/knowledge.ts`
   Load shared KB files plus platform-specific bundle files.
-- Create: `backend/src/lib/prompts/platform.ts`  
+- Create: `backend/src/lib/prompts/platform.ts`
   Platform-specific prompt fragments for chat, command, and scenario-generation flows.
-- Create: `backend/src/lib/prompts/scenario-generator.ts`  
+- Create: `backend/src/lib/prompts/scenario-generator.ts`
   Build platform-aware scenario-generation prompts instead of keeping the prompt inline in the route.
 - Modify: `backend/src/lib/prompts/system.ts`
 - Modify: `backend/src/lib/prompts/command.ts`

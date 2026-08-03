@@ -3,7 +3,10 @@ import { access, readdir, readFile } from "fs/promises";
 import { join, resolve } from "path";
 import type { Difficulty, Scenario } from "../../../shared/types/game";
 import { PLATFORM_IDS, type PlatformId } from "../../../shared/types/platform";
-import { isPlatformContext } from "./scenario-validation";
+import {
+  getPlatformContentViolation,
+  isPlatformContextForPlatform,
+} from "./scenario-validation";
 import { utcOffsetMinutes } from "./sim-clock";
 
 const DIFFICULTIES: Difficulty[] = ["easy", "medium", "hard"];
@@ -180,11 +183,17 @@ function assertScenarioTemplate(
   }
 
   if (value.platformContext !== undefined) {
-    if (!isPlatformContext(value.platformContext)) {
+    if (!isPlatformContextForPlatform(value.platformContext, platform)) {
       throw invalidCatalog(
-        `Catalog scenario ${filePath} platformContext must use only supported platform metadata with non-empty string values`,
+        `Catalog scenario ${filePath} platformContext contains keys that are invalid for ${platform}`,
       );
     }
+  }
+  const contentViolation = getPlatformContentViolation(value, platform);
+  if (contentViolation) {
+    throw invalidCatalog(
+      `Catalog scenario ${filePath} contains ${contentViolation} content that is invalid for ${platform}`,
+    );
   }
 
   return value as unknown as Scenario;

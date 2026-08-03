@@ -21,7 +21,7 @@
     "nodeCount": 8,
     "status": "Degraded",
     "recentEvents": [
-      "{{minutesAgo:160}} - machine-config: node pool worker-b reports pending updates after unsupported change",
+      "{{minutesAgo:160}} - nodepool/worker-b: rollout paused after the NodePool controller rejected an unsupported setting",
       "{{minutesAgo:55}} - scheduler: several workloads remain pending because one pool is unschedulable",
       "{{minutesAgo:15}} - hosted cluster worker rollout remains paused while guest workloads rebalance"
     ],

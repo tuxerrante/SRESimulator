@@ -154,6 +154,15 @@ describe("buildGameplayTelemetryPayload", () => {
     expect(payload.grade).toBeUndefined();
     expect(payload.durationMs).toBe(1_500);
   });
+
+  it("refuses to invent a platform when the active scenario is missing", () => {
+    expect(() =>
+      buildGameplayTelemetryPayload(
+        makeState({ scenario: null }),
+        "abandoned",
+      ),
+    ).toThrow("without an active scenario");
+  });
 });
 
 describe("shouldSendAbandonmentEvent", () => {

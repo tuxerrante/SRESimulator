@@ -18,7 +18,10 @@ import { getRuntimePlatformProfile } from "../lib/platform-profiles";
 import { buildScenarioGenerationPrompt } from "../lib/prompts/scenario-generator";
 import { utcNow } from "../lib/sim-clock";
 import { verifyTurnstileToken } from "../lib/turnstile";
-import { isPlatformContext } from "../lib/scenario-validation";
+import {
+  getPlatformContentViolation,
+  isPlatformContextForPlatform,
+} from "../lib/scenario-validation";
 import {
   readAnonymousProofFromCookieHeader,
   readViewerFromCookieHeader,
@@ -289,10 +292,16 @@ function validateScenarioPayload(
 
   if (
     payload.platformContext !== undefined &&
-    !isPlatformContext(payload.platformContext)
+    !isPlatformContextForPlatform(payload.platformContext, platform)
   ) {
     throw new InvalidScenarioPayloadError(
-      "AI scenario field platformContext must use only supported platform metadata with non-empty string values",
+      `AI scenario field platformContext contains keys that are invalid for ${platform}`,
+    );
+  }
+  const contentViolation = getPlatformContentViolation(payload, platform);
+  if (contentViolation) {
+    throw new InvalidScenarioPayloadError(
+      `AI scenario payload contains ${contentViolation} content that is invalid for ${platform}`,
     );
   }
 

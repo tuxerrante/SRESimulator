@@ -24,6 +24,7 @@ export function ChatPanel({ onRunCommand }: ChatPanelProps) {
 
   // Subscribe to the raw messages array to detect content updates during streaming
   const storeMessages = useGameStore((s) => s.messages);
+  const platform = useGameStore((s) => s.scenario?.platform);
   const lastContent = storeMessages[storeMessages.length - 1]?.content;
 
   useEffect(() => {
@@ -53,6 +54,7 @@ export function ChatPanel({ onRunCommand }: ChatPanelProps) {
           <ChatMessage
             key={message.id}
             message={message}
+            platform={platform}
             onRunCommand={onRunCommand}
           />
         ))}

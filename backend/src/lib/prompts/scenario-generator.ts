@@ -4,6 +4,30 @@ import {
 } from "../../../../shared/types/platform";
 import { PLATFORM_PROMPT_FRAGMENTS } from "./platform";
 
+function getPlatformContextTemplate(platform: PlatformId): string {
+  if (platform === "aks") {
+    return `{
+    "nodePoolNames": ["AKS node pool names"],
+    "managedResourceGroupHint": "optional AKS managed resource group hint",
+    "addonContext": ["optional AKS add-on context"]
+  }`;
+  }
+  if (platform === "aro-hcp") {
+    return `{
+    "routeNames": ["optional guest-cluster route names"],
+    "guestClusterName": "ARO HCP guest cluster name",
+    "hostedControlPlaneNamespace": "provider-owned hosted control plane namespace",
+    "controlPlaneBoundaryNotes": ["guest versus management-plane ownership"],
+    "nodePoolNames": ["ARO HCP node pool names"]
+  }`;
+  }
+  return `{
+    "machineNames": ["ARO Classic machine names"],
+    "routeNames": ["optional OpenShift route names"],
+    "clusterOperatorHints": ["optional ARO Classic cluster operators"]
+  }`;
+}
+
 export function buildScenarioGenerationPrompt(input: {
   platform: PlatformId;
   difficulty: "easy" | "medium" | "hard";
@@ -13,6 +37,7 @@ export function buildScenarioGenerationPrompt(input: {
   const { platform, difficulty, currentDate, scenarioContext } = input;
   const profile = PLATFORM_PROFILES[platform];
   const fragments = PLATFORM_PROMPT_FRAGMENTS[platform];
+  const platformContextTemplate = getPlatformContextTemplate(platform);
   const versionGuidance =
     platform === "aks"
       ? "Use currently supported AKS and upstream Kubernetes version language around 1.30-1.31."
@@ -68,16 +93,7 @@ IMPORTANT: Respond with ONLY valid JSON matching this exact structure (no markdo
     "alerts": [{"name": "alert name", "severity": "critical|warning|info", "message": "alert message", "firingTime": "ISO timestamp"}],
     "upgradeHistory": [{"from": "version", "to": "version", "status": "completed|failed|in_progress", "timestamp": "ISO timestamp"}]
   },
-  "platformContext": {
-    "machineNames": ["optional for classic"],
-    "routeNames": ["optional for classic"],
-    "guestClusterName": "optional for aro-hcp",
-    "hostedControlPlaneNamespace": "optional for aro-hcp",
-    "controlPlaneBoundaryNotes": ["optional for aro-hcp"],
-    "nodePoolNames": ["optional for aks or aro-hcp"],
-    "managedResourceGroupHint": "optional for aks",
-    "addonContext": ["optional for aks"]
-  }
+  "platformContext": ${platformContextTemplate}
 }
 
 Reference incidents and alerts:

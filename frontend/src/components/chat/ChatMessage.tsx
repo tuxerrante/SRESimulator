@@ -3,17 +3,26 @@
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { ChatMessage as ChatMessageType } from "@shared/types/chat";
-import type { CompatibleCommandType } from "@shared/types/platform";
+import {
+  isDocumentationUrlAllowedForPlatform,
+  type CompatibleCommandType,
+  type PlatformId,
+} from "@shared/types/platform";
 import { CodeBlock } from "@/components/shared/CodeBlock";
 import { cn } from "@/lib/utils";
 import { User, Bot, ExternalLink } from "lucide-react";
 
 interface ChatMessageProps {
   message: ChatMessageType;
+  platform?: PlatformId;
   onRunCommand?: (command: string, type: CompatibleCommandType) => void;
 }
 
-export function ChatMessage({ message, onRunCommand }: ChatMessageProps) {
+export function ChatMessage({
+  message,
+  platform,
+  onRunCommand,
+}: ChatMessageProps) {
   const isUser = message.role === "user";
 
   // Strip control markers from display
@@ -51,6 +60,21 @@ export function ChatMessage({ message, onRunCommand }: ChatMessageProps) {
             remarkPlugins={[remarkGfm]}
             components={{
               a({ href, children, className, ...props }) {
+                if (
+                  !isUser &&
+                  platform &&
+                  href &&
+                  !isDocumentationUrlAllowedForPlatform(platform, href)
+                ) {
+                  return (
+                    <span
+                      className="text-zinc-400"
+                      title={`Reference not available for ${platform}`}
+                    >
+                      {children}
+                    </span>
+                  );
+                }
                 return (
                   <a
                     {...props}
@@ -82,6 +106,7 @@ export function ChatMessage({ message, onRunCommand }: ChatMessageProps) {
                     <CodeBlock
                       code={codeStr}
                       language={lang}
+                      platform={platform}
                       onRun={onRunCommand}
                     />
                   );

@@ -212,5 +212,40 @@ describe("buildSystemPrompt", () => {
     expect(aksPrompt).toContain("```geneva```");
     expect(aksPrompt).toContain("Dashboard");
     expect(aksPrompt).not.toContain("Collect evidence with `oc` commands");
+    expect(aksPrompt).toContain("AKS support policies");
+    expect(aksPrompt).not.toContain("openshift/runbooks");
+    expect(aksPrompt).not.toContain("azure/openshift/support-policies-v4");
+  });
+
+  it("keeps ARO HCP references and placeholders guest-cluster scoped", () => {
+    const hcpPrompt = buildSystemPrompt(
+      "hcp kb",
+      makeScenario({
+        platform: "aro-hcp",
+        title: "Guest Route 503",
+      }),
+      "reading",
+      getRuntimePlatformProfile("aro-hcp"),
+    );
+
+    expect(hcpPrompt).toContain("ARO HCP Support Guidance");
+    expect(hcpPrompt).toContain("[ARO HCP architecture](https://github.com/Azure/ARO-HCP)");
+    expect(hcpPrompt).toContain("`oc describe node <node-name>`");
+    expect(hcpPrompt).not.toContain("`oc describe machine <machine-name>`");
+    expect(hcpPrompt).not.toContain("azure/openshift/support-policies-v4");
+  });
+
+  it("keeps ARO Classic references and placeholders classic scoped", () => {
+    const classicPrompt = buildSystemPrompt(
+      "classic kb",
+      makeScenario(),
+      "reading",
+      classicProfile,
+    );
+
+    expect(classicPrompt).toContain("ARO Classic Support Guidance");
+    expect(classicPrompt).toContain("azure/openshift/support-policies-v4");
+    expect(classicPrompt).toContain("`oc describe machine <machine-name>`");
+    expect(classicPrompt).not.toContain("github.com/Azure/ARO-HCP");
   });
 });

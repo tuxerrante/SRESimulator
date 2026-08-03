@@ -46,8 +46,8 @@ SRESimulator/
 ├── helm/sre-simulator/                   # AKS/ARO deployment manifests
 ├── knowledge_base/                       # Reference docs loaded into AI context
 │   ├── sre-investigation-techniques.md
-│   ├── Openshift-clusters-alerts-resolutions.md
-│   └── Community-reported-issues.md
+│   ├── Openshift-clusters-alerts-resolutions.md # ARO Classic only
+│   ├── Community-reported-issues.md             # ARO Classic only
 │   └── platforms/                        # Platform-specific gameplay bundles
 │       ├── aro-classic/
 │       ├── aro-hcp/
@@ -352,8 +352,8 @@ identity:
 
 After access is approved, the route binds the session to a `PlatformId`, then
 either selects a repo-owned scenario from `scenarios/<platform>/<difficulty>/`
-or calls the configured AI provider with shared + platform-specific
-knowledge-base context to produce a realistic incident ticket and cluster
+or calls the configured AI provider with the shared methodology and the
+platform-scoped knowledge file set to produce a realistic incident ticket and cluster
 context. In `AI_MOCK_MODE=true`, it returns a deterministic platform-aware mock
 scenario.
 

@@ -150,5 +150,18 @@ describe("platform session flows", () => {
       const payload = await commandResponse.json() as { error?: string };
       expect(payload.error).toContain(`platform ${platform}`);
     }
+
+    const hcpSession = await createScenarioSession(baseUrl, "aro-hcp", "easy");
+    const classicResourceResponse = await fetch(`${baseUrl}/api/command`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        sessionToken: hcpSession.sessionToken,
+        command: "oc get machines -A",
+        type: "oc",
+        scenario: hcpSession.scenario,
+      }),
+    });
+    expect(classicResourceResponse.status).toBe(409);
   });
 });

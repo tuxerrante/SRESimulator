@@ -1,5 +1,6 @@
 import {
   PLATFORM_PROFILES,
+  isCommandTypeCompatibleWithPlatform,
   type CompatibleCommandType,
   type PlatformId,
   type PlatformProfile,
@@ -14,7 +15,11 @@ export const RUNTIME_PLATFORM_PROFILES: Record<PlatformId, RuntimePlatformProfil
   {
     "aro-classic": {
       ...PLATFORM_PROFILES["aro-classic"],
-      knowledgeFiles: ["platforms/aro-classic/platform-operations.md"],
+      knowledgeFiles: [
+        "Openshift-clusters-alerts-resolutions.md",
+        "Community-reported-issues.md",
+        "platforms/aro-classic/platform-operations.md",
+      ],
       allowedCommandTypes: ["oc", "kql", "geneva"],
     },
     "aro-hcp": {
@@ -39,5 +44,46 @@ export function isCommandTypeAllowedForPlatform(
   platform: PlatformId,
   type: CompatibleCommandType,
 ): boolean {
-  return getRuntimePlatformProfile(platform).allowedCommandTypes.includes(type);
+  return isCommandTypeCompatibleWithPlatform(platform, type);
+}
+
+const FORBIDDEN_COMMAND_RESOURCES: Record<
+  PlatformId,
+  readonly { label: string; pattern: RegExp }[]
+> = {
+  "aro-classic": [
+    {
+      label: "hosted control plane resource",
+      pattern: /\b(?:hostedclusters?|hostedcontrolplanes?|nodepools?)\b/i,
+    },
+  ],
+  "aro-hcp": [
+    {
+      label: "ARO Classic Machine API resource",
+      pattern:
+        /\b(?:get|describe|delete|patch|edit)\s+(?:machines?|machinesets?|controlplanemachinesets?)(?:\.machine\.openshift\.io)?\b/i,
+    },
+  ],
+  aks: [
+    {
+      label: "OpenShift resource",
+      pattern:
+        /\b(?:routes?\.route\.openshift\.io|machineconfigs?|machineconfigpools?|clusterversions?|clusteroperators?|hostedclusters?|hostedcontrolplanes?)\b/i,
+    },
+  ],
+};
+
+export function getCommandScopeViolation(
+  platform: PlatformId,
+  type: CompatibleCommandType,
+  command: string,
+): string | null {
+  if (type !== getRuntimePlatformProfile(platform).primaryCli) {
+    return null;
+  }
+  return (
+    FORBIDDEN_COMMAND_RESOURCES[platform].find(({ pattern }) =>
+      pattern.test(command),
+    )?.label ?? null
+  );
 }
