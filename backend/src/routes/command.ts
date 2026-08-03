@@ -45,7 +45,7 @@ type LooseHistoryEntry = {
 };
 
 const DEFAULT_MAX_COMMAND_TOKENS = 8192;
-const DEFAULT_COMMAND_TIMEOUT_MS = 20000;
+const DEFAULT_COMMAND_TIMEOUT_MS = 12000;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);

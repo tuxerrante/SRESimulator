@@ -70,6 +70,7 @@ backend:
   trustProxyHeaders: false
   persistentLeaderboardEnabled: false
   aiChatTimeoutMs: 30000
+  aiCommandTimeoutMs: 12000
   aiScenarioTimeoutMs: 30000
   rateLimit:
     windowMs: 60000

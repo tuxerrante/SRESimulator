@@ -233,6 +233,9 @@ entire completion budget), the backend:
 2. If still empty, the command route falls back to deterministic mock output
    so gameplay continues unblocked.
 
+Command generation has a 12-second default application timeout so the degraded
+mock response is returned before the public edge request budget can emit a 504.
+
 ---
 
 ## Token Observability
