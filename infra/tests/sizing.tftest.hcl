@@ -81,8 +81,8 @@ run "default_aoai_model" {
   command = plan
 
   assert {
-    condition     = var.aoai_model_name == "gpt-4o-mini"
-    error_message = "Default model should be gpt-4o-mini (cheapest, per PR #31)."
+    condition     = var.aoai_model_name == "gpt-5.6-terra"
+    error_message = "Default model should be gpt-5.6-terra."
   }
 }
 

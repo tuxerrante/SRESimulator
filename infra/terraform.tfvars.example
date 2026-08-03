@@ -41,10 +41,10 @@ location    = "eastus"
 # NOTE: Terraform does not expand "~"; use an absolute path.
 # pull_secret_path = "/absolute/path/to/pull-secret.txt"
 
-# Azure OpenAI model (gpt-4o-mini is cheapest; see PR #31 for per-route sizing)
-# aoai_model_name    = "gpt-4o-mini"
-# aoai_model_version = "2024-07-18"
-# aoai_sku_name      = "GlobalStandard" # required for some regions/models (e.g. westeurope + gpt-4o-mini)
+# Azure OpenAI model (must be available in the selected region and SKU).
+# aoai_model_name    = "gpt-5.6-terra"
+# aoai_model_version = "2026-07-09"
+# aoai_sku_name      = "GlobalStandard"
 # aoai_capacity      = 80  # 80K TPM rate limit (pay-per-token, not per capacity)
 
 # Stable namespace for the app (shared cluster + AOAI with e2e namespaces)

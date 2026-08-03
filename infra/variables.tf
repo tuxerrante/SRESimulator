@@ -244,7 +244,7 @@ variable "aoai_model_version" {
 }
 
 variable "aoai_sku_name" {
-  description = "Azure OpenAI deployment SKU name. For westeurope with gpt-4o-mini, use GlobalStandard."
+  description = "Azure OpenAI deployment SKU name. Use a SKU supported by the selected model and region, such as GlobalStandard when available."
   type        = string
   default     = "GlobalStandard"
 }
