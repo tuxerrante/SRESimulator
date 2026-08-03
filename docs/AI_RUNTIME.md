@@ -379,14 +379,15 @@ metrics independently — there is no aggregated view across replicas.
 **Mitigation:** Export structured logs to an external observability stack
 (e.g., Azure Monitor, Prometheus) for durable, cross-replica metrics.
 
-### Leaderboard writes serialize on a single process
+### JSON stores are local-only
 
-The leaderboard JSON file on PVC uses an in-process async mutex. In a
-multi-replica deployment, concurrent writes from different pods can
-race. The current architecture expects a single backend replica.
+The JSON player and leaderboard stores use in-process queues, filesystem locks,
+and atomic renames for local development and tests. Startup refuses
+`STORAGE_BACKEND=json` under Kubernetes or production mode, so deployed
+replicas use MSSQL instead of sharing JSON files on a PVC.
 
-**Mitigation:** Move leaderboard storage to a shared database (e.g.,
-CosmosDB, Redis) or use a distributed lock.
+**Guardrail:** If deployed JSON storage is ever reintroduced, it must use a
+distributed datastore or lock rather than these local filesystem primitives.
 
 ### Context compaction is best-effort
 
