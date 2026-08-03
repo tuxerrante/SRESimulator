@@ -71,7 +71,7 @@ backend:
   persistentLeaderboardEnabled: false
   aiChatTimeoutMs: 30000
   aiCommandTimeoutMs: 12000
-  aiScenarioTimeoutMs: 30000
+  aiScenarioTimeoutMs: 12000
   rateLimit:
     windowMs: 60000
     max: 15

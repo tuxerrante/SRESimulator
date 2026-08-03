@@ -235,6 +235,8 @@ entire completion budget), the backend:
 
 Command generation has a 12-second default application timeout so the degraded
 mock response is returned before the public edge request budget can emit a 504.
+Scenario generation uses the same 12-second edge-safe budget and falls back to
+the matching curated platform catalog on timeout or provider throttling.
 
 ---
 

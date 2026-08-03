@@ -150,6 +150,7 @@ describe("scenario reservation before AI generation", () => {
     process.env.ANTI_ABUSE_HMAC_SECRET = "test-hmac";
     delete process.env.SCENARIO_SOURCE;
     delete process.env.SCENARIO_CATALOG_DIR;
+    delete process.env.AI_SCENARIO_TIMEOUT_MS;
     delete process.env.STORAGE_BACKEND;
     generateAiTextMock.mockReset().mockImplementation(
       () =>
@@ -169,6 +170,7 @@ describe("scenario reservation before AI generation", () => {
     delete process.env.ANTI_ABUSE_HMAC_SECRET;
     delete process.env.SCENARIO_SOURCE;
     delete process.env.SCENARIO_CATALOG_DIR;
+    delete process.env.AI_SCENARIO_TIMEOUT_MS;
     await rm(tmpDir, { recursive: true, force: true });
   });
 
@@ -227,6 +229,35 @@ describe("scenario reservation before AI generation", () => {
         _reasoningEffortOverride: "low",
       }),
     );
+  });
+
+  it("falls back to the platform catalog when live generation times out", async () => {
+    process.env.AI_SCENARIO_TIMEOUT_MS = "20";
+    generateAiTextMock.mockImplementation(() => new Promise<string>(() => {}));
+
+    const storageModule = await import("../lib/storage");
+    await storageModule.initStorage();
+    const scenarioModule = await import("./scenario");
+    const app = createApp(scenarioModule.scenarioRouter);
+    const headers = {
+      cookie: createAnonymousProofCookie("fp_timeout_fallback"),
+      "user-agent": anonymousUserAgent,
+      ...createSignedClientIpHeaders("203.0.113.44"),
+    };
+
+    const response = await postJson(
+      app,
+      "/api/scenario",
+      { platform: "aro-classic", difficulty: "easy", turnstileToken: "pass" },
+      headers,
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.body.mode).toBe("degraded");
+    expect(response.body.degradedReason).toBe("timeout");
+    expect(
+      (response.body.scenario as Record<string, unknown>).platform,
+    ).toBe("aro-classic");
   });
 
   it("releases reserved anonymous claims when AI returns schema-invalid JSON", async () => {

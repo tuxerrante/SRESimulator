@@ -61,7 +61,7 @@ const ISO_8601_UTC_TIMESTAMP_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 const SEVEN_DAYS_MS = 7 * ONE_DAY_MS;
 const TIMESTAMP_GRACE_MS = 5 * 60 * 1000;
-const DEFAULT_SCENARIO_TIMEOUT_MS = 30000;
+const DEFAULT_SCENARIO_TIMEOUT_MS = 12000;
 
 class InvalidScenarioPayloadError extends Error {
   readonly clientMessage = "Scenario generation returned an invalid payload.";
@@ -584,29 +584,63 @@ scenarioRouter.post("/", async (req: Request, res: Response) => {
 
     const currentDate = utcNow();
 
-    const responseText = await withAbortTimeout(
-      (signal) =>
-        generateAiText({
-          maxTokens: 1024,
-          route: "scenario",
-          _reasoningEffortOverride: "low",
-          signal,
-          system: buildScenarioGenerationPrompt({
-            platform,
-            difficulty,
-            currentDate,
-            scenarioContext,
+    let responseText: string;
+    try {
+      responseText = await withAbortTimeout(
+        (signal) =>
+          generateAiText({
+            maxTokens: 1024,
+            route: "scenario",
+            _reasoningEffortOverride: "low",
+            signal,
+            system: buildScenarioGenerationPrompt({
+              platform,
+              difficulty,
+              currentDate,
+              scenarioContext,
+            }),
+            messages: [
+              {
+                role: "user",
+                content: `Generate a ${difficulty} difficulty ${profile.label} incident scenario.`,
+              },
+            ],
           }),
-          messages: [
-            {
-              role: "user",
-              content: `Generate a ${difficulty} difficulty ${profile.label} incident scenario.`,
-            },
-          ],
-        }),
-      getScenarioTimeoutMs(),
-      (timeoutMs) => new ScenarioGenerationTimeoutError(timeoutMs),
-    );
+        getScenarioTimeoutMs(),
+        (timeoutMs) => new ScenarioGenerationTimeoutError(timeoutMs),
+      );
+    } catch (error) {
+      if (
+        error instanceof ScenarioGenerationTimeoutError ||
+        error instanceof AiThrottledError
+      ) {
+        captureBackendRouteError(req, error);
+        const degradedReason =
+          error instanceof ScenarioGenerationTimeoutError
+            ? "timeout"
+            : "throttled";
+        console.warn(
+          `[scenario] ${degradedReason}; returning catalog fallback for ${platform}/${difficulty}`,
+        );
+        const fallbackScenario = await getCatalogScenario({
+          platform,
+          difficulty,
+        });
+        const fallbackSession = await createSessionForScenario(
+          fallbackScenario,
+          `scenario-catalog-${degradedReason}`,
+        );
+        res.json({
+          scenario: fallbackScenario,
+          sessionToken: fallbackSession.sessionToken,
+          identityKind: fallbackSession.identityKind,
+          mode: "degraded",
+          degradedReason,
+        });
+        return;
+      }
+      throw error;
+    }
 
     let text = responseText;
 
