@@ -61,6 +61,18 @@ The game enforces the "Scientific Method of Investigation" as defined in the ARO
 - Backend AI/runtime settings live in `backend/.env.local.example`.
 - Prefer `make` targets over ad-hoc commands for validation, tests, e2e, and deploy flows.
 
+### Mandatory live browser gate
+
+- Every pull request must pass the `live-e2e` GitHub check before merge.
+- The check deploys the PR head to an isolated temporary namespace and runs
+  `make test-e2e-live` against AKS, ARO Classic, and ARO HCP.
+- Do not call a PR merge-ready when this check is skipped, pending, or failed.
+- The `live-e2e` GitHub Environment requires explicit approval before cluster
+  and AI credentials are released to PR code. Review workflow, deploy, Helm,
+  Dockerfile, and E2E-script changes carefully before approving the job.
+- Fork PRs must be moved to a trusted same-repository branch before this
+  privileged mandatory check can run.
+
 ## 4. Public-Only Safety Boundary
 
 - Do not imply access to internal Red Hat or Azure systems unless a user explicitly provides that access in the current session.

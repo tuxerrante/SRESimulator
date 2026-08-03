@@ -3,7 +3,7 @@
        lint lint-ts lint-backend lint-unused-exports lint-yaml lint-md \
        typecheck typecheck-backend validate \
        security audit lockfile-lint gitleaks grype require-mssql-sa-password require-mssql-database-url \
-       test test-shell test-integration test-mssql dev-db smoke-backend-mssql smoke-local-vertex release-prepare verify-release-version env-check aro-login aks-login e2e-azure-route e2e-azure-route-up e2e-azure-route-refresh e2e-azure-route-down \
+       test test-shell test-integration test-e2e-live playwright-install test-mssql dev-db smoke-backend-mssql smoke-local-vertex release-prepare verify-release-version env-check aro-login aks-login e2e-azure-route e2e-azure-route-up e2e-azure-route-refresh e2e-azure-route-down \
        prod-up prod-up-tag prod-down prod-status public-exposure-audit db-mode-check db-port-forward-check db-inspect db-inspect-live db-admin-stats db-admin-stats-live geneva-suppression-check prod-up-final \
        build dev start capture-readme-hero \
        docker-build-frontend docker-build-backend docker-build \
@@ -70,6 +70,10 @@ AOAI_DEPLOYMENT_PROBE ?=
 E2E_NAMESPACE_PREFIX ?= sre-manual-e2e
 E2E_RELEASE ?= sre-simulator
 E2E_METADATA_FILE ?= data/e2e-azure-route.env
+LIVE_E2E_BASE_URL ?=
+LIVE_E2E_AUTH_SESSION_SECRET ?=
+LIVE_E2E_ARTIFACT_DIR ?= data/playwright-live-e2e
+LIVE_E2E_VIEWER_PREFIX ?= live-e2e
 E2E_REQUIRED_VARS := AZURE_SUBSCRIPTION_ID AOAI_RG AOAI_ACCOUNT AOAI_DEPLOYMENT $(if $(filter aks,$(CLUSTER_FLAVOR)),AKS_RG AKS_CLUSTER,ARO_RG ARO_CLUSTER)
 PROD_NAMESPACE ?= sre-simulator
 PROD_METADATA_FILE ?= data/prod-route.env
@@ -290,6 +294,7 @@ test-shell: ## Run shell regression tests
 	env -i PATH="$$PATH" HOME="$$HOME" TMPDIR="$${TMPDIR:-/tmp}" bash scripts/helm-platform.test.sh
 	env -i PATH="$$PATH" HOME="$$HOME" TMPDIR="$${TMPDIR:-/tmp}" bash scripts/install-worktree-cleanup-launchd.test.sh
 	env -i PATH="$$PATH" HOME="$$HOME" TMPDIR="$${TMPDIR:-/tmp}" bash scripts/local-mssql-secrets.test.sh
+	env -i PATH="$$PATH" HOME="$$HOME" TMPDIR="$${TMPDIR:-/tmp}" bash scripts/live-e2e-gate.test.sh
 	env -i PATH="$$PATH" HOME="$$HOME" TMPDIR="$${TMPDIR:-/tmp}" bash scripts/prod-db-guard.test.sh
 	env -i PATH="$$PATH" HOME="$$HOME" TMPDIR="$${TMPDIR:-/tmp}" bash scripts/release-version-sync.test.sh
 	env -i PATH="$$PATH" HOME="$$HOME" TMPDIR="$${TMPDIR:-/tmp}" bash scripts/select-deploy.test.sh
@@ -313,6 +318,24 @@ verify-release-version: ## Verify semver surfaces for a release tag
 
 test-integration: test-shell ## Run backend integration tests (full API game flow, mock mode)
 	cd $(BACKEND_DIR) && npm run test:integration
+
+playwright-install: ## Install Chromium used by live Playwright validation
+	cd $(FRONTEND_DIR) && npx playwright install --with-deps chromium
+
+test-e2e-live: ## Run mandatory live browser flows for every gameplay platform
+	@if [ -z "$(LIVE_E2E_BASE_URL)" ]; then \
+		echo "LIVE_E2E_BASE_URL is required."; \
+		exit 1; \
+	fi
+	@if [ -z "$(LIVE_E2E_AUTH_SESSION_SECRET)" ]; then \
+		echo "LIVE_E2E_AUTH_SESSION_SECRET is required."; \
+		exit 1; \
+	fi
+	@LIVE_E2E_BASE_URL="$(LIVE_E2E_BASE_URL)" \
+		LIVE_E2E_AUTH_SESSION_SECRET="$(LIVE_E2E_AUTH_SESSION_SECRET)" \
+		LIVE_E2E_ARTIFACT_DIR="$(LIVE_E2E_ARTIFACT_DIR)" \
+		LIVE_E2E_VIEWER_PREFIX="$(LIVE_E2E_VIEWER_PREFIX)" \
+		node scripts/playwright-live-e2e.mjs
 
 MSSQL_SA_PASSWORD ?=
 MSSQL_DATABASE_URL ?=

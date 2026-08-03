@@ -243,6 +243,7 @@ For provider options, environment variables, and runtime behavior, use:
 | `make validate` | Lint + typecheck validation |
 | `make test` | Unit tests with coverage |
 | `make test-integration` | Integration tests |
+| `make test-e2e-live` | Authenticated live Playwright flows for all platforms |
 | `make env-check` | Verify required local env/bootstrap settings before live e2e |
 | `make security` | Security checks |
 | `make aro-login` | Authenticate Azure CLI if needed and log `oc` into the configured ARO cluster |
@@ -253,6 +254,27 @@ For provider options, environment variables, and runtime behavior, use:
 | `make prod-up-final` | Guarded production deploy sequence |
 | `make prod-status` | Show production namespace status |
 | `make prod-down` | Delete production namespace (explicit confirmation) |
+
+## Mandatory pull-request browser gate
+
+Every PR must pass the `live-e2e` CI job. The job is serialized, requires
+approval through the protected `live-e2e` GitHub Environment, creates an
+isolated `sre-pr-<number>-<timestamp>` namespace, publishes non-semver PR
+images, runs the three-platform Playwright suite, uploads screenshots/results,
+and removes the namespace in an `always()` cleanup step.
+
+Local invocation against an existing environment:
+
+```bash
+make playwright-install
+LIVE_E2E_BASE_URL=https://e2e.example.test \
+LIVE_E2E_AUTH_SESSION_SECRET=<session-signing-secret> \
+make test-e2e-live
+```
+
+Never print the session secret. PRs from forks cannot receive privileged
+environment credentials and must be moved to a trusted same-repository branch
+before merge.
 
 ## Production and infra guidance
 

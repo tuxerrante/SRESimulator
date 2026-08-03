@@ -1,0 +1,330 @@
+#!/usr/bin/env node
+
+import { createHmac } from "node:crypto";
+import { mkdir, writeFile } from "node:fs/promises";
+import { createRequire } from "node:module";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const repoRoot = path.resolve(__dirname, "..");
+const frontendRoot = path.join(repoRoot, "frontend");
+const require = createRequire(path.join(frontendRoot, "package.json"));
+const { chromium } = require("playwright");
+
+const baseUrl = process.env.LIVE_E2E_BASE_URL?.replace(/\/$/, "");
+const secret = process.env.LIVE_E2E_AUTH_SESSION_SECRET;
+const artifactDir = path.resolve(
+  process.env.LIVE_E2E_ARTIFACT_DIR ??
+    path.join(repoRoot, "data", "playwright-live-e2e"),
+);
+const viewerPrefix =
+  process.env.LIVE_E2E_VIEWER_PREFIX ?? `live-e2e-${Date.now()}`;
+
+if (!baseUrl || !secret) {
+  throw new Error(
+    "LIVE_E2E_BASE_URL and LIVE_E2E_AUTH_SESSION_SECRET are required",
+  );
+}
+
+const platforms = [
+  {
+    id: "aks",
+    label: "AKS",
+    cli: "kubectl",
+    expectedContext: ["Platformaks", "Node pools:", "Managed RG hint:"],
+    forbiddenText: [/\bARO\b/i, /\bOpenShift\b/i, /\boc get\b/i],
+  },
+  {
+    id: "aro-hcp",
+    label: "ARO HCP",
+    cli: "oc",
+    expectedContext: [
+      "Platformaro-hcp",
+      "Guest cluster:",
+      "Hosted control plane namespace:",
+      "Node pools:",
+    ],
+    forbiddenText: [/\bAKS\b/i, /\bkubectl\b/i],
+  },
+  {
+    id: "aro-classic",
+    label: "ARO Classic",
+    cli: "oc",
+    expectedContext: ["Platformaro-classic", "Machines:"],
+    forbiddenText: [/\bAKS\b/i, /\bkubectl\b/i, /\bHostedCluster\b/i],
+  },
+];
+
+const allowedReferences = {
+  aks: [
+    "https://learn.microsoft.com/en-us/azure/aks/",
+    "https://learn.microsoft.com/en-us/troubleshoot/azure/azure-kubernetes/",
+    "https://learn.microsoft.com/en-us/azure/aks/support-policies",
+    "https://kubernetes.io/docs/",
+    "https://learn.microsoft.com/en-us/azure/azure-monitor/",
+  ],
+  "aro-hcp": [
+    "https://learn.microsoft.com/en-us/azure/openshift/support-lifecycle",
+    "https://github.com/Azure/ARO-HCP",
+    "https://docs.openshift.com/container-platform/4.18/",
+    "https://access.redhat.com/knowledgebase",
+    "https://github.com/openshift/runbooks/tree/master/alerts",
+  ],
+  "aro-classic": [
+    "https://learn.microsoft.com/en-us/azure/openshift/support-lifecycle",
+    "https://learn.microsoft.com/en-us/azure/openshift/support-policies-v4",
+    "https://docs.openshift.com/container-platform/4.18/",
+    "https://access.redhat.com/knowledgebase",
+    "https://github.com/openshift/runbooks/tree/master/alerts",
+  ],
+};
+
+function createViewerToken(platformId) {
+  const now = Date.now();
+  const payload = Buffer.from(
+    JSON.stringify({
+      kind: "github",
+      githubUserId: `${viewerPrefix}-${platformId}`,
+      githubLogin: `${viewerPrefix}-${platformId}`,
+      displayName: `Live E2E ${platformId}`,
+      avatarUrl: null,
+      issuedAt: now,
+      expiresAt: now + 60 * 60 * 1000,
+    }),
+    "utf8",
+  ).toString("base64url");
+  const signature = createHmac("sha256", secret)
+    .update(payload)
+    .digest("base64url");
+  return `${payload}.${signature}`;
+}
+
+function isAllowedReference(platform, href) {
+  const candidate = new URL(href);
+  return allowedReferences[platform].some((allowedHref) => {
+    const allowed = new URL(allowedHref);
+    const prefix = allowed.pathname.endsWith("/")
+      ? allowed.pathname
+      : `${allowed.pathname}/`;
+    return (
+      candidate.origin === allowed.origin &&
+      (candidate.pathname === allowed.pathname ||
+        candidate.pathname.startsWith(prefix))
+    );
+  });
+}
+
+async function waitForAssistant(page, previousCount) {
+  await page.waitForFunction(
+    (count) =>
+      Array.from(document.querySelectorAll("div")).filter(
+        (element) => element.textContent?.trim() === "Dungeon Master",
+      ).length > count,
+    previousCount,
+    { timeout: 120_000 },
+  );
+  await page
+    .getByText("Dungeon Master is thinking...", { exact: true })
+    .waitFor({ state: "hidden", timeout: 120_000 })
+    .catch(() => {});
+}
+
+async function sendChat(page, message) {
+  const assistantLabels = page.getByText("Dungeon Master", { exact: true });
+  const previousCount = await assistantLabels.count();
+  const input = page.getByPlaceholder(
+    "Describe what you want to investigate...",
+  );
+  await input.fill(message);
+  await input.press("Enter");
+  await waitForAssistant(page, previousCount);
+  return assistantLabels.last().locator("xpath=..").innerText();
+}
+
+async function runPlatform(browser, platform) {
+  const context = await browser.newContext({
+    viewport: { width: 1800, height: 1100 },
+  });
+  await context.addCookies([
+    {
+      name: "sresim_viewer_session",
+      value: createViewerToken(platform.id),
+      url: baseUrl,
+      httpOnly: true,
+      secure: new URL(baseUrl).protocol === "https:",
+      sameSite: "Lax",
+    },
+  ]);
+
+  const page = await context.newPage();
+  const consoleErrors = [];
+  const failedResponses = [];
+  page.on("console", (message) => {
+    if (message.type() === "error") consoleErrors.push(message.text());
+  });
+  page.on("response", (response) => {
+    if (response.status() >= 500) {
+      failedResponses.push({ status: response.status(), url: response.url() });
+    }
+  });
+
+  try {
+    await page.goto(baseUrl, { waitUntil: "networkidle", timeout: 60_000 });
+    await page
+      .getByText(`Signed in with GitHub as Live E2E ${platform.id}`, {
+        exact: true,
+      })
+      .waitFor({ timeout: 30_000 });
+    await page.getByLabel("Callsign").fill(`battle-${platform.id}`);
+    await page
+      .getByRole("button", { name: new RegExp(`^${platform.label}`) })
+      .click();
+    await page.getByRole("button", { name: /The Junior SRE/ }).click();
+    await page.waitForURL("**/game", { timeout: 120_000 });
+
+    await page
+      .getByText(new RegExp(`live incident on ${platform.label}`))
+      .waitFor({ timeout: 30_000 });
+    await page.getByRole("button", { name: /^Next/ }).click();
+    await page.getByRole("button", { name: /^Next/ }).click();
+    await page
+      .getByText(new RegExp(`${platform.cli}/KQL commands`))
+      .waitFor();
+    await page.getByRole("button", { name: "Close tour" }).click();
+
+    await page.getByRole("button", { name: "Dashboard" }).click();
+    const dashboardText = (await page.locator("body").innerText())
+      .replace(/\s+/g, "")
+      .toLowerCase();
+    for (const expected of platform.expectedContext) {
+      if (
+        !dashboardText.includes(expected.replace(/\s+/g, "").toLowerCase())
+      ) {
+        throw new Error(
+          `${platform.id} dashboard missing expected context: ${expected}`,
+        );
+      }
+    }
+
+    const readingResponse = await sendChat(
+      page,
+      "I read the ticket and compared the symptom, customer impact, cluster version, region, alert timing, and recent events. I have not inferred a root cause yet. What inconsistency should I prioritize?",
+    );
+    const factsResponse = await sendChat(
+      page,
+      `I checked the Dashboard and compared active alerts, recent events, node status, and upgrade history. I am ready for facts gathering. Respond with exactly one read-only ${platform.cli} command in a fenced ${platform.cli} block, using scenario resources.`,
+    );
+    let assistantText = `${readingResponse}\n${factsResponse}`;
+    let chatLinks = await page
+      .locator('[data-tour="chat-panel"] a[href]')
+      .evaluateAll((links) => links.map((link) => link.href));
+    if (chatLinks.length === 0) {
+      assistantText += `\n${await sendChat(
+        page,
+        "Before continuing, provide one clickable official documentation reference appropriate to this platform.",
+      )}`;
+      chatLinks = await page
+        .locator('[data-tour="chat-panel"] a[href]')
+        .evaluateAll((links) => links.map((link) => link.href));
+    }
+
+    for (const forbidden of platform.forbiddenText) {
+      if (forbidden.test(assistantText)) {
+        throw new Error(
+          `${platform.id} response contained forbidden text: ${forbidden}`,
+        );
+      }
+    }
+    if (chatLinks.length === 0) {
+      throw new Error(`${platform.id} produced no documentation links`);
+    }
+    for (const href of chatLinks) {
+      if (!isAllowedReference(platform.id, href)) {
+        throw new Error(`${platform.id} rendered an invalid link: ${href}`);
+      }
+    }
+
+    const expectedLabel =
+      platform.cli === "kubectl" ? "Kubernetes CLI" : "OpenShift CLI";
+    const wrongLabel =
+      platform.cli === "kubectl" ? "OpenShift CLI" : "Kubernetes CLI";
+    const expectedCodeLabel = page.getByText(expectedLabel, { exact: true });
+    await expectedCodeLabel.last().waitFor({ timeout: 60_000 });
+
+    const wrongBlocks = page.getByText(
+      new RegExp(`^${wrongLabel} \\(not valid for`),
+    );
+    for (let index = 0; index < (await wrongBlocks.count()); index += 1) {
+      const block = wrongBlocks
+        .nth(index)
+        .locator('xpath=ancestor::div[contains(@class,"my-2")][1]');
+      if ((await block.getByRole("button", { name: /^Run$/ }).count()) > 0) {
+        throw new Error(`${platform.id} exposed a runnable invalid CLI`);
+      }
+    }
+
+    const codeBlock = expectedCodeLabel
+      .last()
+      .locator('xpath=ancestor::div[contains(@class,"my-2")][1]');
+    await codeBlock.getByRole("button", { name: /^Run$/ }).click();
+    await page.getByRole("button", { name: "Terminal" }).click();
+    await page
+      .getByText("Simulating command execution...", { exact: true })
+      .waitFor({ state: "hidden", timeout: 120_000 })
+      .catch(() => {});
+    await page
+      .getByText("1 command", { exact: true })
+      .waitFor({ timeout: 120_000 });
+
+    await page.screenshot({
+      path: path.join(artifactDir, `${platform.id}.png`),
+      fullPage: true,
+    });
+    if (failedResponses.length > 0) {
+      throw new Error(
+        `${platform.id} observed HTTP 5xx: ${JSON.stringify(failedResponses)}`,
+      );
+    }
+    if (consoleErrors.length > 0) {
+      throw new Error(
+        `${platform.id} observed console errors: ${JSON.stringify(consoleErrors)}`,
+      );
+    }
+
+    return {
+      platform: platform.id,
+      scenario: "passed",
+      onboarding: "passed",
+      dashboard: "passed",
+      chat: "passed",
+      links: chatLinks,
+      command: "passed",
+    };
+  } catch (error) {
+    await page.screenshot({
+      path: path.join(artifactDir, `${platform.id}-failure.png`),
+      fullPage: true,
+    });
+    throw error;
+  } finally {
+    await context.close();
+  }
+}
+
+await mkdir(artifactDir, { recursive: true });
+const browser = await chromium.launch({ headless: true });
+const results = [];
+try {
+  for (const platform of platforms) {
+    results.push(await runPlatform(browser, platform));
+  }
+} finally {
+  await browser.close();
+}
+
+await writeFile(
+  path.join(artifactDir, "results.json"),
+  `${JSON.stringify(results, null, 2)}\n`,
+);
+console.log(JSON.stringify(results));

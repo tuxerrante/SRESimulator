@@ -627,6 +627,199 @@ jobs:
           -t "sre-simulator-${COMPONENT}"
           .
 
+  live-e2e:
+    needs:
+      - changes
+      - lint-typecheck
+      - test
+      - integration-test
+      - integration-test-mssql
+      - security
+      - helm-validate
+      - docker-build
+    if: >-
+      always() &&
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      needs.changes.result == 'success' &&
+      needs.lint-typecheck.result == 'success' &&
+      needs.test.result == 'success' &&
+      needs.security.result == 'success' &&
+      needs.helm-validate.result == 'success' &&
+      needs.docker-build.result == 'success' &&
+      (
+        needs.changes.outputs.run_integration != 'true' ||
+        (
+          needs.integration-test.result == 'success' &&
+          needs.integration-test-mssql.result == 'success'
+        )
+      )
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    environment:
+      name: live-e2e
+    concurrency:
+      group: sresimulator-live-e2e
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      packages: write
+    env:
+      CLUSTER_FLAVOR: aks
+      AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      AKS_RG: ${{ secrets.AKS_RG }}
+      AKS_CLUSTER: ${{ secrets.AKS_CLUSTER }}
+      AOAI_RG: ${{ secrets.AOAI_RG }}
+      AOAI_ACCOUNT: ${{ secrets.AOAI_ACCOUNT }}
+      AOAI_DEPLOYMENT: ${{ secrets.AOAI_DEPLOYMENT }}
+      AOAI_DEPLOYMENT_CHAT: ${{ secrets.AOAI_DEPLOYMENT_CHAT }}
+      AOAI_DEPLOYMENT_COMMAND: ${{ secrets.AOAI_DEPLOYMENT_COMMAND }}
+      AOAI_DEPLOYMENT_SCENARIO: ${{ secrets.AOAI_DEPLOYMENT_SCENARIO }}
+      AOAI_DEPLOYMENT_PROBE: ${{ secrets.AOAI_DEPLOYMENT_PROBE }}
+      GITHUB_AUTH_SECRET_NAME: >-
+        ${{
+          vars.AUTH_SECRET_NAME ||
+          secrets.AUTH_SECRET_NAME ||
+          vars.GITHUB_AUTH_SECRET_NAME ||
+          secrets.GITHUB_AUTH_SECRET_NAME ||
+          'sre-auth-secrets'
+        }}
+      AUTH_SECRET_SOURCE_NAMESPACE: ${{ secrets.PROD_NAMESPACE }}
+      DB_SECRET_NAME: ${{ secrets.DB_SECRET_NAME }}
+      DB_SECRET_SOURCE_NAMESPACE: ${{ secrets.PROD_NAMESPACE }}
+      PROD_NAMESPACE: ${{ secrets.PROD_NAMESPACE }}
+      E2E_NAMESPACE_PREFIX: sre-pr-${{ github.event.number }}
+      E2E_METADATA_FILE: data/live-e2e-${{ github.event.number }}.env
+      E2E_RELEASE: sre-simulator
+      AKS_E2E_EXPOSURE_MODE: none
+      AKS_E2E_PUSH_DEV_IMAGES: "true"
+      AKS_E2E_DEV_IMAGE_TAG_SUFFIX: dev
+      GHCR_USERNAME: ${{ github.actor }}
+      GH_TOKEN: ${{ github.token }}
+      TURNSTILE_TEST_MODE: "true"
+      LOCAL_TEST_VERIFICATION_ENABLED: "true"
+      LIVE_E2E_ARTIFACT_DIR: >-
+        data/playwright-live-e2e-${{ github.event.number }}
+      LIVE_E2E_VIEWER_PREFIX: >-
+        pr-${{ github.event.number }}-${{ github.run_id }}
+    steps:
+      - name: Harden runner
+        # v2.18.0
+        uses: >-
+          step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        # v6.0.2
+        uses: >-
+          actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          fetch-depth: 0
+
+      - name: Load npm version
+        run: echo "NPM_VERSION=$(tr -d '\n' < .npm-version)" >> "$GITHUB_ENV"
+
+      - name: Setup Node.js
+        # v6.3.0
+        uses: >-
+          actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: |
+            frontend/package-lock.json
+            backend/package-lock.json
+
+      - name: Update npm
+        run: npm install --global "npm@${NPM_VERSION}"
+
+      - name: Install dependencies
+        run: make install
+
+      - name: Setup Helm
+        # v5.0.0
+        uses: >-
+          azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310
+
+      - name: Azure login
+        # v3.0.0
+        uses: >-
+          azure/login@532459ea530d8321f2fb9bb10d1e0bcf23869a43
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Validate privileged E2E configuration
+        run: |
+          set -euo pipefail
+          missing=()
+          for name in \
+            AZURE_SUBSCRIPTION_ID AKS_RG AKS_CLUSTER \
+            AOAI_RG AOAI_ACCOUNT AOAI_DEPLOYMENT \
+            GITHUB_AUTH_SECRET_NAME DB_SECRET_NAME PROD_NAMESPACE; do
+            if [[ -z "${!name:-}" ]]; then
+              missing+=("$name")
+            fi
+          done
+          if [[ "${#missing[@]}" -gt 0 ]]; then
+            echo "Missing live E2E configuration: ${missing[*]}"
+            exit 1
+          fi
+
+      - name: Deploy PR head to isolated E2E namespace
+        run: make e2e-azure-route-up
+
+      - name: Install Playwright Chromium
+        run: make playwright-install
+
+      - name: Run live Playwright platform flows
+        run: |
+          set -euo pipefail
+          ns="$(sed -n 's/^NS=//p' "$E2E_METADATA_FILE")"
+          base_url="$(sed -n 's/^URL=//p' "$E2E_METADATA_FILE")"
+          session_secret="$(
+            kubectl -n "$ns" get "secret/$GITHUB_AUTH_SECRET_NAME" \
+              -o jsonpath='{.data.auth-session-secret}' |
+              base64 --decode
+          )"
+          if [[ -z "$ns" || -z "$base_url" || -z "$session_secret" ]]; then
+            echo "E2E metadata or auth session secret is missing."
+            exit 1
+          fi
+          export LIVE_E2E_BASE_URL="$base_url"
+          export LIVE_E2E_AUTH_SESSION_SECRET="$session_secret"
+          make test-e2e-live
+          unset LIVE_E2E_AUTH_SESSION_SECRET session_secret
+
+      - name: Add live E2E result summary
+        if: always()
+        run: |
+          if [[ -f "$LIVE_E2E_ARTIFACT_DIR/results.json" ]]; then
+            echo "### Live Playwright E2E" >> "$GITHUB_STEP_SUMMARY"
+            echo '```json' >> "$GITHUB_STEP_SUMMARY"
+            cat "$LIVE_E2E_ARTIFACT_DIR/results.json" \
+              >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload live E2E artifacts
+        if: always()
+        # v4.6.2
+        uses: >-
+          actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: live-e2e-pr-${{ github.event.number }}
+          path: ${{ env.LIVE_E2E_ARTIFACT_DIR }}
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Remove temporary E2E namespace
+        if: always()
+        run: |
+          if [[ -f "$E2E_METADATA_FILE" ]]; then
+            make e2e-azure-route-down
+          fi
+
   ci-gate:
     if: always()
     needs:
@@ -639,6 +832,7 @@ jobs:
       - security
       - helm-validate
       - docker-build
+      - live-e2e
     runs-on: ubuntu-latest
     steps:
       - name: Verify all jobs passed
@@ -654,6 +848,8 @@ jobs:
           SECURITY_RESULT: ${{ needs.security.result }}
           HELM_RESULT: ${{ needs.helm-validate.result }}
           DOCKER_RESULT: ${{ needs.docker-build.result }}
+          LIVE_E2E_RESULT: ${{ needs.live-e2e.result }}
+          EVENT_NAME: ${{ github.event_name }}
         run: |
           failed=false
           failed_jobs=()
@@ -670,6 +866,7 @@ jobs:
           echo "  security:                   ${SECURITY_RESULT}"
           echo "  helm-validate:              ${HELM_RESULT}"
           echo "  docker-build:               ${DOCKER_RESULT}"
+          echo "  live-e2e:                   ${LIVE_E2E_RESULT}"
 
           for name_result in \
             "tag-mainline-check:${TAG_MAINLINE_RESULT}" \
@@ -686,6 +883,15 @@ jobs:
               failed_jobs+=("${name} (${result})")
             fi
           done
+
+          if [[ "${EVENT_NAME}" == "pull_request" ]]; then
+            if [[ "${LIVE_E2E_RESULT}" != "success" ]]; then
+              failed=true
+              failed_jobs+=("live-e2e (${LIVE_E2E_RESULT})")
+            fi
+          else
+            echo "Live E2E is required for pull requests only."
+          fi
 
           if [[ "${RUN_INTEGRATION}" == "true" ]]; then
             for name_result in \
