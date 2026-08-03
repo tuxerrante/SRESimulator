@@ -1,12 +1,11 @@
-import { readFile, writeFile, mkdir, rename, rm } from "fs/promises";
+import { readFile, writeFile, mkdir, rename } from "fs/promises";
 import { existsSync } from "fs";
 import path from "path";
 import type { GithubViewer } from "../../../../shared/auth/viewer";
 import type { IPlayerStore, PlayerRecord } from "./types";
+import { acquireJsonProcessLock } from "./json-process-lock";
 
 const DEFAULT_LOCK_WAIT_TIMEOUT_MS = 5000;
-const LOCK_RETRY_DELAY_MS = 10;
-
 function getLockWaitTimeoutMs(): number {
   const parsed = Number.parseInt(
     process.env.JSON_PLAYER_STORE_LOCK_TIMEOUT_MS ?? "",
@@ -51,29 +50,11 @@ export class JsonPlayerStore implements IPlayerStore {
   }
 
   private async acquireProcessLock(): Promise<() => Promise<void>> {
-    const timeoutMs = getLockWaitTimeoutMs();
-    const deadline = Date.now() + timeoutMs;
-
-    for (;;) {
-      try {
-        await mkdir(this.lockPath);
-        return async () => {
-          await rm(this.lockPath, { recursive: true, force: true });
-        };
-      } catch (error) {
-        if (!(error instanceof Error) || !("code" in error) || error.code !== "EEXIST") {
-          throw error;
-        }
-        if (Date.now() >= deadline) {
-          const timeoutError = new Error(
-            `Timed out waiting for players lock after ${timeoutMs}ms`,
-          ) as Error & { cause?: unknown };
-          timeoutError.cause = error;
-          throw timeoutError;
-        }
-        await new Promise((resolve) => setTimeout(resolve, LOCK_RETRY_DELAY_MS));
-      }
-    }
+    return acquireJsonProcessLock(
+      this.lockPath,
+      getLockWaitTimeoutMs(),
+      "players lock",
+    );
   }
 
   private async writePlayers(players: PlayerRecord[]): Promise<void> {

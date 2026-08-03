@@ -153,6 +153,17 @@ ensure_auth_secret_for_e2e_namespace() {
   github_auth_secret_name="$(sanitize_single_line_value "${GITHUB_AUTH_SECRET_NAME:-}")"
   e2e_auth_secret_name="$(sanitize_single_line_value "${E2E_AUTH_SECRET_NAME:-}")"
   secret_name="${github_auth_secret_name:-${e2e_auth_secret_name}}"
+  turnstile_site_key="${TURNSTILE_SITE_KEY:-${NEXT_PUBLIC_TURNSTILE_SITE_KEY:-}}"
+
+  if [ -n "${GITHUB_CLIENT_ID:-}" ] || \
+     [ -n "${GITHUB_CLIENT_SECRET:-}" ] || \
+     [ -n "${AUTH_SESSION_SECRET:-}" ] || \
+     [ -n "${ANTI_ABUSE_HMAC_SECRET:-}" ] || \
+     [ -n "${TURNSTILE_SECRET_KEY:-}" ] || \
+     [ -n "${TURNSTILE_EXPECTED_HOSTNAME:-}" ] || \
+     [ -n "$turnstile_site_key" ]; then
+    has_runtime_values=true
+  fi
 
   if [ -z "$secret_name" ] && [ "$has_runtime_values" = false ] && \
      secret_exists_in_namespace "$src_ns" "sre-auth-secrets"; then
@@ -163,17 +174,6 @@ ensure_auth_secret_for_e2e_namespace() {
   if [ -n "$github_auth_secret_name" ]; then
     echo "Ensuring auth secret in '$dst_ns' (from namespace '$src_ns', secret '${github_auth_secret_name}'; payload not logged)." >&2
     copy_secret_across_namespaces "$src_ns" "$dst_ns" "$github_auth_secret_name" || return 1
-  fi
-
-  turnstile_site_key="${TURNSTILE_SITE_KEY:-${NEXT_PUBLIC_TURNSTILE_SITE_KEY:-}}"
-  if [ -n "${GITHUB_CLIENT_ID:-}" ] || \
-     [ -n "${GITHUB_CLIENT_SECRET:-}" ] || \
-     [ -n "${AUTH_SESSION_SECRET:-}" ] || \
-     [ -n "${ANTI_ABUSE_HMAC_SECRET:-}" ] || \
-     [ -n "${TURNSTILE_SECRET_KEY:-}" ] || \
-     [ -n "${TURNSTILE_EXPECTED_HOSTNAME:-}" ] || \
-     [ -n "$turnstile_site_key" ]; then
-    has_runtime_values=true
   fi
 
   if [ -z "$secret_name" ] && [ "$has_runtime_values" = true ]; then

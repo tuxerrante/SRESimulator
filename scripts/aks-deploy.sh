@@ -456,8 +456,13 @@ login_ghcr_with_local_cli() {
 
 build_and_push_ghcr_image() {
   local container_cli=$1 image_repo=$2 image_tag=$3 dockerfile=$4
+  local image_platform="${AKS_E2E_DEV_IMAGE_PLATFORM:-linux/amd64}"
 
-  "$container_cli" build -f "$dockerfile" -t "${image_repo}:${image_tag}" . >/dev/null
+  "$container_cli" build \
+    --platform "$image_platform" \
+    -f "$dockerfile" \
+    -t "${image_repo}:${image_tag}" \
+    . >/dev/null
   "$container_cli" push "${image_repo}:${image_tag}" >/dev/null
 }
 
@@ -531,10 +536,34 @@ helm_deploy_sre() {
   local auth_flags=()
   local image_pull_flags=()
   local aoai_route_flags=()
+  local helm_upgrade_flags=()
+  local public_origin_flags=()
   local image_pull_policy
   local aoai_model
   local resolved_auth_secret
   local turnstile_site_key
+
+  if [ -n "${AKS_PUBLIC_ORIGIN_OVERRIDE:-}" ]; then
+    if [[ ! "${AKS_PUBLIC_ORIGIN_OVERRIDE}" =~ ^https?://[^[:space:]]+$ ]]; then
+      echo "error: AKS_PUBLIC_ORIGIN_OVERRIDE must be an absolute http(s) origin" >&2
+      rm -f "$exposure_values_file"
+      return 1
+    fi
+    public_origin_flags+=(--set-string "publicOrigin=${AKS_PUBLIC_ORIGIN_OVERRIDE}")
+  fi
+
+  case "${AKS_HELM_FORCE_CONFLICTS:-false}" in
+    1|true|TRUE|yes|YES)
+      helm_upgrade_flags+=(--server-side=true --force-conflicts)
+      ;;
+    0|false|FALSE|no|NO|"")
+      ;;
+    *)
+      echo "error: AKS_HELM_FORCE_CONFLICTS must be true or false" >&2
+      rm -f "$exposure_values_file"
+      return 1
+      ;;
+  esac
 
   image_pull_policy="$(image_pull_policy_for_tag "$tag")"
   aoai_model="${AOAI_MODEL:-${AOAI_DEPLOYMENT}}"
@@ -645,6 +674,8 @@ helm_deploy_sre() {
     "${image_pull_flags[@]}" \
     "${auth_flags[@]}" \
     "${db_flags[@]}" \
+    "${public_origin_flags[@]}" \
+    "${helm_upgrade_flags[@]}" \
     --wait --timeout 15m >/dev/null; then
     rm -f "$exposure_values_file"
     return 1

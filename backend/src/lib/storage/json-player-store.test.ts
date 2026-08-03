@@ -53,6 +53,21 @@ describe("JsonPlayerStore", () => {
     expect(persistedPlayers.every((player) => player?.githubUserId)).toBe(true);
   });
 
+  it("creates a missing data directory before acquiring the process lock", async () => {
+    process.env.DATA_DIR = join(dataDir, "missing");
+    const store = new JsonPlayerStore();
+
+    await expect(
+      store.upsertGithubViewer({
+        kind: "github",
+        githubUserId: "first-run-user",
+        githubLogin: "first-run-user",
+        displayName: "First Run User",
+        avatarUrl: null,
+      }),
+    ).resolves.toMatchObject({ githubUserId: "first-run-user" });
+  });
+
   it("fails fast when a stale cross-process lock never clears", async () => {
     process.env.JSON_PLAYER_STORE_LOCK_TIMEOUT_MS = "30";
     await mkdir(join(dataDir, ".players.lock"), { recursive: true });
