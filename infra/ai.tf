@@ -2,7 +2,7 @@
 # Azure OpenAI (Cognitive Services) - single account + deployment
 # ---------------------------------------------------------------------------
 #
-# Per PR #31 spike results, all routes can share a single gpt-4o-mini deployment.
+# All routes can share the default deployment.
 # Per-route overrides (e.g. a more capable model for chat) are handled at the
 # application layer via AI_AZURE_OPENAI_DEPLOYMENT_<ROUTE> env vars.
 

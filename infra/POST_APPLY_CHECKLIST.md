@@ -321,8 +321,8 @@ minutes (it only updates the rate limit on the existing deployment).
 | ------- | ------- |
 | Max standard deployments per AOAI resource | 32 |
 | Max AOAI resources per region per subscription | 30 |
-| `gpt-4o-mini` Tier 1 quota (Standard) | 6M TPM |
-| `gpt-4o-mini` usage tier (monthly) | 85B tokens |
+| Selected model quota | Verify for the configured region and SKU |
+| Selected model usage tier | Verify against current Foundry limits |
 
 See [Azure OpenAI Quotas and Limits](https://learn.microsoft.com/en-us/azure/ai-foundry/openai/quotas-limits)
 for the full reference. Quota tiers auto-upgrade with usage.

@@ -94,7 +94,7 @@ run "aoai_deployment_name" {
   command = plan
 
   assert {
-    condition     = azurerm_cognitive_deployment.model.name == "gpt-4o-mini"
+    condition     = azurerm_cognitive_deployment.model.name == "gpt-5.6-terra"
     error_message = "Azure OpenAI deployment name should match the model name variable."
   }
 }

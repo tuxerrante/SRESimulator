@@ -15,7 +15,7 @@ cluster_flavor = "aks"
 # supported version for the region.
 # aks_kubernetes_version = ""
 
-# In westeurope, gpt-4o-mini requires GlobalStandard (Standard is unsupported).
+# The selected model and region must support GlobalStandard.
 aoai_sku_name = "GlobalStandard"
 
 # Minimum-cost AKS sizing with node autoscaling.
