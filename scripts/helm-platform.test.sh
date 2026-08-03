@@ -40,6 +40,9 @@ grep -Eq 'value: "https://route\.example\.com"' "${route_render}" || \
 grep -Eq 'AI_COMMAND_TIMEOUT_MS: "12000"' "${route_render}" || \
   fail "Backend command timeout should remain below the public edge request budget."
 
+grep -Eq 'AI_SCENARIO_TIMEOUT_MS: "12000"' "${route_render}" || \
+  fail "Backend scenario timeout should remain below the public edge request budget."
+
 helm template sre-simulator "${CHART_DIR}" \
   --set exposure.mode=route \
   --set exposure.host=route.example.com \
