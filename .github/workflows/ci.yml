@@ -478,27 +478,24 @@ jobs:
       - name: Install dependencies
         run: make install
 
+      - name: Resolve daily Grype cache key
+        id: grype-cache-key
+        run: >-
+          echo "key=grype-${RUNNER_OS}-v0.110.0-$(date -u +%Y-%m-%d)"
+          >> "$GITHUB_OUTPUT"
+
+      - name: Restore Grype vulnerability database
+        # v4.2.4
+        uses: >-
+          actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: ~/.cache/grype
+          key: ${{ steps.grype-cache-key.outputs.key }}
+          restore-keys: |
+            grype-${{ runner.os }}-v0.110.0-
+
       - name: Security checks
         run: make security
-
-      - name: Grype severity gate
-        run: |
-          set -euo pipefail
-          mkdir -p "$HOME/.cache/grype"
-          grype_digest_a="sha256:af65fbc0c664691067788fe95ff88760"
-          grype_digest_b="b435543e45595eb2ca6f102fc476fbe1"
-          grype_image="anchore/grype:v0.110.0@${grype_digest_a}${grype_digest_b}"
-          docker_args=(
-            --rm
-            -e GRYPE_DB_AUTO_UPDATE=true
-            -v "$HOME/.cache/grype:/root/.cache/grype"
-            -v "$PWD:/work"
-            -w /work
-            "$grype_image"
-          )
-          fail_args=(--only-fixed --fail-on "$SECURITY_FAIL_LEVEL")
-          docker run "${docker_args[@]}" "dir:frontend" "${fail_args[@]}"
-          docker run "${docker_args[@]}" "dir:backend" "${fail_args[@]}"
 
   helm-validate:
     runs-on: ubuntu-latest

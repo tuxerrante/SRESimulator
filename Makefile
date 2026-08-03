@@ -263,16 +263,38 @@ gitleaks: ## Scan repository for hardcoded secrets
 	fi
 
 grype: ## Scan frontend/backend dependencies with Grype (high/critical)
-	@set -e; \
+	@set -eo pipefail; \
+	FRONTEND_LOG="$$(mktemp "$${TMPDIR:-/tmp}/grype-frontend.XXXXXX")"; \
+	BACKEND_LOG="$$(mktemp "$${TMPDIR:-/tmp}/grype-backend.XXXXXX")"; \
+	trap 'rm -f "$$FRONTEND_LOG" "$$BACKEND_LOG"' EXIT INT TERM; \
 	if command -v grype >/dev/null 2>&1; then \
-		GRYPE_DB_AUTO_UPDATE=true grype "dir:$(FRONTEND_DIR)" --fail-on $(SECURITY_FAIL_LEVEL) --only-fixed; \
-		GRYPE_DB_AUTO_UPDATE=true grype "dir:$(BACKEND_DIR)" --fail-on $(SECURITY_FAIL_LEVEL) --only-fixed; \
+		GRYPE_DB_AUTO_UPDATE=true grype db update; \
+		GRYPE_DB_AUTO_UPDATE=false grype "dir:$(FRONTEND_DIR)" --fail-on $(SECURITY_FAIL_LEVEL) --only-fixed >"$$FRONTEND_LOG" 2>&1 & \
+		FRONTEND_PID=$$!; \
+		GRYPE_DB_AUTO_UPDATE=false grype "dir:$(BACKEND_DIR)" --fail-on $(SECURITY_FAIL_LEVEL) --only-fixed >"$$BACKEND_LOG" 2>&1 & \
+		BACKEND_PID=$$!; \
 	elif command -v docker >/dev/null 2>&1; then \
 		mkdir -p "$$HOME/.cache/grype"; \
-		docker run --rm -e GRYPE_DB_AUTO_UPDATE=true -v "$$HOME/.cache/grype:/root/.cache/grype" -v "$$(pwd):/work" -w /work "$(GRYPE_IMAGE)" "dir:$(FRONTEND_DIR)" --fail-on $(SECURITY_FAIL_LEVEL) --only-fixed; \
-		docker run --rm -e GRYPE_DB_AUTO_UPDATE=true -v "$$HOME/.cache/grype:/root/.cache/grype" -v "$$(pwd):/work" -w /work "$(GRYPE_IMAGE)" "dir:$(BACKEND_DIR)" --fail-on $(SECURITY_FAIL_LEVEL) --only-fixed; \
+		GRYPE_DOCKER_ARGS=(--rm -v "$$HOME/.cache/grype:/root/.cache/grype" -v "$$(pwd):/work" -w /work "$(GRYPE_IMAGE)"); \
+		docker run "$${GRYPE_DOCKER_ARGS[@]}" db update; \
+		docker run -e GRYPE_DB_AUTO_UPDATE=false "$${GRYPE_DOCKER_ARGS[@]}" "dir:$(FRONTEND_DIR)" --fail-on $(SECURITY_FAIL_LEVEL) --only-fixed >"$$FRONTEND_LOG" 2>&1 & \
+		FRONTEND_PID=$$!; \
+		docker run -e GRYPE_DB_AUTO_UPDATE=false "$${GRYPE_DOCKER_ARGS[@]}" "dir:$(BACKEND_DIR)" --fail-on $(SECURITY_FAIL_LEVEL) --only-fixed >"$$BACKEND_LOG" 2>&1 & \
+		BACKEND_PID=$$!; \
 	else \
 		echo "grype scanner requires either grype CLI or docker."; \
+		exit 1; \
+	fi; \
+	FRONTEND_STATUS=0; \
+	BACKEND_STATUS=0; \
+	wait "$$FRONTEND_PID" || FRONTEND_STATUS=$$?; \
+	wait "$$BACKEND_PID" || BACKEND_STATUS=$$?; \
+	echo "=== Grype frontend ==="; \
+	cat "$$FRONTEND_LOG"; \
+	echo "=== Grype backend ==="; \
+	cat "$$BACKEND_LOG"; \
+	if [ "$$FRONTEND_STATUS" -ne 0 ] || [ "$$BACKEND_STATUS" -ne 0 ]; then \
+		echo "Grype failed: frontend=$$FRONTEND_STATUS backend=$$BACKEND_STATUS"; \
 		exit 1; \
 	fi
 
@@ -297,6 +319,7 @@ test-shell: ## Run shell regression tests
 	env -i PATH="$$PATH" HOME="$$HOME" TMPDIR="$${TMPDIR:-/tmp}" bash scripts/live-e2e-gate.test.sh
 	env -i PATH="$$PATH" HOME="$$HOME" TMPDIR="$${TMPDIR:-/tmp}" bash scripts/prod-db-guard.test.sh
 	env -i PATH="$$PATH" HOME="$$HOME" TMPDIR="$${TMPDIR:-/tmp}" bash scripts/release-version-sync.test.sh
+	env -i PATH="$$PATH" HOME="$$HOME" TMPDIR="$${TMPDIR:-/tmp}" bash scripts/security-parallel.test.sh
 	env -i PATH="$$PATH" HOME="$$HOME" TMPDIR="$${TMPDIR:-/tmp}" bash scripts/select-deploy.test.sh
 	env -i PATH="$$PATH" HOME="$$HOME" TMPDIR="$${TMPDIR:-/tmp}" bash infra/scripts/tf-preflight.test.sh
 
