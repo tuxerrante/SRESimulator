@@ -260,6 +260,37 @@ describe("scenario reservation before AI generation", () => {
     ).toBe("aro-classic");
   });
 
+  it("falls back to the platform catalog when live generation is throttled", async () => {
+    const { AiThrottledError } = await import("../lib/ai-runtime");
+    generateAiTextMock.mockRejectedValueOnce(
+      new AiThrottledError("scenario provider throttled"),
+    );
+
+    const storageModule = await import("../lib/storage");
+    await storageModule.initStorage();
+    const scenarioModule = await import("./scenario");
+    const app = createApp(scenarioModule.scenarioRouter);
+    const headers = {
+      cookie: createAnonymousProofCookie("fp_throttled_fallback"),
+      "user-agent": anonymousUserAgent,
+      ...createSignedClientIpHeaders("203.0.113.45"),
+    };
+
+    const response = await postJson(
+      app,
+      "/api/scenario",
+      { platform: "aro-classic", difficulty: "easy", turnstileToken: "pass" },
+      headers,
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.body.mode).toBe("degraded");
+    expect(response.body.degradedReason).toBe("throttled");
+    expect(
+      (response.body.scenario as Record<string, unknown>).platform,
+    ).toBe("aro-classic");
+  });
+
   it("releases reserved anonymous claims when AI returns schema-invalid JSON", async () => {
     const invalidScenario = createValidAiScenario();
     invalidScenario.clusterContext = {

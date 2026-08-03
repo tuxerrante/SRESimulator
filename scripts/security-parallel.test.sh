@@ -24,6 +24,7 @@ assert_not_contains() {
 
 assert_contains "GRYPE_DB_AUTO_UPDATE=true grype db update" "$MAKEFILE"
 assert_contains "GRYPE_DB_AUTO_UPDATE=false grype" "$MAKEFILE"
+assert_contains 'mkdir -p "$$HOME/.cache/grype/db"' "$MAKEFILE"
 assert_contains "GRYPE_DB_CACHE_DIR=/cache/db" "$MAKEFILE"
 assert_contains '"$$HOME/.cache/grype:/cache"' "$MAKEFILE"
 assert_contains 'FRONTEND_PID=$$!' "$MAKEFILE"

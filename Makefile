@@ -267,6 +267,7 @@ grype: ## Scan frontend/backend dependencies with Grype (high/critical)
 	FRONTEND_LOG="$$(mktemp "$${TMPDIR:-/tmp}/grype-frontend.XXXXXX")"; \
 	BACKEND_LOG="$$(mktemp "$${TMPDIR:-/tmp}/grype-backend.XXXXXX")"; \
 	trap 'rm -f "$$FRONTEND_LOG" "$$BACKEND_LOG"' EXIT INT TERM; \
+	mkdir -p "$$HOME/.cache/grype/db"; \
 	if command -v grype >/dev/null 2>&1; then \
 		GRYPE_DB_CACHE_DIR="$$HOME/.cache/grype/db" GRYPE_DB_AUTO_UPDATE=true grype db update; \
 		GRYPE_DB_CACHE_DIR="$$HOME/.cache/grype/db" GRYPE_DB_AUTO_UPDATE=false grype "dir:$(FRONTEND_DIR)" --fail-on $(SECURITY_FAIL_LEVEL) --only-fixed >"$$FRONTEND_LOG" 2>&1 & \
@@ -274,7 +275,6 @@ grype: ## Scan frontend/backend dependencies with Grype (high/critical)
 		GRYPE_DB_CACHE_DIR="$$HOME/.cache/grype/db" GRYPE_DB_AUTO_UPDATE=false grype "dir:$(BACKEND_DIR)" --fail-on $(SECURITY_FAIL_LEVEL) --only-fixed >"$$BACKEND_LOG" 2>&1 & \
 		BACKEND_PID=$$!; \
 	elif command -v docker >/dev/null 2>&1; then \
-		mkdir -p "$$HOME/.cache/grype"; \
 		GRYPE_DOCKER_ARGS=(--rm -e GRYPE_DB_CACHE_DIR=/cache/db -v "$$HOME/.cache/grype:/cache" -v "$$(pwd):/work" -w /work "$(GRYPE_IMAGE)"); \
 		docker run "$${GRYPE_DOCKER_ARGS[@]}" db update; \
 		docker run -e GRYPE_DB_AUTO_UPDATE=false "$${GRYPE_DOCKER_ARGS[@]}" "dir:$(FRONTEND_DIR)" --fail-on $(SECURITY_FAIL_LEVEL) --only-fixed >"$$FRONTEND_LOG" 2>&1 & \
