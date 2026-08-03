@@ -2,20 +2,47 @@ import { readFile, writeFile, mkdir, rename } from "fs/promises";
 import { existsSync } from "fs";
 import path from "path";
 import type { AnonymousTrialClaim, IAnonymousTrialStore } from "./types";
+import { acquireJsonProcessLock } from "./json-process-lock";
+
+const DEFAULT_LOCK_WAIT_TIMEOUT_MS = 5000;
+let sharedWriteLock: Promise<void> = Promise.resolve();
+
+function getLockWaitTimeoutMs(): number {
+  const parsed = Number.parseInt(
+    process.env.JSON_ANONYMOUS_TRIAL_STORE_LOCK_TIMEOUT_MS ?? "",
+    10,
+  );
+  return Number.isFinite(parsed) && parsed > 0
+    ? parsed
+    : DEFAULT_LOCK_WAIT_TIMEOUT_MS;
+}
 
 export class JsonAnonymousTrialStore implements IAnonymousTrialStore {
   private readonly dataDir: string;
   private readonly filePath: string;
-  private writeLock: Promise<void> = Promise.resolve();
+  private readonly lockPath: string;
 
   constructor() {
     this.dataDir = process.env.DATA_DIR || path.join(process.cwd(), "data");
     this.filePath = path.join(this.dataDir, "anonymous-trial-claims.json");
+    this.lockPath = path.join(this.dataDir, ".anonymous-trial.lock");
   }
 
   private withWriteLock<T>(fn: () => Promise<T>): Promise<T> {
-    const next = this.writeLock.then(fn, fn);
-    this.writeLock = next.then(() => {}, () => {});
+    const runWithProcessLock = async () => {
+      const releaseProcessLock = await acquireJsonProcessLock(
+        this.lockPath,
+        getLockWaitTimeoutMs(),
+        "anonymous trial lock",
+      );
+      try {
+        return await fn();
+      } finally {
+        await releaseProcessLock();
+      }
+    };
+    const next = sharedWriteLock.then(runWithProcessLock, runWithProcessLock);
+    sharedWriteLock = next.then(() => {}, () => {});
     return next;
   }
 
@@ -36,7 +63,7 @@ export class JsonAnonymousTrialStore implements IAnonymousTrialStore {
 
   private async writeClaims(claims: AnonymousTrialClaim[]): Promise<void> {
     await this.ensureFile();
-    const tmpFile = `${this.filePath}.tmp`;
+    const tmpFile = `${this.filePath}.${crypto.randomUUID()}.tmp`;
     await writeFile(tmpFile, JSON.stringify(claims, null, 2), "utf-8");
     await rename(tmpFile, this.filePath);
   }
