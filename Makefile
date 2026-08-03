@@ -622,6 +622,14 @@ e2e-azure-route-refresh: env-check ## Refresh the selected e2e namespace (NS=...
 	fi; \
 	if [ -n "$${NS:-}" ]; then \
 		TARGET_NS="$$NS"; \
+		if [ -f "$(E2E_METADATA_FILE)" ]; then \
+			METADATA_NS="$$(sed -n 's/^NS=//p' "$(E2E_METADATA_FILE)")"; \
+			if [ "$$METADATA_NS" = "$$TARGET_NS" ]; then \
+				PORT_FORWARD_PID="$$(sed -n 's/^PORT_FORWARD_PID=//p' "$(E2E_METADATA_FILE)")"; \
+				PORT_FORWARD_LOG="$$(sed -n 's/^PORT_FORWARD_LOG=//p' "$(E2E_METADATA_FILE)")"; \
+				DEPLOYED_AKS_EXPOSURE_MODE="$$(sed -n 's/^DEPLOYED_AKS_EXPOSURE_MODE=//p' "$(E2E_METADATA_FILE)")"; \
+			fi; \
+		fi; \
 	elif [ -f "$(E2E_METADATA_FILE)" ]; then \
 		. "$(E2E_METADATA_FILE)"; \
 		TARGET_NS="$$NS"; \
