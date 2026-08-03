@@ -52,6 +52,7 @@ export function CodeBlock({
   const isRunnable = commandType !== null && isPlatformCompatible;
   const isPlatformMismatch =
     commandType !== null && platform !== undefined && !isPlatformCompatible;
+  const platformLabel = platform ? PLATFORM_PROFILES[platform].label : null;
 
   const handleCopy = async () => {
     await navigator.clipboard.writeText(code);
@@ -73,8 +74,8 @@ export function CodeBlock({
       <div className="flex items-center justify-between px-3 py-1.5 bg-zinc-800 border-b border-zinc-700">
         <span className="text-xs text-zinc-400 font-mono">
           {LANGUAGE_LABELS[language] || language}
-          {isPlatformMismatch
-            ? ` (not valid for ${PLATFORM_PROFILES[platform].label})`
+          {isPlatformMismatch && platformLabel
+            ? ` (not valid for ${platformLabel})`
             : ""}
         </span>
         <div className="flex items-center gap-1">
