@@ -585,6 +585,7 @@ run_none_deploy_public_origin_conflict_override_check() {
   source "$ROOT_DIR/scripts/aks-deploy.sh"
   stub_cluster_helpers
   capture_helm_invocation
+  helm_supports_server_side_conflicts() { return 0; }
 
   unset DEPLOY_HOST DEPLOY_SCHEME || true
   E2E_RELEASE="sre-simulator"
@@ -607,6 +608,29 @@ run_none_deploy_public_origin_conflict_override_check() {
   assert_contains 'mode: "none"' "$TMP_DIR/captured-values.yaml"
 
   unset AKS_PUBLIC_ORIGIN_OVERRIDE AKS_HELM_FORCE_CONFLICTS || true
+}
+
+run_force_conflicts_requires_supported_helm_check() {
+  # shellcheck disable=SC1091
+  source "$ROOT_DIR/scripts/aks-deploy.sh"
+  stub_cluster_helpers
+  capture_helm_invocation
+  helm_supports_server_side_conflicts() { return 1; }
+
+  E2E_RELEASE="sre-simulator"
+  AKS_RG="example-aks-rg"
+  AKS_CLUSTER="example-aks"
+  AKS_EXPOSURE_MODE="none"
+  AKS_LOCAL_PORT_FORWARD_PORT="38080"
+  AKS_HELM_FORCE_CONFLICTS="true"
+  AOAI_DEPLOYMENT="gpt-4o-mini"
+
+  if helm_deploy_sre "sre-e2e" "e2e-test-dev" "probe-token" >"$TMP_DIR/unsupported-helm.out" 2>&1; then
+    fail "helm_deploy_sre should reject conflict takeover when Helm lacks the required flags"
+  fi
+
+  assert_contains "AKS_HELM_FORCE_CONFLICTS requires Helm support" "$TMP_DIR/unsupported-helm.out"
+  unset AKS_HELM_FORCE_CONFLICTS || true
 }
 
 run_immutable_tag_check() {
@@ -1729,6 +1753,7 @@ main() {
   run_none_values_check
   run_none_deploy_path_check
   run_none_deploy_public_origin_conflict_override_check
+  run_force_conflicts_requires_supported_helm_check
   run_immutable_tag_check
   run_frontend_auth_secret_flag_check
   run_auth_secret_resolution_sanitizes_and_keeps_helm_args_clean_check

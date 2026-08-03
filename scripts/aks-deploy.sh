@@ -495,6 +495,13 @@ image_pull_policy_for_tag() {
   esac
 }
 
+helm_supports_server_side_conflicts() {
+  local upgrade_help
+  upgrade_help="$(helm upgrade --help 2>/dev/null)" || return 1
+  printf '%s\n' "$upgrade_help" | grep -Fq -- "--server-side" && \
+    printf '%s\n' "$upgrade_help" | grep -Fq -- "--force-conflicts"
+}
+
 # Usage: helm_deploy_sre <namespace> <tag> <probe-token>
 # Sets DEPLOY_HOST/DEPLOY_SCHEME for use by caller.
 helm_deploy_sre() {
@@ -554,6 +561,11 @@ helm_deploy_sre() {
 
   case "${AKS_HELM_FORCE_CONFLICTS:-false}" in
     1|true|TRUE|yes|YES)
+      if ! helm_supports_server_side_conflicts; then
+        echo "error: AKS_HELM_FORCE_CONFLICTS requires Helm support for --server-side and --force-conflicts (Helm 4+)" >&2
+        rm -f "$exposure_values_file"
+        return 1
+      fi
       helm_upgrade_flags+=(--server-side=true --force-conflicts)
       ;;
     0|false|FALSE|no|NO|"")

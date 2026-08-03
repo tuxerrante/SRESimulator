@@ -219,6 +219,7 @@ Technical setup and operational commands are documented here so
 | npm | >= 10 |
 | gcloud | Optional for Vertex provider |
 | Managed AI endpoint | Vertex or Azure OpenAI/Foundry |
+| Helm | 4+ when `AKS_HELM_FORCE_CONFLICTS=true` |
 
 ## Local development
 
