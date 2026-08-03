@@ -5,6 +5,21 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-08-03
+
+### Added (0.4.0)
+
+- Added first-class AKS, ARO Classic, and ARO HCP gameplay paths across scenario selection, prompts, command simulation, telemetry, analytics, storage, and leaderboards.
+- Added platform-scoped scenario catalogs, knowledge bundles, context metadata, documentation references, and interactive onboarding.
+- Added a protected mandatory live Playwright PR gate with parallel isolated users covering every platform path on distinct scenarios.
+
+### Changed (0.4.0)
+
+- Enforced platform boundaries for generated incidents, stored sessions, knowledge retrieval, CLI/resource commands, telemetry, and rendered documentation links.
+- Hardened local JSON persistence with bounded filesystem locks and atomic writes across player, leaderboard, and anonymous-trial stores.
+- Hardened AKS E2E workflows with authenticated secret handling, `linux/amd64` development images, Helm capability checks, shared-edge reconciliation, and safe port-forward refreshes.
+- Reduced the command-generation timeout so deterministic degraded output is returned before the public gateway timeout.
+
 ## [0.3.0] - 2026-07-31
 
 ### Changed (0.3.0)
