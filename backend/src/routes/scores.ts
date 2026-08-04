@@ -150,30 +150,27 @@ scoresRouter.post("/", async (req: Request, res: Response) => {
     const effectiveNickname = existingSession.identityKind === "github"
       ? existingSession.githubLogin
       : nickname;
+    const normalizedNickname =
+      typeof effectiveNickname === "string" ? effectiveNickname.trim() : "";
 
-    if (
-      !effectiveNickname ||
-      typeof effectiveNickname !== "string" ||
-      effectiveNickname.trim().length === 0
-    ) {
+    if (!normalizedNickname) {
       res.status(400).json({ error: "Nickname is required" });
       return;
     }
     const maxNicknameLength = existingSession.identityKind === "github" ? 39 : 20;
-    if (effectiveNickname.length > maxNicknameLength) {
+    if (normalizedNickname.length > maxNicknameLength) {
       res.status(400).json({
         error: `Nickname must be ${maxNicknameLength} characters or less`,
       });
       return;
     }
     if (existingSession.identityKind !== "github") {
-      const nicknameCheck = isCleanNickname(effectiveNickname);
+      const nicknameCheck = isCleanNickname(normalizedNickname);
       if (!nicknameCheck.clean) {
         res.status(400).json({ error: nicknameCheck.reason });
         return;
       }
     }
-    const normalizedNickname = effectiveNickname.trim();
 
     const gameplayRecord = await getMetricsStore().getLatestCompletedBySessionToken(sessionToken);
     if (!gameplayRecord) {

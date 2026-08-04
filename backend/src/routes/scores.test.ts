@@ -418,6 +418,20 @@ describe("scores routes", () => {
     expect(res.body.error).toContain("inappropriate");
   });
 
+  it("POST /api/scores validates an anonymous nickname after trimming", async () => {
+    const token = await getSessionStore().create("easy", "Trimmed Nickname");
+    await recordCompletedTelemetry(token, { scenarioTitle: "Trimmed Nickname" });
+
+    const app = createApp();
+    const res = await httpRequest(app, "POST", "/api/scores", {
+      sessionToken: token,
+      nickname: `${"a".repeat(20)} `,
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body.nickname).toBe("a".repeat(20));
+  });
+
   it("POST /api/scores saves a valid GitHub-backed entry and returns 201", async () => {
     const token = await getSessionStore().create({
       platform: "aro-classic",

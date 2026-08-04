@@ -12,7 +12,7 @@ import type { GithubViewer, ViewerAccessPolicy } from "@shared/auth/viewer";
 
 const NICKNAME_KEY = "sre-nickname";
 const PLATFORM_KEY = "sre-platform";
-const MAX_NICKNAME_LENGTH = 20;
+const MAX_ANONYMOUS_NICKNAME_LENGTH = 20;
 
 function loadNickname(): string | null {
   try {
@@ -23,7 +23,7 @@ function loadNickname(): string | null {
 }
 
 function normalizeNickname(name: string): string | null {
-  const normalized = name.trim().slice(0, MAX_NICKNAME_LENGTH);
+  const normalized = name.trim().slice(0, MAX_ANONYMOUS_NICKNAME_LENGTH);
   return normalized || null;
 }
 
