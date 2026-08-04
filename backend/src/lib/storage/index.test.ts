@@ -96,6 +96,17 @@ describe("initStorage production guard", () => {
     );
   });
 
+  test("does not allow deployed JSON with mock AI mode alone", async () => {
+    process.env.NODE_ENV = "production";
+    process.env.AI_MOCK_MODE = "true";
+
+    const storage = await loadStorageModule();
+
+    await expect(storage.initStorage()).rejects.toThrow(
+      "Refusing to start with STORAGE_BACKEND=json",
+    );
+  });
+
   test("rejects whitespace-only DATABASE_URL for mssql", async () => {
     process.env.NODE_ENV = "production";
     process.env.STORAGE_BACKEND = "mssql";
