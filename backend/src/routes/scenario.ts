@@ -525,6 +525,31 @@ scenarioRouter.post("/", async (req: Request, res: Response) => {
       };
     };
 
+    const respondWithCatalogFallback = async (
+      degradedReason: "timeout" | "throttled" | "invalid_payload",
+      error: unknown,
+    ): Promise<void> => {
+      captureBackendRouteError(req, error);
+      console.warn(
+        `[scenario] ${degradedReason}; returning catalog fallback for ${platform}/${difficulty}`,
+      );
+      const fallbackScenario = await getCatalogScenario({
+        platform,
+        difficulty,
+      });
+      const fallbackSession = await createSessionForScenario(
+        fallbackScenario,
+        `scenario-catalog-${degradedReason}`,
+      );
+      res.json({
+        scenario: fallbackScenario,
+        sessionToken: fallbackSession.sessionToken,
+        identityKind: fallbackSession.identityKind,
+        mode: "degraded",
+        degradedReason,
+      });
+    };
+
     if (isCatalogScenarioSource()) {
       reservedClaimKeys = await reserveAnonymousClaimKeys();
       const catalogScenario = await getCatalogScenario({ platform, difficulty });
@@ -614,29 +639,11 @@ scenarioRouter.post("/", async (req: Request, res: Response) => {
         error instanceof ScenarioGenerationTimeoutError ||
         error instanceof AiThrottledError
       ) {
-        captureBackendRouteError(req, error);
         const degradedReason =
           error instanceof ScenarioGenerationTimeoutError
             ? "timeout"
             : "throttled";
-        console.warn(
-          `[scenario] ${degradedReason}; returning catalog fallback for ${platform}/${difficulty}`,
-        );
-        const fallbackScenario = await getCatalogScenario({
-          platform,
-          difficulty,
-        });
-        const fallbackSession = await createSessionForScenario(
-          fallbackScenario,
-          `scenario-catalog-${degradedReason}`,
-        );
-        res.json({
-          scenario: fallbackScenario,
-          sessionToken: fallbackSession.sessionToken,
-          identityKind: fallbackSession.identityKind,
-          mode: "degraded",
-          degradedReason,
-        });
+        await respondWithCatalogFallback(degradedReason, error);
         return;
       }
       throw error;
@@ -647,13 +654,23 @@ scenarioRouter.post("/", async (req: Request, res: Response) => {
     // Strip markdown code fences if present
     text = text.replace(/^```(?:json)?\s*\n?/i, "").replace(/\n?```\s*$/i, "").trim();
 
-    let rawScenario: unknown;
+    let scenario: Scenario;
     try {
-      rawScenario = JSON.parse(text) as unknown;
-    } catch {
-      throw new InvalidScenarioPayloadError("AI scenario response was not valid JSON");
+      const rawScenario = JSON.parse(text) as unknown;
+      scenario = validateScenarioPayload(rawScenario, platform, difficulty);
+    } catch (error) {
+      const invalidPayloadError =
+        error instanceof InvalidScenarioPayloadError
+          ? error
+          : new InvalidScenarioPayloadError(
+              "AI scenario response was not valid JSON",
+            );
+      await respondWithCatalogFallback(
+        "invalid_payload",
+        invalidPayloadError,
+      );
+      return;
     }
-    const scenario = validateScenarioPayload(rawScenario, platform, difficulty);
 
     const session = await createSessionForScenario(scenario);
 
