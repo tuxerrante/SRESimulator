@@ -665,6 +665,11 @@ scenarioRouter.post("/", async (req: Request, res: Response) => {
           : new InvalidScenarioPayloadError(
               "AI scenario response was not valid JSON",
             );
+      if (!(error instanceof InvalidScenarioPayloadError)) {
+        (
+          invalidPayloadError as Error & { cause?: unknown }
+        ).cause = error;
+      }
       await respondWithCatalogFallback(
         "invalid_payload",
         invalidPayloadError,
