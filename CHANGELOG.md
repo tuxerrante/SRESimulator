@@ -25,6 +25,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 - Aligned infrastructure defaults, examples, tests, and operator guidance with Azure OpenAI `gpt-5.6-terra` (`2026-07-09`) and made SKU guidance model-agnostic. ([#291](https://github.com/tuxerrante/SRESimulator/commit/81e1121e31e3b90318eca08e009303c950e95613))
 - Hardened Helm integration validation by allowing deployed JSON storage only for explicit mock tests, probing the actual frontend Service port in connection checks, and updating the vulnerable transitive `ip-address` dependency. ([#311](https://github.com/tuxerrante/SRESimulator/commit/a87dcc95dcd847c326d52b350cd9f93c4a0f92ac))
 - Synchronized frontend, backend, Helm, lockfile, and customer-visible release metadata to `v0.4.0`. ([#307](https://github.com/tuxerrante/SRESimulator/commit/83e923c2d79b9a161a7f8a889730ca9850f6e995))
+- Tightened landing-page vertical spacing by keeping the content and authentication/footer controls in one centered stack on tall viewports. ([#312](https://github.com/tuxerrante/SRESimulator/commit/59229814807059b4de046341db463d46752e2c7b))
+- Hardened GitHub OAuth for non-production environments with a native GET login form, fail-closed callback validation, complete Secret-key requirements, and portable callback-value decoding without leaking errors. ([#314](https://github.com/tuxerrante/SRESimulator/commit/323c8722d496c169b6f8e9bef63130a0ae3c4c56))
+- Expanded the mandatory live Playwright gate to four concurrent paths—anonymous start-to-game verification plus AKS, ARO HCP, and ARO Classic users—with double-gated local verification settings, production-namespace refresh refusal, distinct scenarios, and separate fallback diagnostics. ([#315](https://github.com/tuxerrante/SRESimulator/commit/aa55aa283da1e411f3aa8376003d273e2e8327b5))
 
 ## [0.3.0] - 2026-07-31
 
