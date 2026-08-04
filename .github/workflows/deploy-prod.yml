@@ -281,10 +281,8 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          check_runs_endpoint=\
-            "repos/${GITHUB_REPOSITORY}/commits/"
-          check_runs_endpoint+=\
-            "${RELEASE_SHA}/check-runs?filter=all&per_page=100"
+          check_runs_endpoint="repos/${GITHUB_REPOSITORY}/commits/"
+          check_runs_endpoint+="${RELEASE_SHA}/check-runs?filter=all&per_page=100"
           ci_gate_conclusion="$(
             gh api \
               --paginate \
