@@ -1743,10 +1743,11 @@ run_e2e_route_up_explicit_override_check() {
 }
 
 run_e2e_route_refresh_metadata_mode_check() {
-  local metadata_file output_file az_log kubectl_log helm_log helm_values curl_log nohup_log state_dir
+  local metadata_file e2e_env_file output_file az_log kubectl_log helm_log helm_values curl_log nohup_log state_dir
 
   write_fake_e2e_clis
   metadata_file="$TMP_DIR/e2e-refresh.env"
+  e2e_env_file="$TMP_DIR/e2e-refresh-config.env"
   output_file="$TMP_DIR/e2e-refresh.out"
   az_log="$TMP_DIR/e2e-refresh.az.log"
   kubectl_log="$TMP_DIR/e2e-refresh.kubectl.log"
@@ -1772,6 +1773,10 @@ DEPLOYED_AKS_EXPOSURE_MODE=publicService
 PORT_FORWARD_PID=
 PORT_FORWARD_LOG=
 EOF
+  cat >"$e2e_env_file" <<'EOF'
+TURNSTILE_TEST_MODE=true
+LOCAL_TEST_VERIFICATION_ENABLED=true
+EOF
 
   if ! env \
     -u AKS_EXPOSURE_MODE \
@@ -1784,7 +1789,7 @@ EOF
     FAKE_CURL_LOG="$curl_log" \
     FAKE_NOHUP_LOG="$nohup_log" \
     make -s -C "$ROOT_DIR" e2e-azure-route-refresh \
-      E2E_ENV_FILE="$TMP_DIR/missing.env" \
+      E2E_ENV_FILE="$e2e_env_file" \
       E2E_METADATA_FILE="$metadata_file" \
       CLUSTER_FLAVOR=aks \
       AZURE_SUBSCRIPTION_ID=00000000-0000-0000-0000-000000000001 \
@@ -1807,13 +1812,16 @@ EOF
   assert_contains 'get namespace/test-refresh' "$kubectl_log"
   assert_not_contains 'port-forward svc/sre-simulator-frontend' "$kubectl_log"
   assert_contains 'http://aks.example.test/api/ai/probe?live=true' "$curl_log"
+  assert_contains "backend.auth.turnstileTestMode=true" "$helm_log"
+  assert_contains "backend.auth.localTestVerificationEnabled=true" "$helm_log"
 }
 
 run_e2e_route_up_dev_image_fallback_check() {
-  local metadata_file output_file az_log kubectl_log helm_log helm_values curl_log nohup_log state_dir docker_log gh_log
+  local metadata_file e2e_env_file output_file az_log kubectl_log helm_log helm_values curl_log nohup_log state_dir docker_log gh_log
 
   write_fake_e2e_clis
   metadata_file="$TMP_DIR/e2e-up-dev.env"
+  e2e_env_file="$TMP_DIR/e2e-up-dev-config.env"
   output_file="$TMP_DIR/e2e-up-dev.out"
   az_log="$TMP_DIR/e2e-up-dev.az.log"
   kubectl_log="$TMP_DIR/e2e-up-dev.kubectl.log"
@@ -1832,6 +1840,10 @@ run_e2e_route_up_dev_image_fallback_check() {
   : >"$nohup_log"
   : >"$docker_log"
   : >"$gh_log"
+  cat >"$e2e_env_file" <<'EOF'
+TURNSTILE_TEST_MODE=true
+LOCAL_TEST_VERIFICATION_ENABLED=true
+EOF
 
   if ! env \
     -u AKS_EXPOSURE_MODE \
@@ -1846,7 +1858,7 @@ run_e2e_route_up_dev_image_fallback_check() {
     FAKE_DOCKER_LOG="$docker_log" \
     FAKE_GH_LOG="$gh_log" \
     make -s -C "$ROOT_DIR" e2e-azure-route-up \
-      E2E_ENV_FILE="$TMP_DIR/missing.env" \
+      E2E_ENV_FILE="$e2e_env_file" \
       E2E_METADATA_FILE="$metadata_file" \
       E2E_NAMESPACE_PREFIX="test-e2e" \
       CLUSTER_FLAVOR=aks \
@@ -1875,7 +1887,30 @@ run_e2e_route_up_dev_image_fallback_check() {
   assert_contains "push ghcr.io/tuxerrante/sre-simulator-frontend:${dev_tag}" "$docker_log"
   assert_contains "build --platform linux/amd64 -f backend/Dockerfile -t ghcr.io/tuxerrante/sre-simulator-backend:${dev_tag} ." "$docker_log"
   assert_contains "push ghcr.io/tuxerrante/sre-simulator-backend:${dev_tag}" "$docker_log"
+  assert_contains "backend.auth.turnstileTestMode=true" "$helm_log"
+  assert_contains "backend.auth.localTestVerificationEnabled=true" "$helm_log"
   assert_not_contains 'WARNING: TAG=latest uses GHCR latest' "$output_file"
+}
+
+run_e2e_route_refresh_rejects_prod_namespace_check() {
+  local output_file
+
+  output_file="$TMP_DIR/e2e-refresh-prod-rejection.out"
+  if make -s -C "$ROOT_DIR" e2e-azure-route-refresh \
+    E2E_ENV_FILE="$TMP_DIR/missing.env" \
+    NS=sre-simulator \
+    PROD_NAMESPACE=sre-simulator \
+    CLUSTER_FLAVOR=aks \
+    AZURE_SUBSCRIPTION_ID=00000000-0000-0000-0000-000000000001 \
+    AKS_RG=test-aks-rg \
+    AKS_CLUSTER=test-aks \
+    AOAI_RG=test-aoai-rg \
+    AOAI_ACCOUNT=test-aoai \
+    AOAI_DEPLOYMENT=gpt-4o-mini >"$output_file" 2>&1; then
+    fail "e2e-azure-route-refresh should reject the production namespace"
+  fi
+
+  assert_contains "REFUSED: e2e-azure-route-refresh cannot target the production namespace sre-simulator." "$output_file"
 }
 
 run_makefile_gateway_defaults_check() {
@@ -2017,6 +2052,7 @@ main() {
   run_e2e_route_up_explicit_override_check
   run_e2e_route_refresh_metadata_mode_check
   run_e2e_route_up_dev_image_fallback_check
+  run_e2e_route_refresh_rejects_prod_namespace_check
   run_makefile_gateway_defaults_check
   run_makefile_gateway_audit_targets_check
   run_makefile_port_forward_e2e_targets_check

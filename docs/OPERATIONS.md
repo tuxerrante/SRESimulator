@@ -167,8 +167,13 @@ Use this order for a real AKS E2E refresh:
 3. Confirm the stable public host still returns healthy responses.
 4. Reuse the current namespace when possible:
    `NS=<existing-namespace> make e2e-azure-route-refresh`
-5. If you need a direct AKS hostname, set `AKS_EXPOSURE_MODE=gateway` for the refresh and ensure the hostname/cert/DNS path already exists.
-6. Re-check:
+   The refresh target refuses to operate on `PROD_NAMESPACE`.
+5. For deterministic anonymous browser validation, pass both
+   `TURNSTILE_TEST_MODE=true` and `LOCAL_TEST_VERIFICATION_ENABLED=true` as
+   Make command-line variables. Never enable either local verification flag
+   for production.
+6. If you need a direct AKS hostname, set `AKS_EXPOSURE_MODE=gateway` for the refresh and ensure the hostname/cert/DNS path already exists.
+7. Re-check:
    - stable host returns `200`
    - direct E2E host returns `200`
    - the footer version matches the intended release state

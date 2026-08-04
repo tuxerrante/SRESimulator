@@ -142,6 +142,85 @@ async function sendChat(page, message) {
   return assistantLabels.last().locator("xpath=..").innerText();
 }
 
+async function runAnonymousEntry(browser) {
+  const startedAt = Date.now();
+  const context = await browser.newContext({
+    viewport: { width: 1800, height: 1100 },
+  });
+  const page = await context.newPage();
+  const consoleErrors = [];
+  const failedResponses = [];
+  const failedRequests = [];
+  page.on("console", (message) => {
+    if (message.type() === "error") consoleErrors.push(message.text());
+  });
+  page.on("response", (response) => {
+    if (response.status() >= 500) {
+      failedResponses.push({ status: response.status(), url: response.url() });
+    }
+  });
+  page.on("requestfailed", (request) => {
+    failedRequests.push({
+      url: request.url(),
+      error: request.failure()?.errorText ?? "unknown",
+    });
+  });
+
+  try {
+    await page.goto(baseUrl, { waitUntil: "networkidle", timeout: 60_000 });
+    const verificationButton = page.getByRole("button", {
+      name: "Use local test verification",
+    });
+    await verificationButton.waitFor({ timeout: 30_000 });
+    await verificationButton.click();
+    await page
+      .getByRole("button", { name: "Local test verification enabled" })
+      .waitFor({ timeout: 10_000 });
+    await page.getByLabel("Callsign").fill(`${viewerPrefix}-anonymous`);
+    await page.getByRole("button", { name: /^AKS/ }).click();
+    await page.getByRole("button", { name: /The Junior SRE/ }).click();
+    await page.waitForURL("**/game", { timeout: 120_000 });
+    await page
+      .locator('[data-tour="incident-ticket"]')
+      .waitFor({ timeout: 30_000 });
+    await page.screenshot({
+      path: path.join(artifactDir, "anonymous-entry.png"),
+      fullPage: true,
+    });
+    if (failedResponses.length > 0) {
+      throw new Error(
+        `anonymous entry observed HTTP 5xx: ${JSON.stringify(failedResponses)}`,
+      );
+    }
+    if (failedRequests.length > 0) {
+      throw new Error(
+        `anonymous entry observed failed requests: ${JSON.stringify(failedRequests)}`,
+      );
+    }
+    if (consoleErrors.length > 0) {
+      throw new Error(
+        `anonymous entry observed console errors: ${JSON.stringify(consoleErrors)}`,
+      );
+    }
+
+    return {
+      user: `${viewerPrefix}-anonymous`,
+      platform: "aks",
+      verification: "passed",
+      scenario: "passed",
+      durationMs: Date.now() - startedAt,
+    };
+  } catch (error) {
+    await page.screenshot({
+      path: path.join(artifactDir, "anonymous-entry-failure.png"),
+      fullPage: true,
+    });
+    throw error;
+  } finally {
+    await context.close();
+  }
+}
+
 async function runPlatform(browser, platform) {
   const startedAt = Date.now();
   const context = await browser.newContext({
@@ -326,12 +405,16 @@ const browser = await chromium.launch({ headless: true });
 let report;
 try {
   const settled = await Promise.allSettled(
-    platforms.map((platform) => runPlatform(browser, platform)),
+    [
+      runAnonymousEntry(browser),
+      ...platforms.map((platform) => runPlatform(browser, platform)),
+    ],
   );
-  const results = settled
+  const [anonymousEntryResult, ...platformResults] = settled;
+  const results = platformResults
     .filter((result) => result.status === "fulfilled")
     .map((result) => result.value);
-  const failures = settled.flatMap((result, index) =>
+  const failures = platformResults.flatMap((result, index) =>
     result.status === "rejected"
       ? [{
           platform: platforms[index]?.id ?? "unknown",
@@ -342,9 +425,22 @@ try {
         }]
       : [],
   );
+  if (anonymousEntryResult.status === "rejected") {
+    failures.unshift({
+      platform: "anonymous-entry",
+      error:
+        anonymousEntryResult.reason instanceof Error
+          ? anonymousEntryResult.reason.message
+          : String(anonymousEntryResult.reason),
+    });
+  }
   report = {
     mode: "parallel",
-    simulatedUsers: platforms.length,
+    simulatedUsers: platforms.length + 1,
+    anonymousEntry:
+      anonymousEntryResult.status === "fulfilled"
+        ? anonymousEntryResult.value
+        : null,
     results,
     failures,
   };

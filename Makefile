@@ -574,6 +574,8 @@ e2e-azure-route-up: env-check ## Deploy frontend/backend to the selected cluster
 		echo "Missing required env vars. Export: $(E2E_REQUIRED_VARS) (or set them in $(E2E_ENV_FILE))."; \
 		exit 1; \
 	fi; \
+	export TURNSTILE_TEST_MODE="$(TURNSTILE_TEST_MODE)"; \
+	export LOCAL_TEST_VERIFICATION_ENABLED="$(LOCAL_TEST_VERIFICATION_ENABLED)"; \
 	. scripts/select-deploy.sh; \
 	if [ "$(CLUSTER_FLAVOR)" = "aks" ] && [ -z "$(AKS_EXPOSURE_MODE_EXPLICIT)" ]; then \
 		export AKS_EXPOSURE_MODE="$(AKS_E2E_EXPOSURE_MODE)"; \
@@ -666,6 +668,8 @@ e2e-azure-route-refresh: env-check ## Refresh the selected e2e namespace (NS=...
 		echo "Missing required env vars. Export: $(E2E_REQUIRED_VARS) (or set them in $(E2E_ENV_FILE))."; \
 		exit 1; \
 	fi; \
+	export TURNSTILE_TEST_MODE="$(TURNSTILE_TEST_MODE)"; \
+	export LOCAL_TEST_VERIFICATION_ENABLED="$(LOCAL_TEST_VERIFICATION_ENABLED)"; \
 	if [ -n "$${NS:-}" ]; then \
 		TARGET_NS="$$NS"; \
 		if [ -f "$(E2E_METADATA_FILE)" ]; then \
@@ -681,6 +685,10 @@ e2e-azure-route-refresh: env-check ## Refresh the selected e2e namespace (NS=...
 		TARGET_NS="$$NS"; \
 	else \
 		echo "Set NS=<namespace> or run e2e-azure-route-up first (needs $(E2E_METADATA_FILE))."; \
+		exit 1; \
+	fi; \
+	if [ "$$TARGET_NS" = "$(PROD_NAMESPACE)" ]; then \
+		echo "REFUSED: e2e-azure-route-refresh cannot target the production namespace $$TARGET_NS."; \
 		exit 1; \
 	fi; \
 	if [ "$(CLUSTER_FLAVOR)" = "aks" ] && [ -z "$(AKS_EXPOSURE_MODE_EXPLICIT)" ] && [ -n "$${DEPLOYED_AKS_EXPOSURE_MODE:-}" ]; then \
