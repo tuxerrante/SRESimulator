@@ -182,9 +182,11 @@ async function runAnonymousEntry(browser) {
     await page.getByRole("button", { name: /^AKS/ }).click();
     await page.getByRole("button", { name: /The Junior SRE/ }).click();
     await page.waitForURL("**/game", { timeout: 120_000 });
-    await page
-      .locator('[data-tour="incident-ticket"]')
-      .waitFor({ timeout: 30_000 });
+    const incidentTicket = page.locator('[data-tour="incident-ticket"]');
+    await incidentTicket.waitFor({ timeout: 30_000 });
+    const incident = (await incidentTicket.innerText())
+      .replace(/\s+/g, " ")
+      .trim();
     await page.screenshot({
       path: path.join(artifactDir, "anonymous-entry.png"),
       fullPage: true,
@@ -208,6 +210,7 @@ async function runAnonymousEntry(browser) {
     return {
       user: `${viewerPrefix}-anonymous`,
       platform: "aks",
+      incident,
       verification: "passed",
       scenario: "passed",
       durationMs: Date.now() - startedAt,
@@ -455,7 +458,7 @@ try {
     ],
   );
   const [anonymousEntryResult, ...platformResults] = settled;
-  const results = platformResults
+  const results = settled
     .filter((result) => result.status === "fulfilled")
     .map((result) => result.value);
   const failures = platformResults.flatMap((result, index) =>
@@ -481,10 +484,6 @@ try {
   report = {
     mode: "parallel",
     simulatedUsers: platforms.length + 1,
-    anonymousEntry:
-      anonymousEntryResult.status === "fulfilled"
-        ? anonymousEntryResult.value
-        : null,
     results,
     failures,
   };
