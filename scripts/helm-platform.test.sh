@@ -43,6 +43,18 @@ grep -Eq 'AI_COMMAND_TIMEOUT_MS: "12000"' "${route_render}" || \
 grep -Eq 'AI_SCENARIO_TIMEOUT_MS: "12000"' "${route_render}" || \
   fail "Backend scenario timeout should remain below the public edge request budget."
 
+grep -Eq 'ALLOW_DEPLOYED_JSON_STORAGE_FOR_TESTS: "false"' "${route_render}" || \
+  fail "Deployed JSON storage test mode must default to false."
+
+helm template sre-simulator "${CHART_DIR}" \
+  --set exposure.mode=route \
+  --set exposure.host=route.example.com \
+  --set ai.mockMode=true \
+  --set backend.allowDeployedJsonStorageForTests=true >"${legacy_kv_render}"
+
+grep -Eq 'ALLOW_DEPLOYED_JSON_STORAGE_FOR_TESTS: "true"' "${legacy_kv_render}" || \
+  fail "Mock Helm integration should be able to opt into deployed JSON storage."
+
 helm template sre-simulator "${CHART_DIR}" \
   --set exposure.mode=route \
   --set exposure.host=route.example.com \
