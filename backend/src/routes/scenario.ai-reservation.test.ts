@@ -14,6 +14,7 @@ import { createSignedClientIp } from "../../../shared/auth/client-ip";
 import { buildAnonymousClaimKeys } from "../lib/anonymous-claim";
 
 const generateAiTextMock = vi.fn();
+const captureBackendRouteErrorMock = vi.fn();
 
 vi.mock("../lib/ai-config", () => ({
   getAiReadiness() {
@@ -28,6 +29,10 @@ vi.mock("../lib/knowledge", () => ({
 vi.mock("../lib/ai-runtime", () => ({
   AiThrottledError: class AiThrottledError extends Error {},
   generateAiText: generateAiTextMock,
+}));
+
+vi.mock("../lib/telemetry/capture", () => ({
+  captureBackendRouteError: captureBackendRouteErrorMock,
 }));
 
 function createApp(scenarioRouter: import("express").Router) {
@@ -121,6 +126,18 @@ describe("scenario reservation before AI generation", () => {
     };
   }
 
+  function expectCatalogFallback(
+    response: { status: number; body: Record<string, unknown> },
+    degradedReason = "invalid_payload",
+  ) {
+    expect(response.status).toBe(200);
+    expect(response.body.mode).toBe("degraded");
+    expect(response.body.degradedReason).toBe(degradedReason);
+    expect(
+      (response.body.scenario as Record<string, unknown>).platform,
+    ).toBe("aro-classic");
+  }
+
   function createAnonymousProofCookie(fingerprintHash: string): string {
     const issuedAt = Date.now();
     const proofToken = createAnonymousProofToken(
@@ -160,6 +177,7 @@ describe("scenario reservation before AI generation", () => {
           }, 50);
         })
     );
+    captureBackendRouteErrorMock.mockReset();
     vi.resetModules();
   });
 
@@ -291,15 +309,13 @@ describe("scenario reservation before AI generation", () => {
     ).toBe("aro-classic");
   });
 
-  it("releases reserved anonymous claims when AI returns schema-invalid JSON", async () => {
+  it("uses the catalog fallback when AI returns schema-invalid JSON", async () => {
     const invalidScenario = createValidAiScenario();
     invalidScenario.clusterContext = {
       ...invalidScenario.clusterContext,
       alerts: "bad-value" as unknown as [],
     };
-    generateAiTextMock
-      .mockResolvedValueOnce(JSON.stringify(invalidScenario))
-      .mockResolvedValueOnce(JSON.stringify(createValidAiScenario()));
+    generateAiTextMock.mockResolvedValueOnce(JSON.stringify(invalidScenario));
 
     const storageModule = await import("../lib/storage");
     await storageModule.initStorage();
@@ -324,15 +340,13 @@ describe("scenario reservation before AI generation", () => {
       headers
     );
 
-    expect(first.status).toBe(502);
-    expect(first.body.error).toBe("Scenario generation returned an invalid payload.");
-    expect(second.status).toBe(200);
+    expectCatalogFallback(first);
+    expect(second.status).toBe(429);
+    expect(generateAiTextMock).toHaveBeenCalledTimes(1);
   });
 
-  it("releases reserved anonymous claims when AI returns non-JSON output", async () => {
-    generateAiTextMock
-      .mockResolvedValueOnce("not valid json")
-      .mockResolvedValueOnce(JSON.stringify(createValidAiScenario()));
+  it("uses the catalog fallback when AI returns non-JSON output", async () => {
+    generateAiTextMock.mockResolvedValueOnce("not valid json");
 
     const storageModule = await import("../lib/storage");
     await storageModule.initStorage();
@@ -357,12 +371,17 @@ describe("scenario reservation before AI generation", () => {
       headers
     );
 
-    expect(first.status).toBe(502);
-    expect(first.body.error).toBe("Scenario generation returned an invalid payload.");
-    expect(second.status).toBe(200);
+    expectCatalogFallback(first);
+    expect(second.status).toBe(429);
+    expect(generateAiTextMock).toHaveBeenCalledTimes(1);
+    const capturedError = captureBackendRouteErrorMock.mock.calls[0]?.[1] as
+      | (Error & { cause?: unknown })
+      | undefined;
+    expect(capturedError).toBeInstanceOf(Error);
+    expect(capturedError?.cause).toBeInstanceOf(SyntaxError);
   });
 
-  it("rejects AI scenarios when incident and cluster context identity fields diverge", async () => {
+  it("falls back when incident and cluster context identity fields diverge", async () => {
     const invalidScenario = createValidAiScenario();
     invalidScenario.incidentTicket.region = "westeurope";
     generateAiTextMock.mockResolvedValueOnce(JSON.stringify(invalidScenario));
@@ -384,11 +403,10 @@ describe("scenario reservation before AI generation", () => {
       headers
     );
 
-    expect(response.status).toBe(502);
-    expect(response.body.error).toBe("Scenario generation returned an invalid payload.");
+    expectCatalogFallback(response);
   });
 
-  it("rejects AI scenarios when incident and cluster names diverge", async () => {
+  it("falls back when incident and cluster names diverge", async () => {
     const invalidScenario = createValidAiScenario();
     invalidScenario.incidentTicket.clusterName = "different-cluster";
     generateAiTextMock.mockResolvedValueOnce(JSON.stringify(invalidScenario));
@@ -410,11 +428,10 @@ describe("scenario reservation before AI generation", () => {
       headers
     );
 
-    expect(response.status).toBe(502);
-    expect(response.body.error).toBe("Scenario generation returned an invalid payload.");
+    expectCatalogFallback(response);
   });
 
-  it("rejects AI scenarios when platformContext fields are structurally invalid", async () => {
+  it("falls back when platformContext fields are structurally invalid", async () => {
     const invalidScenario = {
       ...createValidAiScenario(),
       platformContext: {
@@ -440,11 +457,10 @@ describe("scenario reservation before AI generation", () => {
       headers,
     );
 
-    expect(response.status).toBe(502);
-    expect(response.body.error).toBe("Scenario generation returned an invalid payload.");
+    expectCatalogFallback(response);
   });
 
-  it("rejects AI scenarios when timestamps are parseable but not strict ISO 8601", async () => {
+  it("falls back when timestamps are parseable but not strict ISO 8601", async () => {
     const invalidScenario = createValidAiScenario();
     invalidScenario.incidentTicket.reportedTime = "03/07/2026 12:34:56";
     generateAiTextMock.mockResolvedValueOnce(JSON.stringify(invalidScenario));
@@ -466,11 +482,10 @@ describe("scenario reservation before AI generation", () => {
       headers
     );
 
-    expect(response.status).toBe(502);
-    expect(response.body.error).toBe("Scenario generation returned an invalid payload.");
+    expectCatalogFallback(response);
   });
 
-  it("rejects AI scenarios with impossible calendar dates", async () => {
+  it("falls back when AI scenarios contain impossible calendar dates", async () => {
     const invalidScenario = createValidAiScenario();
     invalidScenario.incidentTicket.reportedTime = "2026-02-29T12:34:56Z";
     generateAiTextMock.mockResolvedValueOnce(JSON.stringify(invalidScenario));
@@ -492,8 +507,7 @@ describe("scenario reservation before AI generation", () => {
       headers
     );
 
-    expect(response.status).toBe(502);
-    expect(response.body.error).toBe("Scenario generation returned an invalid payload.");
+    expectCatalogFallback(response);
   });
 
   it("returns a curated catalog scenario without calling AI generation when catalog mode is enabled", async () => {

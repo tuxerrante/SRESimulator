@@ -19,7 +19,7 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 - Hardened local JSON persistence with bounded filesystem locks and atomic writes across player, leaderboard, and anonymous-trial stores.
 - Hardened AKS E2E workflows with authenticated secret handling, `linux/amd64` development images, Helm capability checks, shared-edge reconciliation, and safe port-forward refreshes.
 - Reduced the command-generation timeout so deterministic degraded output is returned before the public gateway timeout.
-- Added an edge-safe curated scenario fallback for AI timeouts and provider throttling.
+- Added an edge-safe curated scenario fallback for AI timeouts, provider throttling, and invalid generated payloads.
 - Cached the Grype vulnerability database, removed a duplicate scan pass, and parallelized frontend/backend dependency scans.
 
 ## [0.3.0] - 2026-07-31
