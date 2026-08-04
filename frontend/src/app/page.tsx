@@ -219,8 +219,8 @@ export default function HomePage() {
   };
 
   return (
-    <div className="min-h-screen bg-zinc-950 text-zinc-100 flex flex-col">
-      <div className="flex-1 flex flex-col items-center justify-center px-6 py-16">
+    <div className="min-h-screen bg-zinc-950 text-zinc-100 flex flex-col justify-center">
+      <div className="flex flex-col items-center justify-center px-6 py-16">
         <div className="mb-4 inline-flex items-center rounded-full border border-amber-500/30 bg-amber-500/10 px-3 py-1 text-xs font-medium text-amber-200">
           AI-guided incident response training
         </div>
