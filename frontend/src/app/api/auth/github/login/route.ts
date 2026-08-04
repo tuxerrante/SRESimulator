@@ -1,24 +1,35 @@
 import { randomUUID } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { GITHUB_OAUTH_STATE_COOKIE } from "@shared/auth/constants";
-import { buildGithubAuthorizeUrl } from "@/lib/auth/github";
+import { buildGithubAuthorizeUrl, resolveGithubOAuthConfig } from "@/lib/auth/github";
 import { getAppOrigin, isSecureRequest } from "@/lib/auth/request-context";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET(request: NextRequest): Promise<NextResponse> {
-  const clientId = process.env.GITHUB_CLIENT_ID;
-  const clientSecret = process.env.GITHUB_CLIENT_SECRET;
-  const authSecret = process.env.AUTH_SESSION_SECRET;
-  if (!clientId || !clientSecret || !authSecret) {
-    return NextResponse.json({ error: "GitHub OAuth is not configured" }, { status: 503 });
+  const oauthConfig = resolveGithubOAuthConfig({
+    baseUrl: getAppOrigin(request),
+    clientId: process.env.GITHUB_CLIENT_ID,
+    clientSecret: process.env.GITHUB_CLIENT_SECRET,
+    authSecret: process.env.AUTH_SESSION_SECRET,
+    configuredCallbackUrl: process.env.GITHUB_OAUTH_CALLBACK_URL,
+    requireCallbackMatch: process.env.GITHUB_OAUTH_REQUIRE_CALLBACK_MATCH === "true",
+  });
+  if (!oauthConfig.configured) {
+    return NextResponse.json(
+      {
+        error: "GitHub OAuth is not available for this origin",
+        code: oauthConfig.reason,
+      },
+      { status: 503 }
+    );
   }
 
   const state = randomUUID();
   const authorizeUrl = buildGithubAuthorizeUrl({
-    clientId,
-    baseUrl: getAppOrigin(request),
+    clientId: oauthConfig.clientId,
+    callbackUrl: oauthConfig.callbackUrl,
     state,
   });
 

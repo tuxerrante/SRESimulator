@@ -29,13 +29,15 @@ describe("HomePage footer release link", () => {
   beforeEach(() => {
     useGameStore.getState().resetGame();
     useGameStore.setState({ nickname: "operator" });
-    fetchMock.mockResolvedValue({
-      ok: true,
-      json: async () => ({
-        viewer: null,
-        authConfigured: false,
-      }),
-    });
+    fetchMock.mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          viewer: null,
+          authConfigured: false,
+        }),
+        { status: 200 }
+      )
+    );
     vi.stubGlobal("fetch", fetchMock);
   });
 
@@ -81,5 +83,37 @@ describe("HomePage footer release link", () => {
     expect(page?.classList.contains("justify-center")).toBe(true);
     expect(content?.classList.contains("flex")).toBe(true);
     expect(content?.classList.contains("flex-1")).toBe(false);
+  });
+
+  it("uses a document navigation for the GitHub OAuth redirect endpoint", async () => {
+    fetchMock.mockResolvedValue(
+      new Response(JSON.stringify({ viewer: null, authConfigured: true }), { status: 200 })
+    );
+
+    render(<HomePage />);
+
+    const loginButton = await screen.findByRole("button", { name: "Sign in with GitHub" });
+    const loginForm = loginButton.closest("form");
+    expect(loginForm?.getAttribute("action")).toBe("/api/auth/github/login");
+    expect(loginForm?.getAttribute("method")).toBe("get");
+  });
+
+  it("explains when the environment callback has not been verified", async () => {
+    fetchMock.mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          viewer: null,
+          authConfigured: false,
+          authUnavailableReason: "callback_not_verified",
+        }),
+        { status: 200 }
+      )
+    );
+
+    render(<HomePage />);
+
+    expect(
+      await screen.findByText("GitHub sign-in is unavailable for this environment.")
+    ).toBeTruthy();
   });
 });

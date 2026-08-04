@@ -1,11 +1,16 @@
 import { describe, expect, it } from "vitest";
-import { buildGithubAuthorizeUrl, toGithubViewer } from "./github";
+import {
+  buildGithubAuthorizeUrl,
+  buildGithubCallbackUrl,
+  resolveGithubOAuthConfig,
+  toGithubViewer,
+} from "./github";
 
 describe("GitHub auth helpers", () => {
   it("builds a GitHub authorize URL with the expected callback and scope", () => {
     const url = buildGithubAuthorizeUrl({
       clientId: "client-123",
-      baseUrl: "https://play.sresimulator.osadev.cloud",
+      callbackUrl: buildGithubCallbackUrl("https://play.sresimulator.osadev.cloud"),
       state: "csrf-state",
     });
 
@@ -16,6 +21,70 @@ describe("GitHub auth helpers", () => {
     );
     expect(url.searchParams.get("scope")).toBe("read:user user:email");
     expect(url.searchParams.get("state")).toBe("csrf-state");
+  });
+
+  it("requires an exact declared callback when callback verification is enabled", () => {
+    expect(
+      resolveGithubOAuthConfig({
+        baseUrl: "https://e2e.example.com",
+        clientId: "client-123",
+        clientSecret: "client-secret",
+        authSecret: "auth-secret",
+        configuredCallbackUrl: "https://play.example.com/api/auth/github/callback",
+        requireCallbackMatch: true,
+      })
+    ).toEqual({
+      configured: false,
+      reason: "callback_not_verified",
+    });
+
+    expect(
+      resolveGithubOAuthConfig({
+        baseUrl: "https://e2e.example.com",
+        clientId: "client-123",
+        clientSecret: "client-secret",
+        authSecret: "auth-secret",
+        configuredCallbackUrl: "https://e2e.example.com/api/auth/github/callback",
+        requireCallbackMatch: true,
+      })
+    ).toMatchObject({
+      configured: true,
+      callbackUrl: "https://e2e.example.com/api/auth/github/callback",
+    });
+  });
+
+  it("keeps undeclared callback verification backward compatible unless required", () => {
+    expect(
+      resolveGithubOAuthConfig({
+        baseUrl: "https://play.example.com",
+        clientId: "client-123",
+        clientSecret: "client-secret",
+        authSecret: "auth-secret",
+      })
+    ).toMatchObject({ configured: true });
+
+    expect(
+      resolveGithubOAuthConfig({
+        baseUrl: "https://play.example.com",
+        clientId: "client-123",
+        clientSecret: "client-secret",
+        authSecret: "auth-secret",
+        requireCallbackMatch: true,
+      })
+    ).toEqual({
+      configured: false,
+      reason: "callback_not_verified",
+    });
+
+    expect(
+      resolveGithubOAuthConfig({
+        baseUrl: "https://play.example.com",
+        requireCallbackMatch: true,
+      })
+    ).toEqual({
+      configured: false,
+      reason: "callback_not_verified",
+    });
   });
 
   it("normalizes a GitHub profile into the app viewer shape", () => {

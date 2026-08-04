@@ -174,6 +174,54 @@ Use this order for a real AKS E2E refresh:
    - the footer version matches the intended release state
    - anonymous easy mode/session configuration still works
 
+## GitHub OAuth On Direct E2E Hosts
+
+GitHub OAuth Apps accept one registered callback URL. When `redirect_uri` is
+provided, its host and port must match that callback; a different E2E hostname
+is not covered by the production app. GitHub documents these constraints in
+[Authorizing OAuth apps](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/authorizing-oauth-apps)
+and notes that OAuth Apps cannot have multiple callbacks in
+[Creating an OAuth app](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/creating-an-oauth-app).
+
+Do not remove `redirect_uri`, relay the production session cookie, or weaken
+state validation to work around a callback warning. The callback and state
+cookie must remain on the same E2E origin.
+
+For a non-production namespace, the AKS deploy helper enables GitHub sign-in
+only when the selected auth Secret contains all of these keys:
+
+- `github-client-id`
+- `github-client-secret`
+- `auth-session-secret`
+- `github-callback-url`
+
+The decoded `github-callback-url` must exactly equal:
+
+```text
+<public E2E origin>/api/auth/github/callback
+```
+
+When the key is absent or does not match, the deployment keeps the signed
+session and anonymous verification configuration but omits the GitHub
+credentials from the frontend Pod. The landing page then reports that GitHub
+sign-in is unavailable instead of sending users to GitHub with an unassociated
+callback.
+
+Required human setup for a direct E2E hostname:
+
+1. Register a separate GitHub OAuth App for the E2E environment. Prefer a
+   stable dedicated E2E hostname; an ephemeral hostname requires its own app or
+   a callback update whenever the hostname changes.
+2. Set its callback to the exact E2E callback, for example
+   `https://e2e-20260731-153322.sresimulator.osadev.cloud/api/auth/github/callback`.
+3. Create an E2E-specific Kubernetes Secret with the four keys above. The
+   `github-callback-url` value must be the same exact URL. Do not reuse the
+   production GitHub client credentials.
+4. Point the E2E deploy at that Secret with `GITHUB_AUTH_SECRET_NAME` and, when
+   needed, `AUTH_SECRET_SOURCE_NAMESPACE`.
+5. Refresh the E2E namespace and confirm `/api/auth/session` reports
+   `authConfigured: true` before testing sign-in.
+
 ## Stable Host Continuous Gate
 
 When touching shared-edge resources:

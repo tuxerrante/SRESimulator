@@ -33,8 +33,13 @@ frontend:
   auth:
     # Existing Secret used by Next.js auth routes.
     existingSecretName: ""
+    githubOAuthEnabled: true
     githubClientIdKey: github-client-id
     githubClientSecretKey: github-client-secret
+    # Optional declaration bound to the OAuth credentials. Non-production
+    # deploy helpers require it to match the public callback exactly.
+    githubCallbackUrlKey: ""
+    requireGithubCallbackMatch: false
     authSessionSecretKey: auth-session-secret
     # Optional keys in the same Secret for anonymous verification flows.
     antiAbuseHmacSecretKey: ""

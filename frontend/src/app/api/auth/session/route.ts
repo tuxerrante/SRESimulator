@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { getViewerAccessPolicy } from "@shared/auth/access";
 import { VIEWER_SESSION_COOKIE } from "@shared/auth/constants";
 import { readViewerSessionToken } from "@shared/auth/session";
+import { resolveGithubOAuthConfig } from "@/lib/auth/github";
+import { getAppOrigin } from "@/lib/auth/request-context";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -65,11 +67,20 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
         avatarUrl: session.avatarUrl,
       }
     : null;
+  const oauthConfig = resolveGithubOAuthConfig({
+    baseUrl: getAppOrigin(request),
+    clientId: process.env.GITHUB_CLIENT_ID,
+    clientSecret: process.env.GITHUB_CLIENT_SECRET,
+    authSecret: secret,
+    configuredCallbackUrl: process.env.GITHUB_OAUTH_CALLBACK_URL,
+    requireCallbackMatch: process.env.GITHUB_OAUTH_REQUIRE_CALLBACK_MATCH === "true",
+  });
 
   return NextResponse.json({
     viewer,
     accessPolicy: getViewerAccessPolicy(viewer),
-    authConfigured: Boolean(process.env.GITHUB_CLIENT_ID && process.env.GITHUB_CLIENT_SECRET),
+    authConfigured: oauthConfig.configured,
+    authUnavailableReason: oauthConfig.configured ? null : oauthConfig.reason,
     adminAnalyticsEnabled,
     ...turnstile,
   });

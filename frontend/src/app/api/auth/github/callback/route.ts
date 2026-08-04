@@ -5,7 +5,7 @@ import {
   VIEWER_SESSION_TTL_MS,
 } from "@shared/auth/constants";
 import { createViewerSessionToken } from "@shared/auth/session";
-import { buildGithubAuthorizeUrl, toGithubViewer } from "@/lib/auth/github";
+import { resolveGithubOAuthConfig, toGithubViewer } from "@/lib/auth/github";
 import { getAppOrigin, isSecureRequest } from "@/lib/auth/request-context";
 
 export const runtime = "nodejs";
@@ -26,12 +26,22 @@ interface GithubProfileResponse {
 
 export async function GET(request: NextRequest): Promise<NextResponse> {
   const appOrigin = getAppOrigin(request);
-  const clientId = process.env.GITHUB_CLIENT_ID;
-  const clientSecret = process.env.GITHUB_CLIENT_SECRET;
-  const authSecret = process.env.AUTH_SESSION_SECRET;
-
-  if (!clientId || !clientSecret || !authSecret) {
-    return NextResponse.json({ error: "GitHub OAuth is not configured" }, { status: 503 });
+  const oauthConfig = resolveGithubOAuthConfig({
+    baseUrl: appOrigin,
+    clientId: process.env.GITHUB_CLIENT_ID,
+    clientSecret: process.env.GITHUB_CLIENT_SECRET,
+    authSecret: process.env.AUTH_SESSION_SECRET,
+    configuredCallbackUrl: process.env.GITHUB_OAUTH_CALLBACK_URL,
+    requireCallbackMatch: process.env.GITHUB_OAUTH_REQUIRE_CALLBACK_MATCH === "true",
+  });
+  if (!oauthConfig.configured) {
+    return NextResponse.json(
+      {
+        error: "GitHub OAuth is not available for this origin",
+        code: oauthConfig.reason,
+      },
+      { status: 503 }
+    );
   }
 
   const code = request.nextUrl.searchParams.get("code");
@@ -42,15 +52,6 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     return NextResponse.redirect(new URL("/?error=github_auth_state", `${appOrigin}/`));
   }
 
-  const redirectUri = buildGithubAuthorizeUrl({
-    clientId,
-    baseUrl: appOrigin,
-    state,
-  }).searchParams.get("redirect_uri");
-  if (!redirectUri) {
-    return NextResponse.redirect(new URL("/?error=github_auth_state", `${appOrigin}/`));
-  }
-
   const tokenResponse = await fetch("https://github.com/login/oauth/access_token", {
     method: "POST",
     headers: {
@@ -58,10 +59,10 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       "Content-Type": "application/x-www-form-urlencoded",
     },
     body: new URLSearchParams({
-      client_id: clientId,
-      client_secret: clientSecret,
+      client_id: oauthConfig.clientId,
+      client_secret: oauthConfig.clientSecret,
       code,
-      redirect_uri: redirectUri,
+      redirect_uri: oauthConfig.callbackUrl,
       state,
     }).toString(),
     cache: "no-store",
@@ -94,7 +95,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       issuedAt,
       expiresAt: issuedAt + VIEWER_SESSION_TTL_MS,
     },
-    authSecret
+    oauthConfig.authSecret
   );
 
   const response = NextResponse.redirect(new URL("/", `${appOrigin}/`));

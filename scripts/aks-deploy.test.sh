@@ -821,7 +821,56 @@ run_default_copied_auth_secret_wires_anonymous_easy_keys_check() {
   assert_contains "backend.auth.antiAbuseHmacSecretKey=anti-abuse-hmac-secret" "$TMP_DIR/helm-args.txt"
   assert_contains "backend.auth.turnstileSecretKey=turnstile-secret-key" "$TMP_DIR/helm-args.txt"
   assert_contains "backend.auth.turnstileExpectedHostnameKey=turnstile-expected-hostname" "$TMP_DIR/helm-args.txt"
+  assert_contains "frontend.auth.requireGithubCallbackMatch=true" "$TMP_DIR/helm-args.txt"
+  assert_contains "frontend.auth.githubOAuthEnabled=false" "$TMP_DIR/helm-args.txt"
+  assert_contains "GitHub OAuth disabled for non-production origin" "$TMP_DIR/default-auth-secret.out"
   assert_contains "sre-simulator|sre-e2e|sre-auth-secrets" "$TMP_DIR/default-auth-secret-copy.txt"
+}
+
+run_e2e_github_callback_match_check() {
+  # shellcheck disable=SC1091
+  source "$ROOT_DIR/scripts/aks-deploy.sh"
+  capture_helm_invocation
+
+  require_cli() { :; }
+  ensure_namespace() { :; }
+  ensure_auth_secret_for_e2e_namespace() {
+    printf '%s\n' "sre-e2e-auth-secrets"
+  }
+  secret_has_key() {
+    case "$3" in
+      github-client-id|github-client-secret|github-callback-url)
+        return 0
+        ;;
+      *)
+        return 1
+        ;;
+    esac
+  }
+  read_secret_literal_key() {
+    printf '%s' "https://e2e.example.test/api/auth/github/callback"
+  }
+
+  unset AKS_GATEWAY_HOST AKS_GATEWAY_CLASS_NAME \
+    AKS_CLUSTER_ISSUER_NAME AKS_GATEWAY_TLS_SECRET_NAME || true
+  AKS_PUBLIC_ORIGIN_OVERRIDE="https://e2e.example.test"
+  E2E_RELEASE="sre-simulator"
+  AKS_RG="example-aks-rg"
+  AKS_CLUSTER="example-aks"
+  AKS_EXPOSURE_MODE="none"
+  AKS_LOCAL_PORT_FORWARD_PORT="38080"
+  AOAI_DEPLOYMENT="gpt-4o-mini"
+
+  if ! helm_deploy_sre "sre-e2e" "latest" "probe-token" >"$TMP_DIR/e2e-github-callback.out" 2>&1; then
+    cat "$TMP_DIR/e2e-github-callback.out" >&2 || true
+    fail "helm_deploy_sre should enable E2E GitHub OAuth for an exact callback match"
+  fi
+
+  assert_contains "frontend.auth.requireGithubCallbackMatch=true" "$TMP_DIR/helm-args.txt"
+  assert_contains "frontend.auth.githubOAuthEnabled=true" "$TMP_DIR/helm-args.txt"
+  assert_contains "frontend.auth.githubCallbackUrlKey=github-callback-url" "$TMP_DIR/helm-args.txt"
+  assert_not_contains "GitHub OAuth disabled" "$TMP_DIR/e2e-github-callback.out"
+  unset AKS_PUBLIC_ORIGIN_OVERRIDE || true
 }
 
 run_runtime_auth_values_skip_default_secret_copy_check() {
@@ -841,17 +890,37 @@ run_runtime_auth_values_skip_default_secret_copy_check() {
   }
 
   unset GITHUB_AUTH_SECRET_NAME E2E_AUTH_SECRET_NAME AUTH_SECRET_SOURCE_NAMESPACE || true
-  unset GITHUB_CLIENT_ID GITHUB_CLIENT_SECRET ANTI_ABUSE_HMAC_SECRET || true
+  unset GITHUB_CLIENT_ID GITHUB_CLIENT_SECRET GITHUB_OAUTH_CALLBACK_URL ANTI_ABUSE_HMAC_SECRET || true
   unset TURNSTILE_SECRET_KEY TURNSTILE_EXPECTED_HOSTNAME TURNSTILE_SITE_KEY NEXT_PUBLIC_TURNSTILE_SITE_KEY || true
   AUTH_SESSION_SECRET="runtime-auth-secret"
+  GITHUB_OAUTH_CALLBACK_URL="https://e2e.example.test/api/auth/github/callback"
 
   resolved_secret="$(ensure_auth_secret_for_e2e_namespace "sre-e2e")"
 
   [ "$resolved_secret" = "sre-auth-secrets" ] || \
     fail "runtime auth values should create the default destination secret"
   assert_contains "sre-e2e|sre-auth-secrets|auth-session-secret" "$TMP_DIR/runtime-auth-upserts.txt"
+  assert_contains "sre-e2e|sre-auth-secrets|github-callback-url" "$TMP_DIR/runtime-auth-upserts.txt"
 
-  unset AUTH_SESSION_SECRET || true
+  unset AUTH_SESSION_SECRET GITHUB_OAUTH_CALLBACK_URL || true
+}
+
+run_read_secret_literal_key_check() {
+  local callback
+
+  # shellcheck disable=SC1091
+  source "$ROOT_DIR/scripts/kube-deploy-common.sh"
+
+  KUBE_CLI="fake_kubectl"
+  fake_kubectl() {
+    printf '%s' "https://e2e.example.test/api/auth/github/callback" | base64
+  }
+
+  callback="$(read_secret_literal_key "sre-e2e" "sre-e2e-auth-secrets" "github-callback-url")"
+  assert_equals \
+    "https://e2e.example.test/api/auth/github/callback" \
+    "$callback" \
+    "read_secret_literal_key should decode the selected secret value"
 }
 
 run_clusterissuer_manifest_check() {
@@ -1759,7 +1828,9 @@ main() {
   run_auth_secret_resolution_sanitizes_and_keeps_helm_args_clean_check
   run_optional_auth_verification_flag_check
   run_default_copied_auth_secret_wires_anonymous_easy_keys_check
+  run_e2e_github_callback_match_check
   run_runtime_auth_values_skip_default_secret_copy_check
+  run_read_secret_literal_key_check
   run_clusterissuer_manifest_check
   run_clusterissuer_manifest_requires_email_check
   run_gatewayclass_manifest_check

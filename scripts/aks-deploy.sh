@@ -549,6 +549,7 @@ helm_deploy_sre() {
   local aoai_model
   local resolved_auth_secret
   local turnstile_site_key
+  local public_origin
 
   if [ -n "${AKS_PUBLIC_ORIGIN_OVERRIDE:-}" ]; then
     if [[ ! "${AKS_PUBLIC_ORIGIN_OVERRIDE}" =~ ^https?://[^[:space:]]+$ ]]; then
@@ -580,6 +581,7 @@ helm_deploy_sre() {
   image_pull_policy="$(image_pull_policy_for_tag "$tag")"
   aoai_model="${AOAI_MODEL:-${AOAI_DEPLOYMENT}}"
   turnstile_site_key="${TURNSTILE_SITE_KEY:-${NEXT_PUBLIC_TURNSTILE_SITE_KEY:-}}"
+  public_origin="${AKS_PUBLIC_ORIGIN_OVERRIDE:-${DEPLOY_SCHEME}://${DEPLOY_HOST}}"
 
   if [ -n "${GHCR_IMAGE_PULL_SECRET:-}" ]; then
     image_pull_flags+=(--set "imagePullSecrets[0]=${GHCR_IMAGE_PULL_SECRET}")
@@ -594,6 +596,31 @@ helm_deploy_sre() {
     auth_flags+=(--set-string "frontend.auth.existingSecretName=${resolved_auth_secret}")
     auth_flags+=(--set-string "backend.auth.existingSecretName=${resolved_auth_secret}")
     auth_flags+=(--set-string "backend.auth.authSessionSecretKey=auth-session-secret")
+
+    if [ "$ns" != "${PROD_NAMESPACE:-sre-simulator}" ]; then
+      local expected_github_callback configured_github_callback
+      expected_github_callback="${public_origin%/}/api/auth/github/callback"
+      configured_github_callback=""
+      if secret_has_key "$ns" "$resolved_auth_secret" "github-callback-url"; then
+        configured_github_callback="$(
+          read_secret_literal_key "$ns" "$resolved_auth_secret" "github-callback-url" || true
+        )"
+      fi
+
+      auth_flags+=(--set frontend.auth.requireGithubCallbackMatch=true)
+      if [ "$configured_github_callback" = "$expected_github_callback" ] && \
+         secret_has_key "$ns" "$resolved_auth_secret" "github-client-id" && \
+         secret_has_key "$ns" "$resolved_auth_secret" "github-client-secret"; then
+        auth_flags+=(--set frontend.auth.githubOAuthEnabled=true)
+        auth_flags+=(--set-string "frontend.auth.githubCallbackUrlKey=github-callback-url")
+      else
+        auth_flags+=(--set frontend.auth.githubOAuthEnabled=false)
+        echo "warning: GitHub OAuth disabled for non-production origin '${public_origin}'." >&2
+        echo "Use a separate OAuth App whose callback is exactly '${expected_github_callback}', then store that URL as '${resolved_auth_secret}/github-callback-url'." >&2
+      fi
+    elif secret_has_key "$ns" "$resolved_auth_secret" "github-callback-url"; then
+      auth_flags+=(--set-string "frontend.auth.githubCallbackUrlKey=github-callback-url")
+    fi
 
     if [ -n "${ANTI_ABUSE_HMAC_SECRET:-}" ] || \
        secret_has_key "$ns" "$resolved_auth_secret" "anti-abuse-hmac-secret"; then
