@@ -287,7 +287,10 @@ async function runPlatform(browser, platform) {
       })
       .waitFor({ timeout: 30_000 });
     await page
-      .getByText(`@${viewerPrefix}-${platform.id}`, { exact: true })
+      .getByText(
+        `@${viewerPrefix}-${platform.id} can access all difficulties and keep persistent best scores.`,
+        { exact: true },
+      )
       .waitFor({ timeout: 30_000 });
     if (await page.getByLabel("Callsign").count() !== 0) {
       throw new Error(`${platform.id} rendered an editable GitHub callsign`);
