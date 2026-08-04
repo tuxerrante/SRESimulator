@@ -125,17 +125,27 @@ secret_has_key() {
 # Prints the decoded value for internal comparisons. Callers must not log
 # credential-bearing values.
 read_secret_literal_key() {
-  local ns=$1 secret_name=$2 key=$3 encoded
+  local ns=$1 secret_name=$2 key=$3 encoded decoded
   encoded="$("$KUBE_CLI" -n "$ns" get "secret/$secret_name" \
-    -o "go-template={{index .data \"$key\"}}" 2>/dev/null || true)"
-  if [ -z "$encoded" ]; then
+    -o "go-template={{if index .data \"$key\"}}{{index .data \"$key\"}}{{end}}" \
+    2>/dev/null || true)"
+  if [ -z "$encoded" ] || [ "$encoded" = "<no value>" ]; then
     return 1
   fi
 
-  if printf '%s' "$encoded" | base64 --decode 2>/dev/null; then
+  if decoded="$(printf '%s' "$encoded" | base64 --decode 2>/dev/null)"; then
+    printf '%s' "$decoded"
     return 0
   fi
-  printf '%s' "$encoded" | base64 -D
+  if decoded="$(printf '%s' "$encoded" | base64 -d 2>/dev/null)"; then
+    printf '%s' "$decoded"
+    return 0
+  fi
+  if decoded="$(printf '%s' "$encoded" | base64 -D 2>/dev/null)"; then
+    printf '%s' "$decoded"
+    return 0
+  fi
+  return 1
 }
 
 # Usage: sanitize_single_line_value <raw_value>

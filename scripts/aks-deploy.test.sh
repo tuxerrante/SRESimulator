@@ -787,7 +787,7 @@ run_default_copied_auth_secret_wires_anonymous_easy_keys_check() {
   }
   secret_has_key() {
     case "$3" in
-      anti-abuse-hmac-secret|turnstile-site-key|turnstile-secret-key|turnstile-expected-hostname)
+      auth-session-secret|anti-abuse-hmac-secret|turnstile-site-key|turnstile-secret-key|turnstile-expected-hostname)
         return 0
         ;;
       *)
@@ -839,6 +839,52 @@ run_e2e_github_callback_match_check() {
   }
   secret_has_key() {
     case "$3" in
+      github-client-id|github-client-secret|github-callback-url|auth-session-secret)
+        return 0
+        ;;
+      *)
+        return 1
+        ;;
+    esac
+  }
+  read_secret_literal_key() {
+    printf '\n  %s  \nignored-line\n' "https://e2e.example.test/api/auth/github/callback"
+  }
+
+  unset AKS_GATEWAY_HOST AKS_GATEWAY_CLASS_NAME \
+    AKS_CLUSTER_ISSUER_NAME AKS_GATEWAY_TLS_SECRET_NAME || true
+  AKS_PUBLIC_ORIGIN_OVERRIDE="https://e2e.example.test"
+  E2E_RELEASE="sre-simulator"
+  AKS_RG="example-aks-rg"
+  AKS_CLUSTER="example-aks"
+  AKS_EXPOSURE_MODE="none"
+  AKS_LOCAL_PORT_FORWARD_PORT="38080"
+  AOAI_DEPLOYMENT="gpt-4o-mini"
+
+  if ! helm_deploy_sre "sre-e2e" "latest" "probe-token" >"$TMP_DIR/e2e-github-callback.out" 2>&1; then
+    cat "$TMP_DIR/e2e-github-callback.out" >&2 || true
+    fail "helm_deploy_sre should enable E2E GitHub OAuth for an exact callback match"
+  fi
+
+  assert_contains "frontend.auth.requireGithubCallbackMatch=true" "$TMP_DIR/helm-args.txt"
+  assert_contains "frontend.auth.githubOAuthEnabled=true" "$TMP_DIR/helm-args.txt"
+  assert_contains "frontend.auth.githubCallbackUrlKey=github-callback-url" "$TMP_DIR/helm-args.txt"
+  assert_not_contains "GitHub OAuth disabled" "$TMP_DIR/e2e-github-callback.out"
+  unset AKS_PUBLIC_ORIGIN_OVERRIDE || true
+}
+
+run_e2e_github_callback_requires_auth_session_check() {
+  # shellcheck disable=SC1091
+  source "$ROOT_DIR/scripts/aks-deploy.sh"
+  capture_helm_invocation
+
+  require_cli() { :; }
+  ensure_namespace() { :; }
+  ensure_auth_secret_for_e2e_namespace() {
+    printf '%s\n' "sre-e2e-auth-secrets"
+  }
+  secret_has_key() {
+    case "$3" in
       github-client-id|github-client-secret|github-callback-url)
         return 0
         ;;
@@ -861,15 +907,13 @@ run_e2e_github_callback_match_check() {
   AKS_LOCAL_PORT_FORWARD_PORT="38080"
   AOAI_DEPLOYMENT="gpt-4o-mini"
 
-  if ! helm_deploy_sre "sre-e2e" "latest" "probe-token" >"$TMP_DIR/e2e-github-callback.out" 2>&1; then
-    cat "$TMP_DIR/e2e-github-callback.out" >&2 || true
-    fail "helm_deploy_sre should enable E2E GitHub OAuth for an exact callback match"
+  if helm_deploy_sre "sre-e2e" "latest" "probe-token" >"$TMP_DIR/e2e-github-missing-session.out" 2>&1; then
+    fail "helm_deploy_sre should reject an E2E auth secret without auth-session-secret"
   fi
 
-  assert_contains "frontend.auth.requireGithubCallbackMatch=true" "$TMP_DIR/helm-args.txt"
-  assert_contains "frontend.auth.githubOAuthEnabled=true" "$TMP_DIR/helm-args.txt"
-  assert_contains "frontend.auth.githubCallbackUrlKey=github-callback-url" "$TMP_DIR/helm-args.txt"
-  assert_not_contains "GitHub OAuth disabled" "$TMP_DIR/e2e-github-callback.out"
+  assert_contains "missing required key 'auth-session-secret'" "$TMP_DIR/e2e-github-missing-session.out"
+  [ ! -s "$TMP_DIR/helm-args.txt" ] || \
+    fail "helm_deploy_sre should fail before invoking Helm for a missing auth session key"
   unset AKS_PUBLIC_ORIGIN_OVERRIDE || true
 }
 
@@ -972,22 +1016,73 @@ run_complete_runtime_auth_values_skip_default_secret_copy_check() {
   unset GITHUB_CLIENT_ID GITHUB_CLIENT_SECRET AUTH_SESSION_SECRET GITHUB_OAUTH_CALLBACK_URL || true
 }
 
-run_read_secret_literal_key_check() {
-  local callback
+run_read_secret_literal_key_decode_modes_check() {
+  local callback decode_mode decoded_value
 
+  # shellcheck disable=SC1091
+  source "$ROOT_DIR/scripts/kube-deploy-common.sh"
+
+  decoded_value="https://e2e.example.test/api/auth/github/callback"
+  KUBE_CLI="fake_kubectl"
+  fake_kubectl() {
+    printf '%s\n' "$*" >"$TMP_DIR/read-secret-kubectl.txt"
+    printf '%s' "ZW5jb2RlZC12YWx1ZQ=="
+  }
+  base64() {
+    local flag="${1:-}"
+    case "${decode_mode}:${flag}" in
+      gnu:--decode|busybox:-d|macos:-D)
+        cat >/dev/null
+        printf '%s' "$decoded_value"
+        ;;
+      *)
+        echo "unsupported decode flag" >&2
+        return 1
+        ;;
+    esac
+  }
+
+  for decode_mode in gnu busybox macos; do
+    callback="$(
+      read_secret_literal_key "sre-e2e" "sre-e2e-auth-secrets" "github-callback-url" \
+        2>"$TMP_DIR/read-secret-${decode_mode}.err"
+    )"
+    assert_equals \
+      "$decoded_value" \
+      "$callback" \
+      "read_secret_literal_key should support the ${decode_mode} base64 decoder"
+    [ ! -s "$TMP_DIR/read-secret-${decode_mode}.err" ] || \
+      fail "read_secret_literal_key should suppress ${decode_mode} decoder errors"
+  done
+
+  assert_contains \
+    'go-template={{if index .data "github-callback-url"}}{{index .data "github-callback-url"}}{{end}}' \
+    "$TMP_DIR/read-secret-kubectl.txt"
+  unset -f base64 fake_kubectl
+}
+
+run_read_secret_literal_key_missing_value_check() {
   # shellcheck disable=SC1091
   source "$ROOT_DIR/scripts/kube-deploy-common.sh"
 
   KUBE_CLI="fake_kubectl"
   fake_kubectl() {
-    printf '%s' "https://e2e.example.test/api/auth/github/callback" | base64
+    printf '%s' "<no value>"
+  }
+  base64() {
+    fail "read_secret_literal_key should not decode a missing Go-template value"
   }
 
-  callback="$(read_secret_literal_key "sre-e2e" "sre-e2e-auth-secrets" "github-callback-url")"
-  assert_equals \
-    "https://e2e.example.test/api/auth/github/callback" \
-    "$callback" \
-    "read_secret_literal_key should decode the selected secret value"
+  if read_secret_literal_key "sre-e2e" "sre-e2e-auth-secrets" "github-callback-url" \
+    >"$TMP_DIR/read-secret-missing.out" 2>"$TMP_DIR/read-secret-missing.err"; then
+    fail "read_secret_literal_key should reject a missing secret key"
+  fi
+
+  [ ! -s "$TMP_DIR/read-secret-missing.out" ] || \
+    fail "read_secret_literal_key should not print a missing secret value"
+  [ ! -s "$TMP_DIR/read-secret-missing.err" ] || \
+    fail "read_secret_literal_key should suppress missing-value decode errors"
+  unset -f base64 fake_kubectl
 }
 
 run_clusterissuer_manifest_check() {
@@ -1896,10 +1991,12 @@ main() {
   run_optional_auth_verification_flag_check
   run_default_copied_auth_secret_wires_anonymous_easy_keys_check
   run_e2e_github_callback_match_check
+  run_e2e_github_callback_requires_auth_session_check
   run_callback_only_auth_config_is_ignored_check
   run_callback_only_config_does_not_rebind_default_credentials_check
   run_complete_runtime_auth_values_skip_default_secret_copy_check
-  run_read_secret_literal_key_check
+  run_read_secret_literal_key_decode_modes_check
+  run_read_secret_literal_key_missing_value_check
   run_clusterissuer_manifest_check
   run_clusterissuer_manifest_requires_email_check
   run_gatewayclass_manifest_check

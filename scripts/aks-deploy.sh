@@ -598,19 +598,29 @@ helm_deploy_sre() {
     auth_flags+=(--set-string "backend.auth.authSessionSecretKey=auth-session-secret")
 
     if [ "$ns" != "${PROD_NAMESPACE:-sre-simulator}" ]; then
-      local expected_github_callback configured_github_callback
+      local expected_github_callback configured_github_callback decoded_github_callback
+      if ! secret_has_key "$ns" "$resolved_auth_secret" "auth-session-secret"; then
+        echo "error: auth secret '${resolved_auth_secret}' is missing required key 'auth-session-secret'; refusing non-production deployment." >&2
+        rm -f "$exposure_values_file"
+        return 1
+      fi
+
       expected_github_callback="${public_origin%/}/api/auth/github/callback"
       configured_github_callback=""
       if secret_has_key "$ns" "$resolved_auth_secret" "github-callback-url"; then
-        configured_github_callback="$(
+        decoded_github_callback="$(
           read_secret_literal_key "$ns" "$resolved_auth_secret" "github-callback-url" || true
+        )"
+        configured_github_callback="$(
+          sanitize_single_line_value "$decoded_github_callback"
         )"
       fi
 
       auth_flags+=(--set frontend.auth.requireGithubCallbackMatch=true)
       if [ "$configured_github_callback" = "$expected_github_callback" ] && \
          secret_has_key "$ns" "$resolved_auth_secret" "github-client-id" && \
-         secret_has_key "$ns" "$resolved_auth_secret" "github-client-secret"; then
+         secret_has_key "$ns" "$resolved_auth_secret" "github-client-secret" && \
+         secret_has_key "$ns" "$resolved_auth_secret" "auth-session-secret"; then
         auth_flags+=(--set frontend.auth.githubOAuthEnabled=true)
         auth_flags+=(--set-string "frontend.auth.githubCallbackUrlKey=github-callback-url")
       else
