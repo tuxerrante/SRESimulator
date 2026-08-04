@@ -93,6 +93,18 @@ Validate gateway-mode exposure settings before rendering dependent resources.
 {{- end }}
 
 {{/*
+Resolve the frontend Service port. Public LoadBalancer mode exposes port 80;
+all internal modes expose the configured frontend container port.
+*/}}
+{{- define "sre-simulator.frontendServicePort" -}}
+{{- if eq (include "sre-simulator.exposureMode" .) "publicService" -}}
+80
+{{- else -}}
+{{- .Values.frontend.port -}}
+{{- end -}}
+{{- end }}
+
+{{/*
 Resolve the externally visible host.
 */}}
 {{- define "sre-simulator.publicHost" -}}

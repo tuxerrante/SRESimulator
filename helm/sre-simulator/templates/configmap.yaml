@@ -36,6 +36,7 @@ data:
   AI_AZURE_OPENAI_API_VERSION: "{{ .Values.ai.azureOpenai.apiVersion }}"
   TRUST_PROXY_HEADERS: {{ ternary "true" "false" .Values.backend.trustProxyHeaders | quote }}
   PERSISTENT_LEADERBOARD_ENABLED: {{ ternary "true" "false" .Values.backend.persistentLeaderboardEnabled | quote }}
+  ALLOW_DEPLOYED_JSON_STORAGE_FOR_TESTS: {{ include "sre-simulator.boolString" .Values.backend.allowDeployedJsonStorageForTests | quote }}
   TURNSTILE_TEST_MODE: {{ include "sre-simulator.boolString" .Values.backend.auth.turnstileTestMode | quote }}
   LOCAL_TEST_VERIFICATION_ENABLED: {{ include "sre-simulator.boolString" .Values.backend.auth.localTestVerificationEnabled | quote }}
   AI_CHAT_TIMEOUT_MS: "{{ .Values.backend.aiChatTimeoutMs }}"

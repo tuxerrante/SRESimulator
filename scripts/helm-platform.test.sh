@@ -34,6 +34,9 @@ grep -Eq '^kind: Route$' "${route_render}" || \
 grep -Eq 'host: route\.example\.com' "${route_render}" || \
   fail "Route mode should preserve the route host."
 
+grep -Fq 'FRONTEND="sre-simulator-frontend:3000"' "${route_render}" || \
+  fail "Helm test should use the configured internal frontend Service port."
+
 grep -Eq 'value: "https://route\.example\.com"' "${route_render}" || \
   fail "Route mode should derive backend CORS origin from the public route host."
 
@@ -42,6 +45,18 @@ grep -Eq 'AI_COMMAND_TIMEOUT_MS: "12000"' "${route_render}" || \
 
 grep -Eq 'AI_SCENARIO_TIMEOUT_MS: "12000"' "${route_render}" || \
   fail "Backend scenario timeout should remain below the public edge request budget."
+
+grep -Eq 'ALLOW_DEPLOYED_JSON_STORAGE_FOR_TESTS: "false"' "${route_render}" || \
+  fail "Deployed JSON storage test mode must default to false."
+
+helm template sre-simulator "${CHART_DIR}" \
+  --set exposure.mode=route \
+  --set exposure.host=route.example.com \
+  --set ai.mockMode=true \
+  --set backend.allowDeployedJsonStorageForTests=true >"${legacy_kv_render}"
+
+grep -Eq 'ALLOW_DEPLOYED_JSON_STORAGE_FOR_TESTS: "true"' "${legacy_kv_render}" || \
+  fail "Mock Helm integration should be able to opt into deployed JSON storage."
 
 helm template sre-simulator "${CHART_DIR}" \
   --set exposure.mode=route \
@@ -97,6 +112,9 @@ grep -Eq '^[[:space:]]+- port: 80$' "${lb_render}" || \
 
 grep -Eq 'targetPort: 3000' "${lb_render}" || \
   fail "AKS public service mode should still target the frontend container port."
+
+grep -Fq 'FRONTEND="sre-simulator-frontend:80"' "${lb_render}" || \
+  fail "Helm test should use frontend Service port 80 in publicService mode."
 
 if grep -Eq '^kind: Ingress$' "${lb_render}"; then
   fail "AKS mode must not render a Kubernetes Ingress."

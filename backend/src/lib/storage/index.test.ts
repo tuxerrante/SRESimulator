@@ -13,6 +13,8 @@ describe("initStorage production guard", () => {
     delete process.env.STORAGE_BACKEND;
     delete process.env.DATABASE_URL;
     delete process.env.KUBERNETES_SERVICE_HOST;
+    delete process.env.ALLOW_DEPLOYED_JSON_STORAGE_FOR_TESTS;
+    delete process.env.AI_MOCK_MODE;
     process.env.NODE_ENV = "test";
   });
 
@@ -68,6 +70,41 @@ describe("initStorage production guard", () => {
     await expect(storage.initStorage()).resolves.toBeUndefined();
     expect(storage.getStorageBackend()).toBe("json");
     expect(storage.getSessionStore()).toBeDefined();
+  });
+
+  test("allows deployed JSON only for explicit mock integration tests", async () => {
+    process.env.NODE_ENV = "production";
+    process.env.KUBERNETES_SERVICE_HOST = "10.0.0.1";
+    process.env.ALLOW_DEPLOYED_JSON_STORAGE_FOR_TESTS = "true";
+    process.env.AI_MOCK_MODE = "true";
+
+    const storage = await loadStorageModule();
+
+    await expect(storage.initStorage()).resolves.toBeUndefined();
+    expect(storage.getStorageBackend()).toBe("json");
+  });
+
+  test("does not allow deployed JSON without mock AI mode", async () => {
+    process.env.NODE_ENV = "production";
+    process.env.ALLOW_DEPLOYED_JSON_STORAGE_FOR_TESTS = "true";
+    process.env.AI_MOCK_MODE = "false";
+
+    const storage = await loadStorageModule();
+
+    await expect(storage.initStorage()).rejects.toThrow(
+      "Refusing to start with STORAGE_BACKEND=json",
+    );
+  });
+
+  test("does not allow deployed JSON with mock AI mode alone", async () => {
+    process.env.NODE_ENV = "production";
+    process.env.AI_MOCK_MODE = "true";
+
+    const storage = await loadStorageModule();
+
+    await expect(storage.initStorage()).rejects.toThrow(
+      "Refusing to start with STORAGE_BACKEND=json",
+    );
   });
 
   test("rejects whitespace-only DATABASE_URL for mssql", async () => {

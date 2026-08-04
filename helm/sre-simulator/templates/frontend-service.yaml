@@ -1,6 +1,5 @@
 {{- $publicService := .Values.frontend.service.public -}}
 {{- $publicServiceEnabled := eq (include "sre-simulator.exposureMode" .) "publicService" -}}
-{{- $frontendServicePort := ternary 80 .Values.frontend.port $publicServiceEnabled -}}
 apiVersion: v1
 kind: Service
 metadata:
@@ -18,7 +17,7 @@ spec:
   loadBalancerIP: {{ $publicService.loadBalancerIP | quote }}
   {{- end }}
   ports:
-    - port: {{ $frontendServicePort }}
+    - port: {{ include "sre-simulator.frontendServicePort" . }}
       targetPort: {{ .Values.frontend.port }}
       protocol: TCP
   selector:

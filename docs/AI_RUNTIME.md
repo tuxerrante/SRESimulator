@@ -14,6 +14,9 @@ AI readiness and storage readiness are separate checks, but deployed backends
 are expected to run with Azure SQL rather than the JSON fallback:
 
 - `STORAGE_BACKEND=json` is for local development and tests only.
+- Kubernetes mock integration may opt in explicitly with both
+  `ALLOW_DEPLOYED_JSON_STORAGE_FOR_TESTS=true` and `AI_MOCK_MODE=true`; this
+  exception is disabled by default and must not be used for live deployments.
 - Deployed or production-like runtimes should use `STORAGE_BACKEND=mssql`
   together with `DATABASE_URL`; startup now fails fast instead of silently
   falling back to JSON when `NODE_ENV=production` or

@@ -81,6 +81,7 @@ jobs:
             --set backend.image.pullPolicy=Never \
             --set ai.mockMode=true \
             --set ai.strictStartup=false \
+            --set backend.allowDeployedJsonStorageForTests=true \
             --set storage.storageClass=standard \
             --set exposure.mode=publicService \
             --set exposure.host=sre-simulator.localtest.me \

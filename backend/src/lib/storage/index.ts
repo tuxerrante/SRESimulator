@@ -46,8 +46,19 @@ function isProductionLikeRuntime(): boolean {
   return process.env.NODE_ENV === "production" || Boolean(process.env.KUBERNETES_SERVICE_HOST);
 }
 
+function isDeployedJsonTestMode(): boolean {
+  return (
+    process.env.ALLOW_DEPLOYED_JSON_STORAGE_FOR_TESTS === "true" &&
+    process.env.AI_MOCK_MODE === "true"
+  );
+}
+
 function assertStorageBackendAllowed(backend: StorageBackend): void {
-  if (backend === "json" && isProductionLikeRuntime()) {
+  if (
+    backend === "json" &&
+    isProductionLikeRuntime() &&
+    !isDeployedJsonTestMode()
+  ) {
     throw new Error(
       "Refusing to start with STORAGE_BACKEND=json in production or deployed mode. " +
       "Set STORAGE_BACKEND=mssql and DATABASE_URL."
