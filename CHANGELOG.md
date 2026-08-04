@@ -5,22 +5,26 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.4.0] - 2026-08-03
+## [0.4.0] - 2026-08-04
 
 ### Added (0.4.0)
 
-- Added first-class AKS, ARO Classic, and ARO HCP gameplay paths across scenario selection, prompts, command simulation, telemetry, analytics, storage, and leaderboards.
-- Added platform-scoped scenario catalogs, knowledge bundles, context metadata, documentation references, and interactive onboarding.
-- Added a protected mandatory live Playwright PR gate with parallel isolated users covering every platform path on distinct scenarios.
+- Added first-class AKS, ARO Classic, and ARO HCP gameplay paths across scenario selection, prompts, command simulation, telemetry, analytics, storage, and leaderboards. ([#306](https://github.com/tuxerrante/SRESimulator/commit/8d507664bf8d232a930170991c4c8cc774b0be44))
+- Added platform-scoped scenario catalogs, knowledge bundles, context metadata, documentation references, and interactive onboarding. ([#306](https://github.com/tuxerrante/SRESimulator/commit/8d507664bf8d232a930170991c4c8cc774b0be44))
+- Added a protected mandatory live Playwright PR gate that runs isolated AKS, ARO Classic, and ARO HCP users in parallel and requires distinct scenario evidence. ([#306](https://github.com/tuxerrante/SRESimulator/commit/8d507664bf8d232a930170991c4c8cc774b0be44))
 
 ### Changed (0.4.0)
 
-- Enforced platform boundaries for generated incidents, stored sessions, knowledge retrieval, CLI/resource commands, telemetry, and rendered documentation links.
-- Hardened local JSON persistence with bounded filesystem locks and atomic writes across player, leaderboard, and anonymous-trial stores.
-- Hardened AKS E2E workflows with authenticated secret handling, `linux/amd64` development images, Helm capability checks, shared-edge reconciliation, and safe port-forward refreshes.
-- Reduced the command-generation timeout so deterministic degraded output is returned before the public gateway timeout.
-- Added an edge-safe curated scenario fallback for AI timeouts, provider throttling, and invalid generated payloads.
-- Cached the Grype vulnerability database, removed a duplicate scan pass, and parallelized frontend/backend dependency scans.
+- Enforced platform boundaries for generated incidents, stored sessions, knowledge retrieval, CLI/resource commands, telemetry, and rendered documentation links. ([#306](https://github.com/tuxerrante/SRESimulator/commit/8d507664bf8d232a930170991c4c8cc774b0be44))
+- Hardened local JSON persistence with bounded filesystem locks, atomic writes, and serialized anonymous-trial claims across concurrent player, leaderboard, and session workers. ([#306](https://github.com/tuxerrante/SRESimulator/commit/8d507664bf8d232a930170991c4c8cc774b0be44))
+- Hardened AKS E2E workflows with authenticated secret handling, `linux/amd64` development images, Helm capability checks, shared-edge reconciliation, and safe port-forward refreshes. ([#306](https://github.com/tuxerrante/SRESimulator/commit/8d507664bf8d232a930170991c4c8cc774b0be44))
+- Reduced the command-generation timeout so deterministic degraded output is returned before the public gateway timeout. ([#306](https://github.com/tuxerrante/SRESimulator/commit/8d507664bf8d232a930170991c4c8cc774b0be44))
+- Added an edge-safe curated scenario fallback for AI timeouts and provider throttling, preserving platform-specific reservations and degraded-response metadata. ([#308](https://github.com/tuxerrante/SRESimulator/commit/3340841f4410bcacac46e86edf8eaa51e8e6cc12))
+- Added the same curated fallback for invalid, non-JSON, or schema-invalid AI payloads so gameplay remains available instead of returning a 502. ([#310](https://github.com/tuxerrante/SRESimulator/commit/d445759d1ed81335d15ce94d2abb9c1a0bf9a19b))
+- Accelerated security checks by caching the Grype vulnerability database, removing a duplicate scan pass, and scanning frontend and backend dependencies in parallel. ([#308](https://github.com/tuxerrante/SRESimulator/commit/3340841f4410bcacac46e86edf8eaa51e8e6cc12))
+- Aligned infrastructure defaults, examples, tests, and operator guidance with Azure OpenAI `gpt-5.6-terra` (`2026-07-09`) and made SKU guidance model-agnostic. ([#291](https://github.com/tuxerrante/SRESimulator/commit/81e1121e31e3b90318eca08e009303c950e95613))
+- Hardened Helm integration validation by allowing deployed JSON storage only for explicit mock tests, probing the actual frontend Service port in connection checks, and updating the vulnerable transitive `ip-address` dependency. ([#311](https://github.com/tuxerrante/SRESimulator/commit/a87dcc95dcd847c326d52b350cd9f93c4a0f92ac))
+- Synchronized frontend, backend, Helm, lockfile, and customer-visible release metadata to `v0.4.0`. ([#307](https://github.com/tuxerrante/SRESimulator/commit/83e923c2d79b9a161a7f8a889730ca9850f6e995))
 
 ## [0.3.0] - 2026-07-31
 
