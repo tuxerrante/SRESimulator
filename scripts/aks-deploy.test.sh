@@ -873,7 +873,70 @@ run_e2e_github_callback_match_check() {
   unset AKS_PUBLIC_ORIGIN_OVERRIDE || true
 }
 
-run_runtime_auth_values_skip_default_secret_copy_check() {
+run_callback_only_auth_config_is_ignored_check() {
+  local resolved_secret
+
+  # shellcheck disable=SC1091
+  source "$ROOT_DIR/scripts/kube-deploy-common.sh"
+
+  copy_secret_across_namespaces() {
+    fail "callback-only config should not copy an auth secret"
+  }
+  upsert_secret_literal_key() {
+    if [ -n "$4" ]; then
+      fail "callback-only config should not write auth secret key '$3'"
+    fi
+  }
+  secret_exists_in_namespace() {
+    return 1
+  }
+
+  unset GITHUB_AUTH_SECRET_NAME E2E_AUTH_SECRET_NAME AUTH_SECRET_SOURCE_NAMESPACE || true
+  unset GITHUB_CLIENT_ID GITHUB_CLIENT_SECRET AUTH_SESSION_SECRET ANTI_ABUSE_HMAC_SECRET || true
+  unset TURNSTILE_SECRET_KEY TURNSTILE_EXPECTED_HOSTNAME TURNSTILE_SITE_KEY NEXT_PUBLIC_TURNSTILE_SITE_KEY || true
+  GITHUB_OAUTH_CALLBACK_URL="https://e2e.example.test/api/auth/github/callback"
+
+  resolved_secret="$(ensure_auth_secret_for_e2e_namespace "sre-e2e")"
+
+  [ -z "$resolved_secret" ] || \
+    fail "callback-only config should leave auth intentionally unset"
+
+  unset GITHUB_OAUTH_CALLBACK_URL || true
+}
+
+run_callback_only_config_does_not_rebind_default_credentials_check() {
+  local resolved_secret
+
+  # shellcheck disable=SC1091
+  source "$ROOT_DIR/scripts/kube-deploy-common.sh"
+
+  copy_secret_across_namespaces() {
+    printf '%s|%s|%s\n' "$1" "$2" "$3" >"$TMP_DIR/callback-only-default-copy.txt"
+  }
+  upsert_secret_literal_key() {
+    if [ "$3" = "github-callback-url" ] && [ -n "$4" ]; then
+      fail "callback-only config should not rebind copied GitHub credentials"
+    fi
+  }
+  secret_exists_in_namespace() {
+    [ "$1" = "sre-simulator" ] && [ "$2" = "sre-auth-secrets" ]
+  }
+
+  unset GITHUB_AUTH_SECRET_NAME E2E_AUTH_SECRET_NAME AUTH_SECRET_SOURCE_NAMESPACE || true
+  unset GITHUB_CLIENT_ID GITHUB_CLIENT_SECRET AUTH_SESSION_SECRET ANTI_ABUSE_HMAC_SECRET || true
+  unset TURNSTILE_SECRET_KEY TURNSTILE_EXPECTED_HOSTNAME TURNSTILE_SITE_KEY NEXT_PUBLIC_TURNSTILE_SITE_KEY || true
+  GITHUB_OAUTH_CALLBACK_URL="https://e2e.example.test/api/auth/github/callback"
+
+  resolved_secret="$(ensure_auth_secret_for_e2e_namespace "sre-e2e")"
+
+  [ "$resolved_secret" = "sre-auth-secrets" ] || \
+    fail "callback-only config should preserve default auth secret reuse"
+  assert_contains "sre-simulator|sre-e2e|sre-auth-secrets" "$TMP_DIR/callback-only-default-copy.txt"
+
+  unset GITHUB_OAUTH_CALLBACK_URL || true
+}
+
+run_complete_runtime_auth_values_skip_default_secret_copy_check() {
   local resolved_secret
 
   # shellcheck disable=SC1091
@@ -892,17 +955,21 @@ run_runtime_auth_values_skip_default_secret_copy_check() {
   unset GITHUB_AUTH_SECRET_NAME E2E_AUTH_SECRET_NAME AUTH_SECRET_SOURCE_NAMESPACE || true
   unset GITHUB_CLIENT_ID GITHUB_CLIENT_SECRET GITHUB_OAUTH_CALLBACK_URL ANTI_ABUSE_HMAC_SECRET || true
   unset TURNSTILE_SECRET_KEY TURNSTILE_EXPECTED_HOSTNAME TURNSTILE_SITE_KEY NEXT_PUBLIC_TURNSTILE_SITE_KEY || true
+  GITHUB_CLIENT_ID="client-id"
+  GITHUB_CLIENT_SECRET="client-secret"
   AUTH_SESSION_SECRET="runtime-auth-secret"
   GITHUB_OAUTH_CALLBACK_URL="https://e2e.example.test/api/auth/github/callback"
 
   resolved_secret="$(ensure_auth_secret_for_e2e_namespace "sre-e2e")"
 
   [ "$resolved_secret" = "sre-auth-secrets" ] || \
-    fail "runtime auth values should create the default destination secret"
+    fail "complete runtime auth values should create the default destination secret"
+  assert_contains "sre-e2e|sre-auth-secrets|github-client-id" "$TMP_DIR/runtime-auth-upserts.txt"
+  assert_contains "sre-e2e|sre-auth-secrets|github-client-secret" "$TMP_DIR/runtime-auth-upserts.txt"
   assert_contains "sre-e2e|sre-auth-secrets|auth-session-secret" "$TMP_DIR/runtime-auth-upserts.txt"
   assert_contains "sre-e2e|sre-auth-secrets|github-callback-url" "$TMP_DIR/runtime-auth-upserts.txt"
 
-  unset AUTH_SESSION_SECRET GITHUB_OAUTH_CALLBACK_URL || true
+  unset GITHUB_CLIENT_ID GITHUB_CLIENT_SECRET AUTH_SESSION_SECRET GITHUB_OAUTH_CALLBACK_URL || true
 }
 
 run_read_secret_literal_key_check() {
@@ -1829,7 +1896,9 @@ main() {
   run_optional_auth_verification_flag_check
   run_default_copied_auth_secret_wires_anonymous_easy_keys_check
   run_e2e_github_callback_match_check
-  run_runtime_auth_values_skip_default_secret_copy_check
+  run_callback_only_auth_config_is_ignored_check
+  run_callback_only_config_does_not_rebind_default_credentials_check
+  run_complete_runtime_auth_values_skip_default_secret_copy_check
   run_read_secret_literal_key_check
   run_clusterissuer_manifest_check
   run_clusterissuer_manifest_requires_email_check

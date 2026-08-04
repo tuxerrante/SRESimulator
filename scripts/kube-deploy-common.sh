@@ -174,7 +174,6 @@ ensure_auth_secret_for_e2e_namespace() {
 
   if [ -n "${GITHUB_CLIENT_ID:-}" ] || \
      [ -n "${GITHUB_CLIENT_SECRET:-}" ] || \
-     [ -n "${GITHUB_OAUTH_CALLBACK_URL:-}" ] || \
      [ -n "${AUTH_SESSION_SECRET:-}" ] || \
      [ -n "${ANTI_ABUSE_HMAC_SECRET:-}" ] || \
      [ -n "${TURNSTILE_SECRET_KEY:-}" ] || \
@@ -205,7 +204,9 @@ ensure_auth_secret_for_e2e_namespace() {
 
   upsert_secret_literal_key "$dst_ns" "$secret_name" "github-client-id" "${GITHUB_CLIENT_ID:-}" || return 1
   upsert_secret_literal_key "$dst_ns" "$secret_name" "github-client-secret" "${GITHUB_CLIENT_SECRET:-}" || return 1
-  upsert_secret_literal_key "$dst_ns" "$secret_name" "github-callback-url" "${GITHUB_OAUTH_CALLBACK_URL:-}" || return 1
+  if [ -n "${GITHUB_CLIENT_ID:-}" ] && [ -n "${GITHUB_CLIENT_SECRET:-}" ]; then
+    upsert_secret_literal_key "$dst_ns" "$secret_name" "github-callback-url" "${GITHUB_OAUTH_CALLBACK_URL:-}" || return 1
+  fi
   upsert_secret_literal_key "$dst_ns" "$secret_name" "auth-session-secret" "${AUTH_SESSION_SECRET:-}" || return 1
   upsert_secret_literal_key "$dst_ns" "$secret_name" "anti-abuse-hmac-secret" "${ANTI_ABUSE_HMAC_SECRET:-}" || return 1
   upsert_secret_literal_key "$dst_ns" "$secret_name" "turnstile-secret-key" "${TURNSTILE_SECRET_KEY:-}" || return 1
