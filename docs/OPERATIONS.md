@@ -167,8 +167,14 @@ Use this order for a real AKS E2E refresh:
 3. Confirm the stable public host still returns healthy responses.
 4. Reuse the current namespace when possible:
    `NS=<existing-namespace> make e2e-azure-route-refresh`
-5. If you need a direct AKS hostname, set `AKS_EXPOSURE_MODE=gateway` for the refresh and ensure the hostname/cert/DNS path already exists.
-6. Re-check:
+   The refresh target requires a non-empty `PROD_NAMESPACE` and refuses to
+   operate on it.
+5. For deterministic anonymous browser validation, pass both
+   `TURNSTILE_TEST_MODE=true` and `LOCAL_TEST_VERIFICATION_ENABLED=true` as
+   Make command-line variables. Never enable either local verification flag
+   for production.
+6. If you need a direct AKS hostname, set `AKS_EXPOSURE_MODE=gateway` for the refresh and ensure the hostname/cert/DNS path already exists.
+7. Re-check:
    - stable host returns `200`
    - direct E2E host returns `200`
    - the footer version matches the intended release state
@@ -308,9 +314,9 @@ For provider options, environment variables, and runtime behavior, use:
 Every PR must pass the `live-e2e` CI job. The job is serialized, requires
 approval through the protected `live-e2e` GitHub Environment, creates an
 isolated `sre-pr-<number>-<timestamp>` namespace, publishes non-semver PR
-images, runs three isolated platform users concurrently on distinct scenarios,
-uploads screenshots/results, and removes the namespace in an `always()` cleanup
-step.
+images, runs one anonymous entry plus three isolated platform users concurrently
+on four distinct scenarios, uploads screenshots/results, and removes the
+namespace in an `always()` cleanup step.
 
 Local invocation against an existing environment:
 

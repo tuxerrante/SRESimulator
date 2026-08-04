@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { createHmac } from "node:crypto";
+import { createHmac, randomUUID } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import path from "node:path";
@@ -20,6 +20,7 @@ const artifactDir = path.resolve(
 );
 const viewerPrefix =
   process.env.LIVE_E2E_VIEWER_PREFIX ?? `live-e2e-${Date.now()}`;
+const runNonce = process.env.LIVE_E2E_RUN_NONCE ?? randomUUID();
 
 if (!baseUrl || !secret) {
   throw new Error(
@@ -32,6 +33,7 @@ const platforms = [
     id: "aks",
     label: "AKS",
     cli: "kubectl",
+    difficulty: /The Shift Lead/,
     expectedContext: ["Platformaks", "Node pools:", "Managed RG hint:"],
     forbiddenText: [/\bARO\b/i, /\bOpenShift\b/i, /\boc get\b/i],
   },
@@ -39,6 +41,7 @@ const platforms = [
     id: "aro-hcp",
     label: "ARO HCP",
     cli: "oc",
+    difficulty: /The Junior SRE/,
     expectedContext: [
       "Platformaro-hcp",
       "Guest cluster:",
@@ -51,6 +54,7 @@ const platforms = [
     id: "aro-classic",
     label: "ARO Classic",
     cli: "oc",
+    difficulty: /The Junior SRE/,
     expectedContext: ["Platformaro-classic", "Machines:"],
     forbiddenText: [/\bAKS\b/i, /\bkubectl\b/i, /\bHostedCluster\b/i],
   },
@@ -142,6 +146,104 @@ async function sendChat(page, message) {
   return assistantLabels.last().locator("xpath=..").innerText();
 }
 
+async function runAnonymousEntry(browser) {
+  const startedAt = Date.now();
+  const context = await browser.newContext({
+    viewport: { width: 1800, height: 1100 },
+    userAgent: `SRESimulator-Live-E2E/${viewerPrefix}-${runNonce}-anonymous`,
+  });
+  const page = await context.newPage();
+  const consoleErrors = [];
+  const failedResponses = [];
+  const failedRequests = [];
+  page.on("console", (message) => {
+    if (message.type() === "error") consoleErrors.push(message.text());
+  });
+  page.on("response", (response) => {
+    if (response.status() >= 500) {
+      failedResponses.push({ status: response.status(), url: response.url() });
+    }
+  });
+  page.on("requestfailed", (request) => {
+    failedRequests.push({
+      url: request.url(),
+      error: request.failure()?.errorText ?? "unknown",
+    });
+  });
+
+  try {
+    await page.goto(baseUrl, { waitUntil: "networkidle", timeout: 60_000 });
+    const verificationButton = page.getByRole("button", {
+      name: "Use local test verification",
+    });
+    await verificationButton.waitFor({ timeout: 30_000 });
+    await verificationButton.click();
+    await page
+      .getByRole("button", { name: "Local test verification enabled" })
+      .waitFor({ timeout: 10_000 });
+    await page.getByLabel("Callsign").fill(`${viewerPrefix}-anonymous`);
+    await page.getByRole("button", { name: /^AKS/ }).click();
+    await page.getByRole("button", { name: /The Junior SRE/ }).click();
+    await page.waitForURL("**/game", { timeout: 120_000 });
+    const incidentTicket = page.locator('[data-tour="incident-ticket"]');
+    await incidentTicket.waitFor({ timeout: 30_000 });
+    const incident = (await incidentTicket.innerText())
+      .replace(/\s+/g, " ")
+      .trim();
+    await page.screenshot({
+      path: path.join(artifactDir, "anonymous-entry.png"),
+      fullPage: true,
+    });
+    if (failedResponses.length > 0) {
+      throw new Error(
+        `anonymous entry observed HTTP 5xx: ${JSON.stringify(failedResponses)}`,
+      );
+    }
+    if (failedRequests.length > 0) {
+      throw new Error(
+        `anonymous entry observed failed requests: ${JSON.stringify(failedRequests)}`,
+      );
+    }
+    if (consoleErrors.length > 0) {
+      throw new Error(
+        `anonymous entry observed console errors: ${JSON.stringify(consoleErrors)}`,
+      );
+    }
+
+    return {
+      user: `${viewerPrefix}-anonymous`,
+      platform: "aks",
+      incident,
+      verification: "passed",
+      scenario: "passed",
+      durationMs: Date.now() - startedAt,
+    };
+  } catch (error) {
+    await page.screenshot({
+      path: path.join(artifactDir, "anonymous-entry-failure.png"),
+      fullPage: true,
+    });
+    const diagnostics = {
+      failedResponses,
+      failedRequests,
+      consoleErrors,
+    };
+    if (
+      failedResponses.length + failedRequests.length + consoleErrors.length >
+      0
+    ) {
+      const message = error instanceof Error ? error.message : String(error);
+      throw new Error(
+        `${message}; captured diagnostics: ${JSON.stringify(diagnostics)}`,
+        { cause: error },
+      );
+    }
+    throw error;
+  } finally {
+    await context.close();
+  }
+}
+
 async function runPlatform(browser, platform) {
   const startedAt = Date.now();
   const context = await browser.newContext({
@@ -161,6 +263,7 @@ async function runPlatform(browser, platform) {
   const page = await context.newPage();
   const consoleErrors = [];
   const failedResponses = [];
+  const failedRequests = [];
   page.on("console", (message) => {
     if (message.type() === "error") consoleErrors.push(message.text());
   });
@@ -168,6 +271,12 @@ async function runPlatform(browser, platform) {
     if (response.status() >= 500) {
       failedResponses.push({ status: response.status(), url: response.url() });
     }
+  });
+  page.on("requestfailed", (request) => {
+    failedRequests.push({
+      url: request.url(),
+      error: request.failure()?.errorText ?? "unknown",
+    });
   });
 
   try {
@@ -181,7 +290,7 @@ async function runPlatform(browser, platform) {
     await page
       .getByRole("button", { name: new RegExp(`^${platform.label}`) })
       .click();
-    await page.getByRole("button", { name: /The Junior SRE/ }).click();
+    await page.getByRole("button", { name: platform.difficulty }).click();
     await page.waitForURL("**/game", { timeout: 120_000 });
     const incident = (
       await page.locator('[data-tour="incident-ticket"]').innerText()
@@ -292,6 +401,11 @@ async function runPlatform(browser, platform) {
         `${platform.id} observed HTTP 5xx: ${JSON.stringify(failedResponses)}`,
       );
     }
+    if (failedRequests.length > 0) {
+      throw new Error(
+        `${platform.id} observed failed requests: ${JSON.stringify(failedRequests)}`,
+      );
+    }
     if (consoleErrors.length > 0) {
       throw new Error(
         `${platform.id} observed console errors: ${JSON.stringify(consoleErrors)}`,
@@ -315,6 +429,21 @@ async function runPlatform(browser, platform) {
       path: path.join(artifactDir, `${platform.id}-failure.png`),
       fullPage: true,
     });
+    const diagnostics = {
+      failedResponses,
+      failedRequests,
+      consoleErrors,
+    };
+    if (
+      failedResponses.length + failedRequests.length + consoleErrors.length >
+      0
+    ) {
+      const message = error instanceof Error ? error.message : String(error);
+      throw new Error(
+        `${message}; captured diagnostics: ${JSON.stringify(diagnostics)}`,
+        { cause: error },
+      );
+    }
     throw error;
   } finally {
     await context.close();
@@ -326,12 +455,16 @@ const browser = await chromium.launch({ headless: true });
 let report;
 try {
   const settled = await Promise.allSettled(
-    platforms.map((platform) => runPlatform(browser, platform)),
+    [
+      runAnonymousEntry(browser),
+      ...platforms.map((platform) => runPlatform(browser, platform)),
+    ],
   );
+  const [anonymousEntryResult, ...platformResults] = settled;
   const results = settled
     .filter((result) => result.status === "fulfilled")
     .map((result) => result.value);
-  const failures = settled.flatMap((result, index) =>
+  const failures = platformResults.flatMap((result, index) =>
     result.status === "rejected"
       ? [{
           platform: platforms[index]?.id ?? "unknown",
@@ -342,9 +475,18 @@ try {
         }]
       : [],
   );
+  if (anonymousEntryResult.status === "rejected") {
+    failures.unshift({
+      platform: "anonymous-entry",
+      error:
+        anonymousEntryResult.reason instanceof Error
+          ? anonymousEntryResult.reason.message
+          : String(anonymousEntryResult.reason),
+    });
+  }
   report = {
     mode: "parallel",
-    simulatedUsers: platforms.length,
+    simulatedUsers: platforms.length + 1,
     results,
     failures,
   };
