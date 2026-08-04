@@ -197,6 +197,10 @@ gameplayRouter.post("/", gameplayTelemetryRateLimit, async (req: Request, res: R
       res.status(403).json({ error: "Invalid session token" });
       return;
     }
+    if (session.identityKind === "github" && !session.githubLogin?.trim()) {
+      res.status(409).json({ error: "GitHub session identity is incomplete" });
+      return;
+    }
     if (body.platform !== undefined && body.platform !== session.platform) {
       res.status(409).json({ error: "Session telemetry mismatch" });
       return;
@@ -211,7 +215,9 @@ gameplayRouter.post("/", gameplayTelemetryRateLimit, async (req: Request, res: R
       sessionToken: body.sessionToken,
       platform: session.platform,
       trafficSource: session.trafficSource,
-      nickname: sanitizeString(body.nickname, 20),
+      nickname: session.identityKind === "github"
+        ? sanitizeString(session.githubLogin, 39)
+        : sanitizeString(body.nickname, 20),
       difficulty: session.difficulty,
       scenarioTitle: session.scenarioTitle,
       lifecycleState: body.lifecycleState,

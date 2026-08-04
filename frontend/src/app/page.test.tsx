@@ -98,6 +98,39 @@ describe("HomePage footer release link", () => {
     expect(loginForm?.getAttribute("method")).toBe("get");
   });
 
+  it("uses the GitHub login as the callsign without rendering an editable field", async () => {
+    fetchMock.mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          viewer: {
+            kind: "github",
+            githubUserId: "12345",
+            githubLogin: "octocat",
+            displayName: "The Octocat",
+            avatarUrl: null,
+          },
+          authConfigured: true,
+        }),
+        { status: 200 },
+      ),
+    );
+
+    render(<HomePage />);
+
+    await screen.findByText("Signed in with GitHub as The Octocat");
+
+    expect(screen.queryByRole("textbox", { name: "Callsign" })).toBeNull();
+    expect(useGameStore.getState().nickname).toBe("octocat");
+  });
+
+  it("does not render a callsign field while authentication is loading", () => {
+    fetchMock.mockReturnValue(new Promise(() => {}));
+
+    render(<HomePage />);
+
+    expect(screen.queryByRole("textbox", { name: "Callsign" })).toBeNull();
+  });
+
   it("explains when the environment callback has not been verified", async () => {
     fetchMock.mockResolvedValue(
       new Response(

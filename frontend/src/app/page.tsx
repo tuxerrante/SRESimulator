@@ -243,19 +243,21 @@ export default function HomePage() {
           proper SRE methodology.
         </p>
 
-        <div className="flex items-center gap-2 mb-8 w-full max-w-xs">
-          <User size={18} className="text-zinc-500 shrink-0" />
-          <input
-            type="text"
-            value={nickname ?? ""}
-            onChange={(e) => setNickname(e.target.value)}
-            placeholder="Enter your callsign"
-            aria-label="Callsign"
-            maxLength={20}
-            className="flex-1 px-3 py-2 rounded-lg bg-zinc-900 border border-zinc-700 text-sm text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-amber-600 transition-colors"
-          />
-        </div>
-        {!hasCallsign && (
+        {sessionReady && !viewer && (
+          <div className="flex items-center gap-2 mb-8 w-full max-w-xs">
+            <User size={18} className="text-zinc-500 shrink-0" />
+            <input
+              type="text"
+              value={nickname ?? ""}
+              onChange={(e) => setNickname(e.target.value)}
+              placeholder="Enter your callsign"
+              aria-label="Callsign"
+              maxLength={20}
+              className="flex-1 px-3 py-2 rounded-lg bg-zinc-900 border border-zinc-700 text-sm text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-amber-600 transition-colors"
+            />
+          </div>
+        )}
+        {sessionReady && !viewer && !hasCallsign && (
           <p className="mb-8 -mt-5 text-xs text-zinc-400">
             Enter a callsign to unlock scenarios.
           </p>

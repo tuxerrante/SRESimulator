@@ -43,34 +43,52 @@ describe("JsonMetricsStore", () => {
 
   it("caps retained in-memory telemetry records", async () => {
     const store = new JsonMetricsStore();
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
 
-    for (let i = 0; i < 10005; i += 1) {
+    try {
+      for (let i = 0; i < 10005; i += 1) {
+        await store.recordGameplay({
+          sessionToken: `session-${i}`,
+          nickname: "captest",
+          lifecycleState: "started",
+          createdAt: new Date(1_000 + i),
+        });
+      }
+
+      const history = await store.getPlayerHistory("captest");
+      expect(history).toHaveLength(10000);
+      expect(history[0].sessionToken).toBe("session-10004");
+      expect(history[history.length - 1]?.sessionToken).toBe("session-5");
+
       await store.recordGameplay({
-        sessionToken: `session-${i}`,
+        sessionToken: "session-0",
         nickname: "captest",
         lifecycleState: "started",
-        createdAt: new Date(1_000 + i),
+        createdAt: new Date(20_000),
       });
+      const historyAfterEviction = await store.getPlayerHistory("captest");
+      expect(historyAfterEviction[0].sessionToken).toBe("session-0");
+    } finally {
+      log.mockRestore();
     }
-
-    const history = await store.getPlayerHistory("captest");
-    expect(history).toHaveLength(10000);
-    expect(history[0].sessionToken).toBe("session-10004");
-    expect(history[history.length - 1]?.sessionToken).toBe("session-5");
   });
 
   it("logs only a short session token prefix", async () => {
     const store = new JsonMetricsStore();
     const log = vi.spyOn(console, "log").mockImplementation(() => {});
 
-    await store.recordGameplay({
-      sessionToken: "12345678-1234-1234-1234-123456789abc",
-      nickname: "player1",
-      lifecycleState: "started",
-    });
+    try {
+      await store.recordGameplay({
+        sessionToken: "12345678-1234-1234-1234-123456789abc",
+        nickname: "player1",
+        lifecycleState: "started",
+      });
 
-    expect(log).toHaveBeenCalled();
-    expect(JSON.stringify(log.mock.calls)).not.toContain("12345678-1234-1234-1234-123456789abc");
+      expect(log).toHaveBeenCalled();
+      expect(JSON.stringify(log.mock.calls)).not.toContain("12345678-1234-1234-1234-123456789abc");
+    } finally {
+      log.mockRestore();
+    }
   });
 
   it("defaults completed to true when lifecycle state is omitted", async () => {

@@ -286,7 +286,15 @@ async function runPlatform(browser, platform) {
         exact: true,
       })
       .waitFor({ timeout: 30_000 });
-    await page.getByLabel("Callsign").fill(`battle-${platform.id}`);
+    await page
+      .getByText(
+        `@${viewerPrefix}-${platform.id} can access all difficulties and keep persistent best scores.`,
+        { exact: true },
+      )
+      .waitFor({ timeout: 30_000 });
+    if (await page.getByLabel("Callsign").count() !== 0) {
+      throw new Error(`${platform.id} rendered an editable GitHub callsign`);
+    }
     await page
       .getByRole("button", { name: new RegExp(`^${platform.label}`) })
       .click();

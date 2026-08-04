@@ -306,7 +306,7 @@ export class MssqlMetricsStore implements IMetricsStore {
       CREATE TABLE #latest_sessions (
         platform VARCHAR(16) NULL,
         lifecycle_state VARCHAR(16) NULL,
-        nickname NVARCHAR(20) NULL,
+        nickname NVARCHAR(39) NULL,
         difficulty VARCHAR(10) NULL,
         scenario_title NVARCHAR(255) NULL,
         command_count INT NULL,

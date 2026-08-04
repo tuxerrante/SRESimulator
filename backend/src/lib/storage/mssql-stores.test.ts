@@ -652,6 +652,7 @@ describe("MssqlMetricsStore", () => {
 
     const sqlText = req.query.mock.calls[0][0] as string;
     expect(sqlText).toContain("CREATE TABLE #latest_sessions");
+    expect(sqlText).toContain("nickname NVARCHAR(39) NULL");
     expect(sqlText).toContain(";WITH ranked_sessions AS");
     expect(sqlText.indexOf("CREATE TABLE #latest_sessions")).toBeLessThan(
       sqlText.indexOf(";WITH ranked_sessions AS"),

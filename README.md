@@ -45,11 +45,16 @@ structured SRE method.
 ```bash
 git clone https://github.com/tuxerrante/SRESimulator.git
 cd SRESimulator
+python3 -m pip install --user pre-commit
 make install
 make dev
 ```
 
 Open `http://localhost:3000` in your browser.
+
+`make install` also installs commit and push hooks. Every push runs
+`make quality-gate` (lint, type checks, unit tests, and backend integration
+tests) before Git sends it to the remote.
 
 ## Support this project
 

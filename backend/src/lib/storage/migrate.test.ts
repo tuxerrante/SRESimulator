@@ -16,3 +16,18 @@ describe("traffic source migration", () => {
     expect(sql).toContain("EXEC('UPDATE leaderboard_entries");
   });
 });
+
+describe("GitHub login nickname migration", () => {
+  it("rebuilds the nickname index before widening the telemetry column", async () => {
+    const migrationPath = path.join(
+      __dirname,
+      "migrations",
+      "007_github_login_nickname_length.sql",
+    );
+    const sql = await readFile(migrationPath, "utf-8");
+
+    expect(sql).toContain("DROP INDEX idx_metrics_nickname ON gameplay_metrics");
+    expect(sql).toContain("ALTER COLUMN nickname NVARCHAR(39) NULL");
+    expect(sql).toContain("CREATE INDEX idx_metrics_nickname ON gameplay_metrics (nickname)");
+  });
+});

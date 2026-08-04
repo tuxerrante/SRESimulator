@@ -292,6 +292,25 @@ describe("scores routes", () => {
     expect(res.body.error).toContain("Nickname is required");
   });
 
+  it("POST /api/scores rejects GitHub sessions without a login identity", async () => {
+    const token = await getSessionStore().create({
+      platform: "aro-classic",
+      difficulty: "easy",
+      scenarioTitle: "Incomplete GitHub Identity",
+      identityKind: "github",
+      githubUserId: "missing-login",
+      githubLogin: null,
+      anonymousClaimKey: null,
+      persistentScoreEligible: true,
+    });
+
+    const app = createApp();
+    const res = await httpRequest(app, "POST", "/api/scores", { sessionToken: token });
+
+    expect(res.status).toBe(409);
+    expect(res.body.error).toContain("identity is incomplete");
+  });
+
   it("POST /api/scores preserves token when completion telemetry is missing", async () => {
     const token = await getSessionStore().create({
       platform: "aro-classic",
@@ -418,6 +437,20 @@ describe("scores routes", () => {
     expect(res.body.error).toContain("inappropriate");
   });
 
+  it("POST /api/scores validates an anonymous nickname after trimming", async () => {
+    const token = await getSessionStore().create("easy", "Trimmed Nickname");
+    await recordCompletedTelemetry(token, { scenarioTitle: "Trimmed Nickname" });
+
+    const app = createApp();
+    const res = await httpRequest(app, "POST", "/api/scores", {
+      sessionToken: token,
+      nickname: `${"a".repeat(20)} `,
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body.nickname).toBe("a".repeat(20));
+  });
+
   it("POST /api/scores saves a valid GitHub-backed entry and returns 201", async () => {
     const token = await getSessionStore().create({
       platform: "aro-classic",
@@ -451,12 +484,36 @@ describe("scores routes", () => {
     });
 
     expect(res.status).toBe(201);
-    expect(res.body.nickname).toBe("testuser");
+    expect(res.body.nickname).toBe("octocat");
     expect(res.body.difficulty).toBe("easy");
     expect(res.body.githubUserId).toBe("12345");
     expect((res.body.score as Record<string, unknown>).total).toBe(80);
     expect(res.body.grade).toBe("B");
     expect(res.body.commandCount).toBe(5);
+  });
+
+  it("POST /api/scores derives a 39-character GitHub login when nickname is omitted", async () => {
+    const githubLogin = "a".repeat(39);
+    const token = await getSessionStore().create({
+      platform: "aro-classic",
+      difficulty: "easy",
+      scenarioTitle: "Long GitHub Login",
+      identityKind: "github",
+      githubUserId: "long-login",
+      githubLogin,
+      anonymousClaimKey: null,
+      persistentScoreEligible: true,
+    });
+    await recordCompletedTelemetry(token, {
+      difficulty: "easy",
+      scenarioTitle: "Long GitHub Login",
+    });
+
+    const app = createApp();
+    const res = await httpRequest(app, "POST", "/api/scores", { sessionToken: token });
+
+    expect(res.status).toBe(201);
+    expect(res.body.nickname).toBe(githubLogin);
   });
 
   it("POST /api/scores keeps anonymous scores ephemeral", async () => {
@@ -531,7 +588,7 @@ describe("scores routes", () => {
     expect(leaderboard.status).toBe(200);
     expect(
       (leaderboard.body.entries as Array<Record<string, unknown>>).some(
-        (entry) => entry.nickname === "autouser",
+        (entry) => entry.nickname === "auto-gh-1",
       ),
     ).toBe(false);
   });
