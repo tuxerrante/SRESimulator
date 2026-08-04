@@ -19,6 +19,7 @@ import { buildScenarioRequestBody } from "@/lib/auth/scenario-request";
 import { fetchJsonObject } from "@/lib/api-client";
 import { buildSafeRequestId, buildTelemetryHeaders } from "@/lib/telemetry/request-context";
 import { captureFrontendError } from "@/lib/telemetry/capture";
+import type { GithubAuthUnavailableReason } from "@/lib/auth/github";
 import {
   ACTOR_REF_HEADER,
   GAME_SESSION_REF_HEADER,
@@ -43,6 +44,8 @@ export default function HomePage() {
   const [error, setError] = useState<string | null>(null);
   const [adminAnalyticsEnabled, setAdminAnalyticsEnabled] = useState(false);
   const [authConfigured, setAuthConfigured] = useState(false);
+  const [authUnavailableReason, setAuthUnavailableReason] =
+    useState<GithubAuthUnavailableReason | null>(null);
   const [sessionReady, setSessionReady] = useState(false);
   const [sessionLoadError, setSessionLoadError] = useState(false);
   const [fingerprintHash, setFingerprintHash] = useState<string | null>(null);
@@ -76,6 +79,7 @@ export default function HomePage() {
             avatarUrl: string | null;
           } | null;
           authConfigured: boolean;
+          authUnavailableReason?: GithubAuthUnavailableReason | null;
           adminAnalyticsEnabled?: boolean;
           turnstileConfigured?: boolean;
           turnstileSiteKey?: string | null;
@@ -84,6 +88,7 @@ export default function HomePage() {
 
         setSessionLoadError(false);
         setAuthConfigured(data.authConfigured);
+        setAuthUnavailableReason(data.authUnavailableReason ?? null);
         setAdminAnalyticsEnabled(Boolean(data.adminAnalyticsEnabled));
         setTurnstileSiteKey(data.turnstileSiteKey ?? null);
         setTurnstileTestMode(Boolean(data.turnstileTestMode));
@@ -99,6 +104,7 @@ export default function HomePage() {
         });
         setSessionLoadError(true);
         setAuthConfigured(false);
+        setAuthUnavailableReason(null);
         setAdminAnalyticsEnabled(false);
         setTurnstileSiteKey(null);
         setTurnstileTestMode(false);
@@ -292,22 +298,31 @@ export default function HomePage() {
                 </div>
               </div>
               {authConfigured ? (
-                <Link
-                  href="/api/auth/github/login"
-                  className="inline-flex items-center gap-2 rounded-lg bg-amber-600 px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-amber-500"
-                >
-                  <Github size={16} />
-                  Sign in with GitHub
-                </Link>
+                <form action="/api/auth/github/login" method="get">
+                  <button
+                    type="submit"
+                    className="inline-flex items-center gap-2 rounded-lg bg-amber-600 px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-amber-500"
+                  >
+                    <Github size={16} />
+                    Sign in with GitHub
+                  </button>
+                </form>
               ) : (
-                <button
-                  type="button"
-                  disabled
-                  className="inline-flex cursor-not-allowed items-center gap-2 rounded-lg bg-zinc-800 px-3 py-2 text-sm font-medium text-zinc-500"
-                >
-                  <Github size={16} />
-                  Sign in with GitHub
-                </button>
+                <div className="md:text-right">
+                  <button
+                    type="button"
+                    disabled
+                    className="inline-flex cursor-not-allowed items-center gap-2 rounded-lg bg-zinc-800 px-3 py-2 text-sm font-medium text-zinc-500"
+                  >
+                    <Github size={16} />
+                    Sign in with GitHub
+                  </button>
+                  {authUnavailableReason === "callback_not_verified" ? (
+                    <div className="mt-1 max-w-xs text-xs text-amber-300">
+                      GitHub sign-in is unavailable for this environment.
+                    </div>
+                  ) : null}
+                </div>
               )}
             </div>
           )}

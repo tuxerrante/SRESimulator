@@ -121,6 +121,33 @@ secret_has_key() {
   [ "$value" = "present" ]
 }
 
+# Usage: read_secret_literal_key <namespace> <secret_name> <key>
+# Prints the decoded value for internal comparisons. Callers must not log
+# credential-bearing values.
+read_secret_literal_key() {
+  local ns=$1 secret_name=$2 key=$3 encoded decoded
+  encoded="$("$KUBE_CLI" -n "$ns" get "secret/$secret_name" \
+    -o "go-template={{if index .data \"$key\"}}{{index .data \"$key\"}}{{end}}" \
+    2>/dev/null || true)"
+  if [ -z "$encoded" ] || [ "$encoded" = "<no value>" ]; then
+    return 1
+  fi
+
+  if decoded="$(printf '%s' "$encoded" | base64 --decode 2>/dev/null)"; then
+    printf '%s' "$decoded"
+    return 0
+  fi
+  if decoded="$(printf '%s' "$encoded" | base64 -d 2>/dev/null)"; then
+    printf '%s' "$decoded"
+    return 0
+  fi
+  if decoded="$(printf '%s' "$encoded" | base64 -D 2>/dev/null)"; then
+    printf '%s' "$decoded"
+    return 0
+  fi
+  return 1
+}
+
 # Usage: sanitize_single_line_value <raw_value>
 # Returns the first non-empty trimmed line to avoid accidental multiline
 # values from CI/runtime env expansion.
@@ -187,6 +214,9 @@ ensure_auth_secret_for_e2e_namespace() {
 
   upsert_secret_literal_key "$dst_ns" "$secret_name" "github-client-id" "${GITHUB_CLIENT_ID:-}" || return 1
   upsert_secret_literal_key "$dst_ns" "$secret_name" "github-client-secret" "${GITHUB_CLIENT_SECRET:-}" || return 1
+  if [ -n "${GITHUB_CLIENT_ID:-}" ] && [ -n "${GITHUB_CLIENT_SECRET:-}" ]; then
+    upsert_secret_literal_key "$dst_ns" "$secret_name" "github-callback-url" "${GITHUB_OAUTH_CALLBACK_URL:-}" || return 1
+  fi
   upsert_secret_literal_key "$dst_ns" "$secret_name" "auth-session-secret" "${AUTH_SESSION_SECRET:-}" || return 1
   upsert_secret_literal_key "$dst_ns" "$secret_name" "anti-abuse-hmac-secret" "${ANTI_ABUSE_HMAC_SECRET:-}" || return 1
   upsert_secret_literal_key "$dst_ns" "$secret_name" "turnstile-secret-key" "${TURNSTILE_SECRET_KEY:-}" || return 1

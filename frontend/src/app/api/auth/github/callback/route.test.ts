@@ -9,6 +9,8 @@ describe("GitHub callback route", () => {
     delete process.env.GITHUB_CLIENT_SECRET;
     delete process.env.AUTH_SESSION_SECRET;
     delete process.env.PUBLIC_APP_ORIGIN;
+    delete process.env.GITHUB_OAUTH_CALLBACK_URL;
+    delete process.env.GITHUB_OAUTH_REQUIRE_CALLBACK_MATCH;
   });
 
   it("exchanges the OAuth code with a form-encoded request", async () => {
@@ -128,5 +130,26 @@ describe("GitHub callback route", () => {
       encodeURIComponent("https://play.example.com/api/auth/github/callback")
     );
     expect(response.cookies.get("sresim_viewer_session")?.secure).toBe(true);
+  });
+
+  it("rejects callbacks when the configured callback belongs to another origin", async () => {
+    process.env.GITHUB_CLIENT_ID = "client-id";
+    process.env.GITHUB_CLIENT_SECRET = "client-secret";
+    process.env.AUTH_SESSION_SECRET = "auth-secret";
+    process.env.PUBLIC_APP_ORIGIN = "https://e2e.example.com";
+    process.env.GITHUB_OAUTH_CALLBACK_URL =
+      "https://play.example.com/api/auth/github/callback";
+    process.env.GITHUB_OAUTH_REQUIRE_CALLBACK_MATCH = "true";
+
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const request = new NextRequest(
+      "https://e2e.example.com/api/auth/github/callback?code=test-code&state=test-state"
+    );
+    const response = await GET(request);
+
+    expect(response.status).toBe(503);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });

@@ -6,6 +6,8 @@ CHART_DIR="${ROOT_DIR}/helm/sre-simulator"
 
 route_render="$(mktemp)"
 auth_render="$(mktemp)"
+auth_guard_render="$(mktemp)"
+auth_disabled_render="$(mktemp)"
 lb_render="$(mktemp)"
 lb_no_db_render="$(mktemp)"
 ingress_render="$(mktemp)"
@@ -17,7 +19,7 @@ gw_missing_host_err="$(mktemp)"
 gw_route_host_bypass_err="$(mktemp)"
 gw_ingress_host_bypass_err="$(mktemp)"
 gw_whitespace_host_err="$(mktemp)"
-trap 'rm -f "${route_render}" "${auth_render}" "${lb_render}" "${lb_no_db_render}" "${ingress_render}" "${gw_render}" "${hostless_render}" "${legacy_kv_render}" "${gw_bad_scheme_err}" "${gw_missing_host_err}" "${gw_route_host_bypass_err}" "${gw_ingress_host_bypass_err}" "${gw_whitespace_host_err}"' EXIT
+trap 'rm -f "${route_render}" "${auth_render}" "${auth_guard_render}" "${auth_disabled_render}" "${lb_render}" "${lb_no_db_render}" "${ingress_render}" "${gw_render}" "${hostless_render}" "${legacy_kv_render}" "${gw_bad_scheme_err}" "${gw_missing_host_err}" "${gw_route_host_bypass_err}" "${gw_ingress_host_bypass_err}" "${gw_whitespace_host_err}"' EXIT
 
 fail() {
   echo "FAIL: $*" >&2
@@ -86,6 +88,37 @@ grep -Eq 'key: "github-client-secret"' "${auth_render}" || \
 
 grep -Eq 'key: "auth-session-secret"' "${auth_render}" || \
   fail "Frontend auth should reference the configured auth session secret key."
+
+helm template sre-simulator "${CHART_DIR}" \
+  --set exposure.mode=route \
+  --set exposure.host=e2e.example.com \
+  --set frontend.auth.existingSecretName=sre-e2e-auth-secrets \
+  --set frontend.auth.githubCallbackUrlKey=github-callback-url \
+  --set frontend.auth.requireGithubCallbackMatch=true >"${auth_guard_render}"
+
+grep -Eq 'name: GITHUB_OAUTH_CALLBACK_URL' "${auth_guard_render}" || \
+  fail "Frontend auth should expose the callback declaration when configured."
+
+grep -Eq 'key: "github-callback-url"' "${auth_guard_render}" || \
+  fail "Frontend auth should reference the configured callback URL key."
+
+grep -A1 -E 'name: GITHUB_OAUTH_REQUIRE_CALLBACK_MATCH[[:space:]]*$' "${auth_guard_render}" | \
+  grep -Fq 'value: "true"' || \
+  fail "Frontend auth should enable callback verification when requested."
+
+helm template sre-simulator "${CHART_DIR}" \
+  --set exposure.mode=route \
+  --set exposure.host=e2e.example.com \
+  --set frontend.auth.existingSecretName=sre-auth-secrets \
+  --set frontend.auth.githubOAuthEnabled=false \
+  --set frontend.auth.requireGithubCallbackMatch=true >"${auth_disabled_render}"
+
+if grep -Eq 'name: GITHUB_CLIENT_(ID|SECRET)' "${auth_disabled_render}"; then
+  fail "Frontend auth should omit GitHub OAuth credentials when OAuth is disabled."
+fi
+
+grep -Eq 'name: AUTH_SESSION_SECRET' "${auth_disabled_render}" || \
+  fail "Disabling GitHub OAuth must preserve the signed session secret."
 
 helm template sre-simulator "${CHART_DIR}" \
   --set exposure.mode=publicService \
