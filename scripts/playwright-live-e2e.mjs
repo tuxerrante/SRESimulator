@@ -33,6 +33,7 @@ const platforms = [
     id: "aks",
     label: "AKS",
     cli: "kubectl",
+    difficulty: /The Shift Lead/,
     expectedContext: ["Platformaks", "Node pools:", "Managed RG hint:"],
     forbiddenText: [/\bARO\b/i, /\bOpenShift\b/i, /\boc get\b/i],
   },
@@ -40,6 +41,7 @@ const platforms = [
     id: "aro-hcp",
     label: "ARO HCP",
     cli: "oc",
+    difficulty: /The Junior SRE/,
     expectedContext: [
       "Platformaro-hcp",
       "Guest cluster:",
@@ -52,6 +54,7 @@ const platforms = [
     id: "aro-classic",
     label: "ARO Classic",
     cli: "oc",
+    difficulty: /The Junior SRE/,
     expectedContext: ["Platformaro-classic", "Machines:"],
     forbiddenText: [/\bAKS\b/i, /\bkubectl\b/i, /\bHostedCluster\b/i],
   },
@@ -287,7 +290,7 @@ async function runPlatform(browser, platform) {
     await page
       .getByRole("button", { name: new RegExp(`^${platform.label}`) })
       .click();
-    await page.getByRole("button", { name: /The Junior SRE/ }).click();
+    await page.getByRole("button", { name: platform.difficulty }).click();
     await page.waitForURL("**/game", { timeout: 120_000 });
     const incident = (
       await page.locator('[data-tour="incident-ticket"]').innerText()

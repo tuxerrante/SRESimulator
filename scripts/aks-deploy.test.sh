@@ -1893,7 +1893,7 @@ EOF
 }
 
 run_e2e_route_refresh_rejects_prod_namespace_check() {
-  local output_file
+  local empty_output_file output_file
 
   output_file="$TMP_DIR/e2e-refresh-prod-rejection.out"
   if make -s -C "$ROOT_DIR" e2e-azure-route-refresh \
@@ -1911,6 +1911,23 @@ run_e2e_route_refresh_rejects_prod_namespace_check() {
   fi
 
   assert_contains "REFUSED: e2e-azure-route-refresh cannot target the production namespace sre-simulator." "$output_file"
+
+  empty_output_file="$TMP_DIR/e2e-refresh-empty-prod-rejection.out"
+  if make -s -C "$ROOT_DIR" e2e-azure-route-refresh \
+    E2E_ENV_FILE="$TMP_DIR/missing.env" \
+    NS=sre-simulator \
+    PROD_NAMESPACE= \
+    CLUSTER_FLAVOR=aks \
+    AZURE_SUBSCRIPTION_ID=00000000-0000-0000-0000-000000000001 \
+    AKS_RG=test-aks-rg \
+    AKS_CLUSTER=test-aks \
+    AOAI_RG=test-aoai-rg \
+    AOAI_ACCOUNT=test-aoai \
+    AOAI_DEPLOYMENT=gpt-4o-mini >"$empty_output_file" 2>&1; then
+    fail "e2e-azure-route-refresh should reject an empty production namespace"
+  fi
+
+  assert_contains "REFUSED: PROD_NAMESPACE must be configured before refreshing an E2E namespace." "$empty_output_file"
 }
 
 run_makefile_gateway_defaults_check() {

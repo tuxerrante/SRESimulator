@@ -687,6 +687,10 @@ e2e-azure-route-refresh: env-check ## Refresh the selected e2e namespace (NS=...
 		echo "Set NS=<namespace> or run e2e-azure-route-up first (needs $(E2E_METADATA_FILE))."; \
 		exit 1; \
 	fi; \
+	if [ -z "$(strip $(PROD_NAMESPACE))" ]; then \
+		echo "REFUSED: PROD_NAMESPACE must be configured before refreshing an E2E namespace."; \
+		exit 1; \
+	fi; \
 	if [ "$$TARGET_NS" = "$(PROD_NAMESPACE)" ]; then \
 		echo "REFUSED: e2e-azure-route-refresh cannot target the production namespace $$TARGET_NS."; \
 		exit 1; \

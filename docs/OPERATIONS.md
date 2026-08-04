@@ -167,7 +167,8 @@ Use this order for a real AKS E2E refresh:
 3. Confirm the stable public host still returns healthy responses.
 4. Reuse the current namespace when possible:
    `NS=<existing-namespace> make e2e-azure-route-refresh`
-   The refresh target refuses to operate on `PROD_NAMESPACE`.
+   The refresh target requires a non-empty `PROD_NAMESPACE` and refuses to
+   operate on it.
 5. For deterministic anonymous browser validation, pass both
    `TURNSTILE_TEST_MODE=true` and `LOCAL_TEST_VERIFICATION_ENABLED=true` as
    Make command-line variables. Never enable either local verification flag
