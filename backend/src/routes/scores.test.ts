@@ -451,12 +451,36 @@ describe("scores routes", () => {
     });
 
     expect(res.status).toBe(201);
-    expect(res.body.nickname).toBe("testuser");
+    expect(res.body.nickname).toBe("octocat");
     expect(res.body.difficulty).toBe("easy");
     expect(res.body.githubUserId).toBe("12345");
     expect((res.body.score as Record<string, unknown>).total).toBe(80);
     expect(res.body.grade).toBe("B");
     expect(res.body.commandCount).toBe(5);
+  });
+
+  it("POST /api/scores derives a 39-character GitHub login when nickname is omitted", async () => {
+    const githubLogin = "a".repeat(39);
+    const token = await getSessionStore().create({
+      platform: "aro-classic",
+      difficulty: "easy",
+      scenarioTitle: "Long GitHub Login",
+      identityKind: "github",
+      githubUserId: "long-login",
+      githubLogin,
+      anonymousClaimKey: null,
+      persistentScoreEligible: true,
+    });
+    await recordCompletedTelemetry(token, {
+      difficulty: "easy",
+      scenarioTitle: "Long GitHub Login",
+    });
+
+    const app = createApp();
+    const res = await httpRequest(app, "POST", "/api/scores", { sessionToken: token });
+
+    expect(res.status).toBe(201);
+    expect(res.body.nickname).toBe(githubLogin);
   });
 
   it("POST /api/scores keeps anonymous scores ephemeral", async () => {
@@ -531,7 +555,7 @@ describe("scores routes", () => {
     expect(leaderboard.status).toBe(200);
     expect(
       (leaderboard.body.entries as Array<Record<string, unknown>>).some(
-        (entry) => entry.nickname === "autouser",
+        (entry) => entry.nickname === "auto-gh-1",
       ),
     ).toBe(false);
   });

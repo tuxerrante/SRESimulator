@@ -43,7 +43,8 @@ export function ScoreBreakdown() {
   const grade = scoreToGrade(score.total);
 
   const handleSubmit = async () => {
-    if (!nickname.trim() || submitState !== "idle") return;
+    const callsign = viewer?.githubLogin ?? nickname.trim();
+    if (!callsign || submitState !== "idle") return;
     setSubmitState("submitting");
     setSubmitError(null);
     try {
@@ -66,7 +67,7 @@ export function ScoreBreakdown() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             sessionToken,
-            nickname: nickname.trim(),
+            ...(viewer ? {} : { nickname: callsign }),
           }),
         });
 
@@ -84,7 +85,9 @@ export function ScoreBreakdown() {
       }
 
       const payload = (await response.json()) as { mode?: "ephemeral" | "persistent" };
-      updateNickname(nickname);
+      if (!viewer) {
+        updateNickname(callsign);
+      }
       setSubmitMessage(
         payload.mode === "ephemeral"
           ? "Trial run saved locally only"
@@ -212,18 +215,24 @@ export function ScoreBreakdown() {
           {submitState !== "submitted" ? (
             <div className="space-y-2">
               <div className="flex gap-2">
-                <input
-                  type="text"
-                  value={nickname}
-                  onChange={(e) => setNickname(e.target.value.slice(0, 20))}
-                  placeholder="Your callsign"
-                  maxLength={20}
-                  disabled={submitState === "submitting"}
-                  className="flex-1 px-3 py-2 rounded-lg bg-zinc-800 border border-zinc-700 text-sm text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-amber-600 disabled:opacity-50"
-                />
+                {viewer ? (
+                  <div className="flex flex-1 items-center rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-200">
+                    @{viewer.githubLogin}
+                  </div>
+                ) : (
+                  <input
+                    type="text"
+                    value={nickname}
+                    onChange={(e) => setNickname(e.target.value.slice(0, 20))}
+                    placeholder="Your callsign"
+                    maxLength={20}
+                    disabled={submitState === "submitting"}
+                    className="flex-1 px-3 py-2 rounded-lg bg-zinc-800 border border-zinc-700 text-sm text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-amber-600 disabled:opacity-50"
+                  />
+                )}
                 <button
                   onClick={handleSubmit}
-                  disabled={!nickname.trim() || submitState === "submitting"}
+                  disabled={!(viewer?.githubLogin ?? nickname.trim()) || submitState === "submitting"}
                   className="px-4 py-2 rounded-lg bg-amber-600 text-white text-sm font-medium hover:bg-amber-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
                 >
                   {submitState === "submitting" ? (

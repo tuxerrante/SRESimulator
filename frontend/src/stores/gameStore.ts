@@ -12,6 +12,7 @@ import type { GithubViewer, ViewerAccessPolicy } from "@shared/auth/viewer";
 
 const NICKNAME_KEY = "sre-nickname";
 const PLATFORM_KEY = "sre-platform";
+const MAX_NICKNAME_LENGTH = 20;
 
 function loadNickname(): string | null {
   try {
@@ -19,6 +20,11 @@ function loadNickname(): string | null {
   } catch {
     return null;
   }
+}
+
+function normalizeNickname(name: string): string | null {
+  const normalized = name.trim().slice(0, MAX_NICKNAME_LENGTH);
+  return normalized || null;
 }
 
 interface GameState {
@@ -96,32 +102,36 @@ export const useGameStore = create<GameState>((set) => ({
   hydrateNickname: () => {
     const raw = loadNickname();
     if (!raw) return;
-    const normalized = raw.trim().slice(0, 20);
+    const normalized = normalizeNickname(raw);
     if (normalized) set({ nickname: normalized });
   },
   setNickname: (name: string) => {
-    const normalized = name.trim().slice(0, 20);
+    const normalized = normalizeNickname(name);
     try {
-      if (normalized === "") {
+      if (!normalized) {
         globalThis.localStorage?.removeItem(NICKNAME_KEY);
       } else {
         globalThis.localStorage?.setItem(NICKNAME_KEY, normalized);
       }
     } catch { /* SSR / restricted storage */ }
-    set({ nickname: normalized === "" ? null : normalized });
+    set({ nickname: normalized });
   },
   viewer: null,
   accessPolicy: getViewerAccessPolicy(null),
   setViewer: (viewer) =>
     set({
+      nickname: viewer.githubLogin,
       viewer,
       accessPolicy: getViewerAccessPolicy(viewer),
     }),
-  clearViewer: () =>
+  clearViewer: () => {
+    const storedNickname = loadNickname();
     set({
+      nickname: storedNickname ? normalizeNickname(storedNickname) : null,
       viewer: null,
       accessPolicy: getViewerAccessPolicy(null),
-    }),
+    });
+  },
 
   status: "idle",
   selectedPlatform: DEFAULT_PLATFORM_ID,

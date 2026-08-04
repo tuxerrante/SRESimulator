@@ -211,7 +211,9 @@ gameplayRouter.post("/", gameplayTelemetryRateLimit, async (req: Request, res: R
       sessionToken: body.sessionToken,
       platform: session.platform,
       trafficSource: session.trafficSource,
-      nickname: sanitizeString(body.nickname, 20),
+      nickname: session.identityKind === "github"
+        ? sanitizeString(session.githubLogin, 39)
+        : sanitizeString(body.nickname, 20),
       difficulty: session.difficulty,
       scenarioTitle: session.scenarioTitle,
       lifecycleState: body.lifecycleState,

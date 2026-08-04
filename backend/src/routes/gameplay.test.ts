@@ -236,7 +236,7 @@ describe("gameplay routes", () => {
 
     expect(response.status).toBe(202);
 
-    const history = await getMetricsStore().getPlayerHistory("traffic-player");
+    const history = await getMetricsStore().getPlayerHistory("traffic-gh");
     expect(history).toHaveLength(1);
     expect(history[0]?.trafficSource).toBe("automated");
   });
@@ -263,7 +263,7 @@ describe("gameplay routes", () => {
 
     expect(response.status).toBe(202);
 
-    const history = await getMetricsStore().getPlayerHistory("platform-player");
+    const history = await getMetricsStore().getPlayerHistory("platform-gh");
     expect(history).toHaveLength(1);
     expect(history[0]?.platform).toBe("aro-hcp");
   });
@@ -328,7 +328,7 @@ describe("gameplay routes", () => {
     expect((await httpRequest(app, "POST", "/api/gameplay", {
       sessionToken: classicToken,
       lifecycleState: "completed",
-      nickname: "classic-admin",
+      nickname: "classic-gh",
     })).status).toBe(202);
     expect((await httpRequest(app, "POST", "/api/gameplay", {
       sessionToken: aksToken,
@@ -350,7 +350,7 @@ describe("gameplay routes", () => {
     expect(response.body.recentSessions).toEqual([
       expect.objectContaining({
         platform: "aro-classic",
-        nickname: "classic-admin",
+        nickname: "classic-gh",
       }),
     ]);
   });
@@ -390,7 +390,7 @@ describe("gameplay routes", () => {
     expect((await httpRequest(app, "POST", "/api/gameplay", {
       sessionToken: playerToken,
       lifecycleState: "completed",
-      nickname: "player-admin",
+      nickname: "analytics-player",
       commandCount: 6,
       chatMessageCount: 8,
       durationMs: 120000,
@@ -432,7 +432,7 @@ describe("gameplay routes", () => {
         lifecycleState: "completed",
         difficulty: "hard",
         scenarioTitle: "Etcd Quorum Loss",
-        nickname: "player-admin",
+        nickname: "analytics-player",
         commandCount: 6,
         scoreTotal: 82,
         grade: "B",

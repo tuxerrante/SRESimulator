@@ -308,7 +308,7 @@ describe("gameStore", () => {
       expect(mockStorage.has("sre-nickname")).toBe(false);
     });
 
-    it("truncates nicknames longer than 20 characters", () => {
+    it("truncates anonymous nicknames longer than 20 characters", () => {
       const longName = "abcdefghij".repeat(5);
       useGameStore.getState().setNickname(longName);
 
@@ -327,6 +327,23 @@ describe("gameStore", () => {
       useGameStore.setState({ nickname: null });
       useGameStore.getState().hydrateNickname();
       expect(useGameStore.getState().nickname).toHaveLength(20);
+    });
+
+    it("restores the anonymous callsign after signing out", () => {
+      useGameStore.getState().setNickname("anonymous");
+      useGameStore.getState().setViewer({
+        kind: "github",
+        githubUserId: "12345",
+        githubLogin: "octocat",
+        displayName: "The Octocat",
+        avatarUrl: null,
+      });
+
+      expect(useGameStore.getState().nickname).toBe("octocat");
+
+      useGameStore.getState().clearViewer();
+
+      expect(useGameStore.getState().nickname).toBe("anonymous");
     });
 
     it("resetGame preserves the nickname", () => {

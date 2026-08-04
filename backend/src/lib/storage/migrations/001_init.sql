@@ -17,7 +17,7 @@ IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = 'idx_sessions_start_time' 
 IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'leaderboard_entries')
 CREATE TABLE leaderboard_entries (
   id                   UNIQUEIDENTIFIER PRIMARY KEY,
-  nickname             NVARCHAR(20) NOT NULL CHECK (LEN(LTRIM(RTRIM(nickname))) > 0),
+  nickname             NVARCHAR(39) NOT NULL CHECK (LEN(LTRIM(RTRIM(nickname))) > 0),
   difficulty           VARCHAR(10) NOT NULL CHECK (difficulty IN ('easy','medium','hard')),
   score_efficiency     INT NOT NULL DEFAULT 0,
   score_safety         INT NOT NULL DEFAULT 0,
@@ -36,7 +36,7 @@ IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'gameplay_metrics')
 CREATE TABLE gameplay_metrics (
   id                     UNIQUEIDENTIFIER PRIMARY KEY DEFAULT NEWID(),
   session_token          UNIQUEIDENTIFIER NULL REFERENCES sessions(token) ON DELETE SET NULL,
-  nickname               NVARCHAR(20),
+  nickname               NVARCHAR(39),
   difficulty             VARCHAR(10),
   scenario_title         NVARCHAR(255),
   commands_executed      NVARCHAR(MAX) DEFAULT '[]',

@@ -140,19 +140,6 @@ scoresRouter.post("/", async (req: Request, res: Response) => {
       return;
     }
 
-    if (!nickname || typeof nickname !== "string" || nickname.trim().length === 0) {
-      res.status(400).json({ error: "Nickname is required" });
-      return;
-    }
-    if (nickname.length > 20) {
-      res.status(400).json({ error: "Nickname must be 20 characters or less" });
-      return;
-    }
-    const nicknameCheck = isCleanNickname(nickname);
-    if (!nicknameCheck.clean) {
-      res.status(400).json({ error: nicknameCheck.reason });
-      return;
-    }
     const existingSession = await getSessionStore().get(sessionToken);
     if (!existingSession || existingSession.used) {
       res.status(403).json({
@@ -160,6 +147,33 @@ scoresRouter.post("/", async (req: Request, res: Response) => {
       });
       return;
     }
+    const effectiveNickname = existingSession.identityKind === "github"
+      ? existingSession.githubLogin
+      : nickname;
+
+    if (
+      !effectiveNickname ||
+      typeof effectiveNickname !== "string" ||
+      effectiveNickname.trim().length === 0
+    ) {
+      res.status(400).json({ error: "Nickname is required" });
+      return;
+    }
+    const maxNicknameLength = existingSession.identityKind === "github" ? 39 : 20;
+    if (effectiveNickname.length > maxNicknameLength) {
+      res.status(400).json({
+        error: `Nickname must be ${maxNicknameLength} characters or less`,
+      });
+      return;
+    }
+    if (existingSession.identityKind !== "github") {
+      const nicknameCheck = isCleanNickname(effectiveNickname);
+      if (!nicknameCheck.clean) {
+        res.status(400).json({ error: nicknameCheck.reason });
+        return;
+      }
+    }
+    const normalizedNickname = effectiveNickname.trim();
 
     const gameplayRecord = await getMetricsStore().getLatestCompletedBySessionToken(sessionToken);
     if (!gameplayRecord) {
@@ -217,7 +231,7 @@ scoresRouter.post("/", async (req: Request, res: Response) => {
       res.status(200).json({
         saved: false,
         mode: "ephemeral",
-        nickname: nickname.trim(),
+        nickname: normalizedNickname,
         platform: session.platform,
         difficulty: session.difficulty,
         score,
@@ -232,7 +246,7 @@ scoresRouter.post("/", async (req: Request, res: Response) => {
 
     const entry: LeaderboardEntry = {
       id: crypto.randomUUID(),
-      nickname: nickname.trim(),
+      nickname: normalizedNickname,
       platform: session.platform,
       difficulty: session.difficulty,
       score,
