@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { createHmac } from "node:crypto";
+import { createHmac, randomUUID } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import path from "node:path";
@@ -20,6 +20,7 @@ const artifactDir = path.resolve(
 );
 const viewerPrefix =
   process.env.LIVE_E2E_VIEWER_PREFIX ?? `live-e2e-${Date.now()}`;
+const runNonce = process.env.LIVE_E2E_RUN_NONCE ?? randomUUID();
 
 if (!baseUrl || !secret) {
   throw new Error(
@@ -146,7 +147,7 @@ async function runAnonymousEntry(browser) {
   const startedAt = Date.now();
   const context = await browser.newContext({
     viewport: { width: 1800, height: 1100 },
-    userAgent: `SRESimulator-Live-E2E/${viewerPrefix}-anonymous`,
+    userAgent: `SRESimulator-Live-E2E/${viewerPrefix}-${runNonce}-anonymous`,
   });
   const page = await context.newPage();
   const consoleErrors = [];
@@ -256,6 +257,7 @@ async function runPlatform(browser, platform) {
   const page = await context.newPage();
   const consoleErrors = [];
   const failedResponses = [];
+  const failedRequests = [];
   page.on("console", (message) => {
     if (message.type() === "error") consoleErrors.push(message.text());
   });
@@ -263,6 +265,12 @@ async function runPlatform(browser, platform) {
     if (response.status() >= 500) {
       failedResponses.push({ status: response.status(), url: response.url() });
     }
+  });
+  page.on("requestfailed", (request) => {
+    failedRequests.push({
+      url: request.url(),
+      error: request.failure()?.errorText ?? "unknown",
+    });
   });
 
   try {
@@ -387,6 +395,11 @@ async function runPlatform(browser, platform) {
         `${platform.id} observed HTTP 5xx: ${JSON.stringify(failedResponses)}`,
       );
     }
+    if (failedRequests.length > 0) {
+      throw new Error(
+        `${platform.id} observed failed requests: ${JSON.stringify(failedRequests)}`,
+      );
+    }
     if (consoleErrors.length > 0) {
       throw new Error(
         `${platform.id} observed console errors: ${JSON.stringify(consoleErrors)}`,
@@ -410,6 +423,21 @@ async function runPlatform(browser, platform) {
       path: path.join(artifactDir, `${platform.id}-failure.png`),
       fullPage: true,
     });
+    const diagnostics = {
+      failedResponses,
+      failedRequests,
+      consoleErrors,
+    };
+    if (
+      failedResponses.length + failedRequests.length + consoleErrors.length >
+      0
+    ) {
+      const message = error instanceof Error ? error.message : String(error);
+      throw new Error(
+        `${message}; captured diagnostics: ${JSON.stringify(diagnostics)}`,
+        { cause: error },
+      );
+    }
     throw error;
   } finally {
     await context.close();
