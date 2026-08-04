@@ -1,4 +1,4 @@
-export const APP_VERSION = "v0.4.0";
+export const APP_VERSION = "v0.4.1";
 
 const GITHUB_RELEASES_URL = "https://github.com/tuxerrante/SRESimulator/releases";
 

@@ -5,6 +5,15 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.1] - 2026-08-04
+
+### Changed (0.4.1)
+
+- Made GitHub-authenticated callsigns server-authoritative, non-editable, and derived from the GitHub login; anonymous callsigns remain separately persisted. ([#319](https://github.com/tuxerrante/SRESimulator/pull/319))
+- Expanded supported authenticated callsign storage to GitHub's 39-character login limit and hardened MSSQL migration and analytics handling. ([#319](https://github.com/tuxerrante/SRESimulator/pull/319))
+- Required the full local quality gate before push and updated live E2E coverage for the read-only authenticated callsign. ([#319](https://github.com/tuxerrante/SRESimulator/pull/319))
+- Hardened production release preflight check pagination and its shell endpoint assembly. ([#317](https://github.com/tuxerrante/SRESimulator/pull/317), [#318](https://github.com/tuxerrante/SRESimulator/pull/318))
+
 ## [0.4.0] - 2026-08-04
 
 ### Added (0.4.0)
