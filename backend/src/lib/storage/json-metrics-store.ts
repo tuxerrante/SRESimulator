@@ -21,6 +21,13 @@ function isTerminalLifecycleState(
   return lifecycleState === "completed" || lifecycleState === "abandoned";
 }
 
+function getLifecycleKey(
+  sessionToken: string,
+  lifecycleState: NonNullable<GameplayRecord["lifecycleState"]>,
+): string {
+  return `${sessionToken}\0${lifecycleState}`;
+}
+
 function getPreferredAnalyticsRecord(
   existing: GameplayRecord | undefined,
   candidate: GameplayRecord,
@@ -43,16 +50,15 @@ function getPreferredAnalyticsRecord(
 
 export class JsonMetricsStore implements IMetricsStore {
   private readonly records: GameplayRecord[] = [];
+  private readonly lifecycleKeys = new Set<string>();
 
   async recordGameplay(data: GameplayRecord): Promise<void> {
     const lifecycleState = data.lifecycleState ?? "completed";
+    const lifecycleKey = data.sessionToken
+      ? getLifecycleKey(data.sessionToken, lifecycleState)
+      : null;
 
-    if (
-      data.sessionToken &&
-      this.records.some((record) =>
-        record.sessionToken === data.sessionToken && record.lifecycleState === lifecycleState
-      )
-    ) {
+    if (lifecycleKey && this.lifecycleKeys.has(lifecycleKey)) {
       return;
     }
 
@@ -74,8 +80,18 @@ export class JsonMetricsStore implements IMetricsStore {
     };
 
     this.records.push(record);
+    if (lifecycleKey) {
+      this.lifecycleKeys.add(lifecycleKey);
+    }
     if (this.records.length > MAX_RECORDS) {
-      this.records.splice(0, this.records.length - MAX_RECORDS);
+      const evicted = this.records.splice(0, this.records.length - MAX_RECORDS);
+      for (const evictedRecord of evicted) {
+        if (evictedRecord.sessionToken) {
+          this.lifecycleKeys.delete(
+            getLifecycleKey(evictedRecord.sessionToken, evictedRecord.lifecycleState ?? "completed"),
+          );
+        }
+      }
     }
 
     console.log(

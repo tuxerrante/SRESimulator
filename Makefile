@@ -144,9 +144,11 @@ install: ## Install all dependencies
 	@if [ "$$CI" = "true" ]; then \
 		echo "CI detected; skipping pre-commit hook installation"; \
 	elif command -v pre-commit >/dev/null 2>&1; then \
-		pre-commit install; \
+		pre-commit install --hook-type pre-commit --hook-type pre-push; \
 	else \
-		echo "pre-commit not found. Skipping pre-commit hook installation."; \
+		echo "pre-commit is required to install the mandatory local quality gate."; \
+		echo "Install it with: python3 -m pip install --user pre-commit"; \
+		exit 1; \
 	fi
 
 install-backend: ## Install backend dependencies
@@ -341,6 +343,8 @@ verify-release-version: ## Verify semver surfaces for a release tag
 
 test-integration: test-shell ## Run backend integration tests (full API game flow, mock mode)
 	cd $(BACKEND_DIR) && npm run test:integration
+
+quality-gate: validate test test-integration ## Run all required local PR quality gates
 
 playwright-install: ## Install Chromium used by live Playwright validation
 	cd $(FRONTEND_DIR) && npx playwright install --with-deps chromium
