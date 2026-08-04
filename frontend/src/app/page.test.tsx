@@ -67,4 +67,19 @@ describe("HomePage footer release link", () => {
     expect(releaseLink.getAttribute("rel")).toContain("noreferrer");
     expect(screen.queryByText("Main feature updates")).toBeNull();
   });
+
+  it("centers the landing page stack without stretching content away from the footer", async () => {
+    const { container } = render(<HomePage />);
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith("/api/auth/session", { cache: "no-store" });
+    });
+
+    const page = container.firstElementChild;
+    const content = page?.firstElementChild;
+
+    expect(page?.classList.contains("justify-center")).toBe(true);
+    expect(content?.classList.contains("flex")).toBe(true);
+    expect(content?.classList.contains("flex-1")).toBe(false);
+  });
 });
