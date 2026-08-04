@@ -292,6 +292,25 @@ describe("scores routes", () => {
     expect(res.body.error).toContain("Nickname is required");
   });
 
+  it("POST /api/scores rejects GitHub sessions without a login identity", async () => {
+    const token = await getSessionStore().create({
+      platform: "aro-classic",
+      difficulty: "easy",
+      scenarioTitle: "Incomplete GitHub Identity",
+      identityKind: "github",
+      githubUserId: "missing-login",
+      githubLogin: null,
+      anonymousClaimKey: null,
+      persistentScoreEligible: true,
+    });
+
+    const app = createApp();
+    const res = await httpRequest(app, "POST", "/api/scores", { sessionToken: token });
+
+    expect(res.status).toBe(409);
+    expect(res.body.error).toContain("identity is incomplete");
+  });
+
   it("POST /api/scores preserves token when completion telemetry is missing", async () => {
     const token = await getSessionStore().create({
       platform: "aro-classic",

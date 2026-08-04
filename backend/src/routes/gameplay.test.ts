@@ -214,6 +214,28 @@ describe("gameplay routes", () => {
     expect(response.body.error).toContain("Invalid lifecycle state");
   });
 
+  it("POST /api/gameplay rejects GitHub sessions without a login identity", async () => {
+    const token = await getSessionStore().create({
+      platform: "aro-classic",
+      difficulty: "easy",
+      scenarioTitle: "Incomplete GitHub Identity",
+      identityKind: "github",
+      githubUserId: "missing-login",
+      githubLogin: null,
+      anonymousClaimKey: null,
+      persistentScoreEligible: true,
+    });
+    const app = createApp();
+
+    const response = await httpRequest(app, "POST", "/api/gameplay", {
+      sessionToken: token,
+      lifecycleState: "started",
+    });
+
+    expect(response.status).toBe(409);
+    expect(response.body.error).toContain("identity is incomplete");
+  });
+
   it("POST /api/gameplay records the session traffic source", async () => {
     const token = await getSessionStore().create({
       platform: "aro-classic",

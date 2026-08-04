@@ -197,6 +197,10 @@ gameplayRouter.post("/", gameplayTelemetryRateLimit, async (req: Request, res: R
       res.status(403).json({ error: "Invalid session token" });
       return;
     }
+    if (session.identityKind === "github" && !session.githubLogin?.trim()) {
+      res.status(409).json({ error: "GitHub session identity is incomplete" });
+      return;
+    }
     if (body.platform !== undefined && body.platform !== session.platform) {
       res.status(409).json({ error: "Session telemetry mismatch" });
       return;

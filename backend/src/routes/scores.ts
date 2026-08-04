@@ -147,6 +147,13 @@ scoresRouter.post("/", async (req: Request, res: Response) => {
       });
       return;
     }
+    if (
+      existingSession.identityKind === "github" &&
+      !existingSession.githubLogin?.trim()
+    ) {
+      res.status(409).json({ error: "GitHub session identity is incomplete" });
+      return;
+    }
     const effectiveNickname = existingSession.identityKind === "github"
       ? existingSession.githubLogin
       : nickname;

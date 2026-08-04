@@ -77,15 +77,18 @@ describe("JsonMetricsStore", () => {
     const store = new JsonMetricsStore();
     const log = vi.spyOn(console, "log").mockImplementation(() => {});
 
-    await store.recordGameplay({
-      sessionToken: "12345678-1234-1234-1234-123456789abc",
-      nickname: "player1",
-      lifecycleState: "started",
-    });
+    try {
+      await store.recordGameplay({
+        sessionToken: "12345678-1234-1234-1234-123456789abc",
+        nickname: "player1",
+        lifecycleState: "started",
+      });
 
-    expect(log).toHaveBeenCalled();
-    expect(JSON.stringify(log.mock.calls)).not.toContain("12345678-1234-1234-1234-123456789abc");
-    log.mockRestore();
+      expect(log).toHaveBeenCalled();
+      expect(JSON.stringify(log.mock.calls)).not.toContain("12345678-1234-1234-1234-123456789abc");
+    } finally {
+      log.mockRestore();
+    }
   });
 
   it("defaults completed to true when lifecycle state is omitted", async () => {
