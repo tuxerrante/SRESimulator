@@ -297,14 +297,13 @@ describe("full game flow: scenario -> chat -> command -> scores", () => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         sessionToken,
-        nickname: "TestSRE",
       }),
     });
     expect(res.status).toBe(201);
 
     const body = (await res.json()) as LeaderboardEntry;
     expect(body.id).toBeDefined();
-    expect(body.nickname).toBe("TestSRE");
+    expect(body.nickname).toBe("octocat");
     expect(body.difficulty).toBe("easy");
     expect(body.score.total).toBe(75);
     expect(body.trafficSource).toBe(getExpectedScenarioTrafficSource());
