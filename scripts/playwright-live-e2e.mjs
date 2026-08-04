@@ -146,6 +146,7 @@ async function runAnonymousEntry(browser) {
   const startedAt = Date.now();
   const context = await browser.newContext({
     viewport: { width: 1800, height: 1100 },
+    userAgent: `SRESimulator-Live-E2E/${viewerPrefix}-anonymous`,
   });
   const page = await context.newPage();
   const consoleErrors = [];
@@ -215,6 +216,21 @@ async function runAnonymousEntry(browser) {
       path: path.join(artifactDir, "anonymous-entry-failure.png"),
       fullPage: true,
     });
+    const diagnostics = {
+      failedResponses,
+      failedRequests,
+      consoleErrors,
+    };
+    if (
+      failedResponses.length + failedRequests.length + consoleErrors.length >
+      0
+    ) {
+      const message = error instanceof Error ? error.message : String(error);
+      throw new Error(
+        `${message}; captured diagnostics: ${JSON.stringify(diagnostics)}`,
+        { cause: error },
+      );
+    }
     throw error;
   } finally {
     await context.close();
