@@ -18,7 +18,7 @@ spec:
         - |
           set -e
           BACKEND="{{ include "sre-simulator.fullname" . }}-backend:{{ .Values.backend.port }}"
-          FRONTEND="{{ include "sre-simulator.fullname" . }}-frontend:{{ .Values.frontend.port }}"
+          FRONTEND="{{ include "sre-simulator.fullname" . }}-frontend:{{ include "sre-simulator.frontendServicePort" . }}"
 
           echo "=== Backend health check ==="
           curl -fsS "http://${BACKEND}/healthz"
