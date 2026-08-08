@@ -46,6 +46,15 @@ frontend:
     turnstileSiteKeyKey: ""
   trustProxyHeaders: false
   adminAnalyticsEnabled: false
+  podSecurityContext:
+    runAsNonRoot: true
+    seccompProfile:
+      type: RuntimeDefault
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
 
 backend:
   image:
@@ -97,6 +106,14 @@ backend:
   podSecurityContext:
     fsGroup: 1001
     fsGroupChangePolicy: OnRootMismatch
+    runAsNonRoot: true
+    seccompProfile:
+      type: RuntimeDefault
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
 
 ai:
   provider: vertex

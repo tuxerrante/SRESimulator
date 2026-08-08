@@ -121,7 +121,10 @@ chatRouter.post("/", async (req: Request, res: Response) => {
       res.setHeader("Cache-Control", "no-cache");
       res.setHeader("Connection", "keep-alive");
       res.flushHeaders();
-      const mockText = generateMockChatResponse(currentPhase);
+      const mockText = generateMockChatResponse(
+        currentPhase,
+        session.platform,
+      );
       res.write(`data: ${JSON.stringify({ text: mockText })}\n\n`);
       res.write("data: [DONE]\n\n");
       res.end();

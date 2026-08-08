@@ -3,7 +3,7 @@
        lint lint-ts lint-backend lint-unused-exports lint-yaml lint-md \
        typecheck typecheck-backend validate \
        security audit lockfile-lint gitleaks grype require-mssql-sa-password require-mssql-database-url \
-       test test-shell test-integration test-e2e-live playwright-install test-mssql dev-db smoke-backend-mssql smoke-local-vertex release-prepare verify-release-version env-check aro-login aks-login e2e-azure-route e2e-azure-route-up e2e-azure-route-refresh e2e-azure-route-down \
+       test test-shell test-integration test-e2e-live playwright-install test-mssql dev-db smoke-backend-mssql smoke-local-vertex release-prepare verify-release-version env-check dependabot-e2e-kubeconfig aro-login aks-login e2e-azure-route e2e-azure-route-up e2e-azure-route-refresh e2e-azure-route-down \
        prod-up prod-up-tag prod-down prod-status public-exposure-audit db-mode-check db-port-forward-check db-inspect db-inspect-live db-admin-stats db-admin-stats-live geneva-suppression-check prod-up-final \
        build dev start capture-readme-hero \
        docker-build-frontend docker-build-backend docker-build \
@@ -74,6 +74,8 @@ LIVE_E2E_BASE_URL ?=
 LIVE_E2E_AUTH_SESSION_SECRET ?=
 LIVE_E2E_ARTIFACT_DIR ?= data/playwright-live-e2e
 LIVE_E2E_VIEWER_PREFIX ?= live-e2e
+DEPENDABOT_E2E_KUBECONFIG_B64 ?=
+DEPENDABOT_E2E_KUBECONFIG_FILE ?= $(HOME)/.config/sresimulator/dependabot-e2e-kubeconfig
 E2E_REQUIRED_VARS := AZURE_SUBSCRIPTION_ID AOAI_RG AOAI_ACCOUNT AOAI_DEPLOYMENT $(if $(filter aks,$(CLUSTER_FLAVOR)),AKS_RG AKS_CLUSTER,ARO_RG ARO_CLUSTER)
 PROD_NAMESPACE ?= sre-simulator
 PROD_METADATA_FILE ?= data/prod-route.env
@@ -96,6 +98,7 @@ export AOAI_RG AOAI_ACCOUNT AOAI_DEPLOYMENT
 export AOAI_DEPLOYMENT_CHAT AOAI_DEPLOYMENT_COMMAND AOAI_DEPLOYMENT_SCENARIO AOAI_DEPLOYMENT_PROBE
 export E2E_RELEASE NPM_VERSION
 export PROD_NAMESPACE DB_SECRET_NAME DB_SECRET_SOURCE_NAMESPACE
+export DEPENDABOT_E2E_KUBECONFIG_B64
 
 E2E_ENV_FILE_KEYS := $(strip $(shell if [ -f "$(E2E_ENV_FILE)" ]; then awk -F '=' '/^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*=/{ sub(/^[[:space:]]*/, "", $$1); print $$1 }' "$(E2E_ENV_FILE)"; fi))
 
@@ -536,6 +539,24 @@ env-check: ## Show source of required e2e vars (values hidden)
 		echo "Missing required e2e vars: $(E2E_MISSING_VARS)"; \
 		exit 1; \
 	fi
+
+dependabot-e2e-kubeconfig: ## Decode the gitignored namespace-only E2E kubeconfig
+	@set -euo pipefail; \
+	if [ -z "$${DEPENDABOT_E2E_KUBECONFIG_B64:-}" ]; then \
+		echo "DEPENDABOT_E2E_KUBECONFIG_B64 is required."; \
+		echo "Set it in $(E2E_ENV_FILE)."; \
+		exit 1; \
+	fi; \
+	target="$(DEPENDABOT_E2E_KUBECONFIG_FILE)"; \
+	mkdir -p "$$(dirname "$$target")"; \
+	tmp="$$(mktemp "$$(dirname "$$target")/.dependabot-e2e-kubeconfig.XXXXXX")"; \
+	trap 'rm -f "$$tmp"' EXIT; \
+	chmod 0600 "$$tmp"; \
+	printf '%s' "$$DEPENDABOT_E2E_KUBECONFIG_B64" | base64 --decode > "$$tmp"; \
+	KUBECONFIG="$$tmp" kubectl config view --minify >/dev/null; \
+	mv "$$tmp" "$$target"; \
+	chmod 0600 "$$target"; \
+	echo "Wrote namespace-only E2E kubeconfig to $$target"
 
 aro-login: ## Authenticate Azure CLI if needed and log oc into the configured ARO cluster
 	@set -eo pipefail; \

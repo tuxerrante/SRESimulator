@@ -1,6 +1,8 @@
 import type { InvestigationPhase } from "../../../shared/types/chat";
 import type { Difficulty, Scenario } from "../../../shared/types/game";
 import {
+  DEFAULT_PLATFORM_ID,
+  PLATFORM_DOCUMENTATION_REFERENCES,
   PLATFORM_PROFILES,
   type CompatibleCommandType,
   type PlatformId,
@@ -97,12 +99,24 @@ export function generateMockScenario(
   };
 }
 
-export function generateMockChatResponse(phase: InvestigationPhase): string {
+export function generateMockChatResponse(
+  phase: InvestigationPhase,
+  platform: PlatformId = DEFAULT_PLATFORM_ID,
+): string {
   const markerPhase = phase || "reading";
+  const primaryCli = PLATFORM_PROFILES[platform].primaryCli;
+  const command = `${primaryCli} get nodes`;
+  const reference = PLATFORM_DOCUMENTATION_REFERENCES[platform][0];
   return [
     "**Mock AI mode is enabled.**",
     "",
     "The backend is reachable and chat streaming works, but no live Vertex call is performed.",
+    "",
+    `\`\`\`${primaryCli}`,
+    command,
+    "```",
+    "",
+    `[${reference.label}](${reference.url})`,
     "",
     "**Next step:** use `/api/ai/probe?live=true` with AI_MOCK_MODE disabled to verify real connectivity.",
     "",

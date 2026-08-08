@@ -76,6 +76,20 @@ describe("generateMockChatResponse", () => {
     );
     expect(response).toContain("[PHASE:reading]");
   });
+
+  it.each([
+    ["aks", "```kubectl", "kubectl get nodes", "azure/aks/"],
+    ["aro-hcp", "```oc", "oc get nodes", "azure/openshift/"],
+    ["aro-classic", "```oc", "oc get nodes", "azure/openshift/"],
+  ] as const)(
+    "includes a safe command and reference for %s",
+    (platform, fence, command, reference) => {
+      const response = generateMockChatResponse("facts", platform);
+      expect(response).toContain(fence);
+      expect(response).toContain(command);
+      expect(response).toContain(reference);
+    },
+  );
 });
 
 describe("generateMockCommandOutput", () => {

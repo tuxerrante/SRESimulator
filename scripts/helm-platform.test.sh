@@ -218,6 +218,25 @@ grep -Eq '^kind: HTTPRoute$' "${gw_render}" || \
 grep -Eq 'type: ClusterIP' "${gw_render}" || \
   fail "Gateway mode should keep the frontend Service internal."
 
+restricted_container_count="$(
+  grep -Ec 'allowPrivilegeEscalation: false' "${gw_render}"
+)"
+if [[ "${restricted_container_count}" -lt 2 ]]; then
+  fail "Frontend and backend containers should disable privilege escalation."
+fi
+
+restricted_capability_count="$(
+  grep -Ec '^[[:space:]]+- ALL$' "${gw_render}"
+)"
+if [[ "${restricted_capability_count}" -lt 2 ]]; then
+  fail "Frontend and backend containers should drop all Linux capabilities."
+fi
+
+restricted_pod_count="$(grep -Ec 'runAsNonRoot: true' "${gw_render}")"
+if [[ "${restricted_pod_count}" -lt 2 ]]; then
+  fail "Frontend and backend Pods should require non-root containers."
+fi
+
 if grep -Eq 'type: LoadBalancer' "${gw_render}"; then
   fail "Gateway mode must not expose the frontend directly as a LoadBalancer."
 fi
