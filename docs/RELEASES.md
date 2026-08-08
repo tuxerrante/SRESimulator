@@ -49,3 +49,12 @@ git push origin vX.Y.Z
   - semver release tags,
   - latest release tag only,
   - successful `ci-gate` result for that tag.
+
+### Overlapping release chains
+
+`workflow_run` events from an older release can finish after a newer semver tag
+is published. Automatic production deploys must therefore check the latest
+semver tag twice: once while resolving the release and again immediately before
+Azure login. A stale automatic run must exit successfully with deployment
+steps skipped; it must not authenticate to Azure or fail the workflow. Manual
+dispatches for a stale tag remain an error.
