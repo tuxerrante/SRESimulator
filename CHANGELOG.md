@@ -5,6 +5,16 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.2] - 2026-08-08
+
+### Fixed (0.4.2)
+
+- Gave `/api/scenario` an explicit 30-second Envoy Gateway timeout so the
+  backend's 12-second AI fallback can finish verification and session
+  persistence instead of returning the gateway's default 504 timeout.
+- Updated transitive frontend `js-yaml` and `nanoid` packages to patched
+  releases required by the release security gate.
+
 ## [0.4.1] - 2026-08-04
 
 ### Changed (0.4.1)

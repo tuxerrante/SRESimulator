@@ -228,6 +228,12 @@ grep -Eq 'hostname: "play\.sresimulator\.osadev\.cloud"' "${gw_render}" || \
 grep -Eq '^[[:space:]]+- "play\.sresimulator\.osadev\.cloud"$' "${gw_render}" || \
   fail "Gateway mode should trim surrounding whitespace from rendered HTTPRoute hostnames."
 
+grep -Eq 'value: /api/scenario' "${gw_render}" || \
+  fail "Gateway mode should render a dedicated scenario API route."
+
+grep -Eq 'request: "30s"' "${gw_render}" || \
+  fail "Gateway mode should keep scenario requests above the backend fallback budget."
+
 grep -Eq 'value: "https://play\.sresimulator\.osadev\.cloud"' "${gw_render}" || \
   fail "Gateway mode should derive a HTTPS public origin for backend CORS."
 

@@ -179,6 +179,10 @@ inside the cluster**.
 - Those requests reach the frontend origin first.
 - In AKS Gateway mode, Envoy terminates TLS and the HTTPS `HTTPRoute` forwards
   traffic to the frontend `ClusterIP` service.
+- The `/api/scenario` rule has an explicit 30-second edge timeout. This leaves
+  headroom for anonymous verification and session persistence around the
+  backend's 12-second AI timeout and catalog fallback; other paths retain the
+  Envoy default.
 - Frontend route handler (`app/api/[...path]/route.ts`) proxies server-to-server to `http://<release>-backend:<port>`.
 - Backend `NetworkPolicy` only allows ingress from frontend Pods on backend port.
 
