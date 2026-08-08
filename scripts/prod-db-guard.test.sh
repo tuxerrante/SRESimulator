@@ -56,8 +56,8 @@ PY
 assert_file_order() {
   local first=$1 second=$2 file=$3
   local first_line second_line
-  first_line="$(grep -nF -- "$first" "$file" | head -n 1 | cut -d: -f1)"
-  second_line="$(grep -nF -- "$second" "$file" | head -n 1 | cut -d: -f1)"
+  first_line="$(awk -v needle="$first" 'index($0, needle) { print NR; exit }' "$file")"
+  second_line="$(awk -v needle="$second" 'index($0, needle) { print NR; exit }' "$file")"
   if [[ -z "$first_line" || -z "$second_line" || "$first_line" -ge "$second_line" ]]; then
     fail "expected '$first' before '$second' in $file"
   fi
