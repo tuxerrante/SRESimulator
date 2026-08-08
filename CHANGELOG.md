@@ -5,6 +5,14 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed (Unreleased)
+
+- Made stale automatic production release runs skip cleanly before Azure login
+  when a newer semver tag appears, while retaining the fail-closed latest-tag
+  guard for manual deploys.
+
 ## [0.4.2] - 2026-08-08
 
 ### Fixed (0.4.2)

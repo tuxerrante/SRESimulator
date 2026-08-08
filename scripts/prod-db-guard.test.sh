@@ -53,6 +53,16 @@ PY
   fi
 }
 
+assert_file_order() {
+  local first=$1 second=$2 file=$3
+  local first_line second_line
+  first_line="$(awk -v needle="$first" 'index($0, needle) { print NR; exit }' "$file")"
+  second_line="$(awk -v needle="$second" 'index($0, needle) { print NR; exit }' "$file")"
+  if [[ -z "$first_line" || -z "$second_line" || "$first_line" -ge "$second_line" ]]; then
+    fail "expected '$first' before '$second' in $file"
+  fi
+}
+
 assert_function_exists() {
   local name=$1
   if ! declare -F "$name" >/dev/null; then
@@ -168,6 +178,18 @@ run_static_wiring_checks() {
   assert_not_contains 'AKS_INGRESS_PUBLIC_IP_NAME: ${{ secrets.AKS_INGRESS_PUBLIC_IP_NAME }}' "$ROOT_DIR/.github/workflows/deploy-prod.yml"
   assert_contains 'PROD_CLUSTER_FLAVOR: >-' "$ROOT_DIR/.github/workflows/deploy-prod.yml"
   assert_contains '${{ needs.resolve-release-tag.outputs.prod_cluster_flavor }}' "$ROOT_DIR/.github/workflows/deploy-prod.yml"
+  assert_contains 'Skipping stale automatic production deploy.' "$ROOT_DIR/.github/workflows/deploy-prod.yml"
+  assert_contains "id: verify_release" "$ROOT_DIR/.github/workflows/deploy-prod.yml"
+  assert_contains "if: steps.verify_release.outputs.should_deploy == 'true'" "$ROOT_DIR/.github/workflows/deploy-prod.yml"
+  assert_file_order "- name: Verify tag is semver and latest release" "- name: Azure login" "$ROOT_DIR/.github/workflows/deploy-prod.yml"
+  local stale_deploy_guards
+  stale_deploy_guards="$(
+    grep -Fc "if: steps.verify_release.outputs.should_deploy == 'true'" \
+      "$ROOT_DIR/.github/workflows/deploy-prod.yml"
+  )"
+  if [[ "$stale_deploy_guards" -ne 6 ]]; then
+    fail "expected six stale-deploy step guards, found $stale_deploy_guards"
+  fi
   assert_contains 'CLUSTER_FLAVOR="${PROD_CLUSTER_FLAVOR}"' "$ROOT_DIR/.github/workflows/deploy-prod.yml"
   assert_contains 'make db-mode-check \' "$ROOT_DIR/.github/workflows/deploy-prod.yml"
   assert_contains 'NS="${PROD_NAMESPACE:-sre-simulator}"' "$ROOT_DIR/.github/workflows/deploy-prod.yml"

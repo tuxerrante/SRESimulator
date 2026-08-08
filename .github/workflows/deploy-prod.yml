@@ -152,6 +152,20 @@ jobs:
           fi
 
           release_tag="${semver_tags[${#semver_tags[@]}-1]}"
+          latest_semver_tag="$(
+            git tag | awk '/^v[0-9]+\.[0-9]+\.[0-9]+$/ {print}' | \
+              sort -V | tail -n 1
+          )"
+          if [[ "${release_tag}" != "${latest_semver_tag}" ]]; then
+            echo "Release ${release_tag} is stale;"
+            echo "latest is ${latest_semver_tag}."
+            echo "Skipping stale automatic production deploy."
+            echo "should_deploy=false" >> "$GITHUB_OUTPUT"
+            echo "release_tag=${release_tag}" >> "$GITHUB_OUTPUT"
+            echo "release_sha=${HEAD_SHA}" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
           echo "should_deploy=true" >> "$GITHUB_OUTPUT"
           echo "release_tag=${release_tag}" >> "$GITHUB_OUTPUT"
           echo "release_sha=${HEAD_SHA}" >> "$GITHUB_OUTPUT"
@@ -164,6 +178,7 @@ jobs:
     env:
       RELEASE_TAG: ${{ needs.resolve-release-tag.outputs.release_tag }}
       RELEASE_SHA: ${{ needs.resolve-release-tag.outputs.release_sha }}
+      EVENT_NAME: ${{ github.event_name }}
       PROD_CLUSTER_FLAVOR: >-
         ${{ needs.resolve-release-tag.outputs.prod_cluster_flavor }}
       AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
@@ -212,14 +227,8 @@ jobs:
           ref: ${{ needs.resolve-release-tag.outputs.release_sha }}
           fetch-depth: 0
 
-      - name: Azure login
-        # v3.0.0
-        uses: >-
-          azure/login@532459ea530d8321f2fb9bb10d1e0bcf23869a43
-        with:
-          creds: ${{ secrets.AZURE_CREDENTIALS }}
-
       - name: Verify tag is semver and latest release
+        id: verify_release
         run: |
           set -euo pipefail
           if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
@@ -240,12 +249,29 @@ jobs:
               sort -V | tail -n 1
           )"
           if [[ "$RELEASE_TAG" != "$latest_semver_tag" ]]; then
+            if [[ "${EVENT_NAME}" == "workflow_run" ]]; then
+              echo "Release ${RELEASE_TAG} became stale;"
+              echo "latest is ${latest_semver_tag}."
+              echo "Skipping stale automatic production deploy."
+              echo "should_deploy=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
             echo "Refusing deploy: ${RELEASE_TAG} is not latest semver"
             echo "tag (${latest_semver_tag})."
             exit 1
           fi
+          echo "should_deploy=true" >> "$GITHUB_OUTPUT"
+
+      - name: Azure login
+        if: steps.verify_release.outputs.should_deploy == 'true'
+        # v3.0.0
+        uses: >-
+          azure/login@532459ea530d8321f2fb9bb10d1e0bcf23869a43
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
 
       - name: Validate required deployment configuration
+        if: steps.verify_release.outputs.should_deploy == 'true'
         run: |
           set -euo pipefail
           missing=()
@@ -277,6 +303,7 @@ jobs:
           fi
 
       - name: Ensure CI gate passed for release tag
+        if: steps.verify_release.outputs.should_deploy == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -327,6 +354,7 @@ jobs:
           fi
 
       - name: Install cluster CLI
+        if: steps.verify_release.outputs.should_deploy == 'true'
         run: |
           set -euo pipefail
           if [[ "${PROD_CLUSTER_FLAVOR}" == "aro" ]]; then
@@ -343,11 +371,13 @@ jobs:
           fi
 
       - name: Setup Helm
+        if: steps.verify_release.outputs.should_deploy == 'true'
         # v5.0.0
         uses: >-
           azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310
 
       - name: Deploy tagged release to production
+        if: steps.verify_release.outputs.should_deploy == 'true'
         run: |
           set -euo pipefail
           make prod-up-tag \
