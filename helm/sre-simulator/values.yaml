@@ -161,6 +161,9 @@ ingress:
 
 gateway:
   className: eg
+  # Envoy Gateway defaults requests to 15s. Scenario creation needs enough
+  # headroom for the backend's 12s AI fallback plus verification and storage.
+  scenarioRequestTimeout: 30s
   tls:
     secretName: sre-simulator-gateway-tls
   certManager:

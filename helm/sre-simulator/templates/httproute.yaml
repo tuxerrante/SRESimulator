@@ -33,6 +33,15 @@ spec:
   hostnames:
     - {{ $publicHost | quote }}
   rules:
+    - matches:
+        - path:
+            type: Exact
+            value: /api/scenario
+      timeouts:
+        request: {{ .Values.gateway.scenarioRequestTimeout | quote }}
+      backendRefs:
+        - name: {{ $fullName }}-frontend
+          port: {{ .Values.frontend.port }}
     - backendRefs:
         - name: {{ $fullName }}-frontend
           port: {{ .Values.frontend.port }}

@@ -1,6 +1,6 @@
 {
   "name": "sre-simulator-backend",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "private": true,
   "scripts": {
     "dev": "npx tsx watch src/index.ts",
