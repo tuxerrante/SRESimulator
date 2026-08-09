@@ -142,14 +142,16 @@ jobs:
             cd "${artifact_dir}"
             sha256sum --check --strict image.tar.sha256
           )
-          source_image="ghcr.io/tuxerrante/sre-simulator-${COMPONENT}:${HEAD_SHA}"
-          target_image="ghcr.io/tuxerrante/sre-simulator-${COMPONENT}:${IMAGE_TAG}"
+          source_image="ghcr.io/${GITHUB_REPOSITORY_OWNER}"
+          source_image+="/sre-simulator-${COMPONENT}:${HEAD_SHA}"
+          target_image="ghcr.io/${GITHUB_REPOSITORY_OWNER}"
+          target_image+="/sre-simulator-${COMPONENT}:${IMAGE_TAG}"
           docker load --input "${artifact_dir}/image.tar"
           docker image inspect "${source_image}" >/dev/null
           docker tag "${source_image}" "${target_image}"
 
       - name: Login to GHCR after artifact validation
-        # v4.1.0
+        # v4.4.0
         uses: >-
           docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0
         with:
@@ -163,7 +165,7 @@ jobs:
           IMAGE_TAG: ${{ needs.resolve.outputs.image_tag }}
         run: |
           docker push \
-            "ghcr.io/tuxerrante/sre-simulator-${COMPONENT}:${IMAGE_TAG}"
+            "ghcr.io/${GITHUB_REPOSITORY_OWNER}/sre-simulator-${COMPONENT}:${IMAGE_TAG}"
 
   run-e2e:
     needs:
@@ -180,8 +182,10 @@ jobs:
       E2E_NAMESPACE: sre-dependabot-e2e
       E2E_RELEASE: sre-dependabot-e2e
       IMAGE_TAG: ${{ needs.resolve.outputs.image_tag }}
-      FRONTEND_IMAGE: ghcr.io/tuxerrante/sre-simulator-frontend
-      BACKEND_IMAGE: ghcr.io/tuxerrante/sre-simulator-backend
+      FRONTEND_IMAGE: >-
+        ghcr.io/${{ github.repository_owner }}/sre-simulator-frontend
+      BACKEND_IMAGE: >-
+        ghcr.io/${{ github.repository_owner }}/sre-simulator-backend
       LIVE_E2E_ARTIFACT_DIR: >-
         data/playwright-dependabot-e2e-${{ needs.resolve.outputs.pr_number }}
       LIVE_E2E_VIEWER_PREFIX: >-
@@ -257,9 +261,19 @@ jobs:
           kubectl auth can-i create deployments.apps \
             --namespace "${E2E_NAMESPACE}" --quiet
           for verb in get list watch; do
-            if kubectl auth can-i "${verb}" secrets \
-              --namespace sre-simulator --quiet; then
+            set +e
+            access="$(
+              kubectl auth can-i "${verb}" secrets \
+                --namespace sre-simulator 2>&1
+            )"
+            access_status=$?
+            set -e
+            if [[ "${access_status}" -eq 0 && "${access}" == "yes" ]]; then
               echo "E2E identity must not ${verb} production secrets." >&2
+              exit 1
+            fi
+            if [[ "${access_status}" -ne 1 || "${access}" != "no" ]]; then
+              echo "Unable to verify ${verb} denial: ${access}" >&2
               exit 1
             fi
           done

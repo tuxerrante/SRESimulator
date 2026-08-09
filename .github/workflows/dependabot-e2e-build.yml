@@ -43,14 +43,16 @@ jobs:
           persist-credentials: false
 
       - name: Build unprivileged PR image artifact
-        # v7.1.0
+        # v7.3.0
         uses: >-
           docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a
         with:
           context: .
           file: ${{ matrix.dockerfile }}
           tags: >-
-            ghcr.io/tuxerrante/sre-simulator-${{ matrix.component }}:${{
+            ghcr.io/${{ github.repository_owner }}/sre-simulator-${{
+              matrix.component
+            }}:${{
               github.event.pull_request.head.sha
             }}
           outputs: >-
