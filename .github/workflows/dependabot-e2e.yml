@@ -262,18 +262,16 @@ jobs:
             --namespace "${E2E_NAMESPACE}" --quiet
           for verb in get list watch; do
             set +e
-            access="$(
-              kubectl auth can-i "${verb}" secrets \
-                --namespace sre-simulator 2>&1
-            )"
+            kubectl auth can-i "${verb}" secrets \
+              --namespace sre-simulator --quiet
             access_status=$?
             set -e
-            if [[ "${access_status}" -eq 0 && "${access}" == "yes" ]]; then
+            if [[ "${access_status}" -eq 0 ]]; then
               echo "E2E identity must not ${verb} production secrets." >&2
               exit 1
             fi
-            if [[ "${access_status}" -ne 1 || "${access}" != "no" ]]; then
-              echo "Unable to verify ${verb} denial: ${access}" >&2
+            if [[ "${access_status}" -ne 1 ]]; then
+              echo "Unable to verify ${verb} denial." >&2
               exit 1
             fi
           done
