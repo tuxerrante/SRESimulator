@@ -255,9 +255,14 @@ jobs:
           umask 077
           printf '%s' "${E2E_KUBECONFIG}" > "${KUBECONFIG}"
           kubectl auth can-i create deployments.apps \
-            --namespace "${E2E_NAMESPACE}" | grep -qx yes
-          kubectl auth can-i get secrets \
-            --namespace sre-simulator | grep -qx no
+            --namespace "${E2E_NAMESPACE}" --quiet
+          for verb in get list watch; do
+            if kubectl auth can-i "${verb}" secrets \
+              --namespace sre-simulator --quiet; then
+              echo "E2E identity must not ${verb} production secrets." >&2
+              exit 1
+            fi
+          done
           for policy in \
             dependabot-e2e-default-deny-egress \
             dependabot-e2e-allow-dns \

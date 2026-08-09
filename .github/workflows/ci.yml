@@ -637,7 +637,7 @@ jobs:
     if: >-
       always() &&
       github.event_name == 'pull_request' &&
-      github.actor != 'dependabot[bot]' &&
+      github.event.pull_request.user.login != 'dependabot[bot]' &&
       github.event.pull_request.head.repo.full_name == github.repository &&
       needs.changes.result == 'success' &&
       needs.lint-typecheck.result == 'success' &&
@@ -851,7 +851,9 @@ jobs:
           DOCKER_RESULT: ${{ needs.docker-build.result }}
           LIVE_E2E_RESULT: ${{ needs.live-e2e.result }}
           EVENT_NAME: ${{ github.event_name }}
-          IS_DEPENDABOT: ${{ github.actor == 'dependabot[bot]' }}
+          IS_DEPENDABOT: >-
+            ${{ github.event_name == 'pull_request' &&
+                github.event.pull_request.user.login == 'dependabot[bot]' }}
           PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           GH_TOKEN: ${{ github.token }}
         run: |
