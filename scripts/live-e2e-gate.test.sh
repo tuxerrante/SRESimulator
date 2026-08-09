@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WORKFLOW="$ROOT_DIR/.github/workflows/ci.yml"
+DEPENDABOT_BUILD_WORKFLOW="$ROOT_DIR/.github/workflows/dependabot-e2e-build.yml"
 DEPENDABOT_WORKFLOW="$ROOT_DIR/.github/workflows/dependabot-e2e.yml"
 MAKEFILE="$ROOT_DIR/Makefile"
 
@@ -15,6 +16,13 @@ assert_contains() {
   local expected=$1 file=$2
   grep -Fq -- "$expected" "$file" || \
     fail "expected '$expected' in $file"
+}
+
+assert_not_contains() {
+  local unexpected=$1 file=$2
+  if grep -Fq -- "$unexpected" "$file"; then
+    fail "did not expect '$unexpected' in $file"
+  fi
 }
 
 node --check "$ROOT_DIR/scripts/playwright-live-e2e.mjs"
@@ -32,14 +40,34 @@ assert_contains "make e2e-azure-route-down" "$WORKFLOW"
 assert_contains "LIVE_E2E_RESULT:" "$WORKFLOW"
 assert_contains 'failed_jobs+=("live-e2e (${LIVE_E2E_RESULT})")' "$WORKFLOW"
 assert_contains 'select(.context == "dependabot-e2e")' "$WORKFLOW"
-assert_contains 'workflows: ["Pre-commit Checks"]' "$DEPENDABOT_WORKFLOW"
+assert_contains '"on":' "$DEPENDABOT_BUILD_WORKFLOW"
+assert_contains "pull_request:" "$DEPENDABOT_BUILD_WORKFLOW"
+assert_contains "permissions:" "$DEPENDABOT_BUILD_WORKFLOW"
+assert_contains "contents: read" "$DEPENDABOT_BUILD_WORKFLOW"
+assert_contains "Checkout Dependabot head without credentials" "$DEPENDABOT_BUILD_WORKFLOW"
+assert_contains "Build unprivileged PR image artifact" "$DEPENDABOT_BUILD_WORKFLOW"
+assert_contains "Upload immutable image artifact" "$DEPENDABOT_BUILD_WORKFLOW"
+assert_contains "ea165f8d65b6e75b540449e92b4886f43607fa02" \
+  "$DEPENDABOT_BUILD_WORKFLOW"
+assert_contains 'workflows: ["Dependabot E2E Build"]' "$DEPENDABOT_WORKFLOW"
 assert_contains "author" "$DEPENDABOT_WORKFLOW"
 assert_contains 'dependabot[bot]' "$DEPENDABOT_WORKFLOW"
 assert_contains "environment:" "$DEPENDABOT_WORKFLOW"
 assert_contains "name: dependabot-e2e" "$DEPENDABOT_WORKFLOW"
 assert_contains "DEPENDABOT_E2E_KUBECONFIG" "$DEPENDABOT_WORKFLOW"
-assert_contains "Build isolated PR image without credentials" "$DEPENDABOT_WORKFLOW"
-assert_contains "Login to GHCR after the untrusted build" "$DEPENDABOT_WORKFLOW"
+assert_contains "Download unprivileged image artifact" "$DEPENDABOT_WORKFLOW"
+assert_contains "Validate and load image artifact" "$DEPENDABOT_WORKFLOW"
+assert_contains "Login to GHCR after artifact validation" "$DEPENDABOT_WORKFLOW"
+assert_contains "SOURCE_BUILD_RESULT:" "$DEPENDABOT_WORKFLOW"
+assert_contains "Unprivileged image build failed" "$DEPENDABOT_WORKFLOW"
+assert_contains 'KUBECONFIG=${RUNNER_TEMP}/dependabot-e2e-kubeconfig' \
+  "$DEPENDABOT_WORKFLOW"
+assert_not_contains "Checkout Dependabot head" "$DEPENDABOT_WORKFLOW"
+assert_not_contains "docker/build-push-action" "$DEPENDABOT_WORKFLOW"
+assert_not_contains '${{ runner.temp }}/dependabot-e2e-kubeconfig' \
+  "$DEPENDABOT_WORKFLOW"
+assert_not_contains "ea165f8d65b5e75b540449e92b4886f43607fa02" \
+  "$DEPENDABOT_WORKFLOW"
 assert_contains "dependabot-e2e-default-deny-egress" "$DEPENDABOT_WORKFLOW"
 assert_contains '[[ "${state}" != "open" ]]' "$DEPENDABOT_WORKFLOW"
 assert_contains '[[ "${head_sha}" != "${WORKFLOW_HEAD_SHA}" ]]' "$DEPENDABOT_WORKFLOW"

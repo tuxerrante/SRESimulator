@@ -3,14 +3,12 @@ name: Dependabot E2E
 
 "on":
   workflow_run:
-    workflows: ["Pre-commit Checks"]
+    workflows: ["Dependabot E2E Build"]
     types:
       - completed
 
 permissions:
   contents: read
-  packages: write
-  statuses: write
 
 concurrency:
   group: dependabot-e2e
@@ -19,9 +17,12 @@ concurrency:
 jobs:
   resolve:
     if: >-
-      github.event.workflow_run.event == 'pull_request' &&
-      github.event.workflow_run.conclusion == 'success'
+      github.event.workflow_run.event == 'pull_request'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+      statuses: write
     outputs:
       is_dependabot: ${{ steps.resolve.outputs.is_dependabot }}
       pr_number: ${{ steps.resolve.outputs.pr_number }}
@@ -85,21 +86,25 @@ jobs:
             "repos/${GITHUB_REPOSITORY}/statuses/${HEAD_SHA}" \
             -f state=pending \
             -f context=dependabot-e2e \
-            -f description="Building isolated mock E2E environment" \
+            -f description="Publishing isolated mock E2E images" \
             -f target_url="${run_url}" \
             >/dev/null
 
-  build-images:
+  publish-images:
     needs: resolve
-    if: needs.resolve.outputs.is_dependabot == 'true'
+    if: >-
+      needs.resolve.outputs.is_dependabot == 'true' &&
+      github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      packages: write
     strategy:
       matrix:
         include:
           - component: frontend
-            dockerfile: frontend/Dockerfile
           - component: backend
-            dockerfile: backend/Dockerfile
     steps:
       - name: Harden runner
         # v2.18.0
@@ -108,28 +113,42 @@ jobs:
         with:
           egress-policy: audit
 
-      - name: Checkout Dependabot head
-        # v6.0.2
+      - name: Download unprivileged image artifact
+        # v4.3.0
         uses: >-
-          actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+          actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
-          ref: ${{ needs.resolve.outputs.head_sha }}
-          persist-credentials: false
-
-      - name: Build isolated PR image without credentials
-        # v7.1.0
-        uses: >-
-          docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a
-        with:
-          context: .
-          file: ${{ matrix.dockerfile }}
-          load: true
-          tags: >-
-            ghcr.io/tuxerrante/sre-simulator-${{ matrix.component }}:${{
-              needs.resolve.outputs.image_tag
+          name: >-
+            dependabot-e2e-${{ matrix.component }}-${{
+              needs.resolve.outputs.head_sha
             }}
+          path: ${{ runner.temp }}/artifact
+          github-token: ${{ github.token }}
+          run-id: ${{ github.event.workflow_run.id }}
 
-      - name: Login to GHCR after the untrusted build
+      - name: Validate and load image artifact
+        env:
+          COMPONENT: ${{ matrix.component }}
+          HEAD_SHA: ${{ needs.resolve.outputs.head_sha }}
+          IMAGE_TAG: ${{ needs.resolve.outputs.image_tag }}
+        run: |
+          set -euo pipefail
+          artifact_dir="${RUNNER_TEMP}/artifact"
+          [[ "$(jq -r '.component' "${artifact_dir}/metadata.json")" \
+            == "${COMPONENT}" ]]
+          [[ "$(jq -r '.head_sha' "${artifact_dir}/metadata.json")" \
+            == "${HEAD_SHA}" ]]
+          (
+            cd "${artifact_dir}"
+            sha256sum --check --strict image.tar.sha256
+          )
+          source_image="ghcr.io/tuxerrante/sre-simulator-${COMPONENT}:${HEAD_SHA}"
+          target_image="ghcr.io/tuxerrante/sre-simulator-${COMPONENT}:${IMAGE_TAG}"
+          docker load --input "${artifact_dir}/image.tar"
+          docker image inspect "${source_image}" >/dev/null
+          docker tag "${source_image}" "${target_image}"
+
+      - name: Login to GHCR after artifact validation
         # v4.1.0
         uses: >-
           docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0
@@ -149,10 +168,12 @@ jobs:
   run-e2e:
     needs:
       - resolve
-      - build-images
-    if: needs.build-images.result == 'success'
+      - publish-images
+    if: needs.publish-images.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    permissions:
+      contents: read
     environment:
       name: dependabot-e2e
     env:
@@ -165,7 +186,6 @@ jobs:
         data/playwright-dependabot-e2e-${{ needs.resolve.outputs.pr_number }}
       LIVE_E2E_VIEWER_PREFIX: >-
         dependabot-${{ needs.resolve.outputs.pr_number }}-${{ github.run_id }}
-      KUBECONFIG: ${{ runner.temp }}/dependabot-e2e-kubeconfig
     steps:
       - name: Harden runner
         # v2.18.0
@@ -173,6 +193,11 @@ jobs:
           step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411
         with:
           egress-policy: audit
+
+      - name: Configure runner paths
+        run: |
+          echo "KUBECONFIG=${RUNNER_TEMP}/dependabot-e2e-kubeconfig" \
+            >> "$GITHUB_ENV"
 
       - name: Checkout trusted deployment and test code
         # v6.0.2
@@ -310,7 +335,7 @@ jobs:
         if: always()
         # v4.6.2
         uses: >-
-          actions/upload-artifact@ea165f8d65b5e75b540449e92b4886f43607fa02
+          actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: dependabot-e2e-pr-${{ needs.resolve.outputs.pr_number }}
           path: ${{ env.LIVE_E2E_ARTIFACT_DIR }}
@@ -328,26 +353,33 @@ jobs:
   finalize:
     needs:
       - resolve
-      - build-images
+      - publish-images
       - run-e2e
     if: >-
       always() &&
       needs.resolve.outputs.is_dependabot == 'true'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      statuses: write
     steps:
       - name: Publish Dependabot E2E result
         env:
           GH_TOKEN: ${{ github.token }}
           HEAD_SHA: ${{ needs.resolve.outputs.head_sha }}
-          BUILD_RESULT: ${{ needs.build-images.result }}
+          SOURCE_BUILD_RESULT: ${{ github.event.workflow_run.conclusion }}
+          PUBLISH_RESULT: ${{ needs.publish-images.result }}
           E2E_RESULT: ${{ needs.run-e2e.result }}
         run: |
           set -euo pipefail
           state=failure
           description="Isolated mock E2E failed"
+          if [[ "${SOURCE_BUILD_RESULT}" != "success" ]]; then
+            description="Unprivileged image build failed"
+          fi
           run_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs"
           run_url+="/${GITHUB_RUN_ID}"
-          if [[ "${BUILD_RESULT}" == "success" ]] &&
+          if [[ "${PUBLISH_RESULT}" == "success" ]] &&
              [[ "${E2E_RESULT}" == "success" ]]; then
             state=success
             description="Isolated mock E2E passed"
