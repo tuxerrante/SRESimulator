@@ -58,6 +58,8 @@ assert_contains "DEPENDABOT_E2E_KUBECONFIG" "$DEPENDABOT_WORKFLOW"
 assert_contains "Download unprivileged image artifact" "$DEPENDABOT_WORKFLOW"
 assert_contains "Validate and load image artifact" "$DEPENDABOT_WORKFLOW"
 assert_contains "Login to GHCR after artifact validation" "$DEPENDABOT_WORKFLOW"
+assert_contains "ea165f8d65b6e75b540449e92b4886f43607fa02" \
+  "$DEPENDABOT_WORKFLOW"
 assert_contains "SOURCE_BUILD_RESULT:" "$DEPENDABOT_WORKFLOW"
 assert_contains "Unprivileged image build failed" "$DEPENDABOT_WORKFLOW"
 assert_contains 'KUBECONFIG=${RUNNER_TEMP}/dependabot-e2e-kubeconfig' \
