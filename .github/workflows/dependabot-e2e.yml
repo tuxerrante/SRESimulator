@@ -272,6 +272,7 @@ jobs:
           session_secret="$(openssl rand -hex 32)"
           anti_abuse_secret="$(openssl rand -hex 32)"
           echo "::add-mask::${session_secret}"
+          echo "::add-mask::${anti_abuse_secret}"
           echo "LIVE_E2E_AUTH_SESSION_SECRET=${session_secret}" \
             >> "$GITHUB_ENV"
 

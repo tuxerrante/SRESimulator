@@ -552,7 +552,14 @@ dependabot-e2e-kubeconfig: ## Decode the gitignored namespace-only E2E kubeconfi
 	tmp="$$(mktemp "$$(dirname "$$target")/.dependabot-e2e-kubeconfig.XXXXXX")"; \
 	trap 'rm -f "$$tmp"' EXIT; \
 	chmod 0600 "$$tmp"; \
-	printf '%s' "$$DEPENDABOT_E2E_KUBECONFIG_B64" | base64 --decode > "$$tmp"; \
+	if ! printf '%s' "$$DEPENDABOT_E2E_KUBECONFIG_B64" | \
+		base64 --decode > "$$tmp" 2>/dev/null; then \
+		if ! printf '%s' "$$DEPENDABOT_E2E_KUBECONFIG_B64" | \
+			base64 -D > "$$tmp" 2>/dev/null; then \
+			echo "Failed to decode DEPENDABOT_E2E_KUBECONFIG_B64."; \
+			exit 1; \
+		fi; \
+	fi; \
 	KUBECONFIG="$$tmp" kubectl config view --minify >/dev/null; \
 	mv "$$tmp" "$$target"; \
 	chmod 0600 "$$target"; \

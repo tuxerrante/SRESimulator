@@ -62,6 +62,8 @@ assert_contains "ea165f8d65b6e75b540449e92b4886f43607fa02" \
   "$DEPENDABOT_WORKFLOW"
 assert_contains "SOURCE_BUILD_RESULT:" "$DEPENDABOT_WORKFLOW"
 assert_contains "Unprivileged image build failed" "$DEPENDABOT_WORKFLOW"
+assert_contains 'echo "::add-mask::${anti_abuse_secret}"' \
+  "$DEPENDABOT_WORKFLOW"
 assert_contains 'KUBECONFIG=${RUNNER_TEMP}/dependabot-e2e-kubeconfig' \
   "$DEPENDABOT_WORKFLOW"
 assert_not_contains "Checkout Dependabot head" "$DEPENDABOT_WORKFLOW"
