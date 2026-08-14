@@ -61,22 +61,25 @@ function getTrustedClientIp(request: NextRequest): string | null {
     return null;
   }
 
+  const envoyExternalIp = readIpHeader(
+    request.headers.get("x-envoy-external-address")
+  );
   const realIp = readIpHeader(request.headers.get("x-real-ip"));
-  if (!realIp) {
-    return null;
-  }
-
   const forwardedIps = readForwardedIps(request.headers.get("x-forwarded-for"));
   if (forwardedIps.length === 0) {
     return null;
   }
 
-  const clientHop = forwardedIps[0];
-  if (!clientHop || clientHop !== realIp) {
+  const edgeDetectedIp = envoyExternalIp ?? realIp;
+  if (edgeDetectedIp) {
+    return forwardedIps.includes(edgeDetectedIp) ? edgeDetectedIp : null;
+  }
+
+  if (forwardedIps.length !== 1) {
     return null;
   }
 
-  return realIp;
+  return forwardedIps[0] ?? null;
 }
 
 function upsertCookieHeader(
@@ -130,6 +133,7 @@ async function proxyRequest(request: NextRequest): Promise<NextResponse> {
   headers.delete("connection");
   headers.delete("x-forwarded-for");
   headers.delete("x-real-ip");
+  headers.delete("x-envoy-external-address");
   headers.delete("forwarded");
   headers.delete("x-sresim-client-ip");
   headers.delete("x-sresim-client-ip-signature");

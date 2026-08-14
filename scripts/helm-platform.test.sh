@@ -36,6 +36,9 @@ grep -Eq '^kind: Route$' "${route_render}" || \
 grep -Eq 'host: route\.example\.com' "${route_render}" || \
   fail "Route mode should preserve the route host."
 
+grep -Eq 'haproxy\.router\.openshift\.io/set-forwarded-headers: replace' "${route_render}" || \
+  fail "Route mode should replace untrusted forwarded headers."
+
 grep -Fq 'FRONTEND="sre-simulator-frontend:3000"' "${route_render}" || \
   fail "Helm test should use the configured internal frontend Service port."
 
@@ -214,6 +217,15 @@ grep -Eq '^kind: Gateway$' "${gw_render}" || \
 
 grep -Eq '^kind: HTTPRoute$' "${gw_render}" || \
   fail "Gateway mode should render HTTPRoute resources."
+
+grep -Eq '^kind: ClientTrafficPolicy$' "${gw_render}" || \
+  fail "Gateway mode should render trusted client IP detection."
+
+grep -A2 -Eq 'xForwardedFor:' "${gw_render}" || \
+  fail "Gateway mode should configure X-Forwarded-For client IP detection."
+
+grep -Eq 'numTrustedHops: 1' "${gw_render}" || \
+  fail "Gateway mode should trust only the immediate edge hop."
 
 grep -Eq 'type: ClusterIP' "${gw_render}" || \
   fail "Gateway mode should keep the frontend Service internal."

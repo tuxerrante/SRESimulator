@@ -478,6 +478,8 @@ run_gateway_deploy_path_check() {
   assert_contains 'scheme: "https"' "$TMP_DIR/captured-values.yaml"
   assert_not_contains 'loadBalancerIP:' "$TMP_DIR/captured-values.yaml"
   assert_not_contains 'azure-pip-name' "$TMP_DIR/captured-values.yaml"
+  assert_not_contains "frontend.trustProxyHeaders=true" "$TMP_DIR/helm-args.txt"
+  assert_not_contains "backend.auth.requireAnonymousClientIp=true" "$TMP_DIR/helm-args.txt"
 }
 
 run_gateway_deploy_skip_bootstrap_check() {
@@ -741,7 +743,11 @@ run_optional_auth_verification_flag_check() {
   E2E_RELEASE="sre-simulator"
   AKS_RG="example-aks-rg"
   AKS_CLUSTER="example-aks"
-  AKS_EXPOSURE_MODE="publicService"
+  AKS_EXPOSURE_MODE="gateway"
+  AKS_GATEWAY_HOST="play.sresimulator.osadev.cloud"
+  AKS_GATEWAY_CLASS_NAME="eg"
+  AKS_CLUSTER_ISSUER_NAME="letsencrypt-azuredns-prod"
+  AKS_GATEWAY_TLS_SECRET_NAME="sre-simulator-gateway-tls"
   AOAI_DEPLOYMENT="gpt-4o-mini"
   GITHUB_AUTH_SECRET_NAME="sre-auth-secrets"
   ANTI_ABUSE_HMAC_SECRET="anti-abuse-hmac"
@@ -763,6 +769,9 @@ run_optional_auth_verification_flag_check() {
   assert_contains "backend.auth.turnstileExpectedHostnameKey=turnstile-expected-hostname" "$TMP_DIR/helm-args.txt"
   assert_contains "backend.auth.turnstileTestMode=true" "$TMP_DIR/helm-args.txt"
   assert_contains "backend.auth.localTestVerificationEnabled=true" "$TMP_DIR/helm-args.txt"
+  assert_contains "frontend.trustProxyHeaders=true" "$TMP_DIR/helm-args.txt"
+  assert_contains "backend.trustProxyHeaders=true" "$TMP_DIR/helm-args.txt"
+  assert_contains "backend.auth.requireAnonymousClientIp=true" "$TMP_DIR/helm-args.txt"
 }
 
 run_default_copied_auth_secret_wires_anonymous_easy_keys_check() {

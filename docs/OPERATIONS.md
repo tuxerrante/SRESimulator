@@ -78,6 +78,10 @@ The AKS helpers support three exposure modes through `AKS_EXPOSURE_MODE`.
 - The frontend service stays `ClusterIP`.
 - The helper expects a Gateway, HTTPRoutes, and a certificate for the TLS secret.
 - This is the stable-path default for AKS (`AKS_EXPOSURE_MODE ?= gateway`).
+- When anonymous verification is configured, the profile enables Envoy
+  client-IP detection, signed frontend-to-backend IP forwarding, and strict
+  IP-backed trial enforcement. If that edge identity is unavailable, anonymous
+  Easy mode fails closed.
 
 ## Shared-Edge Direct E2E Hostnames
 

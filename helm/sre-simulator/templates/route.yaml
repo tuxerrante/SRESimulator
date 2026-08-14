@@ -5,6 +5,8 @@ metadata:
   name: {{ include "sre-simulator.fullname" . }}
   labels:
     {{- include "sre-simulator.labels" . | nindent 4 }}
+  annotations:
+    haproxy.router.openshift.io/set-forwarded-headers: replace
 spec:
   host: {{ include "sre-simulator.publicHost" . }}
   tls:

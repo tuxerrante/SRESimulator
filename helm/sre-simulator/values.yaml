@@ -94,6 +94,7 @@ backend:
     turnstileExpectedHostnameKey: ""
     turnstileTestMode: false
     localTestVerificationEnabled: false
+    requireAnonymousClientIp: false
   podSecurityContext:
     fsGroup: 1001
     fsGroupChangePolicy: OnRootMismatch
@@ -170,6 +171,9 @@ gateway:
     clusterIssuer: letsencrypt-azuredns-prod
   envoyProxy:
     name: sre-simulator-public-edge
+  clientIpDetection:
+    enabled: true
+    numTrustedHops: 1
 
 database:
   enabled: false

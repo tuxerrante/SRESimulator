@@ -412,6 +412,18 @@ scenarioRouter.post("/", async (req: Request, res: Response) => {
     const antiAbuseSecret = process.env.ANTI_ABUSE_HMAC_SECRET;
     const clientIp = getClientIp(req, antiAbuseSecret);
     const userAgent = req.get("user-agent") ?? "unknown";
+    if (
+      !viewer &&
+      difficulty === "easy" &&
+      process.env.REQUIRE_ANONYMOUS_CLIENT_IP === "true" &&
+      !clientIp
+    ) {
+      res.status(503).json({
+        error: "Anonymous anti-abuse client identity is unavailable.",
+        code: "anonymous_client_identity_unavailable",
+      });
+      return;
+    }
     const anonymousProof =
       !viewer && antiAbuseSecret
         ? readAnonymousProofFromCookieHeader(req.headers.cookie, antiAbuseSecret, userAgent)

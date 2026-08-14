@@ -636,6 +636,11 @@ helm_deploy_sre() {
        secret_has_key "$ns" "$resolved_auth_secret" "anti-abuse-hmac-secret"; then
       auth_flags+=(--set-string "frontend.auth.antiAbuseHmacSecretKey=anti-abuse-hmac-secret")
       auth_flags+=(--set-string "backend.auth.antiAbuseHmacSecretKey=anti-abuse-hmac-secret")
+      if [ "$AKS_EXPOSURE_MODE" = "gateway" ]; then
+        auth_flags+=(--set frontend.trustProxyHeaders=true)
+        auth_flags+=(--set backend.trustProxyHeaders=true)
+        auth_flags+=(--set backend.auth.requireAnonymousClientIp=true)
+      fi
     fi
 
     if [ -n "$turnstile_site_key" ] || \

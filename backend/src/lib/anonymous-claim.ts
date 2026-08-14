@@ -32,6 +32,7 @@ export function buildAnonymousClaimKeys(
   if (ip) {
     const ipHash = hashSignal(ip);
     claimKeys.push(buildClaimDigest(["ip-ua", ipHash, userAgentHash].join(":"), secret));
+    claimKeys.push(buildClaimDigest(["ip", ipHash].join(":"), secret));
   }
 
   return claimKeys;

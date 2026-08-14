@@ -185,6 +185,77 @@ describe("frontend backend proxy route", () => {
     expect(headers.get("x-sresim-client-ip-signature")).toBeTruthy();
   });
 
+  it("uses the client IP detected by Envoy Gateway", async () => {
+    process.env.ANTI_ABUSE_HMAC_SECRET = "test-hmac";
+    process.env.BACKEND_INTERNAL_BASE_URL = "http://backend.internal";
+    process.env.TRUST_PROXY_HEADERS = "true";
+
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const request = new NextRequest("https://play.example.com/api/scenario", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "user-agent": "Proxy Test Browser",
+        "x-envoy-external-address": "203.0.113.6",
+        "x-forwarded-for": "198.51.100.99, 203.0.113.6",
+      },
+      body: JSON.stringify({
+        difficulty: "easy",
+        turnstileToken: "token-123",
+        fingerprintHash: "fingerprint-123",
+      }),
+    });
+
+    await POST(request);
+
+    const [, options] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const headers = options.headers as Headers;
+    expect(headers.get("x-envoy-external-address")).toBeNull();
+    expect(headers.get("x-sresim-client-ip")).toBe("203.0.113.6");
+    expect(headers.get("x-sresim-client-ip-signature")).toBeTruthy();
+  });
+
+  it("accepts a single sanitized forwarded IP from a trusted edge", async () => {
+    process.env.ANTI_ABUSE_HMAC_SECRET = "test-hmac";
+    process.env.BACKEND_INTERNAL_BASE_URL = "http://backend.internal";
+    process.env.TRUST_PROXY_HEADERS = "true";
+
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const request = new NextRequest("https://play.example.com/api/scenario", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "user-agent": "Proxy Test Browser",
+        "x-forwarded-for": "203.0.113.7",
+      },
+      body: JSON.stringify({
+        difficulty: "easy",
+        turnstileToken: "token-123",
+        fingerprintHash: "fingerprint-123",
+      }),
+    });
+
+    await POST(request);
+
+    const [, options] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const headers = options.headers as Headers;
+    expect(headers.get("x-sresim-client-ip")).toBe("203.0.113.7");
+  });
+
   it.each(["/api/chat", "/api/command"])(
     "rejects %s when proxy trust is enabled but the client IP is unavailable",
     async (pathname) => {
