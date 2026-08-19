@@ -260,6 +260,11 @@ jobs:
           printf '%s' "${E2E_KUBECONFIG}" > "${KUBECONFIG}"
           kubectl auth can-i create deployments.apps \
             --namespace "${E2E_NAMESPACE}" --quiet
+          # The browser E2E reaches the frontend through kubectl port-forward,
+          # which needs an explicit pods/portforward create grant. Without this
+          # check the job only surfaces an opaque connection refused later on.
+          kubectl auth can-i create pods/portforward \
+            --namespace "${E2E_NAMESPACE}" --quiet
           for verb in get list watch; do
             set +e
             kubectl auth can-i "${verb}" secrets \
@@ -338,13 +343,29 @@ jobs:
           port_forward_pid=$!
           trap 'kill "${port_forward_pid}" >/dev/null 2>&1 || true' EXIT
 
+          ready=0
           for _ in $(seq 1 30); do
             if curl -fsS http://127.0.0.1:3000/ >/dev/null; then
+              ready=1
               break
             fi
             sleep 2
           done
-          curl -fsS http://127.0.0.1:3000/ >/dev/null
+
+          if [[ "${ready}" -ne 1 ]]; then
+            echo "::error::Frontend did not answer through the port-forward."
+            echo "--- port-forward log ---"
+            cat "${port_forward_log}" || true
+            echo "--- workloads ---"
+            kubectl -n "${E2E_NAMESPACE}" get \
+              deploy,pod,svc,endpoints -o wide || true
+            echo "--- not-ready pods ---"
+            kubectl -n "${E2E_NAMESPACE}" describe pods || true
+            echo "--- frontend logs ---"
+            kubectl -n "${E2E_NAMESPACE}" logs \
+              "deployment/${E2E_RELEASE}-frontend" --tail=100 || true
+            exit 1
+          fi
 
           export LIVE_E2E_BASE_URL=http://127.0.0.1:3000
           make test-e2e-live

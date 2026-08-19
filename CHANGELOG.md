@@ -35,6 +35,10 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Fixed (Unreleased)
 
+- Made the Dependabot E2E browser step diagnosable: the job now fails fast if
+  the namespace identity cannot create `pods/portforward`, and on a
+  port-forward failure it dumps the port-forward log, workload state, pod
+  descriptions and frontend logs instead of an opaque connection refused.
 - Fixed the unprivileged Dependabot E2E image build, which failed with
   "Docker exporter is not supported for the docker driver" and blocked every
   Dependabot pull request at `ci-gate`. The image is now loaded into the local
