@@ -32,6 +32,11 @@ import { matchesSharedSecret } from "../lib/shared-secret";
 import { captureBackendRouteError } from "../lib/telemetry/capture";
 import { parsePositiveIntEnv } from "../lib/env";
 import { withAbortTimeout } from "../lib/timeout";
+import {
+  createRequestDeadline,
+  RequestDeadlineExceededError,
+  waitAtMost,
+} from "../lib/request-deadline";
 import { verifySignedClientIp } from "../../../shared/auth/client-ip";
 import type { Difficulty, Scenario } from "../../../shared/types/game";
 import {
@@ -62,6 +67,20 @@ const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 const SEVEN_DAYS_MS = 7 * ONE_DAY_MS;
 const TIMESTAMP_GRACE_MS = 5 * 60 * 1000;
 const DEFAULT_SCENARIO_TIMEOUT_MS = 12000;
+// End-to-end application deadline for POST /api/scenario. It must respond
+// before the 30s Envoy Gateway timeout, leaving serialization headroom.
+const DEFAULT_SCENARIO_REQUEST_BUDGET_MS = 24000;
+// Larger budgets would silently break the guarantee that the application
+// answers before the 30s Envoy Gateway timeout, so they are clamped.
+const MAX_SCENARIO_REQUEST_BUDGET_MS = 24000;
+// Share of the budget held back so session persistence and the catalog
+// fallback can always finish.
+const SESSION_COMPLETION_RESERVE_RATIO = 0.32;
+// Share of the budget below which AI generation is not worth starting.
+const MIN_GENERATION_BUDGET_RATIO = 0.08;
+// Held back inside the deadline so failure cleanup cannot push the response
+// past the total budget.
+const CLEANUP_RESERVE_RATIO = 0.12;
 
 class InvalidScenarioPayloadError extends Error {
   readonly clientMessage = "Scenario generation returned an invalid payload.";
@@ -79,8 +98,53 @@ class ScenarioGenerationTimeoutError extends Error {
   }
 }
 
+class ClientDisconnectedError extends Error {
+  constructor() {
+    super("Client disconnected before the scenario response was sent");
+    this.name = "ClientDisconnectedError";
+  }
+}
+
 function getScenarioTimeoutMs(): number {
   return parsePositiveIntEnv(process.env.AI_SCENARIO_TIMEOUT_MS, DEFAULT_SCENARIO_TIMEOUT_MS);
+}
+
+function getScenarioRequestBudgetMs(): number {
+  const configured = parsePositiveIntEnv(
+    process.env.SCENARIO_REQUEST_BUDGET_MS,
+    DEFAULT_SCENARIO_REQUEST_BUDGET_MS,
+  );
+  const clamped = Math.min(MAX_SCENARIO_REQUEST_BUDGET_MS, configured);
+  if (clamped !== configured) {
+    console.warn(
+      `[scenario] SCENARIO_REQUEST_BUDGET_MS=${configured} exceeds the safe maximum ` +
+        `${MAX_SCENARIO_REQUEST_BUDGET_MS}ms for the 30s gateway timeout; using ${clamped}`,
+    );
+  }
+  return clamped;
+}
+
+async function releaseClaimKeysSafely(
+  claimKeys: string[],
+  reason: string,
+  waitMs: number,
+): Promise<void> {
+  if (claimKeys.length === 0) {
+    return;
+  }
+  const released = await waitAtMost(
+    getAnonymousTrialStore()
+      .releaseClaimKeys(claimKeys)
+      .catch((error: unknown) => {
+        console.warn(`[scenario] anonymous claim release failed (${reason})`, error);
+      }),
+    Math.max(0, waitMs),
+  );
+  if (!released) {
+    console.warn(
+      `[scenario] anonymous claim release still pending after ${waitMs}ms (${reason})`,
+    );
+  }
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -384,6 +448,21 @@ async function recordStartedTelemetry(
 scenarioRouter.post("/", async (req: Request, res: Response) => {
   let reservedClaimKeys: string[] = [];
   let claimReservationCommitted = false;
+  const deadline = createRequestDeadline(getScenarioRequestBudgetMs());
+  const cleanupReserveMs = Math.round(deadline.totalMs * CLEANUP_RESERVE_RATIO);
+  const sessionCompletionReserveMs =
+    Math.round(deadline.totalMs * SESSION_COMPLETION_RESERVE_RATIO) + cleanupReserveMs;
+  const minGenerationBudgetMs = Math.round(deadline.totalMs * MIN_GENERATION_BUDGET_RATIO);
+  const preGenerationReserveMs = sessionCompletionReserveMs + minGenerationBudgetMs;
+  const disconnect = new AbortController();
+  // `res` close fires when the response finished or the peer went away first;
+  // `req` close also fires on a normal fully-received body, so it cannot be
+  // used to detect a disconnect.
+  res.on("close", () => {
+    if (!res.writableFinished) {
+      disconnect.abort(new ClientDisconnectedError());
+    }
+  });
   try {
     const body: ScenarioRequestBody = req.body;
     const { difficulty, turnstileToken } = body;
@@ -439,19 +518,20 @@ scenarioRouter.post("/", async (req: Request, res: Response) => {
             antiAbuseSecret
           )
         : [];
-    const hasActiveAnonymousClaim =
-      anonymousClaimKeys.length > 0
-        ? (
-            await Promise.all(
+    const [hasActiveAnonymousClaim, hasValidTurnstileToken] = await deadline.waitWithin(
+      "identity-verification",
+      Promise.all([
+        anonymousClaimKeys.length > 0
+          ? Promise.all(
               anonymousClaimKeys.map((claimKey) =>
                 getAnonymousTrialStore().hasActiveClaim(claimKey)
               )
-            )
-          ).some(Boolean)
-        : false;
-    const hasValidTurnstileToken = viewer
-      ? true
-      : await verifyTurnstileToken(turnstileToken, clientIp);
+            ).then((results) => results.some(Boolean))
+          : Promise.resolve(false),
+        viewer ? Promise.resolve(true) : verifyTurnstileToken(turnstileToken, clientIp),
+      ]),
+      { reserveMs: preGenerationReserveMs, abortSignal: disconnect.signal },
+    );
 
     const accessDecision = evaluateScenarioAccess({
       difficulty,
@@ -475,7 +555,11 @@ scenarioRouter.post("/", async (req: Request, res: Response) => {
     }
 
     if (viewer) {
-      await getPlayerStore().upsertGithubViewer(viewer);
+      await deadline.waitWithin(
+        "github-viewer-upsert",
+        getPlayerStore().upsertGithubViewer(viewer),
+        { reserveMs: preGenerationReserveMs, abortSignal: disconnect.signal },
+      );
     }
 
     const reserveAnonymousClaimKeys = async (): Promise<string[]> => {
@@ -484,10 +568,23 @@ scenarioRouter.post("/", async (req: Request, res: Response) => {
       }
 
       const now = Date.now();
-      const reserved = await getAnonymousTrialStore().reserveClaimKeys(anonymousClaimKeys, {
+      const reservation = getAnonymousTrialStore().reserveClaimKeys(anonymousClaimKeys, {
         claimKey: anonymousClaimKeys[0] ?? "anonymous",
         createdAt: now,
         expiresAt: now + ANONYMOUS_TRIAL_TTL_MS,
+      });
+      const reserved = await deadline.waitWithin("anonymous-claim-reservation", reservation, {
+        reserveMs: sessionCompletionReserveMs,
+        abortSignal: disconnect.signal,
+        onLateSettle: (lateReserved) => {
+          if (lateReserved) {
+            void releaseClaimKeysSafely(
+              anonymousClaimKeys,
+              "late-reservation",
+              cleanupReserveMs,
+            );
+          }
+        },
       });
       if (!reserved) {
         res.status(429).json({
@@ -508,7 +605,7 @@ scenarioRouter.post("/", async (req: Request, res: Response) => {
       identityKind: "github" | "anonymous";
     }> => {
       const trafficSource = getTrafficSource(req);
-      const sessionToken = await getSessionStore().create({
+      const sessionCreation = getSessionStore().create({
         platform,
         difficulty,
         scenarioId: scenario.id,
@@ -520,6 +617,23 @@ scenarioRouter.post("/", async (req: Request, res: Response) => {
         githubLogin: viewer?.githubLogin ?? null,
         anonymousClaimKey: reservedClaimKeys[0] ?? null,
         persistentScoreEligible: accessDecision.sessionIdentityKind === "github",
+      });
+      const sessionToken = await deadline.waitWithin("session-create", sessionCreation, {
+        reserveMs: cleanupReserveMs,
+        abortSignal: disconnect.signal,
+        onLateSettle: (lateToken, error) => {
+          // The outer catch already released the claim synchronously when the
+          // deadline was reported, so releasing again here could delete a claim
+          // that a newer request has since reserved. Only log the orphan.
+          if (lateToken) {
+            console.warn(
+              "[scenario] session persisted after the deadline; token was never delivered",
+              { sessionCreated: true },
+            );
+          } else if (error) {
+            console.warn("[scenario] late session persistence failed", error);
+          }
+        },
       });
       claimReservationCommitted = true;
       void recordStartedTelemetry(
@@ -545,10 +659,21 @@ scenarioRouter.post("/", async (req: Request, res: Response) => {
       console.warn(
         `[scenario] ${degradedReason}; returning catalog fallback for ${platform}/${difficulty}`,
       );
-      const fallbackScenario = await getCatalogScenario({
-        platform,
-        difficulty,
-      });
+      const fallbackScenario = await deadline.waitWithin(
+        "catalog-fallback-read",
+        getCatalogScenario({
+          platform,
+          difficulty,
+        }),
+        // Leave persistence and cleanup budget so the fallback can still
+        // return a session.
+        {
+          reserveMs:
+            cleanupReserveMs +
+            Math.round((sessionCompletionReserveMs - cleanupReserveMs) / 2),
+          abortSignal: disconnect.signal,
+        },
+      );
       const fallbackSession = await createSessionForScenario(
         fallbackScenario,
         `scenario-catalog-${degradedReason}`,
@@ -564,7 +689,11 @@ scenarioRouter.post("/", async (req: Request, res: Response) => {
 
     if (isCatalogScenarioSource()) {
       reservedClaimKeys = await reserveAnonymousClaimKeys();
-      const catalogScenario = await getCatalogScenario({ platform, difficulty });
+      const catalogScenario = await deadline.waitWithin(
+        "catalog-scenario-read",
+        getCatalogScenario({ platform, difficulty }),
+        { reserveMs: sessionCompletionReserveMs, abortSignal: disconnect.signal },
+      );
       const session = await createSessionForScenario(catalogScenario, "scenario-catalog");
       res.json({
         scenario: catalogScenario,
@@ -591,7 +720,11 @@ scenarioRouter.post("/", async (req: Request, res: Response) => {
     }
 
     reservedClaimKeys = await reserveAnonymousClaimKeys();
-    const knowledgeBase = await loadKnowledgeBase(platform);
+    const knowledgeBase = await deadline.waitWithin(
+      "knowledge-base-load",
+      loadKnowledgeBase(platform),
+      { reserveMs: preGenerationReserveMs, abortSignal: disconnect.signal },
+    );
     const profile = getRuntimePlatformProfile(platform);
 
     // Extract only scenario-relevant context from the knowledge base
@@ -622,6 +755,17 @@ scenarioRouter.post("/", async (req: Request, res: Response) => {
     const currentDate = utcNow();
 
     let responseText: string;
+    const generationBudgetMs = deadline.budgetFor(
+      getScenarioTimeoutMs(),
+      sessionCompletionReserveMs,
+    );
+    if (generationBudgetMs < minGenerationBudgetMs) {
+      await respondWithCatalogFallback(
+        "timeout",
+        new RequestDeadlineExceededError("ai-scenario-generation", deadline.totalMs),
+      );
+      return;
+    }
     try {
       responseText = await withAbortTimeout(
         (signal) =>
@@ -643,8 +787,9 @@ scenarioRouter.post("/", async (req: Request, res: Response) => {
               },
             ],
           }),
-        getScenarioTimeoutMs(),
+        generationBudgetMs,
         (timeoutMs) => new ScenarioGenerationTimeoutError(timeoutMs),
+        { abortSignal: disconnect.signal },
       );
     } catch (error) {
       if (
@@ -694,9 +839,32 @@ scenarioRouter.post("/", async (req: Request, res: Response) => {
     res.json({ scenario, sessionToken: session.sessionToken, identityKind: session.identityKind });
   } catch (error) {
     if (reservedClaimKeys.length > 0 && !claimReservationCommitted) {
-      await getAnonymousTrialStore().releaseClaimKeys(reservedClaimKeys);
+      await releaseClaimKeysSafely(reservedClaimKeys, "request-failure", cleanupReserveMs);
     }
     if (error instanceof Error && error.message === "anonymous_claim_conflict") {
+      return;
+    }
+    if (disconnect.signal.aborted || error instanceof ClientDisconnectedError) {
+      console.warn("[scenario] client disconnected before the response was sent", {
+        elapsedMs: deadline.elapsedMs(),
+      });
+      return;
+    }
+    if (error instanceof RequestDeadlineExceededError) {
+      captureBackendRouteError(req, error);
+      console.warn("[scenario] request deadline exceeded", {
+        stage: error.stage,
+        totalMs: error.totalMs,
+        elapsedMs: deadline.elapsedMs(),
+        stages: deadline.timings(),
+      });
+      // Verification and persistence exhaustion is retryable, so it must not be
+      // reported as a gateway timeout.
+      res.setHeader("Retry-After", "5");
+      res.status(503).json({
+        error: "Scenario creation could not finish safely in time. Please retry.",
+        code: "scenario_request_deadline_exceeded",
+      });
       return;
     }
     if (error instanceof AiThrottledError) {
