@@ -7,6 +7,13 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+### Changed (Unreleased)
+
+- Made anonymous trial enforcement identity-aware by client IP: an opaque
+  IP-only claim is persisted alongside browser signals and trusted client IP
+  detection is wired through the AKS Gateway path. The anonymous Easy path now
+  fails closed when strict anonymous identity is unavailable.
+
 ### Fixed (Unreleased)
 
 - Made stale automatic production release runs skip cleanly before Azure login
