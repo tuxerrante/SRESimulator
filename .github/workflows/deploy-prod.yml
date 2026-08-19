@@ -53,16 +53,16 @@ jobs:
       prod_cluster_flavor: ${{ steps.resolve.outputs.prod_cluster_flavor }}
     steps:
       - name: Harden runner
-        # v2.18.0
+        # v2.21.0
         uses: >-
-          step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411
+          step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c
         with:
           egress-policy: audit
 
       - name: Checkout
         # v6.0.2
         uses: >-
-          actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+          actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           fetch-depth: 0
 
@@ -213,16 +213,16 @@ jobs:
       NPM_VERSION: "10"
     steps:
       - name: Harden runner
-        # v2.18.0
+        # v2.21.0
         uses: >-
-          step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411
+          step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c
         with:
           egress-policy: audit
 
       - name: Checkout
         # v6.0.2
         uses: >-
-          actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+          actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           ref: ${{ needs.resolve-release-tag.outputs.release_sha }}
           fetch-depth: 0
