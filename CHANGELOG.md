@@ -7,6 +7,17 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+### Added (Unreleased)
+
+- Bound `POST /api/scenario` with an end-to-end application deadline
+  (`SCENARIO_REQUEST_BUDGET_MS`, default and hard maximum 24s) shared by
+  identity verification, viewer upsert, claim reservation, knowledge and
+  catalog reads, AI generation, session persistence and failure cleanup, so the
+  composed worst case stays inside the 30-second Envoy Gateway budget.
+  Anonymous claim lookup and Turnstile verification now run concurrently, and
+  per-stage latencies are recorded and logged when the deadline is exceeded.
+  ([#340](https://github.com/tuxerrante/SRESimulator/issues/340))
+
 ### Changed (Unreleased)
 
 - Made anonymous trial enforcement identity-aware by client IP: an opaque
@@ -27,6 +38,14 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 - Made stale automatic production release runs skip cleanly before Azure login
   when a newer semver tag appears, while retaining the fail-closed latest-tag
   guard for manual deploys.
+- Stopped scenario creation from consuming an anonymous daily claim without
+  returning a usable session: stages are never aborted mid-flight, and
+  reservations or sessions that settle after the deadline trigger a
+  compensating release that cannot delete a claim a newer request has since
+  reserved. Failure cleanup is reserved inside the request budget, an overrun
+  returns `503` with `Retry-After` (`scenario_request_deadline_exceeded`)
+  instead of an edge 504, and a client disconnect aborts provider work and
+  releases the reserved claim.
 
 ## [0.4.2] - 2026-08-08
 

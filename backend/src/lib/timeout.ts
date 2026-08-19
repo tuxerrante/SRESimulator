@@ -1,5 +1,9 @@
 interface WithAbortTimeoutOptions {
   suppressAbortErrorAfterTimeout?: boolean;
+  /**
+   * Aborts the work before the timeout, e.g. when the client disconnects.
+   */
+  abortSignal?: AbortSignal;
 }
 
 function isAbortLikeError(error: unknown): boolean {
@@ -25,15 +29,34 @@ export async function withAbortTimeout<T>(
       reject(timeoutError);
     }, timeoutMs);
 
+    const external = options?.abortSignal;
+    const onExternalAbort = () => {
+      clearTimeout(timer);
+      const abortError = external?.reason;
+      controller.abort(abortError);
+      reject(abortError instanceof Error ? abortError : new Error("Aborted"));
+    };
+    if (external) {
+      if (external.aborted) {
+        onExternalAbort();
+        return;
+      }
+      external.addEventListener("abort", onExternalAbort, { once: true });
+    }
+    const cleanup = () => {
+      clearTimeout(timer);
+      external?.removeEventListener("abort", onExternalAbort);
+    };
+
     run(controller.signal).then(
       (value) => {
-        clearTimeout(timer);
+        cleanup();
         if (!timedOut) {
           resolve(value);
         }
       },
       (error) => {
-        clearTimeout(timer);
+        cleanup();
         if (
           timedOut &&
           options?.suppressAbortErrorAfterTimeout &&

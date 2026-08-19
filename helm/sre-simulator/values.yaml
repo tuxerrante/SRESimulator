@@ -78,6 +78,10 @@ backend:
   aiChatTimeoutMs: 30000
   aiCommandTimeoutMs: 12000
   aiScenarioTimeoutMs: 12000
+  # End-to-end application deadline for POST /api/scenario, including failure
+  # cleanup. The backend clamps this to 24000 ms so it always answers before
+  # the 30s Envoy Gateway timeout on the same route.
+  scenarioRequestBudgetMs: 24000
   rateLimit:
     windowMs: 60000
     max: 15
