@@ -30,6 +30,7 @@ import { buildAnonymousClaimKeys } from "../lib/anonymous-claim";
 import { evaluateScenarioAccess } from "../lib/scenario-access";
 import { matchesSharedSecret } from "../lib/shared-secret";
 import { captureBackendRouteError } from "../lib/telemetry/capture";
+import { isSentryEnabled } from "../lib/telemetry/sentry";
 import { parsePositiveIntEnv } from "../lib/env";
 import { withAbortTimeout } from "../lib/timeout";
 import {
@@ -885,6 +886,20 @@ scenarioRouter.post("/", async (req: Request, res: Response) => {
       res.status(error.status).json({ error: error.clientMessage });
       return;
     }
+    // Sentry receives a sanitized error with the raw message dropped, so the
+    // detailed log is emitted only where Sentry cannot report at all (CI and
+    // local runs). Name and stage timings carry no user or AI content and are
+    // always logged, otherwise this branch is silent when Sentry is degraded.
+    console.error("[scenario] unexpected scenario creation failure", {
+      name: error instanceof Error ? error.name : typeof error,
+      stages: deadline.timings(),
+      ...(isSentryEnabled()
+        ? {}
+        : {
+          message: error instanceof Error ? error.message : String(error),
+          stack: error instanceof Error ? error.stack : undefined,
+        }),
+    });
     captureBackendRouteError(req, error);
     res.status(500).json({ error: "Scenario generation failed" });
   }
