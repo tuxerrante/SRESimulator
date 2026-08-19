@@ -218,14 +218,32 @@ grep -Eq '^kind: Gateway$' "${gw_render}" || \
 grep -Eq '^kind: HTTPRoute$' "${gw_render}" || \
   fail "Gateway mode should render HTTPRoute resources."
 
-grep -Eq '^kind: ClientTrafficPolicy$' "${gw_render}" || \
-  fail "Gateway mode should render trusted client IP detection."
+# The AKS edge is a Layer-4 Azure Load Balancer that never sets
+# X-Forwarded-For, so trusting that header would let any caller forge a client
+# IP. Envoy must derive the client IP from the connection source address
+# instead, which is its behaviour when no xForwardedFor policy is rendered.
+if grep -Eq '^kind: ClientTrafficPolicy$' "${gw_render}"; then
+  fail "Gateway mode must not trust X-Forwarded-For by default."
+fi
 
-grep -A2 -Eq 'xForwardedFor:' "${gw_render}" || \
-  fail "Gateway mode should configure X-Forwarded-For client IP detection."
+if grep -Eq 'xForwardedFor:' "${gw_render}"; then
+  fail "Gateway mode must not configure X-Forwarded-For client IP detection by default."
+fi
 
-grep -Eq 'numTrustedHops: 1' "${gw_render}" || \
-  fail "Gateway mode should trust only the immediate edge hop."
+gw_xff_render="$(mktemp)"
+helm template sre-simulator "${CHART_DIR}" \
+  --set exposure.mode=gateway \
+  --set-string exposure.host="play.sresimulator.osadev.cloud" \
+  --set gateway.className=eg \
+  --set gateway.clientIpDetection.trustXForwardedFor=true >"${gw_xff_render}"
+
+grep -Eq '^kind: ClientTrafficPolicy$' "${gw_xff_render}" || \
+  fail "Opting into X-Forwarded-For trust should render a ClientTrafficPolicy."
+
+grep -Eq 'numTrustedHops: 1' "${gw_xff_render}" || \
+  fail "Opting into X-Forwarded-For trust should trust only the immediate edge hop."
+
+rm -f "${gw_xff_render}"
 
 grep -Eq 'type: ClusterIP' "${gw_render}" || \
   fail "Gateway mode should keep the frontend Service internal."

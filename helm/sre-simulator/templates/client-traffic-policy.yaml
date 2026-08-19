@@ -1,4 +1,4 @@
-{{- if and (eq (include "sre-simulator.exposureMode" .) "gateway") .Values.gateway.clientIpDetection.enabled }}
+{{- if and (eq (include "sre-simulator.exposureMode" .) "gateway") .Values.gateway.clientIpDetection.enabled .Values.gateway.clientIpDetection.trustXForwardedFor }}
 apiVersion: gateway.envoyproxy.io/v1alpha1
 kind: ClientTrafficPolicy
 metadata:

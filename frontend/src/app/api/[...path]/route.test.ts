@@ -149,7 +149,7 @@ describe("frontend backend proxy route", () => {
     expect(response.cookies.get("sresim_anonymous_proof")?.value).toBeTruthy();
   });
 
-  it("only forwards a signed client IP when proxy header trust is explicitly enabled", async () => {
+  it("ignores caller-supplied forwarding headers even when proxy trust is enabled", async () => {
     process.env.ANTI_ABUSE_HMAC_SECRET = "test-hmac";
     process.env.BACKEND_INTERNAL_BASE_URL = "http://backend.internal";
     process.env.TRUST_PROXY_HEADERS = "true";
@@ -177,12 +177,13 @@ describe("frontend backend proxy route", () => {
       }),
     });
 
-    await POST(request);
+    const response = await POST(request);
 
-    const [, options] = fetchMock.mock.calls[0] as [string, RequestInit];
-    const headers = options.headers as Headers;
-    expect(headers.get("x-sresim-client-ip")).toBe("203.0.113.5");
-    expect(headers.get("x-sresim-client-ip-signature")).toBeTruthy();
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({
+      error: "Trusted proxy client IP verification failed",
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("uses the client IP detected by Envoy Gateway", async () => {
@@ -222,7 +223,7 @@ describe("frontend backend proxy route", () => {
     expect(headers.get("x-sresim-client-ip-signature")).toBeTruthy();
   });
 
-  it("accepts a single sanitized forwarded IP from a trusted edge", async () => {
+  it("rejects a spoofable single-entry X-Forwarded-For without an edge address", async () => {
     process.env.ANTI_ABUSE_HMAC_SECRET = "test-hmac";
     process.env.BACKEND_INTERNAL_BASE_URL = "http://backend.internal";
     process.env.TRUST_PROXY_HEADERS = "true";
@@ -249,11 +250,10 @@ describe("frontend backend proxy route", () => {
       }),
     });
 
-    await POST(request);
+    const response = await POST(request);
 
-    const [, options] = fetchMock.mock.calls[0] as [string, RequestInit];
-    const headers = options.headers as Headers;
-    expect(headers.get("x-sresim-client-ip")).toBe("203.0.113.7");
+    expect(response.status).toBe(400);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it.each(["/api/chat", "/api/command"])(
@@ -321,7 +321,7 @@ describe("frontend backend proxy route", () => {
         method: "POST",
         headers: {
           "content-type": "application/json",
-          "x-real-ip": "203.0.113.5",
+          "x-envoy-external-address": "203.0.113.5",
           "x-forwarded-for": "203.0.113.5, 10.0.0.1",
         },
         body: JSON.stringify(payload),

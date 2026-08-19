@@ -435,6 +435,19 @@ Database free tier (100K vCore-seconds/month, 32 GB storage, $0/month).
   claim digests with 24h expiry for free-trial enforcement. Public ingress
   profiles require a trusted edge-supplied client IP and fail closed when it is
   unavailable.
+
+  The only trustworthy source for that address is Envoy's connection source
+  address, republished as `x-envoy-external-address`. The AKS edge terminates
+  on a Layer-4 Azure Load Balancer that never sets `X-Forwarded-For`, so that
+  header is fully caller-controlled: trusting it would let anyone forge a
+  client IP and mint unlimited anonymous trials. Consequently the chart does
+  **not** render an Envoy `ClientTrafficPolicy` with `xForwardedFor` trust by
+  default (`gateway.clientIpDetection.trustXForwardedFor=false`); enable it
+  only when a Layer-7 proxy that overwrites the header fronts the Gateway.
+  The frontend proxy likewise accepts only `x-envoy-external-address` and
+  strips every inbound forwarding header before proxying. The Envoy service is
+  deployed with `externalTrafficPolicy: Local` so kube-proxy does not SNAT the
+  source address onto a node IP and collapse all visitors onto one identity.
 - **Leaderboard**: Stored in `leaderboard_entries` table. Uses `MERGE`
   to atomically keep the best score per (GitHub user id, platform, difficulty,
   traffic source). The stored callsign/nickname corresponds to the best

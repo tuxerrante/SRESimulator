@@ -1148,6 +1148,24 @@ run_gatewayclass_manifest_check() {
   rm -f "$manifest"
 }
 
+run_envoyproxy_manifest_source_ip_check() {
+  local manifest
+
+  # shellcheck disable=SC1091
+  source "$ROOT_DIR/scripts/aks-deploy.sh"
+
+  AKS_RG="sre-simulator-rg"
+  AKS_FRONTEND_PUBLIC_IP_NAME="sre-simulator-pip"
+  AKS_FRONTEND_PUBLIC_IP="203.0.113.10"
+
+  manifest="$(write_aks_envoyproxy_manifest "sre-simulator")"
+  assert_contains 'kind: EnvoyProxy' "$manifest"
+  # Without Local the Azure Load Balancer path SNATs every visitor onto a node
+  # IP, collapsing all anonymous identities onto one client address.
+  assert_contains 'externalTrafficPolicy: Local' "$manifest"
+  rm -f "$manifest"
+}
+
 run_cert_manager_gateway_api_enable_check() {
   # shellcheck disable=SC1091
   source "$ROOT_DIR/scripts/aks-deploy.sh"
@@ -2061,6 +2079,7 @@ main() {
   run_clusterissuer_manifest_check
   run_clusterissuer_manifest_requires_email_check
   run_gatewayclass_manifest_check
+  run_envoyproxy_manifest_source_ip_check
   run_cert_manager_gateway_api_enable_check
   run_gateway_ready_missing_gateway_check
   run_gateway_ready_stale_status_check

@@ -218,6 +218,13 @@ spec:
                 service.beta.kubernetes.io/azure-pip-name: "${AKS_FRONTEND_PUBLIC_IP_NAME}"
             spec:
               loadBalancerIP: "${AKS_FRONTEND_PUBLIC_IP}"
+              # Required for anonymous trial enforcement: the Azure Load
+              # Balancer is Layer 4 and does not set X-Forwarded-For, so the
+              # only trustworthy client IP is Envoy's socket source address.
+              # With the default "Cluster" policy kube-proxy SNATs that
+              # address to a node IP and every visitor collapses onto one
+              # identity.
+              externalTrafficPolicy: Local
 EOF
   then
     rm -f "$manifest_file"
