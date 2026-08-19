@@ -13,7 +13,7 @@
   },
   "dependencies": {
     "@anthropic-ai/vertex-sdk": "^0.19.0",
-    "@sentry/node": "^10.56.0",
+    "@sentry/node": "^10.70.0",
     "compromise": "^14.15.1",
     "cors": "^2.8.5",
     "express": "^5.2.1",
