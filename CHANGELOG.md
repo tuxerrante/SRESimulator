@@ -24,6 +24,10 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Fixed (Unreleased)
 
+- Fixed the unprivileged Dependabot E2E image build, which failed with
+  "Docker exporter is not supported for the docker driver" and blocked every
+  Dependabot pull request at `ci-gate`. The image is now loaded into the local
+  daemon and exported with `docker save` instead of a buildx tarball exporter.
 - Made stale automatic production release runs skip cleanly before Azure login
   when a newer semver tag appears, while retaining the fail-closed latest-tag
   guard for manual deploys.

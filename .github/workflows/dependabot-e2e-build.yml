@@ -55,8 +55,20 @@ jobs:
             }}:${{
               github.event.pull_request.head.sha
             }}
-          outputs: >-
-            type=docker,dest=${{ runner.temp }}/${{ matrix.component }}.tar
+          # The default buildx "docker" driver cannot export to a tarball, so
+          # load the image into the local daemon and save it separately
+          # instead of using outputs: type=docker,dest=...
+          load: true
+
+      - name: Export image artifact
+        env:
+          COMPONENT: ${{ matrix.component }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          image="ghcr.io/${GITHUB_REPOSITORY_OWNER}"
+          image+="/sre-simulator-${COMPONENT}:${HEAD_SHA}"
+          docker save "${image}" --output "${RUNNER_TEMP}/${COMPONENT}.tar"
 
       - name: Record artifact identity
         env:
