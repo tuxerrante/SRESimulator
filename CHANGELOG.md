@@ -12,6 +12,10 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 - Made stale automatic production release runs skip cleanly before Azure login
   when a newer semver tag appears, while retaining the fail-closed latest-tag
   guard for manual deploys.
+- Added a merge-blocking Dependabot browser E2E path that uses trusted
+  deployment code, SHA-bound artifacts built by an unprivileged PR workflow,
+  mock-only runtime configuration, and a fixed namespace-scoped Kubernetes
+  identity without Azure login or production secrets.
 
 ## [0.4.2] - 2026-08-08
 

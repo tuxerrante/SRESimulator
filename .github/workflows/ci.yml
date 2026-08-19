@@ -637,6 +637,7 @@ jobs:
     if: >-
       always() &&
       github.event_name == 'pull_request' &&
+      github.event.pull_request.user.login != 'dependabot[bot]' &&
       github.event.pull_request.head.repo.full_name == github.repository &&
       needs.changes.result == 'success' &&
       needs.lint-typecheck.result == 'success' &&
@@ -819,6 +820,9 @@ jobs:
 
   ci-gate:
     if: always()
+    permissions:
+      contents: read
+      statuses: read
     needs:
       - tag-mainline-check
       - changes
@@ -847,6 +851,11 @@ jobs:
           DOCKER_RESULT: ${{ needs.docker-build.result }}
           LIVE_E2E_RESULT: ${{ needs.live-e2e.result }}
           EVENT_NAME: ${{ github.event_name }}
+          IS_DEPENDABOT: >-
+            ${{ github.event_name == 'pull_request' &&
+                github.event.pull_request.user.login == 'dependabot[bot]' }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           failed=false
           failed_jobs=()
@@ -882,7 +891,39 @@ jobs:
           done
 
           if [[ "${EVENT_NAME}" == "pull_request" ]]; then
-            if [[ "${LIVE_E2E_RESULT}" != "success" ]]; then
+            if [[ "${IS_DEPENDABOT}" == "true" ]]; then
+              dependabot_e2e_state=""
+              for _ in $(seq 1 90); do
+                dependabot_e2e_state="$(
+                  gh api \
+                    "repos/${GITHUB_REPOSITORY}/commits/${PR_HEAD_SHA}/status" \
+                    --jq '
+                      [
+                        .statuses[] |
+                        select(.context == "dependabot-e2e")
+                      ] |
+                      sort_by(.created_at) |
+                      last |
+                      .state // ""
+                    '
+                )"
+                case "${dependabot_e2e_state}" in
+                  success)
+                    break
+                    ;;
+                  failure|error)
+                    break
+                    ;;
+                esac
+                sleep 20
+              done
+              if [[ "${dependabot_e2e_state}" != "success" ]]; then
+                failed=true
+                failed_jobs+=(
+                  "dependabot-e2e (${dependabot_e2e_state:-missing})"
+                )
+              fi
+            elif [[ "${LIVE_E2E_RESULT}" != "success" ]]; then
               failed=true
               failed_jobs+=("live-e2e (${LIVE_E2E_RESULT})")
             fi

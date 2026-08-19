@@ -3,6 +3,8 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WORKFLOW="$ROOT_DIR/.github/workflows/ci.yml"
+DEPENDABOT_BUILD_WORKFLOW="$ROOT_DIR/.github/workflows/dependabot-e2e-build.yml"
+DEPENDABOT_WORKFLOW="$ROOT_DIR/.github/workflows/dependabot-e2e.yml"
 MAKEFILE="$ROOT_DIR/Makefile"
 
 fail() {
@@ -16,6 +18,13 @@ assert_contains() {
     fail "expected '$expected' in $file"
 }
 
+assert_not_contains() {
+  local unexpected=$1 file=$2
+  if grep -Fq -- "$unexpected" "$file"; then
+    fail "did not expect '$unexpected' in $file"
+  fi
+}
+
 node --check "$ROOT_DIR/scripts/playwright-live-e2e.mjs"
 assert_contains "Promise.allSettled" "$ROOT_DIR/scripts/playwright-live-e2e.mjs"
 assert_contains "Parallel users did not receive distinct scenarios" "$ROOT_DIR/scripts/playwright-live-e2e.mjs"
@@ -23,12 +32,69 @@ assert_contains "Parallel users did not receive distinct scenarios" "$ROOT_DIR/s
 assert_contains "live-e2e:" "$WORKFLOW"
 assert_contains "name: live-e2e" "$WORKFLOW"
 assert_contains "github.event.pull_request.head.repo.full_name == github.repository" "$WORKFLOW"
+assert_contains "github.event.pull_request.user.login != 'dependabot[bot]'" "$WORKFLOW"
+assert_contains "github.event.pull_request.user.login == 'dependabot[bot]'" "$WORKFLOW"
+assert_not_contains "github.actor != 'dependabot[bot]'" "$WORKFLOW"
+assert_not_contains "github.actor == 'dependabot[bot]'" "$WORKFLOW"
 assert_contains "E2E_NAMESPACE_PREFIX: sre-pr-" "$WORKFLOW"
 assert_contains 'group: sresimulator-live-e2e-pr-${{ github.event.pull_request.number }}' "$WORKFLOW"
 assert_contains "make test-e2e-live" "$WORKFLOW"
 assert_contains "make e2e-azure-route-down" "$WORKFLOW"
 assert_contains "LIVE_E2E_RESULT:" "$WORKFLOW"
 assert_contains 'failed_jobs+=("live-e2e (${LIVE_E2E_RESULT})")' "$WORKFLOW"
+assert_contains 'select(.context == "dependabot-e2e")' "$WORKFLOW"
+assert_contains '"on":' "$DEPENDABOT_BUILD_WORKFLOW"
+assert_contains "pull_request:" "$DEPENDABOT_BUILD_WORKFLOW"
+assert_contains "permissions:" "$DEPENDABOT_BUILD_WORKFLOW"
+assert_contains "contents: read" "$DEPENDABOT_BUILD_WORKFLOW"
+assert_contains "Checkout Dependabot head without credentials" "$DEPENDABOT_BUILD_WORKFLOW"
+assert_contains "Build unprivileged PR image artifact" "$DEPENDABOT_BUILD_WORKFLOW"
+assert_contains 'ghcr.io/${{ github.repository_owner }}/sre-simulator-' \
+  "$DEPENDABOT_BUILD_WORKFLOW"
+assert_not_contains "ghcr.io/tuxerrante/" "$DEPENDABOT_BUILD_WORKFLOW"
+assert_contains "Upload immutable image artifact" "$DEPENDABOT_BUILD_WORKFLOW"
+assert_contains "ea165f8d65b6e75b540449e92b4886f43607fa02" \
+  "$DEPENDABOT_BUILD_WORKFLOW"
+assert_contains 'workflows: ["Dependabot E2E Build"]' "$DEPENDABOT_WORKFLOW"
+assert_contains "author" "$DEPENDABOT_WORKFLOW"
+assert_contains 'dependabot[bot]' "$DEPENDABOT_WORKFLOW"
+assert_contains "environment:" "$DEPENDABOT_WORKFLOW"
+assert_contains "name: dependabot-e2e" "$DEPENDABOT_WORKFLOW"
+assert_contains "DEPENDABOT_E2E_KUBECONFIG" "$DEPENDABOT_WORKFLOW"
+assert_contains "for verb in get list watch" "$DEPENDABOT_WORKFLOW"
+assert_contains 'kubectl auth can-i "${verb}" secrets' "$DEPENDABOT_WORKFLOW"
+assert_contains "E2E identity must not" "$DEPENDABOT_WORKFLOW"
+assert_contains "Unable to verify" "$DEPENDABOT_WORKFLOW"
+assert_contains 'ghcr.io/${{ github.repository_owner }}/sre-simulator-frontend' \
+  "$DEPENDABOT_WORKFLOW"
+assert_not_contains "ghcr.io/tuxerrante/" "$DEPENDABOT_WORKFLOW"
+assert_contains "Download unprivileged image artifact" "$DEPENDABOT_WORKFLOW"
+assert_contains "Validate and load image artifact" "$DEPENDABOT_WORKFLOW"
+assert_contains "Login to GHCR after artifact validation" "$DEPENDABOT_WORKFLOW"
+assert_contains "ea165f8d65b6e75b540449e92b4886f43607fa02" \
+  "$DEPENDABOT_WORKFLOW"
+assert_contains "SOURCE_BUILD_RESULT:" "$DEPENDABOT_WORKFLOW"
+assert_contains "Unprivileged image build failed" "$DEPENDABOT_WORKFLOW"
+assert_contains 'echo "::add-mask::${anti_abuse_secret}"' \
+  "$DEPENDABOT_WORKFLOW"
+assert_contains 'KUBECONFIG=${RUNNER_TEMP}/dependabot-e2e-kubeconfig' \
+  "$DEPENDABOT_WORKFLOW"
+assert_not_contains "Checkout Dependabot head" "$DEPENDABOT_WORKFLOW"
+assert_not_contains "docker/build-push-action" "$DEPENDABOT_WORKFLOW"
+assert_not_contains '${{ runner.temp }}/dependabot-e2e-kubeconfig' \
+  "$DEPENDABOT_WORKFLOW"
+assert_not_contains "ea165f8d65b5e75b540449e92b4886f43607fa02" \
+  "$DEPENDABOT_WORKFLOW"
+assert_contains "dependabot-e2e-default-deny-egress" "$DEPENDABOT_WORKFLOW"
+assert_contains '[[ "${state}" != "open" ]]' "$DEPENDABOT_WORKFLOW"
+assert_contains '[[ "${head_sha}" != "${WORKFLOW_HEAD_SHA}" ]]' "$DEPENDABOT_WORKFLOW"
+assert_contains "ai.mockMode=true" "$DEPENDABOT_WORKFLOW"
+assert_contains "database.enabled=false" "$DEPENDABOT_WORKFLOW"
+assert_contains "storage.enabled=false" "$DEPENDABOT_WORKFLOW"
+assert_contains "turnstile-secret-key" "$DEPENDABOT_WORKFLOW"
+assert_contains "sre-simulator" "$DEPENDABOT_WORKFLOW"
+assert_contains "dependabot-e2e-runtime" "$DEPENDABOT_WORKFLOW"
+assert_contains "context=dependabot-e2e" "$DEPENDABOT_WORKFLOW"
 
 assert_contains "playwright-install:" "$MAKEFILE"
 assert_contains "test-e2e-live:" "$MAKEFILE"

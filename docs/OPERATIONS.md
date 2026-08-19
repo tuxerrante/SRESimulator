@@ -318,6 +318,35 @@ images, runs one anonymous entry plus three isolated platform users concurrently
 on four distinct scenarios, uploads screenshots/results, and removes the
 namespace in an `always()` cleanup step.
 
+Dependabot PRs take a credential-minimized path because GitHub withholds normal
+Actions secrets and gives their pull-request workflows a read-only token. A
+unprivileged `pull_request` workflow builds the dependency-update images and
+uploads immutable, SHA-bound artifacts. A trusted `workflow_run` validates and
+publishes those artifacts without checking out PR code, deploys only the trusted
+`main` chart into the fixed `sre-dependabot-e2e` namespace, and runs mock-AI/JSON
+browser coverage. Its kubeconfig is stored only in the unprotected
+`dependabot-e2e` Environment and is bound to that namespace; it cannot read the
+production namespace or delete namespaces. The main `ci-gate` waits for the
+`dependabot-e2e` commit status, so the bot path remains merge-blocking without
+Azure login or manual approval.
+
+The `dependabot-e2e` Environment accepts protected branches only. The trusted
+workflow re-reads PR metadata and refuses closed PRs, non-`main` bases,
+non-Dependabot authors, non-Dependabot refs, forks, and stale triggering SHAs.
+
+The namespace enforces restricted Pod Security and persistent default-deny
+egress. Pods may resolve cluster DNS, and the frontend may reach only the
+matching backend Pod on port 8080. PR-controlled images are built in a workflow
+with read-only repository permissions and no secrets; only the trusted
+default-branch workflow can publish packages or receive the namespace
+kubeconfig.
+
+For local operator access, keep the base64-encoded namespace kubeconfig in
+gitignored `backend/.env.local` as `DEPENDABOT_E2E_KUBECONFIG_B64`, then run
+`make dependabot-e2e-kubeconfig`. The target validates and writes the decoded
+credential with mode `0600` to
+`~/.config/sresimulator/dependabot-e2e-kubeconfig`.
+
 Local invocation against an existing environment:
 
 ```bash

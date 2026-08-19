@@ -20,10 +20,18 @@ spec:
         {{- include "sre-simulator.frontend.selectorLabels" . | nindent 8 }}
     spec:
       {{- include "sre-simulator.imagePullSecrets" . | nindent 6 }}
+      {{- with .Values.frontend.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       containers:
         - name: frontend
           image: "{{ .Values.frontend.image.repository }}:{{ .Values.frontend.image.tag }}"
           imagePullPolicy: {{ .Values.frontend.image.pullPolicy }}
+          {{- with .Values.frontend.containerSecurityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
           env:
             - name: BACKEND_INTERNAL_BASE_URL
               value: "http://{{ include "sre-simulator.fullname" . }}-backend:{{ .Values.backend.port }}"

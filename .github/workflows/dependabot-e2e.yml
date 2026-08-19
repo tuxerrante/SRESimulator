@@ -1,0 +1,413 @@
+---
+name: Dependabot E2E
+
+"on":
+  workflow_run:
+    workflows: ["Dependabot E2E Build"]
+    types:
+      - completed
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dependabot-e2e
+  cancel-in-progress: false
+
+jobs:
+  resolve:
+    if: >-
+      github.event.workflow_run.event == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+      statuses: write
+    outputs:
+      is_dependabot: ${{ steps.resolve.outputs.is_dependabot }}
+      pr_number: ${{ steps.resolve.outputs.pr_number }}
+      head_sha: ${{ steps.resolve.outputs.head_sha }}
+      image_tag: ${{ steps.resolve.outputs.image_tag }}
+    steps:
+      - name: Harden runner
+        # v2.18.0
+        uses: >-
+          step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411
+        with:
+          egress-policy: audit
+
+      - name: Resolve trusted Dependabot PR metadata
+        id: resolve
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: >-
+            ${{ github.event.workflow_run.pull_requests[0].number }}
+          WORKFLOW_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          echo "is_dependabot=false" >> "$GITHUB_OUTPUT"
+          if [[ -z "${PR_NUMBER}" ]]; then
+            exit 0
+          fi
+
+          pr_json="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")"
+          author="$(jq -r '.user.login' <<<"${pr_json}")"
+          state="$(jq -r '.state' <<<"${pr_json}")"
+          base_ref="$(jq -r '.base.ref' <<<"${pr_json}")"
+          head_repo="$(jq -r '.head.repo.full_name' <<<"${pr_json}")"
+          head_ref="$(jq -r '.head.ref' <<<"${pr_json}")"
+          head_sha="$(jq -r '.head.sha' <<<"${pr_json}")"
+          if [[ "${author}" != "dependabot[bot]" ]] ||
+             [[ "${state}" != "open" ]] ||
+             [[ "${base_ref}" != "main" ]] ||
+             [[ "${head_repo}" != "${GITHUB_REPOSITORY}" ]] ||
+             [[ "${head_ref}" != dependabot/* ]] ||
+             [[ "${head_sha}" != "${WORKFLOW_HEAD_SHA}" ]] ||
+             [[ ! "${head_sha}" =~ ^[0-9a-f]{40}$ ]]; then
+            exit 0
+          fi
+
+          echo "is_dependabot=true" >> "$GITHUB_OUTPUT"
+          echo "pr_number=${PR_NUMBER}" >> "$GITHUB_OUTPUT"
+          echo "head_sha=${head_sha}" >> "$GITHUB_OUTPUT"
+          echo "image_tag=dependabot-pr-${PR_NUMBER}-${head_sha:0:12}" \
+            >> "$GITHUB_OUTPUT"
+
+      - name: Mark Dependabot E2E pending
+        if: steps.resolve.outputs.is_dependabot == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ steps.resolve.outputs.head_sha }}
+        run: |
+          run_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs"
+          run_url+="/${GITHUB_RUN_ID}"
+          gh api \
+            --method POST \
+            "repos/${GITHUB_REPOSITORY}/statuses/${HEAD_SHA}" \
+            -f state=pending \
+            -f context=dependabot-e2e \
+            -f description="Publishing isolated mock E2E images" \
+            -f target_url="${run_url}" \
+            >/dev/null
+
+  publish-images:
+    needs: resolve
+    if: >-
+      needs.resolve.outputs.is_dependabot == 'true' &&
+      github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      packages: write
+    strategy:
+      matrix:
+        include:
+          - component: frontend
+          - component: backend
+    steps:
+      - name: Harden runner
+        # v2.18.0
+        uses: >-
+          step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411
+        with:
+          egress-policy: audit
+
+      - name: Download unprivileged image artifact
+        # v4.3.0
+        uses: >-
+          actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: >-
+            dependabot-e2e-${{ matrix.component }}-${{
+              needs.resolve.outputs.head_sha
+            }}
+          path: ${{ runner.temp }}/artifact
+          github-token: ${{ github.token }}
+          run-id: ${{ github.event.workflow_run.id }}
+
+      - name: Validate and load image artifact
+        env:
+          COMPONENT: ${{ matrix.component }}
+          HEAD_SHA: ${{ needs.resolve.outputs.head_sha }}
+          IMAGE_TAG: ${{ needs.resolve.outputs.image_tag }}
+        run: |
+          set -euo pipefail
+          artifact_dir="${RUNNER_TEMP}/artifact"
+          [[ "$(jq -r '.component' "${artifact_dir}/metadata.json")" \
+            == "${COMPONENT}" ]]
+          [[ "$(jq -r '.head_sha' "${artifact_dir}/metadata.json")" \
+            == "${HEAD_SHA}" ]]
+          (
+            cd "${artifact_dir}"
+            sha256sum --check --strict image.tar.sha256
+          )
+          source_image="ghcr.io/${GITHUB_REPOSITORY_OWNER}"
+          source_image+="/sre-simulator-${COMPONENT}:${HEAD_SHA}"
+          target_image="ghcr.io/${GITHUB_REPOSITORY_OWNER}"
+          target_image+="/sre-simulator-${COMPONENT}:${IMAGE_TAG}"
+          docker load --input "${artifact_dir}/image.tar"
+          docker image inspect "${source_image}" >/dev/null
+          docker tag "${source_image}" "${target_image}"
+
+      - name: Login to GHCR after artifact validation
+        # v4.4.0
+        uses: >-
+          docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Publish isolated PR image
+        env:
+          COMPONENT: ${{ matrix.component }}
+          IMAGE_TAG: ${{ needs.resolve.outputs.image_tag }}
+        run: |
+          docker push \
+            "ghcr.io/${GITHUB_REPOSITORY_OWNER}/sre-simulator-${COMPONENT}:${IMAGE_TAG}"
+
+  run-e2e:
+    needs:
+      - resolve
+      - publish-images
+    if: needs.publish-images.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    environment:
+      name: dependabot-e2e
+    env:
+      E2E_NAMESPACE: sre-dependabot-e2e
+      E2E_RELEASE: sre-dependabot-e2e
+      IMAGE_TAG: ${{ needs.resolve.outputs.image_tag }}
+      FRONTEND_IMAGE: >-
+        ghcr.io/${{ github.repository_owner }}/sre-simulator-frontend
+      BACKEND_IMAGE: >-
+        ghcr.io/${{ github.repository_owner }}/sre-simulator-backend
+      LIVE_E2E_ARTIFACT_DIR: >-
+        data/playwright-dependabot-e2e-${{ needs.resolve.outputs.pr_number }}
+      LIVE_E2E_VIEWER_PREFIX: >-
+        dependabot-${{ needs.resolve.outputs.pr_number }}-${{ github.run_id }}
+    steps:
+      - name: Harden runner
+        # v2.18.0
+        uses: >-
+          step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411
+        with:
+          egress-policy: audit
+
+      - name: Configure runner paths
+        run: |
+          echo "KUBECONFIG=${RUNNER_TEMP}/dependabot-e2e-kubeconfig" \
+            >> "$GITHUB_ENV"
+
+      - name: Checkout trusted deployment and test code
+        # v6.0.2
+        uses: >-
+          actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          ref: main
+          persist-credentials: false
+
+      - name: Load npm version
+        run: echo "NPM_VERSION=$(tr -d '\n' < .npm-version)" >> "$GITHUB_ENV"
+
+      - name: Setup Node.js
+        # v6.3.0
+        uses: >-
+          actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Update npm
+        run: npm install --global "npm@${NPM_VERSION}"
+
+      - name: Install browser test dependencies
+        run: npm ci --prefix frontend
+
+      - name: Setup Helm
+        # v5.0.0
+        uses: >-
+          azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310
+
+      - name: Install kubectl
+        env:
+          KUBECTL_VERSION: v1.34.4
+        run: |
+          set -euo pipefail
+          bin_dir="${RUNNER_TEMP}/bin"
+          mkdir -p "${bin_dir}"
+          base="https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64"
+          curl -fsSLo "${bin_dir}/kubectl" "${base}/kubectl"
+          curl -fsSLo "${bin_dir}/kubectl.sha256" "${base}/kubectl.sha256"
+          printf '%s  %s\n' \
+            "$(cat "${bin_dir}/kubectl.sha256")" \
+            "${bin_dir}/kubectl" |
+            sha256sum --check --status
+          chmod 0755 "${bin_dir}/kubectl"
+          echo "${bin_dir}" >> "$GITHUB_PATH"
+
+      - name: Configure namespace-only Kubernetes identity
+        env:
+          E2E_KUBECONFIG: ${{ secrets.DEPENDABOT_E2E_KUBECONFIG }}
+        run: |
+          set -euo pipefail
+          umask 077
+          printf '%s' "${E2E_KUBECONFIG}" > "${KUBECONFIG}"
+          kubectl auth can-i create deployments.apps \
+            --namespace "${E2E_NAMESPACE}" --quiet
+          for verb in get list watch; do
+            set +e
+            kubectl auth can-i "${verb}" secrets \
+              --namespace sre-simulator --quiet
+            access_status=$?
+            set -e
+            if [[ "${access_status}" -eq 0 ]]; then
+              echo "E2E identity must not ${verb} production secrets." >&2
+              exit 1
+            fi
+            if [[ "${access_status}" -ne 1 ]]; then
+              echo "Unable to verify ${verb} denial." >&2
+              exit 1
+            fi
+          done
+          for policy in \
+            dependabot-e2e-default-deny-egress \
+            dependabot-e2e-allow-dns \
+            dependabot-e2e-frontend-to-backend; do
+            kubectl -n "${E2E_NAMESPACE}" get \
+              "networkpolicy/${policy}" >/dev/null
+          done
+
+      - name: Deploy trusted chart with mock-only runtime
+        run: |
+          set -euo pipefail
+          session_secret="$(openssl rand -hex 32)"
+          anti_abuse_secret="$(openssl rand -hex 32)"
+          echo "::add-mask::${session_secret}"
+          echo "::add-mask::${anti_abuse_secret}"
+          echo "LIVE_E2E_AUTH_SESSION_SECRET=${session_secret}" \
+            >> "$GITHUB_ENV"
+
+          kubectl -n "${E2E_NAMESPACE}" create secret generic \
+            dependabot-e2e-runtime \
+            --from-literal=auth-session-secret="${session_secret}" \
+            --from-literal=anti-abuse-hmac-secret="${anti_abuse_secret}" \
+            --from-literal=turnstile-secret-key=dependabot-test-secret \
+            --dry-run=client -o yaml |
+            kubectl apply -f -
+
+          helm upgrade --install "${E2E_RELEASE}" ./helm/sre-simulator \
+            --namespace "${E2E_NAMESPACE}" \
+            --set exposure.mode=none \
+            --set-string "frontend.image.repository=${FRONTEND_IMAGE}" \
+            --set-string "frontend.image.tag=${IMAGE_TAG}" \
+            --set frontend.image.pullPolicy=Always \
+            --set-string "backend.image.repository=${BACKEND_IMAGE}" \
+            --set-string "backend.image.tag=${IMAGE_TAG}" \
+            --set backend.image.pullPolicy=Always \
+            --set ai.mockMode=true \
+            --set ai.strictStartup=false \
+            --set database.enabled=false \
+            --set storage.enabled=false \
+            --set backend.allowDeployedJsonStorageForTests=true \
+            --set frontend.auth.githubOAuthEnabled=false \
+            --set frontend.auth.existingSecretName=dependabot-e2e-runtime \
+            --set frontend.auth.antiAbuseHmacSecretKey=anti-abuse-hmac-secret \
+            --set backend.auth.existingSecretName=dependabot-e2e-runtime \
+            --set backend.auth.antiAbuseHmacSecretKey=anti-abuse-hmac-secret \
+            --set backend.auth.turnstileSecretKey=turnstile-secret-key \
+            --set backend.auth.turnstileTestMode=true \
+            --set backend.auth.localTestVerificationEnabled=true \
+            --wait --timeout 10m
+
+      - name: Install Playwright Chromium
+        run: make playwright-install
+
+      - name: Run browser E2E
+        run: |
+          set -euo pipefail
+          port_forward_log="${RUNNER_TEMP}/dependabot-e2e-port-forward.log"
+          kubectl -n "${E2E_NAMESPACE}" port-forward \
+            "service/${E2E_RELEASE}-frontend" 3000:3000 \
+            >"${port_forward_log}" 2>&1 &
+          port_forward_pid=$!
+          trap 'kill "${port_forward_pid}" >/dev/null 2>&1 || true' EXIT
+
+          for _ in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:3000/ >/dev/null; then
+              break
+            fi
+            sleep 2
+          done
+          curl -fsS http://127.0.0.1:3000/ >/dev/null
+
+          export LIVE_E2E_BASE_URL=http://127.0.0.1:3000
+          make test-e2e-live
+
+      - name: Upload Dependabot E2E artifacts
+        if: always()
+        # v4.6.2
+        uses: >-
+          actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: dependabot-e2e-pr-${{ needs.resolve.outputs.pr_number }}
+          path: ${{ env.LIVE_E2E_ARTIFACT_DIR }}
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Clean fixed E2E namespace
+        if: always()
+        run: |
+          helm uninstall "${E2E_RELEASE}" \
+            --namespace "${E2E_NAMESPACE}" >/dev/null 2>&1 || true
+          kubectl -n "${E2E_NAMESPACE}" delete secret \
+            dependabot-e2e-runtime --ignore-not-found >/dev/null
+
+  finalize:
+    needs:
+      - resolve
+      - publish-images
+      - run-e2e
+    if: >-
+      always() &&
+      needs.resolve.outputs.is_dependabot == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      statuses: write
+    steps:
+      - name: Publish Dependabot E2E result
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ needs.resolve.outputs.head_sha }}
+          SOURCE_BUILD_RESULT: ${{ github.event.workflow_run.conclusion }}
+          PUBLISH_RESULT: ${{ needs.publish-images.result }}
+          E2E_RESULT: ${{ needs.run-e2e.result }}
+        run: |
+          set -euo pipefail
+          state=failure
+          description="Isolated mock E2E failed"
+          if [[ "${SOURCE_BUILD_RESULT}" != "success" ]]; then
+            description="Unprivileged image build failed"
+          fi
+          run_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs"
+          run_url+="/${GITHUB_RUN_ID}"
+          if [[ "${PUBLISH_RESULT}" == "success" ]] &&
+             [[ "${E2E_RESULT}" == "success" ]]; then
+            state=success
+            description="Isolated mock E2E passed"
+          fi
+          gh api \
+            --method POST \
+            "repos/${GITHUB_REPOSITORY}/statuses/${HEAD_SHA}" \
+            -f state="${state}" \
+            -f context=dependabot-e2e \
+            -f description="${description}" \
+            -f target_url="${run_url}" \
+            >/dev/null
+          [[ "${state}" == "success" ]]
