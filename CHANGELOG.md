@@ -39,7 +39,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   errors were reported only through Sentry, which is disabled in CI and local
   runs, so a generic `Scenario generation failed` response carried no error
   name, message, stack or stage timings anywhere in the logs. Diagnosing an
-  intermittent CI failure of this route was impossible as a result.
+  intermittent CI failure of this route was impossible as a result. The error
+  name and stage timings are always logged; the raw message and stack are
+  logged only where Sentry is disabled, so production disclosure is unchanged.
 - Fixed the Dependabot E2E browser step, which port-forwarded
   `${E2E_RELEASE}-frontend` while the chart rendered
   `${E2E_RELEASE}-sre-simulator-frontend`, so the service was never found. The
