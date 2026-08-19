@@ -885,6 +885,14 @@ scenarioRouter.post("/", async (req: Request, res: Response) => {
       res.status(error.status).json({ error: error.clientMessage });
       return;
     }
+    // Sentry is disabled in CI and local runs, so without this the only
+    // unclassified failure path of the route is completely silent.
+    console.error("[scenario] unexpected scenario creation failure", {
+      name: error instanceof Error ? error.name : typeof error,
+      message: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+      stages: deadline.timings(),
+    });
     captureBackendRouteError(req, error);
     res.status(500).json({ error: "Scenario generation failed" });
   }

@@ -35,6 +35,11 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Fixed (Unreleased)
 
+- Logged the unclassified failure path of `POST /api/scenario`. Unexpected
+  errors were reported only through Sentry, which is disabled in CI and local
+  runs, so a generic `Scenario generation failed` response carried no error
+  name, message, stack or stage timings anywhere in the logs. Diagnosing an
+  intermittent CI failure of this route was impossible as a result.
 - Fixed the Dependabot E2E browser step, which port-forwarded
   `${E2E_RELEASE}-frontend` while the chart rendered
   `${E2E_RELEASE}-sre-simulator-frontend`, so the service was never found. The
