@@ -185,6 +185,13 @@ run_prepare_and_verify_check() {
   assert_contains "Semver surfaces aligned for v0.1.3." \
     "$TMP_DIR/verify-success.txt"
   assert_not_contains "mismatch" "$TMP_DIR/verify-success.txt"
+
+  # appVersion is the last line of Chart.yaml, so a greedy trailing-whitespace
+  # pattern silently swallows the final newline and every release commit then
+  # trips the end-of-file-fixer pre-commit hook.
+  if [ -n "$(tail -c 1 "$repo_dir/helm/sre-simulator/Chart.yaml")" ]; then
+    fail "prepare must keep the trailing newline in Chart.yaml"
+  fi
 }
 
 run_prepare_pattern_guard_check() {

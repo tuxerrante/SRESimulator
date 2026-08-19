@@ -7,7 +7,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
-### Added (Unreleased)
+## [0.5.0] - 2026-08-19
+
+### Added (0.5.0)
 
 - Bound `POST /api/scenario` with an end-to-end application deadline
   (`SCENARIO_REQUEST_BUDGET_MS`, default and hard maximum 24s) shared by
@@ -18,7 +20,7 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   per-stage latencies are recorded and logged when the deadline is exceeded.
   ([#340](https://github.com/tuxerrante/SRESimulator/issues/340))
 
-### Changed (Unreleased)
+### Changed (0.5.0)
 
 - Made anonymous trial enforcement identity-aware by client IP: an opaque
   IP-only claim is persisted alongside browser signals and trusted client IP
@@ -32,9 +34,22 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   accepts only `x-envoy-external-address`, and the Envoy service is deployed
   with `externalTrafficPolicy: Local` so the real source address survives
   kube-proxy.
+- Updated the safe dependency backlog in a single batch: `actions/checkout`
+  7.0.1, `step-security/harden-runner` 2.21.0, `vitest` and
+  `@vitest/coverage-v8` 4.1.10 in both workspaces, backend
+  `typescript-eslint` 8.67.0 and `compromise` 14.16.0, and frontend
+  `playwright` 1.62.1. The frontend test toolchain moves `vite` 6.4.3 to 8.2.1
+  transitively through `vitest`; it is test-only tooling and every runtime
+  image and workflow already runs Node 24.
+  ([#351](https://github.com/tuxerrante/SRESimulator/pull/351))
 
-### Fixed (Unreleased)
+### Fixed (0.5.0)
 
+- Kept the trailing newline in `helm/sre-simulator/Chart.yaml` when preparing a
+  release. `appVersion` is the last line of the file and the update pattern
+  ended in a greedy `\s*$`, which under the `m` flag consumed the final
+  newline, so every release commit tripped the `end-of-file-fixer` pre-commit
+  hook and had to be fixed by hand.
 - Logged the unclassified failure path of `POST /api/scenario`. Unexpected
   errors were reported only through Sentry, which is disabled in CI and local
   runs, so a generic `Scenario generation failed` response carried no error
