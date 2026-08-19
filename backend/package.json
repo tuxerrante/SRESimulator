@@ -34,7 +34,7 @@
     "ts-unused-exports": "^11.0.1",
     "tsx": "^4.23.12",
     "typescript": "^6.0.3",
-    "typescript-eslint": "^8.61.0",
+    "typescript-eslint": "^8.67.0",
     "vitest": "^4.1.9"
   }
 }
