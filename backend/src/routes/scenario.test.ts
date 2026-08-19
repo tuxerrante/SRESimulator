@@ -95,12 +95,15 @@ describe("POST /api/scenario", () => {
   let tmpDir: string;
   const anonymousUserAgent = "scenario-test-agent";
 
-  function createAnonymousProofCookie(fingerprintHash: string): string {
+  function createAnonymousProofCookie(
+    fingerprintHash: string,
+    userAgent = anonymousUserAgent,
+  ): string {
     const issuedAt = Date.now();
     const proofToken = createAnonymousProofToken(
       {
         fingerprintHash,
-        userAgentHash: hashAnonymousProofUserAgent(anonymousUserAgent),
+        userAgentHash: hashAnonymousProofUserAgent(userAgent),
         issuedAt,
         expiresAt: issuedAt + 60_000,
       },
@@ -124,6 +127,8 @@ describe("POST /api/scenario", () => {
     originalEnv.AUTH_SESSION_SECRET = process.env.AUTH_SESSION_SECRET;
     originalEnv.ANTI_ABUSE_HMAC_SECRET = process.env.ANTI_ABUSE_HMAC_SECRET;
     originalEnv.AUTOMATED_TRAFFIC_TOKEN = process.env.AUTOMATED_TRAFFIC_TOKEN;
+    originalEnv.REQUIRE_ANONYMOUS_CLIENT_IP =
+      process.env.REQUIRE_ANONYMOUS_CLIENT_IP;
     process.env.AI_MOCK_MODE = "true";
     process.env.DATA_DIR = tmpDir;
     process.env.TURNSTILE_SECRET_KEY = "test-secret";
@@ -146,6 +151,7 @@ describe("POST /api/scenario", () => {
     process.env.AUTH_SESSION_SECRET = "test-secret";
     process.env.ANTI_ABUSE_HMAC_SECRET = "test-hmac";
     delete process.env.AUTOMATED_TRAFFIC_TOKEN;
+    delete process.env.REQUIRE_ANONYMOUS_CLIENT_IP;
   });
 
   afterAll(async () => {
@@ -178,6 +184,12 @@ describe("POST /api/scenario", () => {
       delete process.env.AUTOMATED_TRAFFIC_TOKEN;
     } else {
       process.env.AUTOMATED_TRAFFIC_TOKEN = originalEnv.AUTOMATED_TRAFFIC_TOKEN;
+    }
+    if (originalEnv.REQUIRE_ANONYMOUS_CLIENT_IP === undefined) {
+      delete process.env.REQUIRE_ANONYMOUS_CLIENT_IP;
+    } else {
+      process.env.REQUIRE_ANONYMOUS_CLIENT_IP =
+        originalEnv.REQUIRE_ANONYMOUS_CLIENT_IP;
     }
     await rm(tmpDir, { recursive: true, force: true });
   });
@@ -371,6 +383,47 @@ describe("POST /api/scenario", () => {
     expect(second.status).toBe(429);
     expect(second.body.error).toBe("Anonymous Easy mode is limited to one run per day.");
     expect(second.body.code).toBe("anonymous_daily_limit_reached");
+  });
+
+  it("blocks a fresh anonymous proof with different browser signals on the same IP", async () => {
+    const app = createApp(scenarioRouter);
+    const firstUserAgent = "first-anonymous-browser";
+    const secondUserAgent = "second-anonymous-browser";
+    const first = await postJson(app, "/api/scenario", {
+      difficulty: "easy",
+      turnstileToken: "pass",
+    }, {
+      cookie: createAnonymousProofCookie("first-fingerprint", firstUserAgent),
+      "user-agent": firstUserAgent,
+      ...createSignedClientIpHeaders("203.0.113.12"),
+    });
+    const second = await postJson(app, "/api/scenario", {
+      difficulty: "easy",
+      turnstileToken: "pass",
+    }, {
+      cookie: createAnonymousProofCookie("second-fingerprint", secondUserAgent),
+      "user-agent": secondUserAgent,
+      ...createSignedClientIpHeaders("203.0.113.12"),
+    });
+
+    expect(first.status).toBe(200);
+    expect(second.status).toBe(429);
+    expect(second.body.code).toBe("anonymous_daily_limit_reached");
+  });
+
+  it("fails closed when strict anonymous IP enforcement has no signed client IP", async () => {
+    process.env.REQUIRE_ANONYMOUS_CLIENT_IP = "true";
+    const app = createApp(scenarioRouter);
+    const res = await postJson(app, "/api/scenario", {
+      difficulty: "easy",
+      turnstileToken: "pass",
+    }, {
+      cookie: createAnonymousProofCookie("missing-ip"),
+      "user-agent": anonymousUserAgent,
+    });
+
+    expect(res.status).toBe(503);
+    expect(res.body.code).toBe("anonymous_client_identity_unavailable");
   });
 
   it("still returns github_required for anonymous medium requests when anti-abuse secret is missing", async () => {

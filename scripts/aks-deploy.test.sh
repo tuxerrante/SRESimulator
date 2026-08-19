@@ -478,6 +478,8 @@ run_gateway_deploy_path_check() {
   assert_contains 'scheme: "https"' "$TMP_DIR/captured-values.yaml"
   assert_not_contains 'loadBalancerIP:' "$TMP_DIR/captured-values.yaml"
   assert_not_contains 'azure-pip-name' "$TMP_DIR/captured-values.yaml"
+  assert_not_contains "frontend.trustProxyHeaders=true" "$TMP_DIR/helm-args.txt"
+  assert_not_contains "backend.auth.requireAnonymousClientIp=true" "$TMP_DIR/helm-args.txt"
 }
 
 run_gateway_deploy_skip_bootstrap_check() {
@@ -741,7 +743,11 @@ run_optional_auth_verification_flag_check() {
   E2E_RELEASE="sre-simulator"
   AKS_RG="example-aks-rg"
   AKS_CLUSTER="example-aks"
-  AKS_EXPOSURE_MODE="publicService"
+  AKS_EXPOSURE_MODE="gateway"
+  AKS_GATEWAY_HOST="play.sresimulator.osadev.cloud"
+  AKS_GATEWAY_CLASS_NAME="eg"
+  AKS_CLUSTER_ISSUER_NAME="letsencrypt-azuredns-prod"
+  AKS_GATEWAY_TLS_SECRET_NAME="sre-simulator-gateway-tls"
   AOAI_DEPLOYMENT="gpt-4o-mini"
   GITHUB_AUTH_SECRET_NAME="sre-auth-secrets"
   ANTI_ABUSE_HMAC_SECRET="anti-abuse-hmac"
@@ -763,6 +769,9 @@ run_optional_auth_verification_flag_check() {
   assert_contains "backend.auth.turnstileExpectedHostnameKey=turnstile-expected-hostname" "$TMP_DIR/helm-args.txt"
   assert_contains "backend.auth.turnstileTestMode=true" "$TMP_DIR/helm-args.txt"
   assert_contains "backend.auth.localTestVerificationEnabled=true" "$TMP_DIR/helm-args.txt"
+  assert_contains "frontend.trustProxyHeaders=true" "$TMP_DIR/helm-args.txt"
+  assert_contains "backend.trustProxyHeaders=true" "$TMP_DIR/helm-args.txt"
+  assert_contains "backend.auth.requireAnonymousClientIp=true" "$TMP_DIR/helm-args.txt"
 }
 
 run_default_copied_auth_secret_wires_anonymous_easy_keys_check() {
@@ -1136,6 +1145,24 @@ run_gatewayclass_manifest_check() {
   assert_contains 'kind: GatewayClass' "$manifest"
   assert_contains 'name: eg' "$manifest"
   assert_contains 'controllerName: gateway.envoyproxy.io/gatewayclass-controller' "$manifest"
+  rm -f "$manifest"
+}
+
+run_envoyproxy_manifest_source_ip_check() {
+  local manifest
+
+  # shellcheck disable=SC1091
+  source "$ROOT_DIR/scripts/aks-deploy.sh"
+
+  AKS_RG="sre-simulator-rg"
+  AKS_FRONTEND_PUBLIC_IP_NAME="sre-simulator-pip"
+  AKS_FRONTEND_PUBLIC_IP="203.0.113.10"
+
+  manifest="$(write_aks_envoyproxy_manifest "sre-simulator")"
+  assert_contains 'kind: EnvoyProxy' "$manifest"
+  # Without Local the Azure Load Balancer path SNATs every visitor onto a node
+  # IP, collapsing all anonymous identities onto one client address.
+  assert_contains 'externalTrafficPolicy: Local' "$manifest"
   rm -f "$manifest"
 }
 
@@ -2052,6 +2079,7 @@ main() {
   run_clusterissuer_manifest_check
   run_clusterissuer_manifest_requires_email_check
   run_gatewayclass_manifest_check
+  run_envoyproxy_manifest_source_ip_check
   run_cert_manager_gateway_api_enable_check
   run_gateway_ready_missing_gateway_check
   run_gateway_ready_stale_status_check

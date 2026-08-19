@@ -7,6 +7,21 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+### Changed (Unreleased)
+
+- Made anonymous trial enforcement identity-aware by client IP: an opaque
+  IP-only claim is persisted alongside browser signals and trusted client IP
+  detection is wired through the AKS Gateway path. The anonymous Easy path now
+  fails closed when strict anonymous identity is unavailable.
+- Derived the trusted client IP from Envoy's connection source address instead
+  of `X-Forwarded-For`. The AKS edge is a Layer-4 Azure Load Balancer that
+  never sets that header, so trusting it allowed any caller to forge a client
+  IP and mint unlimited anonymous trials. `X-Forwarded-For` trust is now
+  opt-in (`gateway.clientIpDetection.trustXForwardedFor`), the frontend proxy
+  accepts only `x-envoy-external-address`, and the Envoy service is deployed
+  with `externalTrafficPolicy: Local` so the real source address survives
+  kube-proxy.
+
 ### Fixed (Unreleased)
 
 - Made stale automatic production release runs skip cleanly before Azure login

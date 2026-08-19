@@ -218,6 +218,13 @@ spec:
                 service.beta.kubernetes.io/azure-pip-name: "${AKS_FRONTEND_PUBLIC_IP_NAME}"
             spec:
               loadBalancerIP: "${AKS_FRONTEND_PUBLIC_IP}"
+              # Required for anonymous trial enforcement: the Azure Load
+              # Balancer is Layer 4 and does not set X-Forwarded-For, so the
+              # only trustworthy client IP is Envoy's socket source address.
+              # With the default "Cluster" policy kube-proxy SNATs that
+              # address to a node IP and every visitor collapses onto one
+              # identity.
+              externalTrafficPolicy: Local
 EOF
   then
     rm -f "$manifest_file"
@@ -636,6 +643,11 @@ helm_deploy_sre() {
        secret_has_key "$ns" "$resolved_auth_secret" "anti-abuse-hmac-secret"; then
       auth_flags+=(--set-string "frontend.auth.antiAbuseHmacSecretKey=anti-abuse-hmac-secret")
       auth_flags+=(--set-string "backend.auth.antiAbuseHmacSecretKey=anti-abuse-hmac-secret")
+      if [ "$AKS_EXPOSURE_MODE" = "gateway" ]; then
+        auth_flags+=(--set frontend.trustProxyHeaders=true)
+        auth_flags+=(--set backend.trustProxyHeaders=true)
+        auth_flags+=(--set backend.auth.requireAnonymousClientIp=true)
+      fi
     fi
 
     if [ -n "$turnstile_site_key" ] || \

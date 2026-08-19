@@ -103,6 +103,7 @@ backend:
     turnstileExpectedHostnameKey: ""
     turnstileTestMode: false
     localTestVerificationEnabled: false
+    requireAnonymousClientIp: false
   podSecurityContext:
     fsGroup: 1001
     fsGroupChangePolicy: OnRootMismatch
@@ -187,6 +188,18 @@ gateway:
     clusterIssuer: letsencrypt-azuredns-prod
   envoyProxy:
     name: sre-simulator-public-edge
+  clientIpDetection:
+    enabled: true
+    # Trust X-Forwarded-For only when a Layer-7 proxy that OVERWRITES the
+    # header sits in front of the Gateway. The AKS path terminates on a
+    # Layer-4 Azure Load Balancer that never sets X-Forwarded-For, so the
+    # header is fully caller-controlled there: trusting it would let anyone
+    # forge a client IP and mint unlimited anonymous trials. Leaving this
+    # disabled makes Envoy derive the client IP from the connection source
+    # address and publish it as x-envoy-external-address.
+    trustXForwardedFor: false
+    # Only used when trustXForwardedFor is true.
+    numTrustedHops: 1
 
 database:
   enabled: false

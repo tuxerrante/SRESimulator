@@ -39,6 +39,7 @@ data:
   ALLOW_DEPLOYED_JSON_STORAGE_FOR_TESTS: {{ include "sre-simulator.boolString" .Values.backend.allowDeployedJsonStorageForTests | quote }}
   TURNSTILE_TEST_MODE: {{ include "sre-simulator.boolString" .Values.backend.auth.turnstileTestMode | quote }}
   LOCAL_TEST_VERIFICATION_ENABLED: {{ include "sre-simulator.boolString" .Values.backend.auth.localTestVerificationEnabled | quote }}
+  REQUIRE_ANONYMOUS_CLIENT_IP: {{ include "sre-simulator.boolString" .Values.backend.auth.requireAnonymousClientIp | quote }}
   AI_CHAT_TIMEOUT_MS: "{{ .Values.backend.aiChatTimeoutMs }}"
   AI_COMMAND_TIMEOUT_MS: "{{ .Values.backend.aiCommandTimeoutMs }}"
   AI_SCENARIO_TIMEOUT_MS: "{{ .Values.backend.aiScenarioTimeoutMs }}"

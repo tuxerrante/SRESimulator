@@ -36,21 +36,6 @@ function readIpHeader(value: string | null): string | null {
   return candidate;
 }
 
-function readForwardedIps(value: string | null): string[] {
-  if (!value) {
-    return [];
-  }
-
-  const parts = value
-    .split(",")
-    .map((part) => part.trim())
-    .filter(Boolean);
-  if (parts.length === 0 || parts.some((part) => isIP(part) === 0)) {
-    return [];
-  }
-  return parts;
-}
-
 function getBackendBaseUrl(): string {
   const base = process.env.BACKEND_INTERNAL_BASE_URL || "http://127.0.0.1:8080";
   return base.endsWith("/") ? base.slice(0, -1) : base;
@@ -61,22 +46,11 @@ function getTrustedClientIp(request: NextRequest): string | null {
     return null;
   }
 
-  const realIp = readIpHeader(request.headers.get("x-real-ip"));
-  if (!realIp) {
-    return null;
-  }
-
-  const forwardedIps = readForwardedIps(request.headers.get("x-forwarded-for"));
-  if (forwardedIps.length === 0) {
-    return null;
-  }
-
-  const clientHop = forwardedIps[0];
-  if (!clientHop || clientHop !== realIp) {
-    return null;
-  }
-
-  return realIp;
+  // Only the edge-generated address is trustworthy. `x-forwarded-for` and
+  // `x-real-ip` are caller-controlled: the AKS Gateway sits behind a Layer-4
+  // Azure Load Balancer that never sets them, so accepting either would let a
+  // client forge its own identity and mint unlimited anonymous trials.
+  return readIpHeader(request.headers.get("x-envoy-external-address"));
 }
 
 function upsertCookieHeader(
@@ -130,6 +104,7 @@ async function proxyRequest(request: NextRequest): Promise<NextResponse> {
   headers.delete("connection");
   headers.delete("x-forwarded-for");
   headers.delete("x-real-ip");
+  headers.delete("x-envoy-external-address");
   headers.delete("forwarded");
   headers.delete("x-sresim-client-ip");
   headers.delete("x-sresim-client-ip-signature");

@@ -352,7 +352,9 @@ identity:
 - **Anonymous players** can request `easy` only, and only after passing
   Cloudflare Turnstile plus the browser fingerprint/IP anti-abuse check
 - Anonymous Easy mode is limited to one run per 24 hours via a salted server-side
-  claim key derived from browser fingerprint, IP, and user-agent signals
+  claim set. Public ingress profiles reserve an IP-only HMAC claim in addition
+  to browser fingerprint/user-agent claims, so clearing private-browser state
+  does not reset the entitlement. Raw IP addresses are not persisted.
 
 After access is approved, the route binds the session to a `PlatformId`, then
 either selects a repo-owned scenario from `scenarios/<platform>/<difficulty>/`
@@ -430,7 +432,22 @@ Database free tier (100K vCore-seconds/month, 32 GB storage, $0/month).
 - **Players**: Stored in `players` and upserted by GitHub user id so nickname
   changes do not create duplicate persistent identities.
 - **Anonymous trials**: Stored in `anonymous_trial_claims`, keyed by salted
-  claim digest with 24h expiry for free-trial enforcement.
+  claim digests with 24h expiry for free-trial enforcement. Public ingress
+  profiles require a trusted edge-supplied client IP and fail closed when it is
+  unavailable.
+
+  The only trustworthy source for that address is Envoy's connection source
+  address, republished as `x-envoy-external-address`. The AKS edge terminates
+  on a Layer-4 Azure Load Balancer that never sets `X-Forwarded-For`, so that
+  header is fully caller-controlled: trusting it would let anyone forge a
+  client IP and mint unlimited anonymous trials. Consequently the chart does
+  **not** render an Envoy `ClientTrafficPolicy` with `xForwardedFor` trust by
+  default (`gateway.clientIpDetection.trustXForwardedFor=false`); enable it
+  only when a Layer-7 proxy that overwrites the header fronts the Gateway.
+  The frontend proxy likewise accepts only `x-envoy-external-address` and
+  strips every inbound forwarding header before proxying. The Envoy service is
+  deployed with `externalTrafficPolicy: Local` so kube-proxy does not SNAT the
+  source address onto a node IP and collapse all visitors onto one identity.
 - **Leaderboard**: Stored in `leaderboard_entries` table. Uses `MERGE`
   to atomically keep the best score per (GitHub user id, platform, difficulty,
   traffic source). The stored callsign/nickname corresponds to the best

@@ -1,0 +1,16 @@
+{{- if and (eq (include "sre-simulator.exposureMode" .) "gateway") .Values.gateway.clientIpDetection.enabled .Values.gateway.clientIpDetection.trustXForwardedFor }}
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: ClientTrafficPolicy
+metadata:
+  name: {{ include "sre-simulator.fullname" . }}-client-ip
+  labels:
+    {{- include "sre-simulator.labels" . | nindent 4 }}
+spec:
+  clientIPDetection:
+    xForwardedFor:
+      numTrustedHops: {{ .Values.gateway.clientIpDetection.numTrustedHops }}
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: {{ include "sre-simulator.fullname" . }}
+{{- end }}

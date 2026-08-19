@@ -24,7 +24,7 @@ describe("buildAnonymousClaimKeys", () => {
     );
 
     expect(first).toStrictEqual(second);
-    expect(first).toHaveLength(2);
+    expect(first).toHaveLength(3);
     expect(first[0]).not.toContain("fingerprint-123");
     expect(first[0]).not.toContain("203.0.113.25");
   });
@@ -50,5 +50,30 @@ describe("buildAnonymousClaimKeys", () => {
 
     expect(first[0]).not.toBe(second[0]);
     expect(first[1]).toBe(second[1]);
+    expect(first[2]).toBe(second[2]);
+  });
+
+  it("keeps the IP claim stable when browser-controlled signals change", () => {
+    const first = buildAnonymousClaimKeys(
+      {
+        fingerprintHash: "fingerprint-123",
+        ip: "203.0.113.25",
+        userAgent: "Mozilla/5.0",
+      },
+      secret
+    );
+
+    const second = buildAnonymousClaimKeys(
+      {
+        fingerprintHash: "fingerprint-456",
+        ip: "203.0.113.25",
+        userAgent: "Different Browser",
+      },
+      secret
+    );
+
+    expect(first[0]).not.toBe(second[0]);
+    expect(first[1]).not.toBe(second[1]);
+    expect(first[2]).toBe(second[2]);
   });
 });
