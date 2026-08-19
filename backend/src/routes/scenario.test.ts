@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, beforeAll, beforeEach, afterAll } from "vitest";
+import { describe, expect, it, vi, beforeAll, beforeEach, afterAll, afterEach } from "vitest";
 import express from "express";
 import { mkdtemp, rm } from "fs/promises";
 import { tmpdir } from "os";
@@ -27,7 +27,7 @@ async function postJson(
   body: unknown,
   headers: Record<string, string> = {},
   options: { timeoutMs?: number } = {},
-): Promise<{ status: number; body: Record<string, unknown> }> {
+): Promise<{ status: number; body: Record<string, unknown>; headers: Record<string, string | string[] | undefined> }> {
   const { request } = await import("http");
   return new Promise((resolve, reject) => {
     let settled = false;
@@ -68,6 +68,7 @@ async function postJson(
               resolve({
                 status: res.statusCode ?? 500,
                 body: JSON.parse(data),
+                headers: res.headers,
               }),
             );
           });
@@ -152,6 +153,7 @@ describe("POST /api/scenario", () => {
     process.env.ANTI_ABUSE_HMAC_SECRET = "test-hmac";
     delete process.env.AUTOMATED_TRAFFIC_TOKEN;
     delete process.env.REQUIRE_ANONYMOUS_CLIENT_IP;
+    delete process.env.SCENARIO_REQUEST_BUDGET_MS;
   });
 
   afterAll(async () => {
@@ -518,5 +520,188 @@ describe("POST /api/scenario", () => {
 
     vi.restoreAllMocks();
     vi.resetModules();
+  });
+
+  describe("end-to-end request deadline", () => {
+    const authToken = createViewerSessionToken(
+      {
+        kind: "github",
+        githubUserId: "deadline-player",
+        githubLogin: "deadline-player",
+        displayName: "Deadline Player",
+        avatarUrl: null,
+        issuedAt: Date.now(),
+        expiresAt: Date.now() + 60_000,
+      },
+      "test-secret",
+    );
+
+    afterEach(() => {
+      delete process.env.SCENARIO_REQUEST_BUDGET_MS;
+      vi.restoreAllMocks();
+      vi.resetModules();
+    });
+
+    it("returns a bounded retryable 503 instead of hanging when a stage overruns the budget", async () => {
+      process.env.SCENARIO_REQUEST_BUDGET_MS = "600";
+      vi.resetModules();
+      const storageModule = await import("../lib/storage");
+      vi.spyOn(storageModule, "getPlayerStore").mockReturnValue({
+        upsertGithubViewer: vi.fn().mockReturnValue(new Promise(() => {})),
+        getByGithubUserId: vi.fn(),
+      });
+
+      const isolated = await import("./scenario");
+      const app = createApp(isolated.scenarioRouter);
+
+      const startedAt = Date.now();
+      const res = await postJson(app, "/api/scenario", { difficulty: "easy" }, {
+        cookie: `${VIEWER_SESSION_COOKIE}=${authToken}`,
+      }, { timeoutMs: 5000 });
+
+      expect(res.status).toBe(503);
+      expect(res.body.code).toBe("scenario_request_deadline_exceeded");
+      expect(Date.now() - startedAt).toBeLessThan(3000);
+    });
+
+    it("releases an anonymous claim that is reserved after the deadline was reported", async () => {
+      process.env.SCENARIO_REQUEST_BUDGET_MS = "600";
+      vi.resetModules();
+      const storageModule = await import("../lib/storage");
+      const releaseClaimKeys = vi.fn().mockResolvedValue(undefined);
+      let resolveReservation: ((reserved: boolean) => void) | undefined;
+      vi.spyOn(storageModule, "getAnonymousTrialStore").mockReturnValue({
+        hasActiveClaim: vi.fn().mockResolvedValue(false),
+        createOrRefreshClaim: vi.fn().mockResolvedValue(undefined),
+        reserveClaimKeys: vi.fn().mockImplementation(
+          () =>
+            new Promise<boolean>((resolve) => {
+              resolveReservation = resolve;
+            }),
+        ),
+        releaseClaimKeys,
+      });
+
+      const isolated = await import("./scenario");
+      const app = createApp(isolated.scenarioRouter);
+
+      const res = await postJson(app, "/api/scenario", {
+        difficulty: "easy",
+        turnstileToken: "pass",
+      }, {
+        cookie: createAnonymousProofCookie("deadline_fp"),
+        "user-agent": anonymousUserAgent,
+        ...createSignedClientIpHeaders("203.0.113.42"),
+      }, { timeoutMs: 5000 });
+
+      expect(res.status).toBe(503);
+      expect(res.body.code).toBe("scenario_request_deadline_exceeded");
+
+      resolveReservation?.(true);
+      await vi.waitFor(() => expect(releaseClaimKeys).toHaveBeenCalled());
+      expect(releaseClaimKeys.mock.calls[releaseClaimKeys.mock.calls.length - 1]?.[0]).toEqual(
+        expect.arrayContaining([expect.any(String)]),
+      );
+    });
+
+
+    it("sets Retry-After so the deadline response is retryable, not a gateway timeout", async () => {
+      process.env.SCENARIO_REQUEST_BUDGET_MS = "600";
+      vi.resetModules();
+      const storageModule = await import("../lib/storage");
+      vi.spyOn(storageModule, "getPlayerStore").mockReturnValue({
+        upsertGithubViewer: vi.fn().mockReturnValue(new Promise(() => {})),
+        getByGithubUserId: vi.fn(),
+      });
+
+      const isolated = await import("./scenario");
+      const app = createApp(isolated.scenarioRouter);
+
+      const res = await postJson(app, "/api/scenario", { difficulty: "easy" }, {
+        cookie: `${VIEWER_SESSION_COOKIE}=${authToken}`,
+      }, { timeoutMs: 5000 });
+
+      expect(res.status).toBe(503);
+      expect(res.headers["retry-after"]).toBe("5");
+    });
+
+    it("releases a reserved claim exactly once so a newer request keeps its own claim", async () => {
+      process.env.SCENARIO_REQUEST_BUDGET_MS = "600";
+      vi.resetModules();
+      const storageModule = await import("../lib/storage");
+      const releaseClaimKeys = vi.fn().mockResolvedValue(undefined);
+      vi.spyOn(storageModule, "getAnonymousTrialStore").mockReturnValue({
+        hasActiveClaim: vi.fn().mockResolvedValue(false),
+        createOrRefreshClaim: vi.fn().mockResolvedValue(undefined),
+        reserveClaimKeys: vi.fn().mockResolvedValue(true),
+        releaseClaimKeys,
+      });
+      let resolveSession: ((token: string) => void) | undefined;
+      vi.spyOn(storageModule, "getSessionStore").mockReturnValue({
+        create: vi.fn().mockImplementation(
+          () =>
+            new Promise<string>((resolve) => {
+              resolveSession = resolve;
+            }),
+        ),
+        get: vi.fn(),
+        validateAndConsume: vi.fn(),
+      });
+
+      const isolated = await import("./scenario");
+      const app = createApp(isolated.scenarioRouter);
+
+      const res = await postJson(app, "/api/scenario", {
+        difficulty: "easy",
+        turnstileToken: "pass",
+      }, {
+        cookie: createAnonymousProofCookie("deadline_session_fp"),
+        "user-agent": anonymousUserAgent,
+        ...createSignedClientIpHeaders("203.0.113.43"),
+      }, { timeoutMs: 5000 });
+
+      expect(res.status).toBe(503);
+      expect(releaseClaimKeys).toHaveBeenCalledTimes(1);
+
+      // A newer request may now hold the same claim keys. The abandoned session
+      // insert must not delete it when it finally settles.
+      resolveSession?.("late-session-token");
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      expect(releaseClaimKeys).toHaveBeenCalledTimes(1);
+    });
+
+    it("releases the anonymous claim and sends no response when the client disconnects", async () => {
+      process.env.SCENARIO_REQUEST_BUDGET_MS = "8000";
+      vi.resetModules();
+      const storageModule = await import("../lib/storage");
+      const releaseClaimKeys = vi.fn().mockResolvedValue(undefined);
+      vi.spyOn(storageModule, "getAnonymousTrialStore").mockReturnValue({
+        hasActiveClaim: vi.fn().mockResolvedValue(false),
+        createOrRefreshClaim: vi.fn().mockResolvedValue(undefined),
+        reserveClaimKeys: vi.fn().mockResolvedValue(true),
+        releaseClaimKeys,
+      });
+      vi.spyOn(storageModule, "getSessionStore").mockReturnValue({
+        create: vi.fn().mockReturnValue(new Promise(() => {})),
+        get: vi.fn(),
+        validateAndConsume: vi.fn(),
+      });
+
+      const isolated = await import("./scenario");
+      const app = createApp(isolated.scenarioRouter);
+
+      await expect(
+        postJson(app, "/api/scenario", {
+          difficulty: "easy",
+          turnstileToken: "pass",
+        }, {
+          cookie: createAnonymousProofCookie("disconnect_fp"),
+          "user-agent": anonymousUserAgent,
+          ...createSignedClientIpHeaders("203.0.113.44"),
+        }, { timeoutMs: 300 }),
+      ).rejects.toThrow(/timed out/);
+
+      await vi.waitFor(() => expect(releaseClaimKeys).toHaveBeenCalled(), { timeout: 9000 });
+    });
   });
 });

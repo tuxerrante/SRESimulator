@@ -183,6 +183,26 @@ inside the cluster**.
   headroom for anonymous verification and session persistence around the
   backend's 12-second AI timeout and catalog fallback; other paths retain the
   Envoy default.
+- The backend additionally enforces an end-to-end application deadline on
+  `POST /api/scenario` (`SCENARIO_REQUEST_BUDGET_MS`, default and hard maximum
+  24000 ms, clamped at runtime). A single decreasing budget is shared by
+  identity verification, viewer upsert, claim reservation, knowledge and
+  catalog reads, AI generation, session persistence and failure cleanup, so the
+  composed worst case can no longer exceed the edge timeout. Anonymous claim
+  lookup and Turnstile verification run concurrently in one stage.
+- Stages are bounded by waiting, not by aborting, so no SQL or filesystem work
+  is abandoned mid-flight. A reservation that commits after its stage already
+  reported the deadline runs a compensating release, and the release path is
+  single-writer so it cannot delete a claim that a newer request has since
+  reserved.
+- When too little budget remains for AI generation the request degrades to a
+  catalog scenario. When verification or persistence cannot finish safely the
+  client receives `503` with `Retry-After` and code
+  `scenario_request_deadline_exceeded`, never an edge 504.
+- A client disconnect aborts AI provider work and stops every waiting stage, so
+  the reserved anonymous claim is released instead of being consumed by a
+  request nobody is waiting for. Per-stage and total latencies are recorded and
+  logged when the deadline is exceeded.
 - Frontend route handler (`app/api/[...path]/route.ts`) proxies server-to-server to `http://<release>-backend:<port>`.
 - Backend `NetworkPolicy` only allows ingress from frontend Pods on backend port.
 
