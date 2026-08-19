@@ -308,6 +308,7 @@ jobs:
 
           helm upgrade --install "${E2E_RELEASE}" ./helm/sre-simulator \
             --namespace "${E2E_NAMESPACE}" \
+            --set-string "fullnameOverride=${E2E_RELEASE}" \
             --set exposure.mode=none \
             --set-string "frontend.image.repository=${FRONTEND_IMAGE}" \
             --set-string "frontend.image.tag=${IMAGE_TAG}" \

@@ -95,6 +95,12 @@ assert_contains "turnstile-secret-key" "$DEPENDABOT_WORKFLOW"
 assert_contains "sre-simulator" "$DEPENDABOT_WORKFLOW"
 assert_contains "dependabot-e2e-runtime" "$DEPENDABOT_WORKFLOW"
 assert_contains "context=dependabot-e2e" "$DEPENDABOT_WORKFLOW"
+# Chart resource names come from sre-simulator.fullname, which prefixes the
+# release name with the chart name unless the release name already contains it.
+# The browser step port-forwards "${E2E_RELEASE}-frontend", so the chart must be
+# pinned to the release name or the service does not exist.
+assert_contains 'fullnameOverride=${E2E_RELEASE}' "$DEPENDABOT_WORKFLOW"
+assert_contains 'create pods/portforward' "$DEPENDABOT_WORKFLOW"
 
 assert_contains "playwright-install:" "$MAKEFILE"
 assert_contains "test-e2e-live:" "$MAKEFILE"

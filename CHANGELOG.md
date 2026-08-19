@@ -35,6 +35,10 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Fixed (Unreleased)
 
+- Fixed the Dependabot E2E browser step, which port-forwarded
+  `${E2E_RELEASE}-frontend` while the chart rendered
+  `${E2E_RELEASE}-sre-simulator-frontend`, so the service was never found. The
+  chart is now pinned with `fullnameOverride` to the release name.
 - Made the Dependabot E2E browser step diagnosable: the job now fails fast if
   the namespace identity cannot create `pods/portforward`, and on a
   port-forward failure it dumps the port-forward log, workload state, pod
