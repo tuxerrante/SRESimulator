@@ -19,18 +19,16 @@ export function buildAnonymousClaimKeys(
   secret: string
 ): string[] {
   const userAgentHash = hashSignal(input.userAgent.trim());
-  const fingerprintSignals = [input.fingerprintHash.trim(), userAgentHash];
   const ip = input.ip?.trim();
-  if (ip) {
-    const ipHash = hashSignal(ip);
+  const ipHash = ip ? hashSignal(ip) : null;
+
+  const fingerprintSignals = [input.fingerprintHash.trim(), userAgentHash];
+  if (ipHash) {
     fingerprintSignals.push(ipHash);
   }
 
-  const fingerprintKey = fingerprintSignals.join(":");
-
-  const claimKeys = [buildClaimDigest(fingerprintKey, secret)];
-  if (ip) {
-    const ipHash = hashSignal(ip);
+  const claimKeys = [buildClaimDigest(fingerprintSignals.join(":"), secret)];
+  if (ipHash) {
     claimKeys.push(buildClaimDigest(["ip-ua", ipHash, userAgentHash].join(":"), secret));
     claimKeys.push(buildClaimDigest(["ip", ipHash].join(":"), secret));
   }
