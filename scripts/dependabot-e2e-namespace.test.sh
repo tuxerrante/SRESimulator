@@ -201,4 +201,18 @@ if grep -Fq "kind: ClusterRoleBinding" "$POOL_SCRIPT"; then
   fail "pool provisioner must not create cluster-scoped bindings"
 fi
 
+# A misconfigured timing setting must fail with a clear message rather than an
+# opaque bash arithmetic error part way through a run.
+for setting in CLAIM_STALE_MINUTES CLAIM_WAIT_SECONDS CLAIM_POLL_SECONDS; do
+  if out="$(
+    env PATH="$WORK_DIR/bin:$PATH" CLAIM_DIR="$WORK_DIR/claims" \
+      DEPENDABOT_E2E_NAMESPACE_POOL="ns-a" "$setting=abc" \
+      bash "$SCRIPT" claim 1 1 2>&1
+  )"; then
+    fail "$setting accepted a non-integer value"
+  fi
+  grep -Fq "$setting must be" <<<"$out" ||
+    fail "$setting rejection did not explain the problem: $out"
+done
+
 echo "dependabot E2E namespace pool checks passed."

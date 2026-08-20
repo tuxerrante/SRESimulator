@@ -77,6 +77,10 @@ case "${verb}" in
     exit 1
     ;;
   delete)
+    if [[ -n "${FAIL_DELETE:-}" && "${name}" == "${FAIL_DELETE}" ]]; then
+      echo 'Error from server: namespaces "'"${name}"'" not found' >&2
+      exit 1
+    fi
     [[ -n "${name}" ]] && rm -f "${NS_DIR}/${name}"
     exit 0
     ;;
@@ -208,9 +212,10 @@ run_cleanup DRY_RUN=false || fail "cleanup exited non-zero: $(cat "$WORK_DIR/out
 # A namespace whose pull request still has a run in flight must be kept.
 cat > "$WORK_DIR/bin/gh" <<'STUB'
 #!/usr/bin/env bash
+[[ "${GH_FAIL:-0}" == "1" ]] && exit 1
 case "$2" in
-  *"/pulls/101") echo "deadbeef" ;;
-  *head_sha=*) echo 3 ;;
+  *actions/runs*) echo "deadbeef" ;;
+  *pulls?state=open*) echo "101 deadbeef" ;;
   *) echo "" ;;
 esac
 exit 0
@@ -221,7 +226,28 @@ reset_cluster
   > "$WORK_DIR/out.txt" 2>&1 || fail "cleanup failed: $(cat "$WORK_DIR/out.txt")"
 [[ -e "$NS_DIR/sre-pr-101" ]] || fail "deleted a namespace whose PR still had a run in flight"
 assert_contains "still has a run in flight" "$WORK_DIR/out.txt"
+# A namespace with no in-flight run must still be reclaimed in the same pass.
+[[ -e "$NS_DIR/sre-manual-e2e-abc" ]] && fail "guard blocked an unrelated namespace"
+
+# If the guard cannot be resolved it must keep pull request namespaces rather
+# than silently degrade to the age check alone.
+reset_cluster
+( cd "$WORK_DIR" && env DRY_RUN=false GITHUB_REPOSITORY="o/r" GH_FAIL=1 bash "$SCRIPT" ) \
+  > "$WORK_DIR/out.txt" 2>&1 || fail "cleanup failed: $(cat "$WORK_DIR/out.txt")"
+[[ -e "$NS_DIR/sre-pr-101" ]] || fail "deleted a PR namespace while the guard was unavailable"
+assert_contains "cannot confirm no run is in flight" "$WORK_DIR/out.txt"
+# Namespaces the guard does not cover must still be reclaimed.
+[[ -e "$NS_DIR/sre-manual-e2e-abc" ]] && fail "a failed PR guard blocked unrelated cleanup"
 rm -f "$WORK_DIR/bin/gh"
+
+# A namespace that disappears between the listing and the delete must not abort
+# the rest of the pass.
+reset_cluster
+( cd "$WORK_DIR" && env DRY_RUN=false GITHUB_REPOSITORY="" FAIL_DELETE=sre-pr-101 \
+  bash "$SCRIPT" ) > "$WORK_DIR/out.txt" 2>&1 || \
+  fail "a failed delete aborted the run: $(cat "$WORK_DIR/out.txt")"
+assert_contains "could not delete sre-pr-101" "$WORK_DIR/out.txt"
+[[ -e "$NS_DIR/sre-manual-e2e-abc" ]] && fail "a failed delete stopped later cleanup"
 
 # Negative control: the assertions above must fail if the guards are removed.
 BROKEN="$WORK_DIR/broken.sh"

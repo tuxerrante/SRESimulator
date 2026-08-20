@@ -122,24 +122,48 @@ age_hours() {
 }
 
 # A pull request namespace is only safe to remove once no workflow run for that
-# pull request can still be using it. Without gh the age threshold is the only
-# guard, which is why it defaults well above the 60 minute job timeout.
-pr_run_active() {
-  local pr_number=$1 active
-  [[ -z "${GITHUB_REPOSITORY}" ]] && return 1
-  command -v gh >/dev/null 2>&1 || return 1
-  active="$(
-    gh api "repos/${GITHUB_REPOSITORY}/pulls/${pr_number}" \
-      --jq '.head.sha' 2>/dev/null || true
-  )"
-  [[ -z "${active}" ]] && return 1
-  active="$(
-    gh api "repos/${GITHUB_REPOSITORY}/actions/runs?head_sha=${active}" \
-      --jq '[.workflow_runs[] | select(.status != "completed")] | length' \
-      2>/dev/null || echo 0
-  )"
-  [[ "${active}" =~ ^[0-9]+$ ]] && [[ "${active}" -gt 0 ]]
+# pull request can still be using it. The guard is resolved once, from two
+# listings, so a per-namespace API hiccup cannot silently disable it: either
+# both listings succeed and the answer is exact, or the guard reports failure
+# and every pull request namespace is kept for the next run.
+PR_GUARD=disabled
+ACTIVE_PR_NUMBERS=""
+
+resolve_pr_guard() {
+  local in_flight open_prs number sha
+  [[ -z "${GITHUB_REPOSITORY}" ]] && return 0
+  command -v gh >/dev/null 2>&1 || return 0
+
+  PR_GUARD=failed
+  in_flight="$(
+    gh api "repos/${GITHUB_REPOSITORY}/actions/runs?per_page=100" \
+      --jq '[.workflow_runs[] | select(.status != "completed") | .head_sha]
+            | unique | join(" ")' 2>/dev/null
+  )" || return 0
+  open_prs="$(
+    gh api "repos/${GITHUB_REPOSITORY}/pulls?state=open&per_page=100" \
+      --jq '.[] | "\(.number) \(.head.sha)"' 2>/dev/null
+  )" || return 0
+
+  while read -r number sha; do
+    [[ -z "${number}" || -z "${sha}" ]] && continue
+    if [[ " ${in_flight} " == *" ${sha} "* ]]; then
+      ACTIVE_PR_NUMBERS="${ACTIVE_PR_NUMBERS} ${number}"
+    fi
+  done <<<"${open_prs}"
+
+  PR_GUARD=ready
+  return 0
 }
+
+pr_has_run_in_flight() {
+  [[ " ${ACTIVE_PR_NUMBERS} " == *" $1 "* ]]
+}
+
+resolve_pr_guard
+if [[ "${PR_GUARD}" == "failed" ]]; then
+  echo "    warn   could not list workflow runs, keeping every pull request namespace" >&2
+fi
 
 echo "==> E2E namespace cleanup (dry-run: ${DRY_RUN})"
 echo "    prefixes:      ${prefixes[*]}"
@@ -179,7 +203,12 @@ while read -r namespace created; do
 
   if [[ "${namespace}" == "${PR_NAMESPACE_PREFIX}"* ]]; then
     pr_number="${namespace#"${PR_NAMESPACE_PREFIX}"}"
-    if [[ "${pr_number}" =~ ^[0-9]+$ ]] && pr_run_active "${pr_number}"; then
+    if [[ "${PR_GUARD}" == "failed" ]]; then
+      echo "    keep   ${namespace}: cannot confirm no run is in flight"
+      skipped=$((skipped + 1))
+      continue
+    fi
+    if [[ "${pr_number}" =~ ^[0-9]+$ ]] && pr_has_run_in_flight "${pr_number}"; then
       echo "    keep   ${namespace}: pull request ${pr_number} still has a run in flight"
       skipped=$((skipped + 1))
       continue
@@ -188,11 +217,19 @@ while read -r namespace created; do
 
   if [[ "${DRY_RUN}" == "true" ]]; then
     echo "    would delete ${namespace}: age ${age}h"
+    deleted=$((deleted + 1))
   else
-    echo "    delete ${namespace}: age ${age}h"
-    kubectl delete namespace "${namespace}" --wait=false >/dev/null
+    # A namespace can disappear between the listing and the delete, and one
+    # failure must not abort the rest of the weekly reclaim.
+    if kubectl delete namespace "${namespace}" \
+      --wait=false --ignore-not-found >/dev/null 2>&1; then
+      echo "    delete ${namespace}: age ${age}h"
+      deleted=$((deleted + 1))
+    else
+      echo "    warn   could not delete ${namespace}" >&2
+      skipped=$((skipped + 1))
+    fi
   fi
-  deleted=$((deleted + 1))
 done <<<"${namespaces}"
 
 # An orphaned release inside a pool namespace is the other way capacity leaks:
