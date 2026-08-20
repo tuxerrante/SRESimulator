@@ -66,10 +66,12 @@ The game enforces the "Scientific Method of Investigation" as defined in the ARO
 - Every pull request must pass a merge-blocking browser E2E gate before merge.
 - Dependabot PRs use the separate `dependabot-e2e` status: a trusted
   default-branch workflow publishes SHA-bound images built by an unprivileged
-  PR workflow, deploys the trusted chart with mock AI/JSON storage into the
-  fixed `sre-dependabot-e2e` namespace, and uses a namespace-only Kubernetes
-  identity. It requires no Azure login, production secret, or manual
-  environment approval.
+  PR workflow, deploys the trusted chart with mock AI/JSON storage into a
+  dedicated namespace claimed from a pre-provisioned pool, and uses a
+  namespace-only Kubernetes identity that cannot create namespaces. It requires
+  no Azure login, production secret, or manual environment approval. Provision
+  or resize the pool with `make dependabot-e2e-pool`; see
+  `docs/OPERATIONS.md`.
 - Human-authored pull requests must pass the protected `live-e2e` GitHub
   check.
 - The check deploys the PR head to an isolated temporary namespace and runs

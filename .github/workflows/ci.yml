@@ -892,8 +892,11 @@ jobs:
 
           if [[ "${EVENT_NAME}" == "pull_request" ]]; then
             if [[ "${IS_DEPENDABOT}" == "true" ]]; then
+              # Dependabot E2E runs are serialised on one shared namespace and
+              # a single run takes ~20 minutes, so the wait has to cover a
+              # queue of PRs rather than a single run.
               dependabot_e2e_state=""
-              for _ in $(seq 1 90); do
+              for _ in $(seq 1 210); do
                 dependabot_e2e_state="$(
                   gh api \
                     "repos/${GITHUB_REPOSITORY}/commits/${PR_HEAD_SHA}/status" \
@@ -922,6 +925,21 @@ jobs:
                 failed_jobs+=(
                   "dependabot-e2e (${dependabot_e2e_state:-missing})"
                 )
+                case "${dependabot_e2e_state}" in
+                  ""|pending)
+                    echo ""
+                    echo "The dependabot-e2e status never reached a terminal" \
+                      "state within the wait window."
+                    echo "This usually means every namespace in the" \
+                      "Dependabot E2E pool was busy, so the run could not" \
+                      "claim a slot. Check DEPENDABOT_E2E_NAMESPACE_POOL and" \
+                      "whether the pool is large enough for the number of" \
+                      "open Dependabot PRs."
+                    echo "It is not evidence that this dependency update is" \
+                      "broken. Re-run 'Dependabot E2E Build' for this PR once" \
+                      "the pool has capacity."
+                    ;;
+                esac
               fi
             elif [[ "${LIVE_E2E_RESULT}" != "success" ]]; then
               failed=true

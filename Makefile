@@ -3,7 +3,7 @@
        lint lint-ts lint-backend lint-unused-exports lint-yaml lint-md \
        typecheck typecheck-backend validate \
        security audit lockfile-lint gitleaks grype require-mssql-sa-password require-mssql-database-url \
-       test test-shell test-integration test-e2e-live playwright-install test-mssql dev-db smoke-backend-mssql smoke-local-vertex release-prepare verify-release-version env-check dependabot-e2e-kubeconfig aro-login aks-login e2e-azure-route e2e-azure-route-up e2e-azure-route-refresh e2e-azure-route-down \
+       test test-shell test-integration test-e2e-live playwright-install test-mssql dev-db smoke-backend-mssql smoke-local-vertex release-prepare verify-release-version env-check dependabot-e2e-kubeconfig dependabot-e2e-pool aro-login aks-login e2e-azure-route e2e-azure-route-up e2e-azure-route-refresh e2e-azure-route-down \
        prod-up prod-up-tag prod-down prod-status public-exposure-audit db-mode-check db-port-forward-check db-inspect db-inspect-live db-admin-stats db-admin-stats-live geneva-suppression-check prod-up-final \
        build dev start capture-readme-hero \
        docker-build-frontend docker-build-backend docker-build \
@@ -76,6 +76,7 @@ LIVE_E2E_ARTIFACT_DIR ?= data/playwright-live-e2e
 LIVE_E2E_VIEWER_PREFIX ?= live-e2e
 DEPENDABOT_E2E_KUBECONFIG_B64 ?=
 DEPENDABOT_E2E_KUBECONFIG_FILE ?= $(HOME)/.config/sresimulator/dependabot-e2e-kubeconfig
+DEPENDABOT_E2E_POOL_SIZE ?= 4
 E2E_REQUIRED_VARS := AZURE_SUBSCRIPTION_ID AOAI_RG AOAI_ACCOUNT AOAI_DEPLOYMENT $(if $(filter aks,$(CLUSTER_FLAVOR)),AKS_RG AKS_CLUSTER,ARO_RG ARO_CLUSTER)
 PROD_NAMESPACE ?= sre-simulator
 PROD_METADATA_FILE ?= data/prod-route.env
@@ -314,6 +315,7 @@ test-shell: ## Run shell regression tests
 	env -i PATH="$$PATH" HOME="$$HOME" TMPDIR="$${TMPDIR:-/tmp}" bash scripts/aro-login.test.sh
 	env -i PATH="$$PATH" HOME="$$HOME" TMPDIR="$${TMPDIR:-/tmp}" bash scripts/aks-deploy.test.sh
 	env -i PATH="$$PATH" HOME="$$HOME" TMPDIR="$${TMPDIR:-/tmp}" bash scripts/cleanup-old-worktrees.test.sh
+	env -i PATH="$$PATH" HOME="$$HOME" TMPDIR="$${TMPDIR:-/tmp}" bash scripts/dependabot-e2e-namespace.test.sh
 	env -i PATH="$$PATH" HOME="$$HOME" TMPDIR="$${TMPDIR:-/tmp}" bash scripts/docker-image-slimming.test.sh
 	env -i PATH="$$PATH" HOME="$$HOME" TMPDIR="$${TMPDIR:-/tmp}" bash scripts/e2e-env-file.test.sh
 	env -i PATH="$$PATH" HOME="$$HOME" TMPDIR="$${TMPDIR:-/tmp}" bash scripts/frontend-audit-check.test.sh
@@ -564,6 +566,9 @@ dependabot-e2e-kubeconfig: ## Decode the gitignored namespace-only E2E kubeconfi
 	mv "$$tmp" "$$target"; \
 	chmod 0600 "$$target"; \
 	echo "Wrote namespace-only E2E kubeconfig to $$target"
+
+dependabot-e2e-pool: ## Provision the Dependabot E2E namespace pool (needs cluster-admin)
+	POOL_SIZE="$(DEPENDABOT_E2E_POOL_SIZE)" bash infra/scripts/dependabot-e2e-pool.sh
 
 aro-login: ## Authenticate Azure CLI if needed and log oc into the configured ARO cluster
 	@set -eo pipefail; \
