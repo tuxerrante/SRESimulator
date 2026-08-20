@@ -108,6 +108,15 @@ AKS deploys consume GHCR images directly. The current helper behavior is importa
 - `TAG=latest` uses whatever GHCR currently serves as `latest`.
 - `TAG=vX.Y.Z` requires those semver-tagged GHCR images to exist first.
 - If `AKS_E2E_PUSH_DEV_IMAGES=true`, the E2E targets switch to a dev-only GHCR publish path before Helm runs.
+- If `AKS_E2E_IMAGE_CACHE=true`, that publish path reuses the previous build's
+  layers through a `:buildcache` registry cache instead of rebuilding from
+  scratch. The `live-e2e` job enables it because its deploy step spent 116 of
+  196 seconds reinstalling `node_modules` and rebuilding the frontend bundle
+  for images that had not changed. It needs a BuildKit `docker-container`
+  builder, which the script creates on demand, and write access to the image
+  repository, which the job already has. Cache export failures are ignored, so
+  a cold or unavailable cache only costs the normal build time. It stays off by
+  default so local and operator runs behave exactly as before.
 
 This means a repo merge alone does not guarantee E2E will run the new app build. Always verify the required GHCR tags first.
 
@@ -312,6 +321,7 @@ For provider options, environment variables, and runtime behavior, use:
 | `make prod-up-final` | Guarded production deploy sequence |
 | `make prod-status` | Show production namespace status |
 | `make prod-down` | Delete production namespace (explicit confirmation) |
+| `make cluster-capacity-report` | Report schedulable cluster headroom (read-only) |
 
 ## Mandatory pull-request browser gate
 
@@ -326,13 +336,57 @@ Dependabot PRs take a credential-minimized path because GitHub withholds normal
 Actions secrets and gives their pull-request workflows a read-only token. A
 unprivileged `pull_request` workflow builds the dependency-update images and
 uploads immutable, SHA-bound artifacts. A trusted `workflow_run` validates and
-publishes those artifacts without checking out PR code, deploys only the trusted
-`main` chart into the fixed `sre-dependabot-e2e` namespace, and runs mock-AI/JSON
-browser coverage. Its kubeconfig is stored only in the unprotected
-`dependabot-e2e` Environment and is bound to that namespace; it cannot read the
-production namespace or delete namespaces. The main `ci-gate` waits for the
-`dependabot-e2e` commit status, so the bot path remains merge-blocking without
-Azure login or manual approval.
+publishes those artifacts without checking out PR code, claims one dedicated
+namespace from a pre-provisioned pool, deploys only the trusted `main` chart
+into it, and runs mock-AI/JSON browser coverage. Its kubeconfig is stored only
+in the unprotected `dependabot-e2e` Environment and is bound to those
+namespaces; it cannot read the production namespace, create namespaces, or
+delete namespaces. The main `ci-gate` waits for the `dependabot-e2e` commit
+status, so the bot path remains merge-blocking without Azure login or manual
+approval.
+
+### Dependabot E2E namespace pool
+
+The Dependabot runs used to share one fixed namespace behind a single global
+Actions concurrency group. GitHub keeps only one pending run per concurrency
+group, so simultaneous Dependabot PRs evicted each other and `ci-gate` failed
+with `dependabot-e2e (missing)` or `(pending)` even though every dependency
+update was fine. Runs are now keyed on the PR head SHA and each claims its own
+namespace.
+
+The pool is pre-provisioned rather than created per PR on purpose. Creating a
+namespace is cluster-scoped, and the namespaced verbs the job needs could only
+be granted through a `ClusterRoleBinding`, because Kubernetes RBAC cannot scope
+a `RoleBinding` to a namespace name prefix and the job cannot grant itself
+rights in a namespace it just created. That binding would also expose the
+production namespace. A bounded pool keeps the identity namespace-only and caps
+how much of the shared AKS cluster Dependabot can consume at once.
+
+Provision or resize it with cluster-admin credentials:
+
+```bash
+DEPENDABOT_E2E_POOL_SIZE=4 make dependabot-e2e-pool
+```
+
+The script is idempotent. It creates each namespace with restricted Pod
+Security, the three `dependabot-e2e-*` NetworkPolicies the workflow verifies,
+and a namespace-scoped `RoleBinding` that grants the E2E ServiceAccount the
+built-in `admin` ClusterRole inside that namespace only. Then set the
+repository variable it prints:
+
+```text
+DEPENDABOT_E2E_NAMESPACE_POOL="sre-dependabot-e2e-1 sre-dependabot-e2e-2 ..."
+```
+
+Until that variable is set the workflow falls back to the single legacy
+`sre-dependabot-e2e` namespace, so provisioning and rollout can be staged.
+
+Each run claims a slot by atomically creating a `dependabot-e2e-claim`
+ConfigMap and releases it in an `always()` step. A claim left behind by a
+cancelled run is reclaimed after `CLAIM_STALE_MINUTES` (45 by default), so a
+lost runner cannot strand a slot permanently. Keep the pool size at or above
+the combined `open-pull-requests-limit` in `.github/dependabot.yml` to avoid
+queueing.
 
 The `dependabot-e2e` Environment accepts protected branches only. The trusted
 workflow re-reads PR metadata and refuses closed PRs, non-`main` bases,
@@ -344,6 +398,82 @@ matching backend Pod on port 8080. PR-controlled images are built in a workflow
 with read-only repository permissions and no secrets; only the trusted
 default-branch workflow can publish packages or receive the namespace
 kubeconfig.
+
+### Weekly ephemeral namespace cleanup
+
+Every job that creates a temporary namespace removes it in an `always()` step,
+but a cancelled run, an expired runner token or a cluster hiccup can still
+leave one behind, and a leaked namespace holds its CPU and memory requests
+forever. Eight abandoned `sre-manual-e2e-*` namespaces, the oldest 61 days old,
+once held 1700m CPU and 2176Mi of requests on this cluster.
+
+The `Cleanup E2E Namespaces` workflow reclaims them every Monday. It runs only
+from the default branch, so it never executes pull request code with the Azure
+credentials and therefore needs no approval gate. Run it by hand with
+`workflow_dispatch`, which defaults to reporting only, or locally:
+
+```bash
+make cleanup-e2e-namespaces                 # report what would be removed
+DRY_RUN=false make cleanup-e2e-namespaces   # actually reclaim
+```
+
+The safety model, in the order the script applies it:
+
+1. Only namespaces matching an allow-listed prefix are considered, and every
+   prefix must start with `sre-` and be long enough to be selective.
+2. Protected namespaces are then removed from the candidate list, so
+   production and the `sre-dependabot-e2e*` pool survive a widened prefix.
+3. A candidate must be older than `CLEANUP_MIN_AGE_HOURS` (24 by default),
+   far above the 60 minute timeout of any job that creates one.
+4. A `sre-pr-<number>` namespace is kept while that pull request still has a
+   workflow run in flight.
+5. Nothing is deleted unless `DRY_RUN` is explicitly `false`.
+
+It also uninstalls Helm releases left inside a pool namespace that no run
+currently claims, which is the other way pool capacity leaks.
+
+### Cluster capacity monitoring
+
+Node utilisation is a misleading number on this cluster. The two nodes have
+4Gi of RAM each, of which AKS reserves about 768Mi before any workload runs,
+and the kubelet, containerd and page cache take roughly another 1.1Gi per
+node. So a node reporting 60% memory is mostly reporting its own fixed floor:
+measured pod usage was 794Mi and 796Mi per node against node totals of 1971Mi
+and 1903Mi. Deleting workloads cannot move that number much, and chasing it
+leads to buying nodes the cluster does not need.
+
+The number that actually constrains this repository is *schedulable* headroom,
+because a new E2E namespace has to fit in what pod requests have not already
+reserved. That is a different figure: CPU requests sat at 64% per node while
+real CPU usage was under 2%, so the cluster can refuse to schedule a pull
+request while looking almost idle.
+
+`make cluster-capacity-report` reports that headroom, estimates how many more
+E2E namespaces still fit, and lists requested versus actually used resources
+per namespace so over-requesting is visible. It is strictly read-only; the
+test suite fails if any mutating `kubectl` verb ever appears in it.
+
+```bash
+make cluster-capacity-report                      # fails below the thresholds
+CAPACITY_STRICT=false make cluster-capacity-report # report only
+MIN_FREE_CPU_PERCENT=25 make cluster-capacity-report
+```
+
+The weekly cleanup workflow runs it after reclaiming namespaces, and a
+scheduled run that fails is mailed to the repository owner. That is the whole
+alerting mechanism, and it is deliberate: an in-cluster Prometheus and Grafana
+stack would consume several hundred Mi on nodes that have little to spare,
+making the problem it observes worse, and no third-party monitoring service
+gets access to this cluster.
+
+Observation alone does not bound the damage, so `make dependabot-e2e-pool`
+also applies a `ResourceQuota` and a `LimitRange` to every pool namespace. The
+E2E identity holds the built-in `admin` role inside its namespace, so a quota
+set by the cluster admin is the only ceiling that identity cannot lift. It is
+sized from what the deploy really asks for, including the frontend autoscaler
+that `scripts/aks-deploy.sh` enables up to 3 replicas, with roughly double
+that as headroom. The `LimitRange` supplies default requests and limits, which
+is what stops the quota from rejecting any container that omits them.
 
 For local operator access, keep the base64-encoded namespace kubeconfig in
 gitignored `backend/.env.local` as `DEPENDABOT_E2E_KUBECONFIG_B64`, then run

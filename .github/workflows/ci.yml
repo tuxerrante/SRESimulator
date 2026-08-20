@@ -691,6 +691,11 @@ jobs:
       E2E_RELEASE: sre-simulator
       AKS_E2E_EXPOSURE_MODE: none
       AKS_E2E_PUSH_DEV_IMAGES: "true"
+      # Reuse the previous push's image layers instead of reinstalling
+      # node_modules and rebuilding the frontend bundle every time. The deploy
+      # step spent 116 of its 196 seconds rebuilding images that had not
+      # changed.
+      AKS_E2E_IMAGE_CACHE: "true"
       AKS_E2E_DEV_IMAGE_TAG_SUFFIX: dev
       GHCR_USERNAME: ${{ github.actor }}
       GH_TOKEN: ${{ github.token }}
@@ -892,8 +897,11 @@ jobs:
 
           if [[ "${EVENT_NAME}" == "pull_request" ]]; then
             if [[ "${IS_DEPENDABOT}" == "true" ]]; then
+              # Dependabot E2E runs claim a namespace from a fixed-size pool
+              # and a single run takes ~20 minutes, so once every slot is busy
+              # the wait has to cover a queue of PRs, not a single run.
               dependabot_e2e_state=""
-              for _ in $(seq 1 90); do
+              for _ in $(seq 1 210); do
                 dependabot_e2e_state="$(
                   gh api \
                     "repos/${GITHUB_REPOSITORY}/commits/${PR_HEAD_SHA}/status" \
@@ -922,6 +930,21 @@ jobs:
                 failed_jobs+=(
                   "dependabot-e2e (${dependabot_e2e_state:-missing})"
                 )
+                case "${dependabot_e2e_state}" in
+                  ""|pending)
+                    echo ""
+                    echo "The dependabot-e2e status never reached a terminal" \
+                      "state within the wait window."
+                    echo "This usually means every namespace in the" \
+                      "Dependabot E2E pool was busy, so the run could not" \
+                      "claim a slot. Check DEPENDABOT_E2E_NAMESPACE_POOL and" \
+                      "whether the pool is large enough for the number of" \
+                      "open Dependabot PRs."
+                    echo "It is not evidence that this dependency update is" \
+                      "broken. Re-run 'Dependabot E2E Build' for this PR once" \
+                      "the pool has capacity."
+                    ;;
+                esac
               fi
             elif [[ "${LIVE_E2E_RESULT}" != "success" ]]; then
               failed=true
