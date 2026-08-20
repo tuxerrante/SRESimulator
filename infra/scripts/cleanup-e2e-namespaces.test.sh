@@ -210,13 +210,18 @@ run_cleanup DRY_RUN=false || fail "cleanup exited non-zero: $(cat "$WORK_DIR/out
 [[ -e "$NS_DIR/sre-dependabot-e2e-1" ]] || fail "pool namespace deleted while reclaiming a release"
 
 # A namespace whose pull request still has a run in flight must be kept.
+# The stub answers only paginated requests, and only reports the in-flight run
+# under a status that is not queried first, so dropping pagination or narrowing
+# the set of active run statuses makes the guard miss the run and fail the test.
 cat > "$WORK_DIR/bin/gh" <<'STUB'
 #!/usr/bin/env bash
 [[ "${GH_FAIL:-0}" == "1" ]] && exit 1
-case "$2" in
-  *actions/runs*) echo "deadbeef" ;;
+args="$*"
+[[ "$args" == *--paginate* ]] || exit 1
+case "$args" in
+  *actions/runs*status=waiting*) echo "deadbeef" ;;
+  *actions/runs*) ;;
   *pulls?state=open*) echo "101 deadbeef" ;;
-  *) echo "" ;;
 esac
 exit 0
 STUB

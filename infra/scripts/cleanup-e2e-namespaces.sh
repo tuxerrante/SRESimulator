@@ -129,19 +129,28 @@ age_hours() {
 PR_GUARD=disabled
 ACTIVE_PR_NUMBERS=""
 
+# Every status a workflow run can report while it may still be using a
+# namespace. Listing them explicitly keeps each query small enough to paginate
+# safely; paginating the unfiltered run list would walk the repository's entire
+# run history on every cleanup.
+ACTIVE_RUN_STATUSES=(queued in_progress waiting pending requested)
+
 resolve_pr_guard() {
-  local in_flight open_prs number sha
+  local in_flight open_prs number sha status shas
   [[ -z "${GITHUB_REPOSITORY}" ]] && return 0
   command -v gh >/dev/null 2>&1 || return 0
 
   PR_GUARD=failed
-  in_flight="$(
-    gh api "repos/${GITHUB_REPOSITORY}/actions/runs?per_page=100" \
-      --jq '[.workflow_runs[] | select(.status != "completed") | .head_sha]
-            | unique | join(" ")' 2>/dev/null
-  )" || return 0
+  in_flight=""
+  for status in "${ACTIVE_RUN_STATUSES[@]}"; do
+    shas="$(
+      gh api --paginate "repos/${GITHUB_REPOSITORY}/actions/runs?status=${status}&per_page=100" \
+        --jq '.workflow_runs[] | .head_sha' 2>/dev/null
+    )" || return 0
+    in_flight="${in_flight} ${shas//$'\n'/ }"
+  done
   open_prs="$(
-    gh api "repos/${GITHUB_REPOSITORY}/pulls?state=open&per_page=100" \
+    gh api --paginate "repos/${GITHUB_REPOSITORY}/pulls?state=open&per_page=100" \
       --jq '.[] | "\(.number) \(.head.sha)"' 2>/dev/null
   )" || return 0
 
