@@ -20,6 +20,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Changed (Unreleased)
 
+- Expanded the low-cost AKS node pool autoscaler ceiling from three to five
+  nodes while retaining a one-node `Standard_B2s` baseline, providing elastic
+  capacity for concurrent E2E workloads without provisioning idle nodes.
 - Made anonymous trial enforcement identity-aware by client IP: an opaque
   IP-only claim is persisted alongside browser signals and trusted client IP
   detection is wired through the AKS Gateway path. The anonymous Easy path now
