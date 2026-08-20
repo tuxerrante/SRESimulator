@@ -118,6 +118,57 @@ subjects:
     name: ${SERVICE_ACCOUNT_NAME}
     namespace: ${SERVICE_ACCOUNT_NAMESPACE}
 EOF
+
+  # The end-to-end identity holds the built-in `admin` ClusterRole inside its
+  # namespace, so nothing in the namespace itself stops a bad chart value or a
+  # runaway HorizontalPodAutoscaler from requesting the whole node pool and
+  # starving production. A ResourceQuota is the only ceiling the namespace
+  # owner cannot lift, which is why it is set here by the cluster admin rather
+  # than shipped in the chart.
+  #
+  # Sizing comes from what the end-to-end deploy actually asks for: the backend
+  # runs a single replica, while scripts/aks-deploy.sh enables the frontend
+  # autoscaler up to 3 replicas, so the worst case is 4 pods requesting
+  # 100m/128Mi, plus rolling-update surge. The ceiling below is roughly double
+  # that, which absorbs surge and Helm hooks while still bounding one namespace
+  # to well under a quarter of the node pool.
+  kubectl apply -n "${namespace}" -f - >/dev/null <<EOF
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: e2e-ceiling
+spec:
+  hard:
+    requests.cpu: "1"
+    requests.memory: 1536Mi
+    limits.cpu: "4"
+    limits.memory: 4Gi
+    pods: "15"
+    persistentvolumeclaims: "4"
+    services: "10"
+EOF
+
+  # A ResourceQuota that constrains requests rejects any Pod that does not
+  # declare them, so the defaults below are what keep the quota from turning
+  # into an outage the first time a container omits its resources block.
+  kubectl apply -n "${namespace}" -f - >/dev/null <<EOF
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: e2e-defaults
+spec:
+  limits:
+    - type: Container
+      defaultRequest:
+        cpu: 100m
+        memory: 128Mi
+      default:
+        cpu: 500m
+        memory: 512Mi
+      max:
+        cpu: "1"
+        memory: 1Gi
+EOF
 done
 
 echo

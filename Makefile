@@ -3,7 +3,7 @@
        lint lint-ts lint-backend lint-unused-exports lint-yaml lint-md \
        typecheck typecheck-backend validate \
        security audit lockfile-lint gitleaks grype require-mssql-sa-password require-mssql-database-url \
-       test test-shell test-integration test-e2e-live playwright-install test-mssql dev-db smoke-backend-mssql smoke-local-vertex release-prepare verify-release-version env-check dependabot-e2e-kubeconfig dependabot-e2e-pool cleanup-e2e-namespaces aro-login aks-login e2e-azure-route e2e-azure-route-up e2e-azure-route-refresh e2e-azure-route-down \
+       test test-shell test-integration test-e2e-live playwright-install test-mssql dev-db smoke-backend-mssql smoke-local-vertex release-prepare verify-release-version env-check dependabot-e2e-kubeconfig dependabot-e2e-pool cleanup-e2e-namespaces cluster-capacity-report aro-login aks-login e2e-azure-route e2e-azure-route-up e2e-azure-route-refresh e2e-azure-route-down \
        prod-up prod-up-tag prod-down prod-status public-exposure-audit db-mode-check db-port-forward-check db-inspect db-inspect-live db-admin-stats db-admin-stats-live geneva-suppression-check prod-up-final \
        build dev start capture-readme-hero \
        docker-build-frontend docker-build-backend docker-build \
@@ -78,6 +78,9 @@ DEPENDABOT_E2E_KUBECONFIG_B64 ?=
 DEPENDABOT_E2E_KUBECONFIG_FILE ?= $(HOME)/.config/sresimulator/dependabot-e2e-kubeconfig
 DEPENDABOT_E2E_POOL_SIZE ?= 4
 CLEANUP_MIN_AGE_HOURS ?= 24
+MIN_FREE_CPU_PERCENT ?= 15
+MIN_FREE_MEMORY_PERCENT ?= 15
+CAPACITY_STRICT ?= true
 DRY_RUN ?= true
 E2E_REQUIRED_VARS := AZURE_SUBSCRIPTION_ID AOAI_RG AOAI_ACCOUNT AOAI_DEPLOYMENT $(if $(filter aks,$(CLUSTER_FLAVOR)),AKS_RG AKS_CLUSTER,ARO_RG ARO_CLUSTER)
 PROD_NAMESPACE ?= sre-simulator
@@ -318,6 +321,7 @@ test-shell: ## Run shell regression tests
 	env -i PATH="$$PATH" HOME="$$HOME" TMPDIR="$${TMPDIR:-/tmp}" bash scripts/aks-deploy.test.sh
 	env -i PATH="$$PATH" HOME="$$HOME" TMPDIR="$${TMPDIR:-/tmp}" bash scripts/cleanup-old-worktrees.test.sh
 	env -i PATH="$$PATH" HOME="$$HOME" TMPDIR="$${TMPDIR:-/tmp}" bash infra/scripts/cleanup-e2e-namespaces.test.sh
+	env -i PATH="$$PATH" HOME="$$HOME" TMPDIR="$${TMPDIR:-/tmp}" bash infra/scripts/cluster-capacity-report.test.sh
 	env -i PATH="$$PATH" HOME="$$HOME" TMPDIR="$${TMPDIR:-/tmp}" bash scripts/dependabot-e2e-namespace.test.sh
 	env -i PATH="$$PATH" HOME="$$HOME" TMPDIR="$${TMPDIR:-/tmp}" bash scripts/docker-image-slimming.test.sh
 	env -i PATH="$$PATH" HOME="$$HOME" TMPDIR="$${TMPDIR:-/tmp}" bash scripts/e2e-env-file.test.sh
@@ -578,6 +582,12 @@ cleanup-e2e-namespaces: ## Reclaim stale ephemeral E2E namespaces (DRY_RUN=false
 	CLEANUP_MIN_AGE_HOURS="$(CLEANUP_MIN_AGE_HOURS)" \
 	PROD_NAMESPACE="$(PROD_NAMESPACE)" \
 	bash infra/scripts/cleanup-e2e-namespaces.sh
+
+cluster-capacity-report: ## Report schedulable cluster headroom (read-only)
+	MIN_FREE_CPU_PERCENT="$(MIN_FREE_CPU_PERCENT)" \
+	MIN_FREE_MEMORY_PERCENT="$(MIN_FREE_MEMORY_PERCENT)" \
+	STRICT="$(CAPACITY_STRICT)" \
+	bash infra/scripts/cluster-capacity-report.sh
 
 aro-login: ## Authenticate Azure CLI if needed and log oc into the configured ARO cluster
 	@set -eo pipefail; \
