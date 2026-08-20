@@ -321,6 +321,7 @@ For provider options, environment variables, and runtime behavior, use:
 | `make prod-up-final` | Guarded production deploy sequence |
 | `make prod-status` | Show production namespace status |
 | `make prod-down` | Delete production namespace (explicit confirmation) |
+| `make cluster-capacity-report` | Report schedulable cluster headroom (read-only) |
 
 ## Mandatory pull-request browser gate
 
@@ -430,6 +431,49 @@ The safety model, in the order the script applies it:
 
 It also uninstalls Helm releases left inside a pool namespace that no run
 currently claims, which is the other way pool capacity leaks.
+
+### Cluster capacity monitoring
+
+Node utilisation is a misleading number on this cluster. The two nodes have
+4Gi of RAM each, of which AKS reserves about 768Mi before any workload runs,
+and the kubelet, containerd and page cache take roughly another 1.1Gi per
+node. So a node reporting 60% memory is mostly reporting its own fixed floor:
+measured pod usage was 794Mi and 796Mi per node against node totals of 1971Mi
+and 1903Mi. Deleting workloads cannot move that number much, and chasing it
+leads to buying nodes the cluster does not need.
+
+The number that actually constrains this repository is *schedulable* headroom,
+because a new E2E namespace has to fit in what pod requests have not already
+reserved. That is a different figure: CPU requests sat at 64% per node while
+real CPU usage was under 2%, so the cluster can refuse to schedule a pull
+request while looking almost idle.
+
+`make cluster-capacity-report` reports that headroom, estimates how many more
+E2E namespaces still fit, and lists requested versus actually used resources
+per namespace so over-requesting is visible. It is strictly read-only; the
+test suite fails if any mutating `kubectl` verb ever appears in it.
+
+```bash
+make cluster-capacity-report                      # fails below the thresholds
+CAPACITY_STRICT=false make cluster-capacity-report # report only
+MIN_FREE_CPU_PERCENT=25 make cluster-capacity-report
+```
+
+The weekly cleanup workflow runs it after reclaiming namespaces, and a
+scheduled run that fails is mailed to the repository owner. That is the whole
+alerting mechanism, and it is deliberate: an in-cluster Prometheus and Grafana
+stack would consume several hundred Mi on nodes that have little to spare,
+making the problem it observes worse, and no third-party monitoring service
+gets access to this cluster.
+
+Observation alone does not bound the damage, so `make dependabot-e2e-pool`
+also applies a `ResourceQuota` and a `LimitRange` to every pool namespace. The
+E2E identity holds the built-in `admin` role inside its namespace, so a quota
+set by the cluster admin is the only ceiling that identity cannot lift. It is
+sized from what the deploy really asks for, including the frontend autoscaler
+that `scripts/aks-deploy.sh` enables up to 3 replicas, with roughly double
+that as headroom. The `LimitRange` supplies default requests and limits, which
+is what stops the quota from rejecting any container that omits them.
 
 For local operator access, keep the base64-encoded namespace kubeconfig in
 gitignored `backend/.env.local` as `DEPENDABOT_E2E_KUBECONFIG_B64`, then run
