@@ -21,7 +21,7 @@ aoai_sku_name = "GlobalStandard"
 # Minimum-cost AKS sizing with node autoscaling.
 aks_node_vm_size   = "Standard_B2s"
 aks_node_count_min = 1
-aks_node_count_max = 3
+aks_node_count_max = 5
 
 # Optional overrides. The frontend public IP stays in the main RG; Azure still
 # creates a separate AKS-managed node RG, which is expected.

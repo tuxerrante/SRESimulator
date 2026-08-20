@@ -125,8 +125,8 @@ run "aks_minimal_autoscaling_defaults" {
   }
 
   assert {
-    condition     = azurerm_kubernetes_cluster.aks[0].default_node_pool[0].max_count == 3
-    error_message = "AKS autoscaler should default to a small upper bound."
+    condition     = azurerm_kubernetes_cluster.aks[0].default_node_pool[0].max_count == 5
+    error_message = "AKS autoscaler should default to five-node burst capacity."
   }
 }
 
