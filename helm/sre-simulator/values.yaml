@@ -68,7 +68,11 @@ backend:
     minReplicas: 1
     maxReplicas: 4
     targetCPUUtilizationPercentage: 70
-    targetMemoryUtilizationPercentage: 75
+    # Memory scaling is disabled by default because Node.js has a high fixed
+    # baseline memory footprint. Scaling down based on memory requires the remaining
+    # pods to absorb the conserved total memory without exceeding the target, which
+    # traps the HPA in a scaled-up state.
+    # targetMemoryUtilizationPercentage: 75
   resources:
     requests:
       cpu: 100m
