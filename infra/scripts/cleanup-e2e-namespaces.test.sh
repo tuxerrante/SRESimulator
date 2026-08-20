@@ -269,6 +269,9 @@ assert_contains "schedule:" "$WORKFLOW"
 assert_contains "workflow_dispatch:" "$WORKFLOW"
 # The scheduled run is the only one allowed to delete without a human choice.
 assert_contains "default: true" "$WORKFLOW"
+# workflow_dispatch can be started from any branch, so the job must refuse to
+# run anything but the default branch with cluster credentials.
+assert_contains "github.event.repository.default_branch" "$WORKFLOW"
 assert_missing "sre-simulator" "$WORKFLOW"
 
 echo "cleanup-e2e-namespaces tests passed."

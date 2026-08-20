@@ -35,6 +35,12 @@ concurrency:
 jobs:
   cleanup:
     name: cleanup-e2e-namespaces
+    # workflow_dispatch can be started from any branch, so without this the job
+    # would run that branch's script with cluster credentials. Refuse anything
+    # but the default branch, which is what the safety model above assumes.
+    if: >-
+      github.ref == format('refs/heads/{0}',
+        github.event.repository.default_branch)
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
