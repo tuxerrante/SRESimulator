@@ -691,6 +691,11 @@ jobs:
       E2E_RELEASE: sre-simulator
       AKS_E2E_EXPOSURE_MODE: none
       AKS_E2E_PUSH_DEV_IMAGES: "true"
+      # Reuse the previous push's image layers instead of reinstalling
+      # node_modules and rebuilding the frontend bundle every time. The deploy
+      # step spent 116 of its 196 seconds rebuilding images that had not
+      # changed.
+      AKS_E2E_IMAGE_CACHE: "true"
       AKS_E2E_DEV_IMAGE_TAG_SUFFIX: dev
       GHCR_USERNAME: ${{ github.actor }}
       GH_TOKEN: ${{ github.token }}

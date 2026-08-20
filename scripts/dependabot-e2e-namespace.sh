@@ -20,6 +20,17 @@ CLAIM_STALE_MINUTES="${CLAIM_STALE_MINUTES:-45}"
 CLAIM_WAIT_SECONDS="${CLAIM_WAIT_SECONDS:-1800}"
 CLAIM_POLL_SECONDS="${CLAIM_POLL_SECONDS:-15}"
 
+# These feed arithmetic and sleep. A non-integer coming from workflow env or a
+# repository variable would otherwise surface as an opaque bash arithmetic
+# error in the middle of a run instead of a clear configuration failure.
+for _setting in CLAIM_STALE_MINUTES CLAIM_WAIT_SECONDS CLAIM_POLL_SECONDS; do
+  if ! [[ "${!_setting}" =~ ^[0-9]+$ ]]; then
+    echo "${_setting} must be a non-negative integer, got '${!_setting}'." >&2
+    exit 2
+  fi
+done
+unset _setting
+
 usage() {
   cat >&2 <<'EOF'
 Usage:
