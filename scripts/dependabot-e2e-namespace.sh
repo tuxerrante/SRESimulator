@@ -129,6 +129,8 @@ claim() {
 
   if [[ -z "${DEPENDABOT_E2E_NAMESPACE_POOL:-}" ]]; then
     log "DEPENDABOT_E2E_NAMESPACE_POOL is empty."
+    log "Set the repository variable to the pool namespaces, creating them"
+    log "first with 'make dependabot-e2e-pool' if they do not exist."
     exit 1
   fi
 

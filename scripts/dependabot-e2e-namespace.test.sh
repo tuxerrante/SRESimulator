@@ -215,4 +215,21 @@ for setting in CLAIM_STALE_MINUTES CLAIM_WAIT_SECONDS CLAIM_POLL_SECONDS; do
     fail "$setting rejection did not explain the problem: $out"
 done
 
+# An unset pool must stop the run, not quietly fall back to one shared
+# namespace. That fallback is what serialised every concurrent Dependabot run
+# behind a single namespace until they timed out, and the symptom then was a
+# slow gate rather than an error, so nobody looked at the configuration.
+if grep -Eq "vars\.DEPENDABOT_E2E_NAMESPACE_POOL[[:space:]]*\|\|" "$WORKFLOW"; then
+  fail "workflow must not default the namespace pool to a shared namespace"
+fi
+
+if out="$(
+  env PATH="$WORK_DIR/bin:$PATH" CLAIM_DIR="$WORK_DIR/claims" \
+    DEPENDABOT_E2E_NAMESPACE_POOL="" bash "$SCRIPT" claim 1 1 2>&1
+)"; then
+  fail "claim succeeded with an empty pool"
+fi
+grep -Fq "make dependabot-e2e-pool" <<<"$out" ||
+  fail "empty pool error did not say how to fix it: $out"
+
 echo "dependabot E2E namespace pool checks passed."
