@@ -389,6 +389,39 @@ with read-only repository permissions and no secrets; only the trusted
 default-branch workflow can publish packages or receive the namespace
 kubeconfig.
 
+### Weekly ephemeral namespace cleanup
+
+Every job that creates a temporary namespace removes it in an `always()` step,
+but a cancelled run, an expired runner token or a cluster hiccup can still
+leave one behind, and a leaked namespace holds its CPU and memory requests
+forever. Eight abandoned `sre-manual-e2e-*` namespaces, the oldest 61 days old,
+once held 1700m CPU and 2176Mi of requests on this cluster.
+
+The `Cleanup E2E Namespaces` workflow reclaims them every Monday. It runs only
+from the default branch, so it never executes pull request code with the Azure
+credentials and therefore needs no approval gate. Run it by hand with
+`workflow_dispatch`, which defaults to reporting only, or locally:
+
+```bash
+make cleanup-e2e-namespaces                 # report what would be removed
+DRY_RUN=false make cleanup-e2e-namespaces   # actually reclaim
+```
+
+The safety model, in the order the script applies it:
+
+1. Only namespaces matching an allow-listed prefix are considered, and every
+   prefix must start with `sre-` and be long enough to be selective.
+2. Protected namespaces are then removed from the candidate list, so
+   production and the `sre-dependabot-e2e*` pool survive a widened prefix.
+3. A candidate must be older than `CLEANUP_MIN_AGE_HOURS` (24 by default),
+   far above the 60 minute timeout of any job that creates one.
+4. A `sre-pr-<number>` namespace is kept while that pull request still has a
+   workflow run in flight.
+5. Nothing is deleted unless `DRY_RUN` is explicitly `false`.
+
+It also uninstalls Helm releases left inside a pool namespace that no run
+currently claims, which is the other way pool capacity leaks.
+
 For local operator access, keep the base64-encoded namespace kubeconfig in
 gitignored `backend/.env.local` as `DEPENDABOT_E2E_KUBECONFIG_B64`, then run
 `make dependabot-e2e-kubeconfig`. The target validates and writes the decoded
