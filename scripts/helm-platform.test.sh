@@ -203,6 +203,28 @@ grep -Eq 'name: sre-simulator-frontend-hpa' "${lb_render}" || \
 grep -Eq 'name: sre-simulator-backend-hpa' "${lb_render}" || \
   fail "Backend autoscaling with database mode should render the backend HPA."
 
+backend_hpa_default="$(
+  helm template sre-simulator "${CHART_DIR}" \
+    --show-only templates/backend-hpa.yaml \
+    --set backend.autoscaling.enabled=true \
+    --set database.enabled=true \
+    --set database.existingSecretName=sre-sql-creds
+)"
+if grep -Eq '^[[:space:]]+name: memory$' <<<"${backend_hpa_default}"; then
+  fail "Backend HPA should not scale on memory by default."
+fi
+
+backend_hpa_memory="$(
+  helm template sre-simulator "${CHART_DIR}" \
+    --show-only templates/backend-hpa.yaml \
+    --set backend.autoscaling.enabled=true \
+    --set backend.autoscaling.targetMemoryUtilizationPercentage=75 \
+    --set database.enabled=true \
+    --set database.existingSecretName=sre-sql-creds
+)"
+grep -Eq '^[[:space:]]+name: memory$' <<<"${backend_hpa_memory}" || \
+  fail "Backend HPA should render the memory metric when explicitly configured."
+
 helm template sre-simulator "${CHART_DIR}" \
   --set exposure.mode=gateway \
   --set-string exposure.host="  play.sresimulator.osadev.cloud  " \
