@@ -1,16 +1,27 @@
 ---
 version: 2
 updates:
+  # The Dependabot E2E gate claims a namespace from a fixed-size pool, so PRs
+  # beyond the pool size queue for a free slot (~20 minutes per run). Keep the
+  # number of simultaneous PRs close to the pool size by batching non-major
+  # updates, otherwise the ci-gate wait starves.
   - package-ecosystem: npm
     directory: /frontend
     schedule:
       interval: weekly
-    open-pull-requests-limit: 10
+    open-pull-requests-limit: 3
     groups:
       react-runtime:
         patterns:
           - react
           - react-dom
+      frontend-minor-patch:
+        applies-to: version-updates
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
     ignore:
       - dependency-name: eslint
         update-types:
@@ -20,7 +31,15 @@ updates:
     directory: /backend
     schedule:
       interval: weekly
-    open-pull-requests-limit: 10
+    open-pull-requests-limit: 3
+    groups:
+      backend-minor-patch:
+        applies-to: version-updates
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
     ignore:
       - dependency-name: vitest
         versions:
@@ -33,4 +52,9 @@ updates:
     directory: /
     schedule:
       interval: weekly
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 2
+    groups:
+      github-actions:
+        applies-to: version-updates
+        patterns:
+          - "*"

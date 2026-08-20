@@ -11,7 +11,10 @@ permissions:
   contents: read
 
 concurrency:
-  group: dependabot-e2e
+  # Scoped to the PR head commit so simultaneous Dependabot PRs run in
+  # parallel. A single global group let GitHub evict queued runs, which left
+  # the dependabot-e2e status permanently pending and failed ci-gate.
+  group: dependabot-e2e-${{ github.event.workflow_run.head_sha }}
   cancel-in-progress: false
 
 jobs:
@@ -173,13 +176,20 @@ jobs:
       - publish-images
     if: needs.publish-images.result == 'success'
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # Covers waiting for a free pool slot (up to 30m) plus the deploy and
+    # browser run.
+    timeout-minutes: 75
     permissions:
       contents: read
     environment:
       name: dependabot-e2e
     env:
-      E2E_NAMESPACE: sre-dependabot-e2e
+      # Each run claims one dedicated namespace from a pre-provisioned pool.
+      # DEPENDABOT_E2E_NAMESPACE_POOL is set once the operator has run
+      # infra/scripts/dependabot-e2e-pool.sh; until then the job falls back to
+      # the original single fixed namespace.
+      DEPENDABOT_E2E_NAMESPACE_POOL: >-
+        ${{ vars.DEPENDABOT_E2E_NAMESPACE_POOL || 'sre-dependabot-e2e' }}
       E2E_RELEASE: sre-dependabot-e2e
       IMAGE_TAG: ${{ needs.resolve.outputs.image_tag }}
       FRONTEND_IMAGE: >-
@@ -258,13 +268,6 @@ jobs:
           set -euo pipefail
           umask 077
           printf '%s' "${E2E_KUBECONFIG}" > "${KUBECONFIG}"
-          kubectl auth can-i create deployments.apps \
-            --namespace "${E2E_NAMESPACE}" --quiet
-          # The browser E2E reaches the frontend through kubectl port-forward,
-          # which needs an explicit pods/portforward create grant. Without this
-          # check the job only surfaces an opaque connection refused later on.
-          kubectl auth can-i create pods/portforward \
-            --namespace "${E2E_NAMESPACE}" --quiet
           for verb in get list watch; do
             set +e
             kubectl auth can-i "${verb}" secrets \
@@ -280,6 +283,46 @@ jobs:
               exit 1
             fi
           done
+          # Creating namespaces stays out of reach on purpose: it is a
+          # cluster-scoped verb, and the namespaced grants that would have to
+          # accompany it could only be delivered through a ClusterRoleBinding
+          # that also reaches production. The pool is pre-provisioned instead.
+          set +e
+          kubectl auth can-i create namespaces --quiet
+          namespace_create_status=$?
+          set -e
+          if [[ "${namespace_create_status}" -eq 0 ]]; then
+            echo "E2E identity must not create namespaces." >&2
+            exit 1
+          fi
+          if [[ "${namespace_create_status}" -ne 1 ]]; then
+            echo "Unable to verify namespace creation denial." >&2
+            exit 1
+          fi
+
+      - name: Claim a dedicated E2E namespace
+        env:
+          PR_NUMBER: ${{ needs.resolve.outputs.pr_number }}
+        run: |
+          set -euo pipefail
+          claimed="$(
+            RELEASE_NAME="${E2E_RELEASE}" \
+              bash scripts/dependabot-e2e-namespace.sh \
+                claim "${PR_NUMBER}" "${GITHUB_RUN_ID}"
+          )"
+          echo "E2E_NAMESPACE=${claimed}" >> "$GITHUB_ENV"
+          echo "Using namespace ${claimed}" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Verify claimed namespace guardrails
+        run: |
+          set -euo pipefail
+          kubectl auth can-i create deployments.apps \
+            --namespace "${E2E_NAMESPACE}" --quiet
+          # The browser E2E reaches the frontend through kubectl port-forward,
+          # which needs an explicit pods/portforward create grant. Without this
+          # check the job only surfaces an opaque connection refused later on.
+          kubectl auth can-i create pods/portforward \
+            --namespace "${E2E_NAMESPACE}" --quiet
           for policy in \
             dependabot-e2e-default-deny-egress \
             dependabot-e2e-allow-dns \
@@ -382,13 +425,16 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
-      - name: Clean fixed E2E namespace
+      - name: Release the claimed E2E namespace
         if: always()
         run: |
-          helm uninstall "${E2E_RELEASE}" \
-            --namespace "${E2E_NAMESPACE}" >/dev/null 2>&1 || true
-          kubectl -n "${E2E_NAMESPACE}" delete secret \
-            dependabot-e2e-runtime --ignore-not-found >/dev/null
+          set -euo pipefail
+          if [[ -z "${E2E_NAMESPACE:-}" ]]; then
+            echo "No namespace was claimed; nothing to release."
+            exit 0
+          fi
+          bash scripts/dependabot-e2e-namespace.sh \
+            release "${E2E_NAMESPACE}" "${E2E_RELEASE}"
 
   finalize:
     needs:

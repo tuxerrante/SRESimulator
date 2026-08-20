@@ -326,13 +326,57 @@ Dependabot PRs take a credential-minimized path because GitHub withholds normal
 Actions secrets and gives their pull-request workflows a read-only token. A
 unprivileged `pull_request` workflow builds the dependency-update images and
 uploads immutable, SHA-bound artifacts. A trusted `workflow_run` validates and
-publishes those artifacts without checking out PR code, deploys only the trusted
-`main` chart into the fixed `sre-dependabot-e2e` namespace, and runs mock-AI/JSON
-browser coverage. Its kubeconfig is stored only in the unprotected
-`dependabot-e2e` Environment and is bound to that namespace; it cannot read the
-production namespace or delete namespaces. The main `ci-gate` waits for the
-`dependabot-e2e` commit status, so the bot path remains merge-blocking without
-Azure login or manual approval.
+publishes those artifacts without checking out PR code, claims one dedicated
+namespace from a pre-provisioned pool, deploys only the trusted `main` chart
+into it, and runs mock-AI/JSON browser coverage. Its kubeconfig is stored only
+in the unprotected `dependabot-e2e` Environment and is bound to those
+namespaces; it cannot read the production namespace, create namespaces, or
+delete namespaces. The main `ci-gate` waits for the `dependabot-e2e` commit
+status, so the bot path remains merge-blocking without Azure login or manual
+approval.
+
+### Dependabot E2E namespace pool
+
+The Dependabot runs used to share one fixed namespace behind a single global
+Actions concurrency group. GitHub keeps only one pending run per concurrency
+group, so simultaneous Dependabot PRs evicted each other and `ci-gate` failed
+with `dependabot-e2e (missing)` or `(pending)` even though every dependency
+update was fine. Runs are now keyed on the PR head SHA and each claims its own
+namespace.
+
+The pool is pre-provisioned rather than created per PR on purpose. Creating a
+namespace is cluster-scoped, and the namespaced verbs the job needs could only
+be granted through a `ClusterRoleBinding`, because Kubernetes RBAC cannot scope
+a `RoleBinding` to a namespace name prefix and the job cannot grant itself
+rights in a namespace it just created. That binding would also expose the
+production namespace. A bounded pool keeps the identity namespace-only and caps
+how much of the shared AKS cluster Dependabot can consume at once.
+
+Provision or resize it with cluster-admin credentials:
+
+```bash
+DEPENDABOT_E2E_POOL_SIZE=4 make dependabot-e2e-pool
+```
+
+The script is idempotent. It creates each namespace with restricted Pod
+Security, the three `dependabot-e2e-*` NetworkPolicies the workflow verifies,
+and a namespace-scoped `RoleBinding` that grants the E2E ServiceAccount the
+built-in `admin` ClusterRole inside that namespace only. Then set the
+repository variable it prints:
+
+```text
+DEPENDABOT_E2E_NAMESPACE_POOL="sre-dependabot-e2e-1 sre-dependabot-e2e-2 ..."
+```
+
+Until that variable is set the workflow falls back to the single legacy
+`sre-dependabot-e2e` namespace, so provisioning and rollout can be staged.
+
+Each run claims a slot by atomically creating a `dependabot-e2e-claim`
+ConfigMap and releases it in an `always()` step. A claim left behind by a
+cancelled run is reclaimed after `CLAIM_STALE_MINUTES` (45 by default), so a
+lost runner cannot strand a slot permanently. Keep the pool size at or above
+the combined `open-pull-requests-limit` in `.github/dependabot.yml` to avoid
+queueing.
 
 The `dependabot-e2e` Environment accepts protected branches only. The trusted
 workflow re-reads PR metadata and refuses closed PRs, non-`main` bases,
