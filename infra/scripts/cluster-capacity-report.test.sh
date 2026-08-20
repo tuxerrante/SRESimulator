@@ -119,6 +119,43 @@ assert_contains "400m/ 1000m" "$WORK_DIR/out.txt"
 
 write_fixtures
 
+# --- per-namespace grouping does not depend on pod ordering ----------------
+# The API server returns pods grouped by namespace today, so an ordering bug
+# here would stay invisible until it did not. These pods interleave two
+# namespaces deliberately.
+cat >"$WORK_DIR/pods.json" <<'JSON'
+{"items":[
+ {"metadata":{"name":"b1","namespace":"team-b"},
+  "spec":{"nodeName":"node-a","containers":[
+    {"resources":{"requests":{"cpu":"10m","memory":"16Mi"}}}]},
+  "status":{"phase":"Running"}},
+ {"metadata":{"name":"a1","namespace":"team-a"},
+  "spec":{"nodeName":"node-a","containers":[
+    {"resources":{"requests":{"cpu":"100m","memory":"64Mi"}}}]},
+  "status":{"phase":"Running"}},
+ {"metadata":{"name":"b2","namespace":"team-b"},
+  "spec":{"nodeName":"node-b","containers":[
+    {"resources":{"requests":{"cpu":"20m","memory":"32Mi"}}}]},
+  "status":{"phase":"Running"}},
+ {"metadata":{"name":"a2","namespace":"team-a"},
+  "spec":{"nodeName":"node-b","containers":[
+    {"resources":{"requests":{"cpu":"200m","memory":"128Mi"}}}]},
+  "status":{"phase":"Running"}}
+]}
+JSON
+run_report || fail "report failed: $(cat "$WORK_DIR/out.txt")"
+# Each namespace must appear once, with both of its pods added together.
+[[ "$(grep -c '^    team-a ' "$WORK_DIR/out.txt")" == "1" ]] \
+  || fail "team-a was split across rows:
+$(cat "$WORK_DIR/out.txt")"
+[[ "$(grep -c '^    team-b ' "$WORK_DIR/out.txt")" == "1" ]] \
+  || fail "team-b was split across rows:
+$(cat "$WORK_DIR/out.txt")"
+assert_contains "team-a                           300m" "$WORK_DIR/out.txt"
+assert_contains "team-b                            30m" "$WORK_DIR/out.txt"
+
+write_fixtures
+
 # --- threshold enforcement -------------------------------------------------
 run_report MIN_FREE_CPU_PERCENT=90 && fail "did not fail when below the CPU threshold"
 assert_contains "schedulable CPU headroom 75% is below 90%" "$WORK_DIR/out.txt"
