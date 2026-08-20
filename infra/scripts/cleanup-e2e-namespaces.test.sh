@@ -124,9 +124,9 @@ recent() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 
 reset_cluster() {
   rm -f "$NS_DIR"/* "$CLAIM_DIR"/* "$RELEASE_DIR"/*
-  old > "$NS_DIR/sre-pr-101"
+  old > "$NS_DIR/sre-pr-101-20260101-010101"
   old > "$NS_DIR/sre-manual-e2e-abc"
-  recent > "$NS_DIR/sre-pr-202"
+  recent > "$NS_DIR/sre-pr-202-20260101-010101"
   old > "$NS_DIR/sre-simulator"
   old > "$NS_DIR/sre-dependabot-e2e-1"
   old > "$NS_DIR/kube-system"
@@ -141,20 +141,20 @@ run_cleanup() {
 # A dry run must report the stale namespaces without removing anything.
 reset_cluster
 run_cleanup DRY_RUN=true || fail "dry run exited non-zero: $(cat "$WORK_DIR/out.txt")"
-assert_contains "would delete sre-pr-101" "$WORK_DIR/out.txt"
+assert_contains "would delete sre-pr-101-20260101-010101" "$WORK_DIR/out.txt"
 assert_contains "would delete sre-manual-e2e-abc" "$WORK_DIR/out.txt"
-[[ -e "$NS_DIR/sre-pr-101" ]] || fail "dry run deleted sre-pr-101"
+[[ -e "$NS_DIR/sre-pr-101-20260101-010101" ]] || fail "dry run deleted sre-pr-101-20260101-010101"
 [[ -e "$NS_DIR/sre-manual-e2e-abc" ]] || fail "dry run deleted sre-manual-e2e-abc"
 
 # The real run must delete only the stale ephemeral namespaces.
 reset_cluster
 run_cleanup DRY_RUN=false || fail "cleanup exited non-zero: $(cat "$WORK_DIR/out.txt")"
-[[ -e "$NS_DIR/sre-pr-101" ]] && fail "stale sre-pr-101 was not deleted"
+[[ -e "$NS_DIR/sre-pr-101-20260101-010101" ]] && fail "stale sre-pr-101 was not deleted"
 [[ -e "$NS_DIR/sre-manual-e2e-abc" ]] && fail "stale sre-manual-e2e-abc was not deleted"
 
 # Everything else must survive: production, the pool, recent namespaces and any
 # namespace outside the allow-listed prefixes.
-for keep in sre-simulator sre-dependabot-e2e-1 kube-system some-other-team sre-pr-202; do
+for keep in sre-simulator sre-dependabot-e2e-1 kube-system some-other-team sre-pr-202-20260101-010101; do
   [[ -e "$NS_DIR/$keep" ]] || fail "cleanup deleted $keep"
 done
 
@@ -189,12 +189,12 @@ reset_cluster
 if run_cleanup DRY_RUN=yes; then
   fail "an invalid DRY_RUN value was accepted"
 fi
-[[ -e "$NS_DIR/sre-pr-101" ]] || fail "invalid DRY_RUN still deleted a namespace"
+[[ -e "$NS_DIR/sre-pr-101-20260101-010101" ]] || fail "invalid DRY_RUN still deleted a namespace"
 
 reset_cluster
 ( cd "$WORK_DIR" && env -u DRY_RUN GITHUB_REPOSITORY="" bash "$SCRIPT" ) \
   > "$WORK_DIR/out.txt" 2>&1 || fail "default run failed: $(cat "$WORK_DIR/out.txt")"
-[[ -e "$NS_DIR/sre-pr-101" ]] || fail "cleanup defaulted to deleting"
+[[ -e "$NS_DIR/sre-pr-101-20260101-010101" ]] || fail "cleanup defaulted to deleting"
 assert_contains "Dry run" "$WORK_DIR/out.txt"
 
 # An unclaimed pool namespace with a leftover release must be reclaimed, and a
@@ -224,7 +224,7 @@ chmod +x "$WORK_DIR/bin/gh"
 reset_cluster
 ( cd "$WORK_DIR" && env DRY_RUN=false GITHUB_REPOSITORY="o/r" bash "$SCRIPT" ) \
   > "$WORK_DIR/out.txt" 2>&1 || fail "cleanup failed: $(cat "$WORK_DIR/out.txt")"
-[[ -e "$NS_DIR/sre-pr-101" ]] || fail "deleted a namespace whose PR still had a run in flight"
+[[ -e "$NS_DIR/sre-pr-101-20260101-010101" ]] || fail "deleted a namespace whose PR still had a run in flight"
 assert_contains "still has a run in flight" "$WORK_DIR/out.txt"
 # A namespace with no in-flight run must still be reclaimed in the same pass.
 [[ -e "$NS_DIR/sre-manual-e2e-abc" ]] && fail "guard blocked an unrelated namespace"
@@ -234,7 +234,7 @@ assert_contains "still has a run in flight" "$WORK_DIR/out.txt"
 reset_cluster
 ( cd "$WORK_DIR" && env DRY_RUN=false GITHUB_REPOSITORY="o/r" GH_FAIL=1 bash "$SCRIPT" ) \
   > "$WORK_DIR/out.txt" 2>&1 || fail "cleanup failed: $(cat "$WORK_DIR/out.txt")"
-[[ -e "$NS_DIR/sre-pr-101" ]] || fail "deleted a PR namespace while the guard was unavailable"
+[[ -e "$NS_DIR/sre-pr-101-20260101-010101" ]] || fail "deleted a PR namespace while the guard was unavailable"
 assert_contains "cannot confirm no run is in flight" "$WORK_DIR/out.txt"
 # Namespaces the guard does not cover must still be reclaimed.
 [[ -e "$NS_DIR/sre-manual-e2e-abc" ]] && fail "a failed PR guard blocked unrelated cleanup"
@@ -243,10 +243,10 @@ rm -f "$WORK_DIR/bin/gh"
 # A namespace that disappears between the listing and the delete must not abort
 # the rest of the pass.
 reset_cluster
-( cd "$WORK_DIR" && env DRY_RUN=false GITHUB_REPOSITORY="" FAIL_DELETE=sre-pr-101 \
+( cd "$WORK_DIR" && env DRY_RUN=false GITHUB_REPOSITORY="" FAIL_DELETE=sre-pr-101-20260101-010101 \
   bash "$SCRIPT" ) > "$WORK_DIR/out.txt" 2>&1 || \
   fail "a failed delete aborted the run: $(cat "$WORK_DIR/out.txt")"
-assert_contains "could not delete sre-pr-101" "$WORK_DIR/out.txt"
+assert_contains "could not delete sre-pr-101-20260101-010101" "$WORK_DIR/out.txt"
 [[ -e "$NS_DIR/sre-manual-e2e-abc" ]] && fail "a failed delete stopped later cleanup"
 
 # Negative control: the assertions above must fail if the guards are removed.

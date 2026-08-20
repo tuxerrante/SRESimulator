@@ -461,9 +461,55 @@ login_ghcr_with_local_cli() {
   printf '%s' "$token" | "$container_cli" login ghcr.io -u "$username" --password-stdin >/dev/null
 }
 
+aks_e2e_image_cache_enabled() {
+  case "${AKS_E2E_IMAGE_CACHE:-false}" in
+    1|true|TRUE|yes|YES)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+# A registry cache can only be exported by a builder that is not the default
+# "docker" driver, so create a docker-container builder once per run.
+ensure_aks_e2e_cache_builder() {
+  local container_cli=$1 builder="${AKS_E2E_CACHE_BUILDER:-sre-e2e-cache}"
+
+  if [ -n "${AKS_E2E_CACHE_BUILDER_READY:-}" ]; then
+    return 0
+  fi
+  if ! "$container_cli" buildx inspect "$builder" >/dev/null 2>&1; then
+    "$container_cli" buildx create \
+      --name "$builder" --driver docker-container >/dev/null 2>&1 || return 1
+  fi
+  AKS_E2E_CACHE_BUILDER_READY=1
+  return 0
+}
+
 build_and_push_ghcr_image() {
   local container_cli=$1 image_repo=$2 image_tag=$3 dockerfile=$4
   local image_platform="${AKS_E2E_DEV_IMAGE_PLATFORM:-linux/amd64}"
+  local builder="${AKS_E2E_CACHE_BUILDER:-sre-e2e-cache}"
+
+  # Every pull request push otherwise reinstalls node_modules and rebuilds the
+  # frontend bundle from scratch inside the image, which dominated the live E2E
+  # deploy step. Reusing the layers from the previous push keeps the mandatory
+  # gate honest while removing the repeated work.
+  if aks_e2e_image_cache_enabled &&
+    ensure_aks_e2e_cache_builder "$container_cli"; then
+    "$container_cli" buildx build \
+      --builder "$builder" \
+      --platform "$image_platform" \
+      -f "$dockerfile" \
+      -t "${image_repo}:${image_tag}" \
+      --cache-from "type=registry,ref=${image_repo}:buildcache" \
+      --cache-to "type=registry,ref=${image_repo}:buildcache,mode=max,ignore-error=true" \
+      --push \
+      . >/dev/null
+    return
+  fi
 
   "$container_cli" build \
     --platform "$image_platform" \

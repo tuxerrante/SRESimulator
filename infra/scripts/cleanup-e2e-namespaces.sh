@@ -202,7 +202,10 @@ while read -r namespace created; do
   fi
 
   if [[ "${namespace}" == "${PR_NAMESPACE_PREFIX}"* ]]; then
+    # The live E2E job names namespaces sre-pr-<number>-<timestamp>, so only
+    # the leading digits identify the pull request.
     pr_number="${namespace#"${PR_NAMESPACE_PREFIX}"}"
+    pr_number="${pr_number%%-*}"
     if [[ "${PR_GUARD}" == "failed" ]]; then
       echo "    keep   ${namespace}: cannot confirm no run is in flight"
       skipped=$((skipped + 1))

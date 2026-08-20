@@ -108,6 +108,15 @@ AKS deploys consume GHCR images directly. The current helper behavior is importa
 - `TAG=latest` uses whatever GHCR currently serves as `latest`.
 - `TAG=vX.Y.Z` requires those semver-tagged GHCR images to exist first.
 - If `AKS_E2E_PUSH_DEV_IMAGES=true`, the E2E targets switch to a dev-only GHCR publish path before Helm runs.
+- If `AKS_E2E_IMAGE_CACHE=true`, that publish path reuses the previous build's
+  layers through a `:buildcache` registry cache instead of rebuilding from
+  scratch. The `live-e2e` job enables it because its deploy step spent 116 of
+  196 seconds reinstalling `node_modules` and rebuilding the frontend bundle
+  for images that had not changed. It needs a BuildKit `docker-container`
+  builder, which the script creates on demand, and write access to the image
+  repository, which the job already has. Cache export failures are ignored, so
+  a cold or unavailable cache only costs the normal build time. It stays off by
+  default so local and operator runs behave exactly as before.
 
 This means a repo merge alone does not guarantee E2E will run the new app build. Always verify the required GHCR tags first.
 

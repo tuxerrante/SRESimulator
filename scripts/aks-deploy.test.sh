@@ -2025,6 +2025,45 @@ run_makefile_port_forward_e2e_targets_check() {
   assert_contains 'Local frontend port-forward failed to start.' "$makefile"
 }
 
+run_e2e_image_cache_check() {
+  local docker_log
+
+  write_fake_e2e_clis
+  docker_log="$TMP_DIR/e2e-image-cache.docker.log"
+
+  # Without the opt-in the build must stay exactly as it was, so local and
+  # operator runs are unaffected.
+  : >"$docker_log"
+  ( cd "$ROOT_DIR" && env PATH="$TMP_DIR/e2e-bin:$PATH" \
+    FAKE_DOCKER_LOG="$docker_log" bash -c '
+      . scripts/aks-deploy.sh
+      build_and_push_ghcr_image docker ghcr.io/o/img tag1 frontend/Dockerfile
+    ' ) || fail "uncached image build failed"
+  assert_contains "build --platform linux/amd64 -f frontend/Dockerfile -t ghcr.io/o/img:tag1 ." "$docker_log"
+  assert_contains "push ghcr.io/o/img:tag1" "$docker_log"
+  assert_not_contains "cache-from" "$docker_log"
+
+  # With the opt-in the layers must be reused from and written back to the
+  # registry, and the image must be pushed by the build itself.
+  : >"$docker_log"
+  ( cd "$ROOT_DIR" && env PATH="$TMP_DIR/e2e-bin:$PATH" \
+    FAKE_DOCKER_LOG="$docker_log" AKS_E2E_IMAGE_CACHE=true bash -c '
+      . scripts/aks-deploy.sh
+      build_and_push_ghcr_image docker ghcr.io/o/img tag1 frontend/Dockerfile
+    ' ) || fail "cached image build failed"
+  assert_contains "buildx build" "$docker_log"
+  assert_contains "--cache-from type=registry,ref=ghcr.io/o/img:buildcache" "$docker_log"
+  assert_contains "--cache-to type=registry,ref=ghcr.io/o/img:buildcache,mode=max,ignore-error=true" "$docker_log"
+  assert_contains "--push" "$docker_log"
+  # A separate push would publish the image twice.
+  assert_not_contains "push ghcr.io/o/img:tag1" "$docker_log"
+
+  # The cache must never be enabled by default anywhere in the repo.
+  if grep -rn "AKS_E2E_IMAGE_CACHE" "$ROOT_DIR/Makefile" >/dev/null 2>&1; then
+    fail "the image cache must stay opt-in from the workflow, not the Makefile"
+  fi
+}
+
 run_geneva_suppression_gate_scope_check() {
   local aks_output aro_output aro_enabled_output
 
@@ -2097,6 +2136,7 @@ main() {
   run_e2e_route_up_explicit_override_check
   run_e2e_route_refresh_metadata_mode_check
   run_e2e_route_up_dev_image_fallback_check
+  run_e2e_image_cache_check
   run_e2e_route_refresh_rejects_prod_namespace_check
   run_makefile_gateway_defaults_check
   run_makefile_gateway_audit_targets_check
