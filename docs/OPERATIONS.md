@@ -360,8 +360,9 @@ DEPENDABOT_E2E_POOL_SIZE=4 make dependabot-e2e-pool
 
 The script is idempotent. It creates each namespace with restricted Pod
 Security, the three `dependabot-e2e-*` NetworkPolicies the workflow verifies,
-and a namespace-scoped `Role`/`RoleBinding` for the E2E ServiceAccount. Then
-set the repository variable it prints:
+and a namespace-scoped `RoleBinding` that grants the E2E ServiceAccount the
+built-in `admin` ClusterRole inside that namespace only. Then set the
+repository variable it prints:
 
 ```text
 DEPENDABOT_E2E_NAMESPACE_POOL="sre-dependabot-e2e-1 sre-dependabot-e2e-2 ..."

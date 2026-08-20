@@ -892,9 +892,9 @@ jobs:
 
           if [[ "${EVENT_NAME}" == "pull_request" ]]; then
             if [[ "${IS_DEPENDABOT}" == "true" ]]; then
-              # Dependabot E2E runs are serialised on one shared namespace and
-              # a single run takes ~20 minutes, so the wait has to cover a
-              # queue of PRs rather than a single run.
+              # Dependabot E2E runs claim a namespace from a fixed-size pool
+              # and a single run takes ~20 minutes, so once every slot is busy
+              # the wait has to cover a queue of PRs, not a single run.
               dependabot_e2e_state=""
               for _ in $(seq 1 210); do
                 dependabot_e2e_state="$(

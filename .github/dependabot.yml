@@ -1,9 +1,10 @@
 ---
 version: 2
 updates:
-  # The Dependabot E2E gate serialises on a single shared namespace, so every
-  # extra open PR adds ~20 minutes to the queue and starves the ci-gate wait.
-  # Keep the number of simultaneous PRs small by batching non-major updates.
+  # The Dependabot E2E gate claims a namespace from a fixed-size pool, so PRs
+  # beyond the pool size queue for a free slot (~20 minutes per run). Keep the
+  # number of simultaneous PRs close to the pool size by batching non-major
+  # updates, otherwise the ci-gate wait starves.
   - package-ecosystem: npm
     directory: /frontend
     schedule:
@@ -16,6 +17,8 @@ updates:
           - react-dom
       frontend-minor-patch:
         applies-to: version-updates
+        patterns:
+          - "*"
         update-types:
           - minor
           - patch
@@ -32,6 +35,8 @@ updates:
     groups:
       backend-minor-patch:
         applies-to: version-updates
+        patterns:
+          - "*"
         update-types:
           - minor
           - patch
