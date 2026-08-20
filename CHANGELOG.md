@@ -43,6 +43,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Fixed (0.5.0)
 
+- Disabled memory-based backend HPA scaling by default so fixed runtime memory
+  does not keep idle replicas above the scale-down threshold. Memory scaling
+  remains available as an explicit Helm value.
 - Kept the trailing newline in `helm/sre-simulator/Chart.yaml` when preparing a
   release. `appVersion` is the last line of the file and the update pattern
   ended in a greedy `\s*$`, which under the `m` flag consumed the final
