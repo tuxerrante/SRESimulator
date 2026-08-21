@@ -156,6 +156,8 @@ run_aks_geneva_confirmation_not_required_check() {
   fi
 
   assert_contains "Preflight passed." "$output_file"
+  assert_contains "aks_node_count_min = 1" "$output_file"
+  assert_contains "aks_node_count_max = 5" "$output_file"
   assert_not_contains "Geneva suppression access was not confirmed" "$output_file"
 }
 
