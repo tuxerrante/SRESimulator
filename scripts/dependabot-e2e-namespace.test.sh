@@ -239,4 +239,14 @@ fi
 grep -Fq "make dependabot-e2e-pool" <<<"$out" ||
   fail "empty pool error did not say how to fix it: $out"
 
+if out="$(
+  env -u DEPENDABOT_E2E_NAMESPACE_POOL \
+    PATH="$WORK_DIR/bin:$PATH" CLAIM_DIR="$WORK_DIR/claims" \
+    bash "$SCRIPT" claim 1 1 2>&1
+)"; then
+  fail "claim succeeded with an unset pool"
+fi
+grep -Fq "make dependabot-e2e-pool" <<<"$out" ||
+  fail "unset pool error did not say how to fix it: $out"
+
 echo "dependabot E2E namespace pool checks passed."
