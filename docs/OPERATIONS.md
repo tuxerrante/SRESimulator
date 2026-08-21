@@ -378,8 +378,13 @@ repository variable it prints:
 DEPENDABOT_E2E_NAMESPACE_POOL="sre-dependabot-e2e-1 sre-dependabot-e2e-2 ..."
 ```
 
-Until that variable is set the workflow falls back to the single legacy
-`sre-dependabot-e2e` namespace, so provisioning and rollout can be staged.
+If that variable is unset the workflow fails at the claim step and tells you
+to run the provisioner. There is deliberately no fallback to a single shared
+namespace: that fallback existed during rollout and would silently restore the
+exact configuration described above, where concurrent runs queue behind one
+namespace until `ci-gate` gives up. The failure mode of the fallback is a slow
+gate, which reads like flakiness and does not point at the configuration, so a
+missing pool is treated as the misconfiguration it is.
 
 Each run claims a slot by atomically creating a `dependabot-e2e-claim`
 ConfigMap and releases it in an `always()` step. A claim left behind by a
