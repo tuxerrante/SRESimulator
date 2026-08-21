@@ -29,7 +29,7 @@ describe("CommandBlock", () => {
     const entry: TerminalEntry = {
       id: "2",
       command: "ClusterLogs | take 10",
-      output: "// mock query received\nError: Command simulation failed: timeout",
+      output: "// mock query received\nError: timeout",
       timestamp: Date.now(),
       exitCode: 1,
       type: "kql",
@@ -40,7 +40,7 @@ describe("CommandBlock", () => {
     expect(preElement).toBeDefined();
 
     // Test that the newline is preserved literally
-    expect(preElement?.textContent).toBe("// mock query received\nError: Command simulation failed: timeout");
+    expect(preElement?.textContent).toBe("// mock query received\nError: timeout");
     expect(preElement?.className).toContain("whitespace-pre-wrap");
 
     expect(screen.getByText("exit code: 1")).toBeDefined();
