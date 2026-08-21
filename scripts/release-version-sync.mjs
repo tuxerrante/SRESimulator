@@ -91,13 +91,13 @@ function updateChartVersion(root, version) {
   const chart = readFile(root, VERSION_FILES.chart);
   const updatedVersion = replaceOrFail(
     chart,
-    /^version:\s*[0-9]+\.[0-9]+\.[0-9]+\s*$/m,
+    /^version:\s*[0-9]+\.[0-9]+\.[0-9]+[ \t]*$/m,
     `version: ${version}`,
     `Failed to update ${VERSION_FILES.chart}: expected version line not found`
   );
   const updated = replaceOrFail(
     updatedVersion,
-    /^appVersion:\s*"([0-9]+\.[0-9]+\.[0-9]+)"\s*$/m,
+    /^appVersion:\s*"([0-9]+\.[0-9]+\.[0-9]+)"[ \t]*$/m,
     `appVersion: "${version}"`,
     `Failed to update ${VERSION_FILES.chart}: expected appVersion line not found`
   );
