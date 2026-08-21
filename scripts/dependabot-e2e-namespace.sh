@@ -129,6 +129,8 @@ claim() {
   local pool=${DEPENDABOT_E2E_NAMESPACE_POOL:-}
   local -a namespaces
 
+  pool=${pool//$'\r'/ }
+  pool=${pool//$'\n'/ }
   if [[ -z "${pool//[[:space:]]/}" ]]; then
     log "DEPENDABOT_E2E_NAMESPACE_POOL is empty."
     log "Set the repository variable to the pool namespaces, creating them"
