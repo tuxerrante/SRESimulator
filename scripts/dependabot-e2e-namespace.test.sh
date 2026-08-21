@@ -135,6 +135,16 @@ stale="$(
 )"
 [[ "$stale" == "ns-b" ]] || fail "expected stale claim on ns-b to be reclaimed"
 
+# Newline-separated repository values must expose every configured namespace.
+bash "$SCRIPT" release ns-b sre-dependabot-e2e >/dev/null 2>&1
+multiline="$(
+  DEPENDABOT_E2E_NAMESPACE_POOL=$'ns-a\nns-b' \
+  CLAIM_WAIT_SECONDS=0 CLAIM_POLL_SECONDS=0 \
+    bash "$SCRIPT" claim 104 4 2>/dev/null
+)"
+[[ "$multiline" == "ns-b" ]] || \
+  fail "expected multiline pool to include ns-b, got '$multiline'"
+
 # A fresh claim must never be stolen.
 : > "$CLAIM_DIR/ns-c"
 printf '%s' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$CLAIM_DIR/ns-c.timestamp"
