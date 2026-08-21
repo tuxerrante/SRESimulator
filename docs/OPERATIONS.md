@@ -457,7 +457,7 @@ az aks nodepool update \
   --resource-group "$AKS_RG" \
   --cluster-name "$AKS_CLUSTER" \
   --name system \
-  --enable-cluster-autoscaler \
+  --update-cluster-autoscaler \
   --min-count 1 \
   --max-count 5
 ```
