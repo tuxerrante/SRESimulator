@@ -453,12 +453,14 @@ IDs, resource names, or command output into public documentation:
 
 ```bash
 az aks nodepool show \
+  --subscription "$AZURE_SUBSCRIPTION_ID" \
   --resource-group "$AKS_RG" \
   --cluster-name "$AKS_CLUSTER" \
   --name system \
   --query '{count:count,min:minCount,max:maxCount,autoscaling:enableAutoScaling}'
 
 az aks nodepool update \
+  --subscription "$AZURE_SUBSCRIPTION_ID" \
   --resource-group "$AKS_RG" \
   --cluster-name "$AKS_CLUSTER" \
   --name system \
