@@ -38,6 +38,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Fixed (Unreleased)
 
+- Disabled memory-based backend HPA scaling by default so fixed runtime memory
+  does not keep idle replicas above the scale-down threshold. Memory scaling
+  remains available as an explicit Helm value.
 - Removed the Dependabot E2E fallback to a shared namespace. A missing
   namespace-pool setting now fails immediately with provisioning guidance
   instead of silently serializing concurrent runs until they time out.
