@@ -439,19 +439,49 @@ currently claims, which is the other way pool capacity leaks.
 
 ### Cluster capacity monitoring
 
-Node utilisation is a misleading number on this cluster. The two nodes have
-4Gi of RAM each, of which AKS reserves about 768Mi before any workload runs,
-and the kubelet, containerd and page cache take roughly another 1.1Gi per
-node. So a node reporting 60% memory is mostly reporting its own fixed floor:
-measured pod usage was 794Mi and 796Mi per node against node totals of 1971Mi
-and 1903Mi. Deleting workloads cannot move that number much, and chasing it
-leads to buying nodes the cluster does not need.
+The Terraform baseline keeps the `Standard_B2s` node shape and lets the
+cluster autoscaler grow the system pool from one to five nodes. Increasing the
+maximum does not provision idle nodes: AKS adds a node only when pending pods
+cannot fit from their declared requests, then removes unneeded nodes. This
+provides burst room for concurrent E2E namespaces without raising the
+one-node steady-state floor.
+
+Prefer changing `aks_node_count_min` and `aks_node_count_max` in Terraform and
+reviewing `make tf-plan`. For read-only inspection or an emergency live
+adjustment, use parameterized Azure CLI commands and never paste subscription
+IDs, resource names, or command output into public documentation:
+
+```bash
+az aks nodepool show \
+  --subscription "$AZURE_SUBSCRIPTION_ID" \
+  --resource-group "$AKS_RG" \
+  --cluster-name "$AKS_CLUSTER" \
+  --name system \
+  --query '{count:count,min:minCount,max:maxCount,autoscaling:enableAutoScaling}'
+
+az aks nodepool update \
+  --subscription "$AZURE_SUBSCRIPTION_ID" \
+  --resource-group "$AKS_RG" \
+  --cluster-name "$AKS_CLUSTER" \
+  --name system \
+  --update-cluster-autoscaler \
+  --min-count 1 \
+  --max-count 5
+```
+
+The update command changes live state and can create Terraform drift. Reflect
+the same bounds in Terraform and run `make tf-plan` before the next apply.
+
+Node utilisation alone is a misleading capacity signal. AKS reserves part of
+each node before workloads run, while the kubelet, container runtime and page
+cache add a fixed floor that deleting application pods cannot reclaim.
+Increasing VM size from utilisation alone can therefore buy capacity that the
+scheduler does not need.
 
 The number that actually constrains this repository is *schedulable* headroom,
 because a new E2E namespace has to fit in what pod requests have not already
-reserved. That is a different figure: CPU requests sat at 64% per node while
-real CPU usage was under 2%, so the cluster can refuse to schedule a pull
-request while looking almost idle.
+reserved. Requested and used resources can differ substantially, so the
+cluster can refuse to schedule a pull request while looking almost idle.
 
 `make cluster-capacity-report` reports that headroom, estimates how many more
 E2E namespaces still fit, and lists requested versus actually used resources

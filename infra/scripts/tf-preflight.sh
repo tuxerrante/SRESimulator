@@ -359,7 +359,7 @@ if [[ "$CLUSTER_FLAVOR" == "aro" ]]; then
 else
   echo "  aks_node_vm_size = \"Standard_B2s\""
   echo "  aks_node_count_min = 1"
-  echo "  aks_node_count_max = 3"
+  echo "  aks_node_count_max = 5"
   echo "  aks_public_ip_dns_label = \"aaffinit-test\""
   if [[ -n "$AKS_NODE_RESOURCE_GROUP_NAME" ]]; then
     echo "  aks_node_resource_group_name = \"${AKS_NODE_RESOURCE_GROUP_NAME}\""

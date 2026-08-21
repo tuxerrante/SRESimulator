@@ -113,7 +113,7 @@ through `infra/` with:
 - Isolated Terraform state key (for example
   `aaffinit-test-sre-simulator.tfstate`) to avoid side effects on other stacks.
 - Explicit `extra_tags.test = "true"` in addition to mandatory infra tags.
-- Minimum-cost AKS sizing (`Standard_B2s`, autoscaled from `1` to `3` nodes).
+- Minimum-cost AKS sizing (`Standard_B2s`, autoscaled from `1` to `5` nodes).
 - Static frontend public IP kept in the main resource group so the public
   endpoint stays alongside the other customer-managed resources.
 - Acceptance of the AKS-managed node resource group as the one planned

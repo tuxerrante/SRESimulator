@@ -31,7 +31,7 @@ resource "azurerm_public_ip" "aks_ingress" {
 }
 
 # ---------------------------------------------------------------------------
-# AKS Cluster - minimal cost defaults with a single autoscaled system pool
+# AKS Cluster - low-cost baseline with elastic E2E burst capacity
 # ---------------------------------------------------------------------------
 
 resource "azurerm_kubernetes_cluster" "aks" {
@@ -48,6 +48,8 @@ resource "azurerm_kubernetes_cluster" "aks" {
   tags                      = local.tags
 
   default_node_pool {
+    # Keep the inexpensive node shape and scale out only when pod requests no
+    # longer fit. The default 1-5 range avoids paying for idle burst capacity.
     name                 = "system"
     vm_size              = var.aks_node_vm_size
     type                 = "VirtualMachineScaleSets"
