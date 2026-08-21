@@ -184,12 +184,16 @@ jobs:
     environment:
       name: dependabot-e2e
     env:
-      # Each run claims one dedicated namespace from a pre-provisioned pool.
-      # DEPENDABOT_E2E_NAMESPACE_POOL is set once the operator has run
-      # infra/scripts/dependabot-e2e-pool.sh; until then the job falls back to
-      # the original single fixed namespace.
-      DEPENDABOT_E2E_NAMESPACE_POOL: >-
-        ${{ vars.DEPENDABOT_E2E_NAMESPACE_POOL || 'sre-dependabot-e2e' }}
+      # Each run claims one dedicated namespace from a pre-provisioned pool
+      # created by infra/scripts/dependabot-e2e-pool.sh.
+      #
+      # There is deliberately no fallback to a single shared namespace. That
+      # fallback used to exist, and it would have silently restored exactly the
+      # configuration that made every concurrent Dependabot run queue behind
+      # one namespace and time out. A missing pool is a misconfiguration, so it
+      # fails loudly at the claim step instead of degrading into a slow gate
+      # nobody would think to question.
+      DEPENDABOT_E2E_NAMESPACE_POOL: ${{ vars.DEPENDABOT_E2E_NAMESPACE_POOL }}
       E2E_RELEASE: sre-dependabot-e2e
       IMAGE_TAG: ${{ needs.resolve.outputs.image_tag }}
       FRONTEND_IMAGE: >-
