@@ -127,6 +127,7 @@ try_claim_namespace() {
 claim() {
   local pr_number=$1 run_id=$2 namespace deadline
   local pool=${DEPENDABOT_E2E_NAMESPACE_POOL:-}
+  local -a namespaces
 
   if [[ -z "${pool//[[:space:]]/}" ]]; then
     log "DEPENDABOT_E2E_NAMESPACE_POOL is empty."
@@ -135,9 +136,10 @@ claim() {
     exit 1
   fi
 
+  read -r -a namespaces <<< "${pool}"
   deadline=$(( $(date -u +%s) + CLAIM_WAIT_SECONDS ))
   while true; do
-    for namespace in ${pool}; do
+    for namespace in "${namespaces[@]}"; do
       if try_claim_namespace "${namespace}" "${pr_number}" "${run_id}"; then
         log "claimed ${namespace} for PR ${pr_number}"
         echo "${namespace}"
