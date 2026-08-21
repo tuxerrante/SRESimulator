@@ -12,7 +12,7 @@
     "test:integration": "vitest run -c vitest.integration.config.ts"
   },
   "dependencies": {
-    "@anthropic-ai/vertex-sdk": "^0.19.0",
+    "@anthropic-ai/vertex-sdk": "^0.19.4",
     "@sentry/node": "^10.70.0",
     "compromise": "^14.16.0",
     "cors": "^2.8.5",
@@ -21,15 +21,15 @@
     "gpt-tokenizer": "^3.4.0",
     "helmet": "^8.3.0",
     "mssql": "^12.7.0",
-    "redis": "^6.0.0"
+    "redis": "^6.2.1"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.0",
     "@types/cors": "^2.8.17",
     "@types/express": "^5.0.6",
     "@types/mssql": "^12.3.0",
-    "@types/node": "^26.1.1",
-    "@vitest/coverage-v8": "^4.1.10",
+    "@types/node": "^26.2.0",
+    "@vitest/coverage-v8": "^4.1.11",
     "eslint": "^10",
     "ts-unused-exports": "^11.0.1",
     "tsx": "^4.23.12",
