@@ -151,6 +151,7 @@ fi
 
 # A whitespace-only pool is also empty after shell word splitting.
 if DEPENDABOT_E2E_NAMESPACE_POOL="   " \
+  CLAIM_WAIT_SECONDS=0 CLAIM_POLL_SECONDS=0 \
   bash "$SCRIPT" claim 106 6 >/dev/null 2>&1
 then
   fail "expected a whitespace-only pool to fail"
@@ -232,7 +233,9 @@ fi
 
 if out="$(
   env PATH="$WORK_DIR/bin:$PATH" CLAIM_DIR="$WORK_DIR/claims" \
-    DEPENDABOT_E2E_NAMESPACE_POOL="" bash "$SCRIPT" claim 1 1 2>&1
+    DEPENDABOT_E2E_NAMESPACE_POOL="" \
+    CLAIM_WAIT_SECONDS=0 CLAIM_POLL_SECONDS=0 \
+    bash "$SCRIPT" claim 1 1 2>&1
 )"; then
   fail "claim succeeded with an empty pool"
 fi
@@ -242,6 +245,7 @@ grep -Fq "make dependabot-e2e-pool" <<<"$out" ||
 if out="$(
   env -u DEPENDABOT_E2E_NAMESPACE_POOL \
     PATH="$WORK_DIR/bin:$PATH" CLAIM_DIR="$WORK_DIR/claims" \
+    CLAIM_WAIT_SECONDS=0 CLAIM_POLL_SECONDS=0 \
     bash "$SCRIPT" claim 1 1 2>&1
 )"; then
   fail "claim succeeded with an unset pool"
