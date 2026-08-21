@@ -127,7 +127,7 @@ try_claim_namespace() {
 claim() {
   local pr_number=$1 run_id=$2 namespace deadline
 
-  if [[ -z "${DEPENDABOT_E2E_NAMESPACE_POOL:-}" ]]; then
+  if [[ -z "${DEPENDABOT_E2E_NAMESPACE_POOL//[[:space:]]/}" ]]; then
     log "DEPENDABOT_E2E_NAMESPACE_POOL is empty."
     log "Set the repository variable to the pool namespaces, creating them"
     log "first with 'make dependabot-e2e-pool' if they do not exist."

@@ -149,6 +149,13 @@ then
   fail "expected an empty pool to fail"
 fi
 
+# A whitespace-only pool is also empty after shell word splitting.
+if DEPENDABOT_E2E_NAMESPACE_POOL="   " \
+  bash "$SCRIPT" claim 106 6 >/dev/null 2>&1
+then
+  fail "expected a whitespace-only pool to fail"
+fi
+
 # An RBAC denial must fail immediately instead of burning the wait window.
 forbidden_output="$(
   FORCE_FORBIDDEN=1 DEPENDABOT_E2E_NAMESPACE_POOL="ns-d" \
