@@ -173,7 +173,7 @@ done
 
 echo
 echo "Pool ready. Set this repository/environment variable so the workflow"
-echo "stops falling back to the single fixed namespace:"
+echo "can claim a slot; the workflow fails without it:"
 echo
 echo "  DEPENDABOT_E2E_NAMESPACE_POOL=\"${namespaces[*]}\""
 echo

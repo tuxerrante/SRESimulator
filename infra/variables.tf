@@ -89,7 +89,7 @@ variable "aks_node_count_min" {
 variable "aks_node_count_max" {
   description = "Maximum number of nodes for the AKS autoscaling node pool."
   type        = number
-  default     = 3
+  default     = 5
 
   validation {
     condition     = var.aks_node_count_max >= var.aks_node_count_min

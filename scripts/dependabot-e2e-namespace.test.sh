@@ -135,6 +135,16 @@ stale="$(
 )"
 [[ "$stale" == "ns-b" ]] || fail "expected stale claim on ns-b to be reclaimed"
 
+# Newline-separated repository values must expose every configured namespace.
+bash "$SCRIPT" release ns-b sre-dependabot-e2e >/dev/null 2>&1
+multiline="$(
+  DEPENDABOT_E2E_NAMESPACE_POOL=$'ns-a\nns-b' \
+  CLAIM_WAIT_SECONDS=0 CLAIM_POLL_SECONDS=0 \
+    bash "$SCRIPT" claim 104 4 2>/dev/null
+)"
+[[ "$multiline" == "ns-b" ]] || \
+  fail "expected multiline pool to include ns-b, got '$multiline'"
+
 # A fresh claim must never be stolen.
 : > "$CLAIM_DIR/ns-c"
 printf '%s' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$CLAIM_DIR/ns-c.timestamp"
@@ -147,6 +157,14 @@ fi
 if DEPENDABOT_E2E_NAMESPACE_POOL="" bash "$SCRIPT" claim 106 6 >/dev/null 2>&1
 then
   fail "expected an empty pool to fail"
+fi
+
+# A whitespace-only pool is also empty after shell word splitting.
+if DEPENDABOT_E2E_NAMESPACE_POOL="   " \
+  CLAIM_WAIT_SECONDS=0 CLAIM_POLL_SECONDS=0 \
+  bash "$SCRIPT" claim 106 6 >/dev/null 2>&1
+then
+  fail "expected a whitespace-only pool to fail"
 fi
 
 # An RBAC denial must fail immediately instead of burning the wait window.
@@ -214,5 +232,35 @@ for setting in CLAIM_STALE_MINUTES CLAIM_WAIT_SECONDS CLAIM_POLL_SECONDS; do
   grep -Fq "$setting must be" <<<"$out" ||
     fail "$setting rejection did not explain the problem: $out"
 done
+
+# An unset pool must stop the run, not quietly fall back to one shared
+# namespace. That fallback is what serialised every concurrent Dependabot run
+# behind a single namespace until they timed out, and the symptom then was a
+# slow gate rather than an error, so nobody looked at the configuration.
+if grep -Eq "vars\.DEPENDABOT_E2E_NAMESPACE_POOL[[:space:]]*\|\|" "$WORKFLOW"; then
+  fail "workflow must not default the namespace pool to a shared namespace"
+fi
+
+if out="$(
+  env PATH="$WORK_DIR/bin:$PATH" CLAIM_DIR="$WORK_DIR/claims" \
+    DEPENDABOT_E2E_NAMESPACE_POOL="" \
+    CLAIM_WAIT_SECONDS=0 CLAIM_POLL_SECONDS=0 \
+    bash "$SCRIPT" claim 1 1 2>&1
+)"; then
+  fail "claim succeeded with an empty pool"
+fi
+grep -Fq "make dependabot-e2e-pool" <<<"$out" ||
+  fail "empty pool error did not say how to fix it: $out"
+
+if out="$(
+  env -u DEPENDABOT_E2E_NAMESPACE_POOL \
+    PATH="$WORK_DIR/bin:$PATH" CLAIM_DIR="$WORK_DIR/claims" \
+    CLAIM_WAIT_SECONDS=0 CLAIM_POLL_SECONDS=0 \
+    bash "$SCRIPT" claim 1 1 2>&1
+)"; then
+  fail "claim succeeded with an unset pool"
+fi
+grep -Fq "make dependabot-e2e-pool" <<<"$out" ||
+  fail "unset pool error did not say how to fix it: $out"
 
 echo "dependabot E2E namespace pool checks passed."

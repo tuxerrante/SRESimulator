@@ -5,7 +5,7 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.5.0] - 2026-08-19
+## [0.5.0] - 2026-08-21
 
 ### Added (0.5.0)
 
@@ -20,6 +20,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Changed (0.5.0)
 
+- Expanded the low-cost AKS node pool autoscaler ceiling from three to five
+  nodes while retaining a one-node `Standard_B2s` baseline, providing elastic
+  capacity for concurrent E2E workloads without provisioning idle nodes.
 - Made anonymous trial enforcement identity-aware by client IP: an opaque
   IP-only claim is persisted alongside browser signals and trusted client IP
   detection is wired through the AKS Gateway path. The anonymous Easy path now
@@ -43,6 +46,12 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Fixed (0.5.0)
 
+- Disabled memory-based backend HPA scaling by default so fixed runtime memory
+  does not keep idle replicas above the scale-down threshold. Memory scaling
+  remains available as an explicit Helm value.
+- Removed the Dependabot E2E fallback to a shared namespace. A missing
+  namespace-pool setting now fails immediately with provisioning guidance
+  instead of silently serializing concurrent runs until they time out.
 - Kept the trailing newline in `helm/sre-simulator/Chart.yaml` when preparing a
   release. `appVersion` is the last line of the file and the update pattern
   ended in a greedy `\s*$`, which under the `m` flag consumed the final

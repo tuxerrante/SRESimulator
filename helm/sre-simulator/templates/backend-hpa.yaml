@@ -19,10 +19,12 @@ spec:
         target:
           type: Utilization
           averageUtilization: {{ .Values.backend.autoscaling.targetCPUUtilizationPercentage }}
+    {{- if .Values.backend.autoscaling.targetMemoryUtilizationPercentage }}
     - type: Resource
       resource:
         name: memory
         target:
           type: Utilization
           averageUtilization: {{ .Values.backend.autoscaling.targetMemoryUtilizationPercentage }}
+    {{- end }}
 {{- end }}
