@@ -126,8 +126,9 @@ try_claim_namespace() {
 
 claim() {
   local pr_number=$1 run_id=$2 namespace deadline
+  local pool=${DEPENDABOT_E2E_NAMESPACE_POOL:-}
 
-  if [[ -z "${DEPENDABOT_E2E_NAMESPACE_POOL//[[:space:]]/}" ]]; then
+  if [[ -z "${pool//[[:space:]]/}" ]]; then
     log "DEPENDABOT_E2E_NAMESPACE_POOL is empty."
     log "Set the repository variable to the pool namespaces, creating them"
     log "first with 'make dependabot-e2e-pool' if they do not exist."
@@ -136,7 +137,7 @@ claim() {
 
   deadline=$(( $(date -u +%s) + CLAIM_WAIT_SECONDS ))
   while true; do
-    for namespace in ${DEPENDABOT_E2E_NAMESPACE_POOL}; do
+    for namespace in ${pool}; do
       if try_claim_namespace "${namespace}" "${pr_number}" "${run_id}"; then
         log "claimed ${namespace} for PR ${pr_number}"
         echo "${namespace}"
@@ -145,7 +146,7 @@ claim() {
     done
 
     if [[ "$(date -u +%s)" -ge "${deadline}" ]]; then
-      log "no free namespace in pool after ${CLAIM_WAIT_SECONDS}s: ${DEPENDABOT_E2E_NAMESPACE_POOL}"
+      log "no free namespace in pool after ${CLAIM_WAIT_SECONDS}s: ${pool}"
       exit 1
     fi
     log "pool busy, retrying in ${CLAIM_POLL_SECONDS}s"
