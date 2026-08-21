@@ -35,6 +35,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Fixed (Unreleased)
 
+- Removed the Dependabot E2E fallback to a shared namespace. A missing
+  namespace-pool setting now fails immediately with provisioning guidance
+  instead of silently serializing concurrent runs until they time out.
 - Logged the unclassified failure path of `POST /api/scenario`. Unexpected
   errors were reported only through Sentry, which is disabled in CI and local
   runs, so a generic `Scenario generation failed` response carried no error
