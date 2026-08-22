@@ -83,20 +83,29 @@ Every pull request is reviewed by GitHub Copilot code review (Balanced),
 requested through the GitHub GraphQL API:
 
 ```bash
+OWNER=<repository-owner>   # e.g. the value of `gh repo view --json owner`
+REPO=<repository-name>
+PR=<pull-request-number>
+
 PR_NODE_ID=$(gh api graphql -f query='
   query($owner:String!,$repo:String!,$number:Int!){
     repository(owner:$owner,name:$repo){
       pullRequest(number:$number){ id }
     }
-  }' -F owner=tuxerrante -F repo=SRESimulator -F number=<PR> \
+  }' -F owner="$OWNER" -F repo="$REPO" -F number="$PR" \
   --jq .data.repository.pullRequest.id)
 
+# Bot id of copilot-pull-request-reviewer[bot]; read it once from any PR that
+# Copilot has already reviewed:
+#   gh api repos/$OWNER/$REPO/pulls/$PR/reviews --jq '.[0].user.node_id'
+COPILOT_BOT_ID=<bot-node-id>
+
 gh api graphql -f query='
-  mutation($pullRequestId:ID!){
-    requestCopilotReview(input:{pullRequestId:$pullRequestId}){
-      pullRequest { id }
-    }
-  }' -F pullRequestId="$PR_NODE_ID"
+  mutation($pullRequestId:ID!,$botIds:[ID!]){
+    requestReviews(input:{
+      pullRequestId:$pullRequestId, botIds:$botIds, union:true
+    }){ pullRequest { number } }
+  }' -F pullRequestId="$PR_NODE_ID" -f botIds="$COPILOT_BOT_ID"
 ```
 
 The loop is:
@@ -128,20 +137,32 @@ applies without exception:
 
 ## 8. Clean up after the merge
 
-Cleanup is part of the change, not an optional follow-up. After the pull
-request merges:
+Cleanup is part of the change, not an optional follow-up. The repository merges
+pull requests with **squash** only, so the topic branch tip never becomes an
+ancestor of `main` and `git branch -d` will refuse to delete it. Confirm the
+pull request actually merged first, then force-delete the local branch:
 
 ```bash
-git -C . worktree remove .worktrees/my-change
-git -C . branch -d chore/my-change
-git -C . worktree prune
+gh pr view <PR> --json state,mergedAt --jq '{state,mergedAt}'   # expect MERGED
+
 git -C . fetch origin --prune
+git -C . worktree remove .worktrees/my-change
+git -C . worktree prune
+git -C . branch -D chore/my-change
 ```
 
-Then reclaim build storage that the change created:
+Then reclaim build storage that the change created. `docker buildx prune`
+only prunes the *currently selected* builder, while `scripts/aks-deploy.sh`
+builds with `buildx build --builder ${AKS_E2E_CACHE_BUILDER:-sre-e2e-cache}`
+without ever selecting it. Target that builder explicitly, and tolerate it not
+existing:
 
 ```bash
-docker buildx prune --filter until=168h -f
+BUILDER="${AKS_E2E_CACHE_BUILDER:-sre-e2e-cache}"
+if docker buildx inspect "$BUILDER" >/dev/null 2>&1; then
+  docker buildx prune --builder "$BUILDER" --filter until=168h -f
+fi
+docker buildx prune --filter until=168h -f   # default builder
 docker image prune -f
 ```
 
