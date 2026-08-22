@@ -132,9 +132,13 @@ jobs:
           else
             tags="${release_image_tag}"
           fi
+          cache_ref="${REGISTRY}/${OWNER}/${NAME}:buildcache"
+          cache_to="type=registry,ref=${cache_ref},mode=max,ignore-error=true"
           echo "tags<<EOF" >> "${GITHUB_OUTPUT}"
           echo "${tags}" >> "${GITHUB_OUTPUT}"
           echo "EOF" >> "${GITHUB_OUTPUT}"
+          echo "cache_ref=${cache_ref}" >> "${GITHUB_OUTPUT}"
+          echo "cache_to=${cache_to}" >> "${GITHUB_OUTPUT}"
 
       - name: Build and push
         # v7.1.0
@@ -145,3 +149,5 @@ jobs:
           file: ${{ matrix.dockerfile }}
           push: true
           tags: ${{ steps.meta.outputs.tags }}
+          cache-from: type=registry,ref=${{ steps.meta.outputs.cache_ref }}
+          cache-to: ${{ steps.meta.outputs.cache_to }}

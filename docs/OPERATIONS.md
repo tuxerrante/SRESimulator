@@ -110,13 +110,14 @@ AKS deploys consume GHCR images directly. The current helper behavior is importa
 - If `AKS_E2E_PUSH_DEV_IMAGES=true`, the E2E targets switch to a dev-only GHCR publish path before Helm runs.
 - If `AKS_E2E_IMAGE_CACHE=true`, that publish path reuses the previous build's
   layers through a `:buildcache` registry cache instead of rebuilding from
-  scratch. The `live-e2e` job enables it because its deploy step spent 116 of
-  196 seconds reinstalling `node_modules` and rebuilding the frontend bundle
-  for images that had not changed. It needs a BuildKit `docker-container`
-  builder, which the script creates on demand, and write access to the image
-  repository, which the job already has. Cache export failures are ignored, so
-  a cold or unavailable cache only costs the normal build time. It stays off by
-  default so local and operator runs behave exactly as before.
+  scratch. Make enables this by default for AKS E2E dev-image publishes,
+  including `e2e-azure-route-up`, `e2e-azure-route-refresh`, and `live-e2e`.
+  The lower-level `scripts/aks-deploy.sh` helper still defaults to uncached for
+  direct shell callers unless the env var is set. The cache needs a BuildKit
+  `docker-container` builder, which the script creates on demand, and write
+  access to the image repository. If builder creation fails, the helper falls
+  back to the original `docker build` plus `docker push`; cache export failures
+  are ignored, so a cold or unavailable cache only costs the normal build time.
 
 This means a repo merge alone does not guarantee E2E will run the new app build. Always verify the required GHCR tags first.
 
@@ -140,6 +141,8 @@ Opt-in knobs:
 - optional `AKS_E2E_DEV_IMAGE_TAG=<custom-nonprod-tag>`
 - optional `AKS_E2E_DEV_IMAGE_TAG_SUFFIX=dev` when you want a different required suffix such as `preview` or `alpha`
 - optional `GHCR_USERNAME=<github-login>` if GHCR login should not be inferred from `gh api user`
+- optional `AKS_E2E_IMAGE_CACHE=false` to opt out of the default registry cache
+  for a Make-driven AKS E2E dev-image publish
 
 Default generated tag format:
 

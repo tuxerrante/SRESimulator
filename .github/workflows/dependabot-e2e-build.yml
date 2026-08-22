@@ -59,6 +59,9 @@ jobs:
           # load the image into the local daemon and save it separately
           # instead of using outputs: type=docker,dest=...
           load: true
+          cache-from: type=gha,scope=dependabot-e2e-${{ matrix.component }}
+          cache-to: >-
+            type=gha,scope=dependabot-e2e-${{ matrix.component }},mode=max
 
       - name: Export image artifact
         env:

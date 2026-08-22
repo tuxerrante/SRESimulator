@@ -316,6 +316,14 @@ EOF
 set -euo pipefail
 
 printf '%s\n' "$*" >>"${FAKE_DOCKER_LOG:?}"
+if [ "$*" = "buildx inspect sre-e2e-cache" ] &&
+   [ "${FAKE_DOCKER_BUILDX_INSPECT_FAIL:-}" = "true" ]; then
+  exit 1
+fi
+if [ "$*" = "buildx create --name sre-e2e-cache --driver docker-container" ] &&
+   [ "${FAKE_DOCKER_BUILDX_CREATE_FAIL:-}" = "true" ]; then
+  exit 1
+fi
 if [ "${1:-}" = "login" ]; then
   cat >/dev/null
 fi
@@ -1910,10 +1918,14 @@ EOF
   assert_contains "auth token" "$gh_log"
   assert_contains "api user --jq .login" "$gh_log"
   assert_contains "login ghcr.io -u fake-gh-user --password-stdin" "$docker_log"
-  assert_contains "build --platform linux/amd64 -f frontend/Dockerfile -t ghcr.io/tuxerrante/sre-simulator-frontend:${dev_tag} ." "$docker_log"
-  assert_contains "push ghcr.io/tuxerrante/sre-simulator-frontend:${dev_tag}" "$docker_log"
-  assert_contains "build --platform linux/amd64 -f backend/Dockerfile -t ghcr.io/tuxerrante/sre-simulator-backend:${dev_tag} ." "$docker_log"
-  assert_contains "push ghcr.io/tuxerrante/sre-simulator-backend:${dev_tag}" "$docker_log"
+  assert_contains "buildx build --builder sre-e2e-cache --platform linux/amd64 -f frontend/Dockerfile -t ghcr.io/tuxerrante/sre-simulator-frontend:${dev_tag}" "$docker_log"
+  assert_contains "--cache-from type=registry,ref=ghcr.io/tuxerrante/sre-simulator-frontend:buildcache" "$docker_log"
+  assert_contains "--cache-to type=registry,ref=ghcr.io/tuxerrante/sre-simulator-frontend:buildcache,mode=max,ignore-error=true" "$docker_log"
+  assert_contains "buildx build --builder sre-e2e-cache --platform linux/amd64 -f backend/Dockerfile -t ghcr.io/tuxerrante/sre-simulator-backend:${dev_tag}" "$docker_log"
+  assert_contains "--cache-from type=registry,ref=ghcr.io/tuxerrante/sre-simulator-backend:buildcache" "$docker_log"
+  assert_contains "--cache-to type=registry,ref=ghcr.io/tuxerrante/sre-simulator-backend:buildcache,mode=max,ignore-error=true" "$docker_log"
+  assert_not_contains "push ghcr.io/tuxerrante/sre-simulator-frontend:${dev_tag}" "$docker_log"
+  assert_not_contains "push ghcr.io/tuxerrante/sre-simulator-backend:${dev_tag}" "$docker_log"
   assert_contains "backend.auth.turnstileTestMode=true" "$helm_log"
   assert_contains "backend.auth.localTestVerificationEnabled=true" "$helm_log"
   assert_not_contains 'WARNING: TAG=latest uses GHCR latest' "$output_file"
@@ -1973,6 +1985,7 @@ run_makefile_gateway_defaults_check() {
   assert_not_contains 'AKS_CERT_MANAGER_ACME_EMAIL ?= aaffinit@redhat.com' "$makefile"
   assert_contains 'AKS_SKIP_GATEWAY_BOOTSTRAP ?= false' "$makefile"
   assert_contains 'AKS_E2E_PUSH_DEV_IMAGES ?= false' "$makefile"
+  assert_contains 'AKS_E2E_IMAGE_CACHE ?= true' "$makefile"
   assert_contains 'AKS_E2E_DEV_IMAGE_TAG ?=' "$makefile"
   assert_contains 'AKS_E2E_DEV_IMAGE_TAG_SUFFIX ?= dev' "$makefile"
   assert_contains 'AKS_E2E_DEV_IMAGE_PLATFORM ?= linux/amd64' "$makefile"
@@ -2004,7 +2017,7 @@ run_makefile_port_forward_e2e_targets_check() {
   assert_contains 'AKS_E2E_EXPOSURE_MODE ?= none' "$makefile"
   assert_contains 'AKS E2E dev-image fallback enabled; using GHCR tag $$TAG' "$makefile"
   assert_contains 'export AKS_SKIP_GATEWAY_BOOTSTRAP AKS_LOCAL_PORT_FORWARD_PORT' "$makefile"
-  assert_contains 'export AKS_E2E_PUSH_DEV_IMAGES AKS_E2E_DEV_IMAGE_TAG AKS_E2E_DEV_IMAGE_TAG_SUFFIX AKS_E2E_DEV_IMAGE_PLATFORM' "$makefile"
+  assert_contains 'export AKS_E2E_PUSH_DEV_IMAGES AKS_E2E_IMAGE_CACHE AKS_E2E_DEV_IMAGE_TAG AKS_E2E_DEV_IMAGE_TAG_SUFFIX AKS_E2E_DEV_IMAGE_PLATFORM' "$makefile"
   assert_contains 'echo "  AKS_EXPOSURE_MODE: $(call e2e_var_source,AKS_EXPOSURE_MODE)"' "$makefile"
   assert_contains 'echo "  AKS_E2E_EXPOSURE_MODE: $(call e2e_var_source,AKS_E2E_EXPOSURE_MODE)"' "$makefile"
   assert_contains 'if [ "$(CLUSTER_FLAVOR)" = "aks" ] && [ -z "$(AKS_EXPOSURE_MODE_EXPLICIT)" ]; then \' "$makefile"
@@ -2031,8 +2044,8 @@ run_e2e_image_cache_check() {
   write_fake_e2e_clis
   docker_log="$TMP_DIR/e2e-image-cache.docker.log"
 
-  # Without the opt-in the build must stay exactly as it was, so local and
-  # operator runs are unaffected.
+  # The script helper itself stays opt-in for direct shell callers that do not
+  # go through Make, so non-E2E use is unaffected.
   : >"$docker_log"
   ( cd "$ROOT_DIR" && env PATH="$TMP_DIR/e2e-bin:$PATH" \
     FAKE_DOCKER_LOG="$docker_log" bash -c '
@@ -2042,6 +2055,12 @@ run_e2e_image_cache_check() {
   assert_contains "build --platform linux/amd64 -f frontend/Dockerfile -t ghcr.io/o/img:tag1 ." "$docker_log"
   assert_contains "push ghcr.io/o/img:tag1" "$docker_log"
   assert_not_contains "cache-from" "$docker_log"
+
+  # Makefile-driven AKS E2E dev-image publishes now enable the cache by default
+  # through exported configuration rather than changing the script fallback.
+  if ! grep -rn "AKS_E2E_IMAGE_CACHE ?= true" "$ROOT_DIR/Makefile" >/dev/null 2>&1; then
+    fail "the Makefile must enable the AKS E2E image cache by default"
+  fi
 
   # With the opt-in the layers must be reused from and written back to the
   # registry, and the image must be pushed by the build itself.
@@ -2058,10 +2077,32 @@ run_e2e_image_cache_check() {
   # A separate push would publish the image twice.
   assert_not_contains "push ghcr.io/o/img:tag1" "$docker_log"
 
-  # The cache must never be enabled by default anywhere in the repo.
-  if grep -rn "AKS_E2E_IMAGE_CACHE" "$ROOT_DIR/Makefile" >/dev/null 2>&1; then
-    fail "the image cache must stay opt-in from the workflow, not the Makefile"
-  fi
+  # Operators must have an explicit opt-out for machines where the buildx
+  # docker-container builder is not desirable.
+  : >"$docker_log"
+  ( cd "$ROOT_DIR" && env PATH="$TMP_DIR/e2e-bin:$PATH" \
+    FAKE_DOCKER_LOG="$docker_log" AKS_E2E_IMAGE_CACHE=false bash -c '
+      . scripts/aks-deploy.sh
+      build_and_push_ghcr_image docker ghcr.io/o/img tag1 frontend/Dockerfile
+    ' ) || fail "cache opt-out image build failed"
+  assert_contains "build --platform linux/amd64 -f frontend/Dockerfile -t ghcr.io/o/img:tag1 ." "$docker_log"
+  assert_contains "push ghcr.io/o/img:tag1" "$docker_log"
+  assert_not_contains "buildx build" "$docker_log"
+
+  # If the docker-container builder cannot be created, the helper must degrade
+  # to the original docker build + push path instead of failing the deploy.
+  : >"$docker_log"
+  ( cd "$ROOT_DIR" && env PATH="$TMP_DIR/e2e-bin:$PATH" \
+    FAKE_DOCKER_LOG="$docker_log" FAKE_DOCKER_BUILDX_INSPECT_FAIL=true \
+    FAKE_DOCKER_BUILDX_CREATE_FAIL=true \
+    AKS_E2E_IMAGE_CACHE=true bash -c '
+      . scripts/aks-deploy.sh
+      build_and_push_ghcr_image docker ghcr.io/o/img tag1 frontend/Dockerfile
+    ' ) || fail "builder fallback image build failed"
+  assert_contains "buildx inspect sre-e2e-cache" "$docker_log"
+  assert_contains "buildx create --name sre-e2e-cache --driver docker-container" "$docker_log"
+  assert_contains "build --platform linux/amd64 -f frontend/Dockerfile -t ghcr.io/o/img:tag1 ." "$docker_log"
+  assert_contains "push ghcr.io/o/img:tag1" "$docker_log"
 }
 
 run_geneva_suppression_gate_scope_check() {
