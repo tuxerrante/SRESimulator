@@ -48,7 +48,13 @@ of creating per-worktree copies:
 
 - Package manager cache: the global cache directory (`~/.npm`, and
   `~/.bun/install/cache` when Bun is used) is shared automatically. Do not
-  override it to a worktree-local path.
+  override it to a worktree-local path. This cache only avoids repeated
+  *downloads*; it does not replace `node_modules`. A worktree that has to run
+  lint, tests, or a build still needs its own installed dependency tree —
+  `make install` installs into `frontend/` and `backend/` separately.
+  When a worktree's change does not alter the dependency tree, symlinking the
+  main checkout's `node_modules` into it is a cheap alternative to a second
+  full install.
 - Container builds: reuse the shared BuildKit builder
   (`AKS_E2E_CACHE_BUILDER`, default `sre-e2e-cache`) and the registry layer
   cache enabled by `AKS_E2E_IMAGE_CACHE`. See
@@ -161,7 +167,11 @@ relative to the worktree you are standing in.
 MAIN_CHECKOUT=/path/to/SRESimulator   # the main checkout, not .worktrees/*
 cd "$MAIN_CHECKOUT"
 
-gh pr view <PR> --json state,mergedAt --jq '{state,mergedAt}'   # expect MERGED
+# Guard: abort unless the PR actually merged. `gh pr view` exits 0 for an open
+# PR, so printing the state is not a check.
+test "$(gh pr view <PR> --json mergedAt --jq '.mergedAt // empty')" != "" || {
+  echo "PR is not merged; refusing to clean up"; exit 1
+}
 
 git fetch origin --prune
 git worktree remove .worktrees/my-change
@@ -219,8 +229,10 @@ make e2e-azure-route-refresh TAG=vX.Y.Z
 AKS_E2E_PUSH_DEV_IMAGES=true make e2e-azure-route-refresh
 ```
 
-`make e2e-azure-route-refresh` with no arguments and no published tag will
-silently redeploy the old `latest` image and prove nothing.
+`make e2e-azure-route-refresh` with no arguments and no published tag
+redeploys the old `latest` image and proves nothing about the merged commit.
+The Makefile does print a warning when `TAG=latest` on AKS, so the failure mode
+is visible — but the command still succeeds, so read the warning.
 
 See [docs/OPERATIONS.md](OPERATIONS.md) for prerequisites, exposure modes, the
 dev-image tag rules, and the safety rails that forbid targeting the production
