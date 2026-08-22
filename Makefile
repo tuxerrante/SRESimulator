@@ -23,7 +23,7 @@ GRYPE_VERSION ?= v0.110.0
 GRYPE_IMAGE ?= anchore/grype:$(GRYPE_VERSION)@sha256:af65fbc0c664691067788fe95ff88760b435543e45595eb2ca6f102fc476fbe1
 GITLEAKS_VERSION ?= v8.30.0
 GITLEAKS_IMAGE ?= ghcr.io/gitleaks/gitleaks:$(GITLEAKS_VERSION)@sha256:691af3c7c5a48b16f187ce3446d5f194838f91238f27270ed36eef6359a574d9
-BUN_VERSION ?= $(shell tr -d '\n' < .bun-version)
+BUN_VERSION ?= $(strip $(shell if [ -s .bun-version ]; then tr -d '\n' < .bun-version; fi))
 WORKTREE_CLEANUP_ROOT ?= $(shell dirname "$$(git rev-parse --path-format=absolute --git-common-dir)")
 WORKTREE_CLEANUP_DAYS ?= 14
 WORKTREE_CLEANUP_LABEL ?= com.tuxerrante.sresimulator.worktree-cleanup
@@ -1258,9 +1258,11 @@ capture-readme-hero: ## Generate README gameplay hero GIF from local mock flow
 # Docker
 # ──────────────────────────────────────────────
 docker-build-frontend: ## Build frontend Docker image
+	@if [ -z "$(BUN_VERSION)" ]; then echo "BUN_VERSION is required; set BUN_VERSION or provide a non-empty .bun-version." >&2; exit 1; fi
 	docker build --build-arg BUN_VERSION=$(BUN_VERSION) -f $(FRONTEND_DIR)/Dockerfile -t sre-simulator-frontend .
 
 docker-build-backend: ## Build backend Docker image
+	@if [ -z "$(BUN_VERSION)" ]; then echo "BUN_VERSION is required; set BUN_VERSION or provide a non-empty .bun-version." >&2; exit 1; fi
 	docker build --build-arg BUN_VERSION=$(BUN_VERSION) -f $(BACKEND_DIR)/Dockerfile -t sre-simulator-backend .
 
 docker-build: docker-build-frontend docker-build-backend ## Build all Docker images

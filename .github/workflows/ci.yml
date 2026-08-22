@@ -646,7 +646,15 @@ jobs:
           actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
 
       - name: Load Bun version
-        run: echo "BUN_VERSION=$(tr -d '\n' < .bun-version)" >> "$GITHUB_ENV"
+        run: |
+          set -euo pipefail
+          if [ ! -s .bun-version ]; then
+            echo "BUN_VERSION is required;" >&2
+            echo ".bun-version is missing or empty." >&2
+            exit 1
+          fi
+          version="$(tr -d '\n' < .bun-version)"
+          echo "BUN_VERSION=${version}" >> "$GITHUB_ENV"
 
       - name: Build Docker image
         env:

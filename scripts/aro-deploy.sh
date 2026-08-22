@@ -43,11 +43,9 @@ print_cluster_login_summary() {
 # Usage: patch_bc_strategy <namespace> <bc-name> <dockerfile-path>
 patch_bc_strategy() {
   local ns=$1 name=$2 dockerfile=$3
-  local bun_version="${BUN_VERSION:-}"
-  if [[ -z "$bun_version" ]]; then
-    echo "BUN_VERSION is required before patching OpenShift BuildConfig buildArgs; load it from .bun-version." >&2
-    return 1
-  fi
+  local bun_version
+
+  bun_version="$(resolve_bun_version)" || return 1
   oc -n "$ns" patch "bc/$name" --type=merge \
     -p "{\"spec\":{\"strategy\":{\"dockerStrategy\":{\"dockerfilePath\":\"$dockerfile\",\"buildArgs\":[{\"name\":\"BUN_VERSION\",\"value\":\"$bun_version\"}]}}}}" \
     >/dev/null

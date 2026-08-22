@@ -1,4 +1,5 @@
-ARG BUN_VERSION
+# Kept in sync with .bun-version by run_bun_version_single_source_check.
+ARG BUN_VERSION=1.4.0
 FROM docker.io/oven/bun:${BUN_VERSION}-alpine AS bun
 
 FROM node:24-alpine AS base

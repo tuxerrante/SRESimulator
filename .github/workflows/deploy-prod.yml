@@ -226,13 +226,6 @@ jobs:
           ref: ${{ needs.resolve-release-tag.outputs.release_sha }}
           fetch-depth: 0
 
-      - name: Load Bun version
-        id: bun
-        run: |
-          version="$(tr -d '\n' < .bun-version)"
-          echo "BUN_VERSION=${version}" >> "$GITHUB_ENV"
-          echo "version=${version}" >> "$GITHUB_OUTPUT"
-
       - name: Verify tag is semver and latest release
         id: verify_release
         run: |

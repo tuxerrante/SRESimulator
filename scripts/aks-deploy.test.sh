@@ -1920,9 +1920,9 @@ EOF
   assert_contains "login ghcr.io -u fake-gh-user --password-stdin" "$docker_log"
   # The registry cache is opt-in, so the default Make-driven publish must stay
   # on the plain build-and-push path.
-  assert_contains "build --platform linux/amd64 -f frontend/Dockerfile -t ghcr.io/tuxerrante/sre-simulator-frontend:${dev_tag} ." "$docker_log"
+  assert_contains "build --platform linux/amd64 -f frontend/Dockerfile --build-arg BUN_VERSION=$(tr -d '\\n' < "$ROOT_DIR/.bun-version") -t ghcr.io/tuxerrante/sre-simulator-frontend:${dev_tag} ." "$docker_log"
   assert_contains "push ghcr.io/tuxerrante/sre-simulator-frontend:${dev_tag}" "$docker_log"
-  assert_contains "build --platform linux/amd64 -f backend/Dockerfile -t ghcr.io/tuxerrante/sre-simulator-backend:${dev_tag} ." "$docker_log"
+  assert_contains "build --platform linux/amd64 -f backend/Dockerfile --build-arg BUN_VERSION=$(tr -d '\\n' < "$ROOT_DIR/.bun-version") -t ghcr.io/tuxerrante/sre-simulator-backend:${dev_tag} ." "$docker_log"
   assert_contains "push ghcr.io/tuxerrante/sre-simulator-backend:${dev_tag}" "$docker_log"
   assert_not_contains "cache-from" "$docker_log"
   assert_contains "backend.auth.turnstileTestMode=true" "$helm_log"
@@ -2038,8 +2038,9 @@ run_makefile_port_forward_e2e_targets_check() {
 }
 
 run_e2e_image_cache_check() {
-  local docker_log
+  local bun_version docker_log
 
+  bun_version="$(tr -d '\n' < "$ROOT_DIR/.bun-version")"
   write_fake_e2e_clis
   docker_log="$TMP_DIR/e2e-image-cache.docker.log"
 
@@ -2051,9 +2052,23 @@ run_e2e_image_cache_check() {
       . scripts/aks-deploy.sh
       build_and_push_ghcr_image docker ghcr.io/o/img tag1 frontend/Dockerfile
     ' ) || fail "uncached image build failed"
-  assert_contains "build --platform linux/amd64 -f frontend/Dockerfile -t ghcr.io/o/img:tag1 ." "$docker_log"
+  assert_contains "build --platform linux/amd64 -f frontend/Dockerfile --build-arg BUN_VERSION=${bun_version} -t ghcr.io/o/img:tag1 ." "$docker_log"
   assert_contains "push ghcr.io/o/img:tag1" "$docker_log"
   assert_not_contains "cache-from" "$docker_log"
+
+  : >"$docker_log"
+  if ( cd "$ROOT_DIR" && env PATH="$TMP_DIR/e2e-bin:$PATH" \
+    FAKE_DOCKER_LOG="$docker_log" BUN_VERSION_FILE="$TMP_DIR/missing-bun-version" bash -c '
+      . scripts/aks-deploy.sh
+      build_and_push_ghcr_image docker ghcr.io/o/img tag1 frontend/Dockerfile
+    ' ) >"$TMP_DIR/missing-bun-version.out" 2>&1; then
+    fail "image build should fail before docker when .bun-version is missing"
+  fi
+  assert_contains "BUN_VERSION is required; set BUN_VERSION or provide a non-empty .bun-version." \
+    "$TMP_DIR/missing-bun-version.out"
+  if [ -s "$docker_log" ]; then
+    fail "image build should not call docker when BUN_VERSION cannot be resolved"
+  fi
 
   # The registry cache must stay opt-in for Make-driven and operator runs: the
   # live-e2e job writes that ref from pull-request head code, and an operator
@@ -2071,6 +2086,7 @@ run_e2e_image_cache_check() {
       build_and_push_ghcr_image docker ghcr.io/o/img tag1 frontend/Dockerfile
     ' ) || fail "cached image build failed"
   assert_contains "buildx build" "$docker_log"
+  assert_contains "--build-arg BUN_VERSION=${bun_version}" "$docker_log"
   assert_contains "--cache-from type=registry,ref=ghcr.io/o/img:buildcache" "$docker_log"
   assert_contains "--cache-to type=registry,ref=ghcr.io/o/img:buildcache,mode=max,ignore-error=true" "$docker_log"
   assert_contains "--push" "$docker_log"
@@ -2085,7 +2101,7 @@ run_e2e_image_cache_check() {
       . scripts/aks-deploy.sh
       build_and_push_ghcr_image docker ghcr.io/o/img tag1 frontend/Dockerfile
     ' ) || fail "cache opt-out image build failed"
-  assert_contains "build --platform linux/amd64 -f frontend/Dockerfile -t ghcr.io/o/img:tag1 ." "$docker_log"
+  assert_contains "build --platform linux/amd64 -f frontend/Dockerfile --build-arg BUN_VERSION=${bun_version} -t ghcr.io/o/img:tag1 ." "$docker_log"
   assert_contains "push ghcr.io/o/img:tag1" "$docker_log"
   assert_not_contains "buildx build" "$docker_log"
 
@@ -2101,7 +2117,7 @@ run_e2e_image_cache_check() {
     ' ) || fail "builder fallback image build failed"
   assert_contains "buildx inspect sre-e2e-cache" "$docker_log"
   assert_contains "buildx create --name sre-e2e-cache --driver docker-container" "$docker_log"
-  assert_contains "build --platform linux/amd64 -f frontend/Dockerfile -t ghcr.io/o/img:tag1 ." "$docker_log"
+  assert_contains "build --platform linux/amd64 -f frontend/Dockerfile --build-arg BUN_VERSION=${bun_version} -t ghcr.io/o/img:tag1 ." "$docker_log"
   assert_contains "push ghcr.io/o/img:tag1" "$docker_log"
 }
 
@@ -2181,8 +2197,31 @@ import sys
 
 root = pathlib.Path(sys.argv[1])
 bun_version = (root / ".bun-version").read_text().strip()
-allowed = {".bun-version"}
+
+# The two Dockerfiles need a literal ARG default: BuildKit resolves the `FROM`
+# of the bun stage before any RUN guard could report a friendly error, so an
+# empty default makes every caller that forgets --build-arg fail with an
+# opaque "invalid reference format". The literal is allowed only in the exact
+# `ARG BUN_VERSION=<pinned>` form and is asserted to match .bun-version below,
+# so it cannot drift.
+dockerfiles = {"backend/Dockerfile", "frontend/Dockerfile"}
+allowed = {".bun-version"} | dockerfiles
 failures = []
+
+for relative in sorted(dockerfiles):
+    text = (root / relative).read_text()
+    expected = "ARG BUN_VERSION=%s\n" % bun_version
+    if expected not in text:
+        failures.append(
+            "%s must pin the same default as .bun-version (%s)"
+            % (relative, bun_version)
+        )
+    for line in text.splitlines():
+        if bun_version in line and line.strip() != expected.strip():
+            failures.append(
+                "%s may only contain the Bun version in the ARG default: %s"
+                % (relative, line.strip())
+            )
 
 tracked_files = subprocess.check_output(
     ["git", "-C", str(root), "ls-files"],

@@ -12,6 +12,22 @@ require_cli() {
   fi
 }
 
+resolve_bun_version() {
+  local script_dir="${SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
+  local version_file="${BUN_VERSION_FILE:-${script_dir}/../.bun-version}"
+  local version="${BUN_VERSION:-}"
+
+  if [ -z "$version" ] && [ -f "$version_file" ]; then
+    version="$(tr -d '\n' <"$version_file")"
+  fi
+  if [ -z "$version" ]; then
+    echo "BUN_VERSION is required; set BUN_VERSION or provide a non-empty .bun-version." >&2
+    return 1
+  fi
+
+  printf '%s\n' "$version"
+}
+
 ensure_azure_login() {
   require_cli az
   if az account show --query id -o tsv >/dev/null 2>&1; then
