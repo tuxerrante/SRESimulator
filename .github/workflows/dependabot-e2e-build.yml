@@ -44,16 +44,7 @@ jobs:
 
       - name: Load Bun version
         id: bun
-        run: |
-          set -euo pipefail
-          if [ ! -s .bun-version ]; then
-            echo "BUN_VERSION is required;" >&2
-            echo ".bun-version is missing or empty." >&2
-            exit 1
-          fi
-          version="$(tr -d '\n' < .bun-version)"
-          echo "BUN_VERSION=${version}" >> "$GITHUB_ENV"
-          echo "version=${version}" >> "$GITHUB_OUTPUT"
+        uses: ./.github/actions/load-bun-version
 
       - name: Set up Docker Buildx
         # v3.11.1

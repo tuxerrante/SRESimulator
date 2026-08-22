@@ -1,0 +1,26 @@
+---
+name: Load Bun version
+description: >-
+  Read the pinned Bun version from .bun-version, export it as the BUN_VERSION
+  environment variable, and expose it as the `version` output. Fails when
+  .bun-version is missing or empty so build paths never resolve an invalid
+  `oven/bun:-alpine` base image.
+outputs:
+  version:
+    description: The Bun version string read from .bun-version.
+    value: ${{ steps.bun.outputs.version }}
+runs:
+  using: composite
+  steps:
+    - id: bun
+      shell: bash
+      run: |
+        set -euo pipefail
+        if [ ! -s .bun-version ]; then
+          echo "BUN_VERSION is required;" >&2
+          echo ".bun-version is missing or empty." >&2
+          exit 1
+        fi
+        version="$(tr -d '\n' < .bun-version)"
+        echo "BUN_VERSION=${version}" >> "$GITHUB_ENV"
+        echo "version=${version}" >> "$GITHUB_OUTPUT"
