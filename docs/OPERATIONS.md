@@ -118,6 +118,11 @@ AKS deploys consume GHCR images directly. The current helper behavior is importa
   access to the image repository. If builder creation fails, the helper falls
   back to the original `docker build` plus `docker push`; cache export failures
   are ignored, so a cold or unavailable cache only costs the normal build time.
+- The trusted release publish in `.github/workflows/build-push.yml` uses a
+  separate `:buildcache-release` ref. The `:buildcache` ref is written by the
+  `live-e2e` job, which builds pull-request head code, so importing it into a
+  release build would let a pull request influence a trusted artifact. Keep the
+  two refs distinct.
 
 This means a repo merge alone does not guarantee E2E will run the new app build. Always verify the required GHCR tags first.
 

@@ -2118,6 +2118,14 @@ run_workflow_buildx_cache_order_check() {
   assert_contains "# v3.11.1" "$ROOT_DIR/.github/workflows/helm-integration.yml"
   assert_contains "# v7.3.0" "$ROOT_DIR/.github/workflows/build-push.yml"
 
+  # The trusted release build must not import the mutable ":buildcache" ref
+  # that the PR-head live-e2e job writes through scripts/aks-deploy.sh.
+  assert_contains 'cache_ref="${REGISTRY}/${OWNER}/${NAME}:buildcache-release"' \
+    "$ROOT_DIR/.github/workflows/build-push.yml"
+  if grep -n 'NAME}:buildcache"' "$ROOT_DIR/.github/workflows/build-push.yml" >/dev/null 2>&1; then
+    fail "the release build must use a release-only registry cache ref"
+  fi
+
   python3 - "$ROOT_DIR" <<'PY'
 import pathlib
 import re
