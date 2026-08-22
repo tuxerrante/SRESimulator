@@ -23,7 +23,7 @@ GRYPE_VERSION ?= v0.110.0
 GRYPE_IMAGE ?= anchore/grype:$(GRYPE_VERSION)@sha256:af65fbc0c664691067788fe95ff88760b435543e45595eb2ca6f102fc476fbe1
 GITLEAKS_VERSION ?= v8.30.0
 GITLEAKS_IMAGE ?= ghcr.io/gitleaks/gitleaks:$(GITLEAKS_VERSION)@sha256:691af3c7c5a48b16f187ce3446d5f194838f91238f27270ed36eef6359a574d9
-NPM_VERSION ?= $(shell tr -d '\n' < .npm-version)
+BUN_VERSION ?= $(shell tr -d '\n' < .bun-version)
 WORKTREE_CLEANUP_ROOT ?= $(shell dirname "$$(git rev-parse --path-format=absolute --git-common-dir)")
 WORKTREE_CLEANUP_DAYS ?= 14
 WORKTREE_CLEANUP_LABEL ?= com.tuxerrante.sresimulator.worktree-cleanup
@@ -103,7 +103,7 @@ export AKS_SKIP_GATEWAY_BOOTSTRAP AKS_LOCAL_PORT_FORWARD_PORT
 export AKS_E2E_PUSH_DEV_IMAGES AKS_E2E_IMAGE_CACHE AKS_E2E_DEV_IMAGE_TAG AKS_E2E_DEV_IMAGE_TAG_SUFFIX AKS_E2E_DEV_IMAGE_PLATFORM
 export AOAI_RG AOAI_ACCOUNT AOAI_DEPLOYMENT
 export AOAI_DEPLOYMENT_CHAT AOAI_DEPLOYMENT_COMMAND AOAI_DEPLOYMENT_SCENARIO AOAI_DEPLOYMENT_PROBE
-export E2E_RELEASE NPM_VERSION
+export E2E_RELEASE BUN_VERSION
 export PROD_NAMESPACE DB_SECRET_NAME DB_SECRET_SOURCE_NAMESPACE
 export DEPENDABOT_E2E_KUBECONFIG_B64
 
@@ -149,8 +149,8 @@ help: ## Show this help
 # Setup
 # ──────────────────────────────────────────────
 install: ## Install all dependencies
-	cd $(FRONTEND_DIR) && npm ci
-	cd $(BACKEND_DIR) && npm ci
+	cd $(FRONTEND_DIR) && bun install --frozen-lockfile
+	cd $(BACKEND_DIR) && bun install --frozen-lockfile
 	@if [ "$$CI" = "true" ]; then \
 		echo "CI detected; skipping pre-commit hook installation"; \
 	elif command -v pre-commit >/dev/null 2>&1; then \
@@ -162,7 +162,7 @@ install: ## Install all dependencies
 	fi
 
 install-backend: ## Install backend dependencies
-	cd $(BACKEND_DIR) && npm ci
+	cd $(BACKEND_DIR) && bun install --frozen-lockfile
 
 clean: ## Remove build artifacts and node_modules
 	rm -rf $(FRONTEND_DIR)/.next $(FRONTEND_DIR)/node_modules
@@ -257,11 +257,7 @@ audit: ## Check npm dependencies for known vulnerabilities
 	node scripts/frontend-audit-check.mjs --root . --frontend-dir $(FRONTEND_DIR) --audit-level $(SECURITY_FAIL_LEVEL)
 
 lockfile-lint: ## Validate lockfile integrity (registry & HTTPS)
-	cd $(FRONTEND_DIR) && npx lockfile-lint \
-		--path package-lock.json \
-		--type npm \
-		--allowed-hosts npm \
-		--validate-https
+	node scripts/bun-lockfile-check.mjs frontend/bun.lock backend/bun.lock
 
 gitleaks: ## Scan repository for hardcoded secrets
 	@set -e; \
@@ -1262,10 +1258,10 @@ capture-readme-hero: ## Generate README gameplay hero GIF from local mock flow
 # Docker
 # ──────────────────────────────────────────────
 docker-build-frontend: ## Build frontend Docker image
-	docker build --build-arg NPM_VERSION=$(NPM_VERSION) -f $(FRONTEND_DIR)/Dockerfile -t sre-simulator-frontend .
+	docker build --build-arg BUN_VERSION=$(BUN_VERSION) -f $(FRONTEND_DIR)/Dockerfile -t sre-simulator-frontend .
 
 docker-build-backend: ## Build backend Docker image
-	docker build --build-arg NPM_VERSION=$(NPM_VERSION) -f $(BACKEND_DIR)/Dockerfile -t sre-simulator-backend .
+	docker build --build-arg BUN_VERSION=$(BUN_VERSION) -f $(BACKEND_DIR)/Dockerfile -t sre-simulator-backend .
 
 docker-build: docker-build-frontend docker-build-backend ## Build all Docker images
 

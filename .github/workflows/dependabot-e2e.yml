@@ -225,23 +225,32 @@ jobs:
           ref: main
           persist-credentials: false
 
-      - name: Load npm version
-        run: echo "NPM_VERSION=$(tr -d '\n' < .npm-version)" >> "$GITHUB_ENV"
-
       - name: Setup Node.js
         # v6.3.0
         uses: >-
           actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
         with:
           node-version: 24
-          cache: npm
-          cache-dependency-path: frontend/package-lock.json
 
-      - name: Update npm
-        run: npm install --global "npm@${NPM_VERSION}"
+      - name: Setup Bun
+        # v2.2.0
+        uses: >-
+          oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version-file: .bun-version
+
+      - name: Cache Bun dependencies
+        # v4.2.4
+        uses: >-
+          actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-${{ hashFiles('**/bun.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-bun-
 
       - name: Install browser test dependencies
-        run: npm ci --prefix frontend
+        run: cd frontend && bun install --frozen-lockfile
 
       - name: Setup Helm
         # v5.0.0

@@ -62,26 +62,22 @@ repos:
         always_run: true
         pass_filenames: false
         stages: [pre-push]
-      - id: npm-audit
-        name: npm audit (high/critical)
+      - id: dependency-audit
+        name: dependency audit (high/critical)
         entry: >-
           node scripts/frontend-audit-check.mjs
           --root .
           --frontend-dir frontend
           --audit-level high
         language: system
-        files: frontend/package-lock\.json
+        files: frontend/bun\.lock
         pass_filenames: false
-      - id: lockfile-lint
-        name: lockfile-lint
+      - id: bun-lockfile-check
+        name: bun lockfile integrity
         entry: >-
-          bash -c
-          'cd frontend &&
-          npx lockfile-lint
-          --path package-lock.json
-          --type npm
-          --allowed-hosts npm
-          --validate-https'
+          node scripts/bun-lockfile-check.mjs
+          frontend/bun.lock
+          backend/bun.lock
         language: system
-        files: frontend/package-lock\.json
+        files: ^(frontend|backend)/bun\.lock$
         pass_filenames: false

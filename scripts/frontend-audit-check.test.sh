@@ -46,15 +46,15 @@ write_fixture_repo() {
 }
 EOF
 
-  cat >"$repo_dir/bin/npm" <<'EOF'
+  cat >"$repo_dir/bin/bun" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
-cat "${FAKE_NPM_AUDIT_JSON:?}"
-if [ "${FAKE_NPM_EXIT_CODE:-0}" -ne 0 ]; then
-  exit "${FAKE_NPM_EXIT_CODE}"
+cat "${FAKE_BUN_AUDIT_JSON:?}"
+if [ "${FAKE_BUN_EXIT_CODE:-0}" -ne 0 ]; then
+  exit "${FAKE_BUN_EXIT_CODE}"
 fi
 EOF
-  chmod +x "$repo_dir/bin/npm"
+  chmod +x "$repo_dir/bin/bun"
 }
 
 write_audit_json() {
@@ -88,8 +88,8 @@ run_allowed_exception_check() {
 
   if ! env \
     PATH="$repo_dir/bin:$PATH" \
-    FAKE_NPM_AUDIT_JSON="$TMP_DIR/allowed-audit.json" \
-    FAKE_NPM_EXIT_CODE=1 \
+    FAKE_BUN_AUDIT_JSON="$TMP_DIR/allowed-audit.json" \
+    FAKE_BUN_EXIT_CODE=1 \
     node "$ROOT_DIR/scripts/frontend-audit-check.mjs" \
       --root "$repo_dir" \
       --frontend-dir frontend \
@@ -126,8 +126,8 @@ run_blocking_signature_mismatch_check() {
 
   if env \
     PATH="$repo_dir/bin:$PATH" \
-    FAKE_NPM_AUDIT_JSON="$TMP_DIR/blocking-audit.json" \
-    FAKE_NPM_EXIT_CODE=1 \
+    FAKE_BUN_AUDIT_JSON="$TMP_DIR/blocking-audit.json" \
+    FAKE_BUN_EXIT_CODE=1 \
     node "$ROOT_DIR/scripts/frontend-audit-check.mjs" \
       --root "$repo_dir" \
       --frontend-dir frontend \
@@ -163,8 +163,8 @@ run_expected_count_ceiling_check() {
 
   if env \
     PATH="$repo_dir/bin:$PATH" \
-    FAKE_NPM_AUDIT_JSON="$TMP_DIR/count-audit.json" \
-    FAKE_NPM_EXIT_CODE=1 \
+    FAKE_BUN_AUDIT_JSON="$TMP_DIR/count-audit.json" \
+    FAKE_BUN_EXIT_CODE=1 \
     node "$ROOT_DIR/scripts/frontend-audit-check.mjs" \
       --root "$repo_dir" \
       --frontend-dir frontend \
@@ -191,8 +191,8 @@ run_lower_count_pass_check() {
 
   if ! env \
     PATH="$repo_dir/bin:$PATH" \
-    FAKE_NPM_AUDIT_JSON="$TMP_DIR/lower-count-audit.json" \
-    FAKE_NPM_EXIT_CODE=0 \
+    FAKE_BUN_AUDIT_JSON="$TMP_DIR/lower-count-audit.json" \
+    FAKE_BUN_EXIT_CODE=0 \
     node "$ROOT_DIR/scripts/frontend-audit-check.mjs" \
       --root "$repo_dir" \
       --frontend-dir frontend \
@@ -228,8 +228,8 @@ run_critical_gate_skips_high_count_check() {
 
   if ! env \
     PATH="$repo_dir/bin:$PATH" \
-    FAKE_NPM_AUDIT_JSON="$TMP_DIR/critical-audit.json" \
-    FAKE_NPM_EXIT_CODE=1 \
+    FAKE_BUN_AUDIT_JSON="$TMP_DIR/critical-audit.json" \
+    FAKE_BUN_EXIT_CODE=1 \
     node "$ROOT_DIR/scripts/frontend-audit-check.mjs" \
       --root "$repo_dir" \
       --frontend-dir frontend \

@@ -53,8 +53,8 @@ run_stage = "\n".join(stages.get("FROM node:24-alpine AS run", []))
 
 if not prod_stage:
     raise SystemExit("missing 'FROM base AS prod-deps' stage")
-if "RUN npm ci --omit=dev" not in prod_stage:
-    raise SystemExit("prod-deps stage should install production-only dependencies")
+if "RUN bun install --frozen-lockfile --production" not in prod_stage:
+    raise SystemExit("prod-deps stage should install production-only dependencies with Bun")
 if not run_stage:
     raise SystemExit("missing backend runtime stage")
 if "COPY --from=prod-deps /app/backend/node_modules ./node_modules" not in run_stage:

@@ -210,7 +210,7 @@ jobs:
       DB_SECRET_NAME: ${{ secrets.DB_SECRET_NAME }}
       PROD_NAMESPACE: ${{ secrets.PROD_NAMESPACE }}
       E2E_RELEASE: sre-simulator
-      NPM_VERSION: "10"
+      BUN_VERSION: "1.4.0"
     steps:
       - name: Harden runner
         # v2.21.0

@@ -54,7 +54,7 @@ The game enforces the "Scientific Method of Investigation" as defined in the ARO
 
 ## 3. Local Dev Workflow
 
-- `make install` installs frontend/backend dependencies and project hooks.
+- `make install` uses Bun to install frontend/backend dependencies and project hooks.
 - `make dev` starts the frontend on `http://localhost:3000`.
 - Run the backend separately from `backend/` with `npm run dev` (default port `8080`).
 - Frontend proxy/runtime settings live in `frontend/.env.local.example`.

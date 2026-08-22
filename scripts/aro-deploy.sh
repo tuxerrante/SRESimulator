@@ -44,7 +44,7 @@ print_cluster_login_summary() {
 patch_bc_strategy() {
   local ns=$1 name=$2 dockerfile=$3
   oc -n "$ns" patch "bc/$name" --type=merge \
-    -p "{\"spec\":{\"strategy\":{\"dockerStrategy\":{\"dockerfilePath\":\"$dockerfile\",\"buildArgs\":[{\"name\":\"NPM_VERSION\",\"value\":\"$NPM_VERSION\"}]}}}}" \
+    -p "{\"spec\":{\"strategy\":{\"dockerStrategy\":{\"dockerfilePath\":\"$dockerfile\",\"buildArgs\":[{\"name\":\"BUN_VERSION\",\"value\":\"$BUN_VERSION\"}]}}}}" \
     >/dev/null
 }
 

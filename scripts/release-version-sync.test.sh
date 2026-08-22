@@ -2,7 +2,9 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-TMP_DIR="$(mktemp -d)"
+TMP_DIR="${ROOT_DIR}/data/release-version-sync-test"
+rm -rf "$TMP_DIR"
+mkdir -p "$TMP_DIR"
 trap 'rm -rf "$TMP_DIR"' EXIT
 
 fail() {
@@ -49,33 +51,29 @@ EOF
 }
 EOF
 
-  cat >"$target_dir/frontend/package-lock.json" <<'EOF'
+  cat >"$target_dir/frontend/bun.lock" <<'EOF'
 {
-  "name": "frontend",
-  "version": "0.1.2",
-  "lockfileVersion": 3,
-  "requires": true,
-  "packages": {
+  "lockfileVersion": 2,
+  "configVersion": 1,
+  "workspaces": {
     "": {
-      "name": "frontend",
-      "version": "0.1.2"
-    }
-  }
+      "name": "frontend"
+    },
+  },
+  "packages": {},
 }
 EOF
 
-  cat >"$target_dir/backend/package-lock.json" <<'EOF'
+  cat >"$target_dir/backend/bun.lock" <<'EOF'
 {
-  "name": "backend",
-  "version": "0.1.2",
-  "lockfileVersion": 3,
-  "requires": true,
-  "packages": {
+  "lockfileVersion": 2,
+  "configVersion": 1,
+  "workspaces": {
     "": {
-      "name": "backend",
-      "version": "0.1.2"
-    }
-  }
+      "name": "backend"
+    },
+  },
+  "packages": {},
 }
 EOF
 
@@ -168,8 +166,8 @@ run_prepare_and_verify_check() {
     "$TMP_DIR/prepare.txt"
   assert_file_contains "$repo_dir/frontend/package.json" '"version": "0.1.3"'
   assert_file_contains "$repo_dir/backend/package.json" '"version": "0.1.3"'
-  assert_file_contains "$repo_dir/frontend/package-lock.json" '"version": "0.1.3"'
-  assert_file_contains "$repo_dir/backend/package-lock.json" '"version": "0.1.3"'
+  assert_file_contains "$repo_dir/frontend/bun.lock" '"lockfileVersion": 2'
+  assert_file_contains "$repo_dir/backend/bun.lock" '"lockfileVersion": 2'
   assert_file_contains "$repo_dir/helm/sre-simulator/Chart.yaml" 'version: 0.1.3'
   assert_file_contains "$repo_dir/helm/sre-simulator/Chart.yaml" 'appVersion: "0.1.3"'
   assert_file_contains "$repo_dir/frontend/src/lib/release.ts" \

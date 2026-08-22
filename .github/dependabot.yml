@@ -1,5 +1,7 @@
 ---
 version: 2
+# Dependabot's npm ecosystem supports Bun lockfiles; this repository keeps
+# frontend/bun.lock and backend/bun.lock as the only dependency lockfiles.
 updates:
   # The Dependabot E2E gate claims a namespace from a fixed-size pool, so PRs
   # beyond the pool size queue for a free slot (~20 minutes per run). Keep the

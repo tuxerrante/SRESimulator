@@ -91,11 +91,11 @@ function findMatchingException(vulnerability, policy) {
 function runAudit(frontendPath) {
   const result =
     process.platform === "win32"
-      ? spawnSync("cmd.exe", ["/d", "/s", "/c", "npm audit --json"], {
+      ? spawnSync("cmd.exe", ["/d", "/s", "/c", "bun audit --json"], {
           cwd: frontendPath,
           encoding: "utf8",
         })
-      : spawnSync("npm", ["audit", "--json"], {
+      : spawnSync("bun", ["audit", "--json"], {
           cwd: frontendPath,
           encoding: "utf8",
         });
@@ -108,7 +108,7 @@ function runAudit(frontendPath) {
   if (!stdout) {
     const stderr = result.stderr?.trim();
     throw new Error(
-      `npm audit --json did not return JSON output.${stderr ? ` stderr: ${stderr}` : ""}`
+      `bun audit --json did not return JSON output.${stderr ? ` stderr: ${stderr}` : ""}`
     );
   }
 
@@ -116,7 +116,7 @@ function runAudit(frontendPath) {
     return JSON.parse(stdout);
   } catch (error) {
     throw new Error(
-      `Failed to parse npm audit JSON output: ${error instanceof Error ? error.message : String(error)}`
+      `Failed to parse bun audit JSON output: ${error instanceof Error ? error.message : String(error)}`
     );
   }
 }
@@ -171,7 +171,7 @@ function printSummary(policy, minimumSeverity, report, summary) {
   console.log(`Review by: ${policy.reviewBy}`);
   console.log(`Gate threshold: ${minimumSeverity}`);
   console.log(
-    `Raw npm audit counts: high=${metadata.high ?? 0}, critical=${metadata.critical ?? 0}, moderate=${metadata.moderate ?? 0}, total=${metadata.total ?? 0}`
+    `Raw bun audit counts: high=${metadata.high ?? 0}, critical=${metadata.critical ?? 0}, moderate=${metadata.moderate ?? 0}, total=${metadata.total ?? 0}`
   );
   console.log(
     `Filtered findings at or above ${minimumSeverity}: ${summary.considered.length} (${summary.excepted.length} excepted, ${summary.blocking.length} blocking)`
