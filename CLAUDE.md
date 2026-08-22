@@ -60,6 +60,9 @@ The game enforces the "Scientific Method of Investigation" as defined in the ARO
 - Frontend proxy/runtime settings live in `frontend/.env.local.example`.
 - Backend AI/runtime settings live in `backend/.env.local.example`.
 - Prefer `make` targets over ad-hoc commands for validation, tests, e2e, and deploy flows.
+- The default branch/worktree/review/cleanup flow for any non-trivial change is
+  defined in `docs/DEVELOPMENT_WORKFLOW.md`. Follow it unless the change is a
+  single-file doc edit or an emergency rollback.
 
 ### Mandatory live browser gate
 
