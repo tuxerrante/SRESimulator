@@ -101,6 +101,60 @@ run_local_scheme_sources_rejected() {
   done
 }
 
+run_custom_registry_rejected() {
+  local lock="$TMP_DIR/registry.lock"
+  write_lock "$lock" \
+    '    "evil": ["evil@1.0.0", "https://npm.evil.example/", {}, "sha512-abc=="],'
+
+  if node "$ROOT_DIR/scripts/bun-lockfile-check.mjs" "$lock" \
+    >"$TMP_DIR/registry.txt" 2>&1; then
+    fail "a custom registry in the second tuple element must be rejected"
+  fi
+  assert_contains "contains a non-allow-listed registry source" \
+    "$TMP_DIR/registry.txt"
+}
+
+run_default_npm_registry_passes() {
+  local lock="$TMP_DIR/registry-default.lock"
+  write_lock "$lock" \
+    '    "left-pad": ["left-pad@1.3.0", "https://registry.npmjs.org/", {}, "sha512-abc=="],'
+
+  if ! node "$ROOT_DIR/scripts/bun-lockfile-check.mjs" "$lock" \
+    >"$TMP_DIR/registry-default.txt" 2>&1; then
+    cat "$TMP_DIR/registry-default.txt" >&2 || true
+    fail "the canonical npmjs registry must be allow-listed"
+  fi
+  assert_contains "Validated 1 Bun lockfile(s)." "$TMP_DIR/registry-default.txt"
+}
+
+run_trusted_dependencies_not_scanned_as_registry() {
+  # trustedDependencies lives in the workspace object, not the packages block;
+  # its string array entries must never be misread as registry tuple values.
+  local lock="$TMP_DIR/trusted.lock"
+  cat >"$lock" <<'EOF'
+{
+  "lockfileVersion": 2,
+  "configVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "app",
+      "trustedDependencies": ["esbuild", "@sentry/cli"],
+    },
+  },
+  "packages": {
+    "left-pad": ["left-pad@1.3.0", "", {}, "sha512-abc=="],
+  },
+}
+EOF
+
+  if ! node "$ROOT_DIR/scripts/bun-lockfile-check.mjs" "$lock" \
+    >"$TMP_DIR/trusted.txt" 2>&1; then
+    cat "$TMP_DIR/trusted.txt" >&2 || true
+    fail "trustedDependencies entries must not be scanned as registry values"
+  fi
+  assert_contains "Validated 1 Bun lockfile(s)." "$TMP_DIR/trusted.txt"
+}
+
 run_npm_lockfile_rejected() {
   local lock="$TMP_DIR/npm.lock"
   cat >"$lock" <<'EOF'
@@ -124,6 +178,9 @@ main() {
   run_tarball_prefixed_source_rejected
   run_git_source_rejected
   run_local_scheme_sources_rejected
+  run_custom_registry_rejected
+  run_default_npm_registry_passes
+  run_trusted_dependencies_not_scanned_as_registry
   run_npm_lockfile_rejected
   echo "bun lockfile check tests passed."
 }

@@ -13,3 +13,110 @@ export function assertBunTextLockfile(contents, source) {
     throw new Error(`${source} is not a Bun text lockfile`);
   }
 }
+
+// Registry values permitted in a package tuple's second element. Bun records
+// the resolving registry there: "" means the default npm registry. Only the
+// default (empty) value and explicitly approved registries may pass; every
+// other value (an arbitrary, possibly attacker-controlled registry URL) is
+// rejected so `bun install` can only fetch from trusted registries.
+export const DEFAULT_ALLOWED_REGISTRIES = Object.freeze([
+  "",
+  "https://registry.npmjs.org/",
+  "https://registry.npmjs.org",
+]);
+
+// Extracts the top-level "packages" object literal from a Bun text lockfile via
+// brace matching (string-aware) so nested objects/arrays elsewhere in the file
+// (e.g. workspace "trustedDependencies") are never scanned as package tuples.
+export function extractPackagesBlock(contents) {
+  const marker = '"packages":';
+  const markerIndex = contents.indexOf(marker);
+  if (markerIndex === -1) return null;
+  const start = contents.indexOf("{", markerIndex);
+  if (start === -1) return null;
+
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let i = start; i < contents.length; i += 1) {
+    const char = contents[i];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (char === "\\") escaped = true;
+      else if (char === '"') inString = false;
+      continue;
+    }
+    if (char === '"') inString = true;
+    else if (char === "{") depth += 1;
+    else if (char === "}") {
+      depth -= 1;
+      if (depth === 0) return contents.slice(start, i + 1);
+    }
+  }
+  return null;
+}
+
+// Removes JSONC trailing commas (which Bun emits) so the block parses as JSON,
+// without touching commas that appear inside string literals.
+function stripTrailingCommas(jsonc) {
+  let out = "";
+  let inString = false;
+  let escaped = false;
+  for (let i = 0; i < jsonc.length; i += 1) {
+    const char = jsonc[i];
+    if (inString) {
+      out += char;
+      if (escaped) escaped = false;
+      else if (char === "\\") escaped = true;
+      else if (char === '"') inString = false;
+      continue;
+    }
+    if (char === '"') {
+      inString = true;
+      out += char;
+      continue;
+    }
+    if (char === ",") {
+      let j = i + 1;
+      while (j < jsonc.length && /\s/.test(jsonc[j])) j += 1;
+      if (jsonc[j] === "}" || jsonc[j] === "]") continue;
+    }
+    out += char;
+  }
+  return out;
+}
+
+// Returns the registry values (second tuple element) that are not allow-listed.
+// In Bun's text lockfile every package entry is `"name": ["name@source",
+// "<registry>", {deps}, "integrity"]`, so the second string element is the
+// registry the package resolves from. The packages object is parsed
+// structurally so nested arrays inside the deps object (e.g. "os"/"cpu") are
+// never mistaken for a tuple's registry field.
+export function collectDisallowedRegistries(
+  contents,
+  allowed = DEFAULT_ALLOWED_REGISTRIES,
+) {
+  const packagesBlock = extractPackagesBlock(contents);
+  if (packagesBlock === null) {
+    throw new Error("Bun lockfile has no parseable packages block");
+  }
+  let packages;
+  try {
+    packages = JSON.parse(stripTrailingCommas(packagesBlock));
+  } catch (error) {
+    throw new Error(
+      `Bun lockfile packages block is not parseable: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  }
+  const allowedSet = new Set(allowed);
+  const disallowed = new Set();
+  for (const tuple of Object.values(packages)) {
+    if (!Array.isArray(tuple) || tuple.length < 2) continue;
+    const registry = tuple[1];
+    if (typeof registry !== "string") continue;
+    if (!allowedSet.has(registry)) disallowed.add(registry);
+  }
+  return [...disallowed];
+}

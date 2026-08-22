@@ -1,7 +1,10 @@
 #!/usr/bin/env node
 
 import { readFileSync } from "node:fs";
-import { assertBunTextLockfile } from "./bun-lockfile-format.mjs";
+import {
+  assertBunTextLockfile,
+  collectDisallowedRegistries,
+} from "./bun-lockfile-format.mjs";
 
 function fail(message) {
   throw new Error(message);
@@ -18,9 +21,6 @@ function checkLockfile(relativePath) {
   if (/http:\/\//i.test(contents)) {
     fail(`${relativePath}: contains an insecure http:// source`);
   }
-  if (/registry\.yarnpkg\.com|registry\.npmmirror\.com/i.test(contents)) {
-    fail(`${relativePath}: contains a non-npm registry host`);
-  }
   // Bun records a package's resolved source in the first tuple element as
   // `name@<source>` (e.g. `pkg@https://host/pkg.tgz` or `pkg@tarball:...`).
   // Reject any non-registry source — remote URL/tarball/git as well as local
@@ -31,6 +31,17 @@ function checkLockfile(relativePath) {
     )
   ) {
     fail(`${relativePath}: contains a non-registry package source`);
+  }
+  // The second tuple element records the registry a package resolves from.
+  // Allow-list only the default npm registry (and explicitly approved ones);
+  // reject any other registry so `bun install` cannot fetch from an arbitrary,
+  // possibly attacker-controlled host.
+  const disallowedRegistries = collectDisallowedRegistries(contents);
+  if (disallowedRegistries.length > 0) {
+    fail(
+      `${relativePath}: contains a non-allow-listed registry source ` +
+        `(${disallowedRegistries.map((value) => JSON.stringify(value)).join(", ")})`
+    );
   }
 }
 
