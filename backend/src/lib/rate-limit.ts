@@ -632,7 +632,7 @@ function createSlidingWindowRateLimit(options: {
   };
 }
 
-export const aiRateLimit = createSlidingWindowRateLimit({
+export const aiRateLimit: RequestHandler = createSlidingWindowRateLimit({
   windowMs: getAiRateLimitWindowMs,
   max: getAiRateLimitMax,
   message: {
