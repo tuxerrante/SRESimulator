@@ -121,6 +121,8 @@ deployed same-origin proxy path.
 
 ## Documentation
 
+- Default development workflow:
+  [docs/DEVELOPMENT_WORKFLOW.md](docs/DEVELOPMENT_WORKFLOW.md)
 - Product architecture: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 - Runtime internals: [docs/AI_RUNTIME.md](docs/AI_RUNTIME.md)
 - Content boundary: [docs/CONTENT_BOUNDARY.md](docs/CONTENT_BOUNDARY.md)
