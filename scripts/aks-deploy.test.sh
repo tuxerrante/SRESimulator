@@ -2120,7 +2120,7 @@ run_workflow_buildx_cache_order_check() {
   # pull-request run can write. live-e2e builds PR-head code with
   # packages: write, and GHCR permissions are not scoped per tag, so no
   # registry cache ref is safe to import there.
-  if grep -nE '^\s*cache-(from|to):' "$ROOT_DIR/.github/workflows/build-push.yml" >/dev/null 2>&1; then
+  if grep -nE '^[[:space:]]*cache-(from|to):' "$ROOT_DIR/.github/workflows/build-push.yml" >/dev/null 2>&1; then
     fail "the release build must not import or export a build cache"
   fi
 
