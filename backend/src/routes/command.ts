@@ -72,8 +72,12 @@ function buildMockCommandResponse(
   options?: { degradedReason?: string },
 ) {
   const degradedReason = options?.degradedReason;
+  let output = stripTerminalCommandEcho(generateMockCommandOutput(command, type), command);
+  if (degradedReason) {
+    output += `\nError: ${degradedReason}`;
+  }
   return {
-    output: stripTerminalCommandEcho(generateMockCommandOutput(command, type), command),
+    output,
     exitCode: degradedReason ? 1 : 0,
     mode: degradedReason ? "degraded" : "mock",
     degradedReason,

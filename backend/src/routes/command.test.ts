@@ -154,7 +154,7 @@ describe("commandRouter", () => {
 
       expect(response.status).toBe(200);
       await expect(response.json()).resolves.toEqual({
-        output: "fallback output",
+        output: "fallback output\nError: missing_output",
         exitCode: 1,
         mode: "degraded",
         degradedReason: "missing_output",
