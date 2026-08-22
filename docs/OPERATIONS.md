@@ -110,19 +110,23 @@ AKS deploys consume GHCR images directly. The current helper behavior is importa
 - If `AKS_E2E_PUSH_DEV_IMAGES=true`, the E2E targets switch to a dev-only GHCR publish path before Helm runs.
 - If `AKS_E2E_IMAGE_CACHE=true`, that publish path reuses the previous build's
   layers through a `:buildcache` registry cache instead of rebuilding from
-  scratch. Make enables this by default for AKS E2E dev-image publishes,
-  including `e2e-azure-route-up`, `e2e-azure-route-refresh`, and `live-e2e`.
-  The lower-level `scripts/aks-deploy.sh` helper still defaults to uncached for
-  direct shell callers unless the env var is set. The cache needs a BuildKit
+  scratch. It stays **opt-in** and defaults to `false` for Make-driven and
+  direct shell runs. Only the `live-e2e` CI job turns it on. The reason is a
+  trust boundary: `live-e2e` builds pull-request head code with
+  `packages: write` and exports `<image_repo>:buildcache`, and GHCR write
+  permission is not scoped per tag, so an operator run that imported that ref
+  would build from pull-request-controlled cache metadata and then deploy the
+  result with real auth, database, and AI secrets. Do not flip this default
+  until cache writes are isolated per trust boundary. The cache needs a BuildKit
   `docker-container` builder, which the script creates on demand, and write
   access to the image repository. If builder creation fails, the helper falls
   back to the original `docker build` plus `docker push`; cache export failures
   are ignored, so a cold or unavailable cache only costs the normal build time.
 - The trusted release publish in `.github/workflows/build-push.yml` deliberately
-  uses **no** build cache. The `live-e2e` job builds pull-request head code with
-  `packages: write`, and GHCR permissions are not scoped per tag, so any
-  registry cache ref a release build imported could be overwritten from a pull
-  request. Releases are infrequent, so the cold build is the cheaper trade.
+  uses **no** build cache, for the same reason.
+- `helm-integration` and `dependabot-e2e-build` use `type=gha` instead. The
+  GitHub Actions cache is scoped per branch, so a pull-request run cannot
+  overwrite what those trusted paths read.
 
 This means a repo merge alone does not guarantee E2E will run the new app build. Always verify the required GHCR tags first.
 
@@ -146,8 +150,8 @@ Configuration knobs:
 - optional `AKS_E2E_DEV_IMAGE_TAG=<custom-nonprod-tag>`
 - optional `AKS_E2E_DEV_IMAGE_TAG_SUFFIX=dev` when you want a different required suffix such as `preview` or `alpha`
 - optional `GHCR_USERNAME=<github-login>` if GHCR login should not be inferred from `gh api user`
-- optional `AKS_E2E_IMAGE_CACHE=false` to opt out of the default registry cache
-  for a Make-driven AKS E2E dev-image publish
+- optional `AKS_E2E_IMAGE_CACHE=true` to opt in to the registry layer cache for
+  a dev-image publish, accepting the trust-boundary caveat above
 
 Default generated tag format:
 

@@ -1918,14 +1918,13 @@ EOF
   assert_contains "auth token" "$gh_log"
   assert_contains "api user --jq .login" "$gh_log"
   assert_contains "login ghcr.io -u fake-gh-user --password-stdin" "$docker_log"
-  assert_contains "buildx build --builder sre-e2e-cache --platform linux/amd64 -f frontend/Dockerfile -t ghcr.io/tuxerrante/sre-simulator-frontend:${dev_tag}" "$docker_log"
-  assert_contains "--cache-from type=registry,ref=ghcr.io/tuxerrante/sre-simulator-frontend:buildcache" "$docker_log"
-  assert_contains "--cache-to type=registry,ref=ghcr.io/tuxerrante/sre-simulator-frontend:buildcache,mode=max,ignore-error=true" "$docker_log"
-  assert_contains "buildx build --builder sre-e2e-cache --platform linux/amd64 -f backend/Dockerfile -t ghcr.io/tuxerrante/sre-simulator-backend:${dev_tag}" "$docker_log"
-  assert_contains "--cache-from type=registry,ref=ghcr.io/tuxerrante/sre-simulator-backend:buildcache" "$docker_log"
-  assert_contains "--cache-to type=registry,ref=ghcr.io/tuxerrante/sre-simulator-backend:buildcache,mode=max,ignore-error=true" "$docker_log"
-  assert_not_contains "push ghcr.io/tuxerrante/sre-simulator-frontend:${dev_tag}" "$docker_log"
-  assert_not_contains "push ghcr.io/tuxerrante/sre-simulator-backend:${dev_tag}" "$docker_log"
+  # The registry cache is opt-in, so the default Make-driven publish must stay
+  # on the plain build-and-push path.
+  assert_contains "build --platform linux/amd64 -f frontend/Dockerfile -t ghcr.io/tuxerrante/sre-simulator-frontend:${dev_tag} ." "$docker_log"
+  assert_contains "push ghcr.io/tuxerrante/sre-simulator-frontend:${dev_tag}" "$docker_log"
+  assert_contains "build --platform linux/amd64 -f backend/Dockerfile -t ghcr.io/tuxerrante/sre-simulator-backend:${dev_tag} ." "$docker_log"
+  assert_contains "push ghcr.io/tuxerrante/sre-simulator-backend:${dev_tag}" "$docker_log"
+  assert_not_contains "cache-from" "$docker_log"
   assert_contains "backend.auth.turnstileTestMode=true" "$helm_log"
   assert_contains "backend.auth.localTestVerificationEnabled=true" "$helm_log"
   assert_not_contains 'WARNING: TAG=latest uses GHCR latest' "$output_file"
@@ -1985,7 +1984,7 @@ run_makefile_gateway_defaults_check() {
   assert_not_contains 'AKS_CERT_MANAGER_ACME_EMAIL ?= aaffinit@redhat.com' "$makefile"
   assert_contains 'AKS_SKIP_GATEWAY_BOOTSTRAP ?= false' "$makefile"
   assert_contains 'AKS_E2E_PUSH_DEV_IMAGES ?= false' "$makefile"
-  assert_contains 'AKS_E2E_IMAGE_CACHE ?= true' "$makefile"
+  assert_contains 'AKS_E2E_IMAGE_CACHE ?= false' "$makefile"
   assert_contains 'AKS_E2E_DEV_IMAGE_TAG ?=' "$makefile"
   assert_contains 'AKS_E2E_DEV_IMAGE_TAG_SUFFIX ?= dev' "$makefile"
   assert_contains 'AKS_E2E_DEV_IMAGE_PLATFORM ?= linux/amd64' "$makefile"
@@ -2056,10 +2055,11 @@ run_e2e_image_cache_check() {
   assert_contains "push ghcr.io/o/img:tag1" "$docker_log"
   assert_not_contains "cache-from" "$docker_log"
 
-  # Makefile-driven AKS E2E dev-image publishes now enable the cache by default
-  # through exported configuration rather than changing the script fallback.
-  if ! grep -rn "AKS_E2E_IMAGE_CACHE ?= true" "$ROOT_DIR/Makefile" >/dev/null 2>&1; then
-    fail "the Makefile must enable the AKS E2E image cache by default"
+  # The registry cache must stay opt-in for Make-driven and operator runs: the
+  # live-e2e job writes that ref from pull-request head code, and an operator
+  # run deploys with real secrets.
+  if ! grep -rn "AKS_E2E_IMAGE_CACHE ?= false" "$ROOT_DIR/Makefile" >/dev/null 2>&1; then
+    fail "the AKS E2E registry image cache must stay opt-in in the Makefile"
   fi
 
   # With the opt-in the layers must be reused from and written back to the
