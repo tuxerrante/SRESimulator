@@ -43,6 +43,13 @@ jobs:
       - name: Helm template (AKS Gateway mode)
         run: bash scripts/helm-render-gateway.sh
 
+      - name: Set up Docker Buildx
+        # v3.11.1
+        uses: >-
+          docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435
+        with:
+          driver: docker-container
+
       - name: Build frontend image
         # v7.3.0
         uses: >-

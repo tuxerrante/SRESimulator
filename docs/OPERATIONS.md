@@ -135,7 +135,7 @@ Prerequisites:
 - a local container CLI in PATH: `docker` or `podman`
 - enough local resources to build both `frontend/Dockerfile` and `backend/Dockerfile`
 
-Opt-in knobs:
+Configuration knobs:
 
 - `AKS_E2E_PUSH_DEV_IMAGES=true`
 - optional `AKS_E2E_DEV_IMAGE_TAG=<custom-nonprod-tag>`

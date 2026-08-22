@@ -2105,6 +2105,59 @@ run_e2e_image_cache_check() {
   assert_contains "push ghcr.io/o/img:tag1" "$docker_log"
 }
 
+run_workflow_buildx_cache_order_check() {
+  local buildx_action
+
+  buildx_action="docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435"
+
+  assert_contains "$buildx_action" "$ROOT_DIR/.github/workflows/build-push.yml"
+  assert_contains "$buildx_action" "$ROOT_DIR/.github/workflows/dependabot-e2e-build.yml"
+  assert_contains "$buildx_action" "$ROOT_DIR/.github/workflows/helm-integration.yml"
+  assert_contains "# v3.11.1" "$ROOT_DIR/.github/workflows/build-push.yml"
+  assert_contains "# v3.11.1" "$ROOT_DIR/.github/workflows/dependabot-e2e-build.yml"
+  assert_contains "# v3.11.1" "$ROOT_DIR/.github/workflows/helm-integration.yml"
+  assert_contains "# v7.3.0" "$ROOT_DIR/.github/workflows/build-push.yml"
+
+  python3 - "$ROOT_DIR" <<'PY'
+import pathlib
+import re
+import sys
+
+root = pathlib.Path(sys.argv[1])
+failures = []
+
+for workflow in sorted((root / ".github" / "workflows").glob("*.yml")):
+    in_jobs = False
+    current_job = None
+    saw_buildx = False
+
+    for line_number, line in enumerate(workflow.read_text().splitlines(), 1):
+        if line == "jobs:":
+            in_jobs = True
+            continue
+        if not in_jobs:
+            continue
+
+        job_match = re.match(r"^  ([A-Za-z0-9_-]+):\s*$", line)
+        if job_match:
+            current_job = job_match.group(1)
+            saw_buildx = False
+            continue
+
+        if "docker/setup-buildx-action@" in line:
+            saw_buildx = True
+            continue
+
+        if "cache-to:" in line and current_job and not saw_buildx:
+            failures.append(f"{workflow.relative_to(root)}:{line_number}: "
+                            f"job {current_job} uses cache-to before setup-buildx-action")
+
+if failures:
+    print("\n".join(failures), file=sys.stderr)
+    sys.exit(1)
+PY
+}
+
 run_geneva_suppression_gate_scope_check() {
   local aks_output aro_output aro_enabled_output
 
@@ -2178,6 +2231,7 @@ main() {
   run_e2e_route_refresh_metadata_mode_check
   run_e2e_route_up_dev_image_fallback_check
   run_e2e_image_cache_check
+  run_workflow_buildx_cache_order_check
   run_e2e_route_refresh_rejects_prod_namespace_check
   run_makefile_gateway_defaults_check
   run_makefile_gateway_audit_targets_check
