@@ -231,11 +231,36 @@ run_cluster_login_helper_flow() {
   assert_contains "login $ARO_API_SERVER -u kubeadmin -p $KUBEADMIN_PASSWORD --insecure-skip-tls-verify=true" "$OC_LOG"
 }
 
+run_patch_bc_strategy_bun_version_guard() {
+  : >"$OC_LOG"
+
+  if BUN_VERSION= \
+    OC_LOG="$OC_LOG" \
+    bash -c 'set -euo pipefail; source "$1"; oc() { printf "%s\n" "$*" >>"$OC_LOG"; }; patch_bc_strategy sre-e2e frontend frontend/Dockerfile' _ \
+    "$ROOT_DIR/scripts/aro-deploy.sh" >"$TMP_DIR/patch-missing-bun.txt" 2>&1; then
+    fail "patch_bc_strategy should fail when BUN_VERSION is empty"
+  fi
+
+  assert_contains "BUN_VERSION is required before patching OpenShift BuildConfig buildArgs; load it from .bun-version." \
+    "$TMP_DIR/patch-missing-bun.txt"
+  if [ -s "$OC_LOG" ]; then
+    fail "patch_bc_strategy should not call oc when BUN_VERSION is empty"
+  fi
+
+  BUN_VERSION=1.4.0 \
+    OC_LOG="$OC_LOG" \
+    bash -c 'set -euo pipefail; source "$1"; oc() { printf "%s\n" "$*" >>"$OC_LOG"; }; patch_bc_strategy sre-e2e frontend frontend/Dockerfile' _ \
+    "$ROOT_DIR/scripts/aro-deploy.sh"
+
+  assert_contains '"name":"BUN_VERSION","value":"1.4.0"' "$OC_LOG"
+}
+
 main() {
   write_stubs
   run_logged_out_flow
   run_logged_in_flow
   run_cluster_login_helper_flow
+  run_patch_bc_strategy_bun_version_guard
   echo "aro-login target tests passed."
 }
 

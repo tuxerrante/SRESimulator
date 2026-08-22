@@ -2,9 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-TMP_DIR="${ROOT_DIR}/data/release-version-sync-test"
-rm -rf "$TMP_DIR"
-mkdir -p "$TMP_DIR"
+TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT
 
 fail() {

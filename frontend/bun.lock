@@ -35,7 +35,6 @@
     },
   },
   "trustedDependencies": [
-    "sharp",
     "unrs-resolver",
     "@sentry/cli",
   ],
