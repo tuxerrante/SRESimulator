@@ -96,8 +96,10 @@ PR_NODE_ID=$(gh api graphql -f query='
   --jq .data.repository.pullRequest.id)
 
 # Bot id of copilot-pull-request-reviewer[bot]; read it once from any PR that
-# Copilot has already reviewed:
-#   gh api repos/$OWNER/$REPO/pulls/$PR/reviews --jq '.[0].user.node_id'
+# Copilot has already reviewed. Filter by login: `.[0]` may be a human review.
+#   gh api repos/$OWNER/$REPO/pulls/$PR/reviews \
+#     --jq 'map(select(.user.login=="copilot-pull-request-reviewer[bot]"))
+#           | .[0].user.node_id'
 COPILOT_BOT_ID=<bot-node-id>
 
 gh api graphql -f query='
@@ -150,15 +152,21 @@ applies without exception:
 Cleanup is part of the change, not an optional follow-up. The repository merges
 pull requests with **squash** only, so the topic branch tip never becomes an
 ancestor of `main` and `git branch -d` will refuse to delete it. Confirm the
-pull request actually merged first, then force-delete the local branch:
+pull request actually merged first, then force-delete the local branch. Run
+this block from the **main checkout**, not from the task worktree: a worktree
+cannot remove itself, and `.worktrees/my-change` would otherwise resolve
+relative to the worktree you are standing in.
 
 ```bash
+MAIN_CHECKOUT=/path/to/SRESimulator   # the main checkout, not .worktrees/*
+cd "$MAIN_CHECKOUT"
+
 gh pr view <PR> --json state,mergedAt --jq '{state,mergedAt}'   # expect MERGED
 
-git -C . fetch origin --prune
-git -C . worktree remove .worktrees/my-change
-git -C . worktree prune
-git -C . branch -D chore/my-change
+git fetch origin --prune
+git worktree remove .worktrees/my-change
+git worktree prune
+git branch -D chore/my-change
 ```
 
 Then reclaim build storage that the change created. `docker buildx prune`
@@ -182,11 +190,28 @@ keeps the next worktree cheap.
 ## 9. Manual verification session
 
 To exercise the merged result in a browser against a real deployment, refresh
-the personal end-to-end namespace instead of testing against production:
+the personal end-to-end namespace instead of testing against production.
+
+A merge alone does **not** publish new images: on AKS the target defaults to
+`TAG=latest`, which only moves when a semver release is published, and
+`docs/OPERATIONS.md` warns explicitly that a repository merge does not
+guarantee E2E runs the new build. So either verify that a GHCR tag containing
+the merged commit already exists and pass it explicitly, or build and publish
+a dev image from a checkout that is actually on the merged commit:
 
 ```bash
-make e2e-azure-route-refresh
+git checkout main && git pull --ff-only
+
+# Option A - a release tag containing the merged commit already exists:
+make e2e-azure-route-refresh TAG=vX.Y.Z
+
+# Option B - no release yet: publish a dev-only image from this checkout.
+AKS_E2E_PUSH_DEV_IMAGES=true make e2e-azure-route-refresh
 ```
 
-See [docs/OPERATIONS.md](OPERATIONS.md) for prerequisites, exposure modes, and
-the safety rails that forbid targeting the production namespace.
+`make e2e-azure-route-refresh` with no arguments and no published tag will
+silently redeploy the old `latest` image and prove nothing.
+
+See [docs/OPERATIONS.md](OPERATIONS.md) for prerequisites, exposure modes, the
+dev-image tag rules, and the safety rails that forbid targeting the production
+namespace.
