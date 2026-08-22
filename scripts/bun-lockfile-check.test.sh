@@ -155,6 +155,35 @@ EOF
   assert_contains "Validated 1 Bun lockfile(s)." "$TMP_DIR/trusted.txt"
 }
 
+run_custom_registry_not_hidden_by_lookalike_key() {
+  # A workspace dependency literally named "packages" (plus a later object)
+  # must not shadow the real packages block; the evil registry must still fail.
+  local lock="$TMP_DIR/lookalike.lock"
+  cat >"$lock" <<'EOF'
+{
+  "lockfileVersion": 2,
+  "configVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "app",
+      "dependencies": { "packages": "^1.0.0" },
+      "devDependencies": { "vitest": "^1.0.0" },
+    },
+  },
+  "packages": {
+    "evil": ["evil@1.0.0", "https://npm.evil.example/", {}, "sha512-x=="],
+  },
+}
+EOF
+
+  if node "$ROOT_DIR/scripts/bun-lockfile-check.mjs" "$lock" \
+    >"$TMP_DIR/lookalike.txt" 2>&1; then
+    fail "an evil registry must not be hidden by a lookalike 'packages' key"
+  fi
+  assert_contains "contains a non-allow-listed registry source" \
+    "$TMP_DIR/lookalike.txt"
+}
+
 run_npm_lockfile_rejected() {
   local lock="$TMP_DIR/npm.lock"
   cat >"$lock" <<'EOF'
@@ -181,6 +210,7 @@ main() {
   run_custom_registry_rejected
   run_default_npm_registry_passes
   run_trusted_dependencies_not_scanned_as_registry
+  run_custom_registry_not_hidden_by_lookalike_key
   run_npm_lockfile_rejected
   echo "bun lockfile check tests passed."
 }

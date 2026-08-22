@@ -25,38 +25,7 @@ export const DEFAULT_ALLOWED_REGISTRIES = Object.freeze([
   "https://registry.npmjs.org",
 ]);
 
-// Extracts the top-level "packages" object literal from a Bun text lockfile via
-// brace matching (string-aware) so nested objects/arrays elsewhere in the file
-// (e.g. workspace "trustedDependencies") are never scanned as package tuples.
-export function extractPackagesBlock(contents) {
-  const marker = '"packages":';
-  const markerIndex = contents.indexOf(marker);
-  if (markerIndex === -1) return null;
-  const start = contents.indexOf("{", markerIndex);
-  if (start === -1) return null;
-
-  let depth = 0;
-  let inString = false;
-  let escaped = false;
-  for (let i = start; i < contents.length; i += 1) {
-    const char = contents[i];
-    if (inString) {
-      if (escaped) escaped = false;
-      else if (char === "\\") escaped = true;
-      else if (char === '"') inString = false;
-      continue;
-    }
-    if (char === '"') inString = true;
-    else if (char === "{") depth += 1;
-    else if (char === "}") {
-      depth -= 1;
-      if (depth === 0) return contents.slice(start, i + 1);
-    }
-  }
-  return null;
-}
-
-// Removes JSONC trailing commas (which Bun emits) so the block parses as JSON,
+// Removes JSONC trailing commas (which Bun emits) so the file parses as JSON,
 // without touching commas that appear inside string literals.
 function stripTrailingCommas(jsonc) {
   let out = "";
@@ -89,26 +58,27 @@ function stripTrailingCommas(jsonc) {
 // Returns the registry values (second tuple element) that are not allow-listed.
 // In Bun's text lockfile every package entry is `"name": ["name@source",
 // "<registry>", {deps}, "integrity"]`, so the second string element is the
-// registry the package resolves from. The packages object is parsed
-// structurally so nested arrays inside the deps object (e.g. "os"/"cpu") are
-// never mistaken for a tuple's registry field.
+// registry the package resolves from. The whole lockfile is parsed structurally
+// and only its top-level `packages` object is inspected, so nested arrays in the
+// deps object (e.g. "os"/"cpu"), workspace "trustedDependencies", and any string
+// that merely contains the text `"packages":` can never be mistaken for a tuple.
 export function collectDisallowedRegistries(
   contents,
   allowed = DEFAULT_ALLOWED_REGISTRIES,
 ) {
-  const packagesBlock = extractPackagesBlock(contents);
-  if (packagesBlock === null) {
-    throw new Error("Bun lockfile has no parseable packages block");
-  }
-  let packages;
+  let lockfile;
   try {
-    packages = JSON.parse(stripTrailingCommas(packagesBlock));
+    lockfile = JSON.parse(stripTrailingCommas(contents));
   } catch (error) {
     throw new Error(
-      `Bun lockfile packages block is not parseable: ${
+      `Bun lockfile is not parseable: ${
         error instanceof Error ? error.message : String(error)
       }`,
     );
+  }
+  const packages = lockfile?.packages;
+  if (packages === null || typeof packages !== "object" || Array.isArray(packages)) {
+    throw new Error("Bun lockfile has no packages object");
   }
   const allowedSet = new Set(allowed);
   const disallowed = new Set();
