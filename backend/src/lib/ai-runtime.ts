@@ -799,7 +799,11 @@ export function warmupAiModel(route: AiRoute = "command"): void {
     route,
     _reasoningEffortOverride: "low",
   }).catch((e) => {
-    console.warn("[ai-runtime] Warmup request failed (ignored):", e.message);
+    // Intentionally suppress the raw exception. E.g. 'e.message' may leak upstream 503 texts or IP addresses
+    // which should not be emitted to stdout. Instead, use a sanitized invariant logging or just ignore it
+    // since it's fire-and-forget. The structured telemetry logger in generateAiText will have captured the core
+    // upstream request trace already.
+    console.warn("[ai-runtime] Warmup request failed (ignored) due to transient AI error.");
   });
 }
 
