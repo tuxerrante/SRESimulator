@@ -29,6 +29,7 @@ vi.mock("../lib/knowledge", () => ({
 vi.mock("../lib/ai-runtime", () => ({
   AiThrottledError: class AiThrottledError extends Error {},
   generateAiText: generateAiTextMock,
+  warmupAiModel: vi.fn(),
 }));
 
 vi.mock("../lib/telemetry/capture", () => ({

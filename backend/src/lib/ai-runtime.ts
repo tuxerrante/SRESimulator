@@ -1,6 +1,7 @@
 import AnthropicVertex from "@anthropic-ai/vertex-sdk";
 import {
   assertAiReadyForRuntime,
+  getAiReadiness,
   getAzureOpenAiApiVersion,
   getConfiguredModel,
 } from "./ai-config";
@@ -785,6 +786,21 @@ export async function generateAiText(request: AiTextRequest): Promise<string> {
     }
   }
   return generateVertexText(request);
+}
+
+export function warmupAiModel(route: AiRoute = "command"): void {
+  const readiness = getAiReadiness();
+  if (readiness.mockMode) return;
+
+  generateAiText({
+    system: "You are a keep-alive bot. Respond with 'ping'.",
+    messages: [{ role: "user", content: "ping" }],
+    maxTokens: 5,
+    route,
+    _reasoningEffortOverride: "low",
+  }).catch((e) => {
+    console.warn("[ai-runtime] Warmup request failed (ignored):", e.message);
+  });
 }
 
 export async function* streamAiText(

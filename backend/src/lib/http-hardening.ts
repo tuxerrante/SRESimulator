@@ -47,13 +47,13 @@ function mapJsonBodyParserError(
   return null;
 }
 
-export const jsonRouteParsers = {
+export const jsonRouteParsers: Record<keyof typeof JSON_BODY_LIMITS, RequestHandler> = {
   chat: createJsonBodyParser(JSON_BODY_LIMITS.chat),
   command: createJsonBodyParser(JSON_BODY_LIMITS.command),
   scenario: createJsonBodyParser(JSON_BODY_LIMITS.scenario),
   scores: createJsonBodyParser(JSON_BODY_LIMITS.scores),
   gameplay: createJsonBodyParser(JSON_BODY_LIMITS.gameplay),
-} satisfies Record<keyof typeof JSON_BODY_LIMITS, RequestHandler>;
+};
 
 export function applyHttpHardening(app: Express): void {
   app.disable("x-powered-by");
