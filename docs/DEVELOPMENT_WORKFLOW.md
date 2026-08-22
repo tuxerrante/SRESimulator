@@ -59,8 +59,11 @@ of creating per-worktree copies:
   stale:
 
   ```bash
+  MAIN_CHECKOUT=/path/to/SRESimulator          # the main checkout
+  MAIN_REV="$(git -C "$MAIN_CHECKOUT" rev-parse HEAD)"
+
   # from the worktree; must print nothing
-  git diff --quiet HEAD "$MAIN_CHECKOUT_REV" -- \
+  git diff --quiet HEAD "$MAIN_REV" -- \
     frontend/package.json frontend/package-lock.json \
     backend/package.json backend/package-lock.json || \
     echo "lockfiles differ: install in the worktree instead"
