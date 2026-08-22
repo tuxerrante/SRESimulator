@@ -42,7 +42,16 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha }}
           persist-credentials: false
 
+      - name: Set up Docker Buildx
+        # v3.11.1
+        uses: >-
+          docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435
+        with:
+          driver: docker-container
+
       - name: Build unprivileged PR image artifact
+        env:
+          SCOPE: dependabot-e2e-${{ matrix.component }}
         # v7.3.0
         uses: >-
           docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a
@@ -59,6 +68,8 @@ jobs:
           # load the image into the local daemon and save it separately
           # instead of using outputs: type=docker,dest=...
           load: true
+          cache-from: type=gha,scope=${{ env.SCOPE }}
+          cache-to: type=gha,scope=${{ env.SCOPE }},mode=max,ignore-error=true
 
       - name: Export image artifact
         env:

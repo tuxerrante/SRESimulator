@@ -316,6 +316,14 @@ EOF
 set -euo pipefail
 
 printf '%s\n' "$*" >>"${FAKE_DOCKER_LOG:?}"
+if [ "$*" = "buildx inspect sre-e2e-cache" ] &&
+   [ "${FAKE_DOCKER_BUILDX_INSPECT_FAIL:-}" = "true" ]; then
+  exit 1
+fi
+if [ "$*" = "buildx create --name sre-e2e-cache --driver docker-container" ] &&
+   [ "${FAKE_DOCKER_BUILDX_CREATE_FAIL:-}" = "true" ]; then
+  exit 1
+fi
 if [ "${1:-}" = "login" ]; then
   cat >/dev/null
 fi
@@ -1910,10 +1918,13 @@ EOF
   assert_contains "auth token" "$gh_log"
   assert_contains "api user --jq .login" "$gh_log"
   assert_contains "login ghcr.io -u fake-gh-user --password-stdin" "$docker_log"
+  # The registry cache is opt-in, so the default Make-driven publish must stay
+  # on the plain build-and-push path.
   assert_contains "build --platform linux/amd64 -f frontend/Dockerfile -t ghcr.io/tuxerrante/sre-simulator-frontend:${dev_tag} ." "$docker_log"
   assert_contains "push ghcr.io/tuxerrante/sre-simulator-frontend:${dev_tag}" "$docker_log"
   assert_contains "build --platform linux/amd64 -f backend/Dockerfile -t ghcr.io/tuxerrante/sre-simulator-backend:${dev_tag} ." "$docker_log"
   assert_contains "push ghcr.io/tuxerrante/sre-simulator-backend:${dev_tag}" "$docker_log"
+  assert_not_contains "cache-from" "$docker_log"
   assert_contains "backend.auth.turnstileTestMode=true" "$helm_log"
   assert_contains "backend.auth.localTestVerificationEnabled=true" "$helm_log"
   assert_not_contains 'WARNING: TAG=latest uses GHCR latest' "$output_file"
@@ -1973,6 +1984,7 @@ run_makefile_gateway_defaults_check() {
   assert_not_contains 'AKS_CERT_MANAGER_ACME_EMAIL ?= aaffinit@redhat.com' "$makefile"
   assert_contains 'AKS_SKIP_GATEWAY_BOOTSTRAP ?= false' "$makefile"
   assert_contains 'AKS_E2E_PUSH_DEV_IMAGES ?= false' "$makefile"
+  assert_contains 'AKS_E2E_IMAGE_CACHE ?= false' "$makefile"
   assert_contains 'AKS_E2E_DEV_IMAGE_TAG ?=' "$makefile"
   assert_contains 'AKS_E2E_DEV_IMAGE_TAG_SUFFIX ?= dev' "$makefile"
   assert_contains 'AKS_E2E_DEV_IMAGE_PLATFORM ?= linux/amd64' "$makefile"
@@ -2004,7 +2016,7 @@ run_makefile_port_forward_e2e_targets_check() {
   assert_contains 'AKS_E2E_EXPOSURE_MODE ?= none' "$makefile"
   assert_contains 'AKS E2E dev-image fallback enabled; using GHCR tag $$TAG' "$makefile"
   assert_contains 'export AKS_SKIP_GATEWAY_BOOTSTRAP AKS_LOCAL_PORT_FORWARD_PORT' "$makefile"
-  assert_contains 'export AKS_E2E_PUSH_DEV_IMAGES AKS_E2E_DEV_IMAGE_TAG AKS_E2E_DEV_IMAGE_TAG_SUFFIX AKS_E2E_DEV_IMAGE_PLATFORM' "$makefile"
+  assert_contains 'export AKS_E2E_PUSH_DEV_IMAGES AKS_E2E_IMAGE_CACHE AKS_E2E_DEV_IMAGE_TAG AKS_E2E_DEV_IMAGE_TAG_SUFFIX AKS_E2E_DEV_IMAGE_PLATFORM' "$makefile"
   assert_contains 'echo "  AKS_EXPOSURE_MODE: $(call e2e_var_source,AKS_EXPOSURE_MODE)"' "$makefile"
   assert_contains 'echo "  AKS_E2E_EXPOSURE_MODE: $(call e2e_var_source,AKS_E2E_EXPOSURE_MODE)"' "$makefile"
   assert_contains 'if [ "$(CLUSTER_FLAVOR)" = "aks" ] && [ -z "$(AKS_EXPOSURE_MODE_EXPLICIT)" ]; then \' "$makefile"
@@ -2031,8 +2043,8 @@ run_e2e_image_cache_check() {
   write_fake_e2e_clis
   docker_log="$TMP_DIR/e2e-image-cache.docker.log"
 
-  # Without the opt-in the build must stay exactly as it was, so local and
-  # operator runs are unaffected.
+  # The script helper itself stays opt-in for direct shell callers that do not
+  # go through Make, so non-E2E use is unaffected.
   : >"$docker_log"
   ( cd "$ROOT_DIR" && env PATH="$TMP_DIR/e2e-bin:$PATH" \
     FAKE_DOCKER_LOG="$docker_log" bash -c '
@@ -2042,6 +2054,13 @@ run_e2e_image_cache_check() {
   assert_contains "build --platform linux/amd64 -f frontend/Dockerfile -t ghcr.io/o/img:tag1 ." "$docker_log"
   assert_contains "push ghcr.io/o/img:tag1" "$docker_log"
   assert_not_contains "cache-from" "$docker_log"
+
+  # The registry cache must stay opt-in for Make-driven and operator runs: the
+  # live-e2e job writes that ref from pull-request head code, and an operator
+  # run deploys with real secrets.
+  if ! grep -rn "AKS_E2E_IMAGE_CACHE ?= false" "$ROOT_DIR/Makefile" >/dev/null 2>&1; then
+    fail "the AKS E2E registry image cache must stay opt-in in the Makefile"
+  fi
 
   # With the opt-in the layers must be reused from and written back to the
   # registry, and the image must be pushed by the build itself.
@@ -2058,10 +2077,100 @@ run_e2e_image_cache_check() {
   # A separate push would publish the image twice.
   assert_not_contains "push ghcr.io/o/img:tag1" "$docker_log"
 
-  # The cache must never be enabled by default anywhere in the repo.
-  if grep -rn "AKS_E2E_IMAGE_CACHE" "$ROOT_DIR/Makefile" >/dev/null 2>&1; then
-    fail "the image cache must stay opt-in from the workflow, not the Makefile"
+  # Operators must have an explicit opt-out for machines where the buildx
+  # docker-container builder is not desirable.
+  : >"$docker_log"
+  ( cd "$ROOT_DIR" && env PATH="$TMP_DIR/e2e-bin:$PATH" \
+    FAKE_DOCKER_LOG="$docker_log" AKS_E2E_IMAGE_CACHE=false bash -c '
+      . scripts/aks-deploy.sh
+      build_and_push_ghcr_image docker ghcr.io/o/img tag1 frontend/Dockerfile
+    ' ) || fail "cache opt-out image build failed"
+  assert_contains "build --platform linux/amd64 -f frontend/Dockerfile -t ghcr.io/o/img:tag1 ." "$docker_log"
+  assert_contains "push ghcr.io/o/img:tag1" "$docker_log"
+  assert_not_contains "buildx build" "$docker_log"
+
+  # If the docker-container builder cannot be created, the helper must degrade
+  # to the original docker build + push path instead of failing the deploy.
+  : >"$docker_log"
+  ( cd "$ROOT_DIR" && env PATH="$TMP_DIR/e2e-bin:$PATH" \
+    FAKE_DOCKER_LOG="$docker_log" FAKE_DOCKER_BUILDX_INSPECT_FAIL=true \
+    FAKE_DOCKER_BUILDX_CREATE_FAIL=true \
+    AKS_E2E_IMAGE_CACHE=true bash -c '
+      . scripts/aks-deploy.sh
+      build_and_push_ghcr_image docker ghcr.io/o/img tag1 frontend/Dockerfile
+    ' ) || fail "builder fallback image build failed"
+  assert_contains "buildx inspect sre-e2e-cache" "$docker_log"
+  assert_contains "buildx create --name sre-e2e-cache --driver docker-container" "$docker_log"
+  assert_contains "build --platform linux/amd64 -f frontend/Dockerfile -t ghcr.io/o/img:tag1 ." "$docker_log"
+  assert_contains "push ghcr.io/o/img:tag1" "$docker_log"
+}
+
+run_workflow_buildx_cache_order_check() {
+  local buildx_action
+
+  buildx_action="docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435"
+
+  assert_contains "$buildx_action" "$ROOT_DIR/.github/workflows/dependabot-e2e-build.yml"
+  assert_contains "$buildx_action" "$ROOT_DIR/.github/workflows/helm-integration.yml"
+  assert_contains "# v3.11.1" "$ROOT_DIR/.github/workflows/dependabot-e2e-build.yml"
+  assert_contains "# v3.11.1" "$ROOT_DIR/.github/workflows/helm-integration.yml"
+  assert_contains "# v7.3.0" "$ROOT_DIR/.github/workflows/build-push.yml"
+
+  # The trusted release publish must not consume any mutable cache that a
+  # pull-request run can write. live-e2e builds PR-head code with
+  # packages: write, and GHCR permissions are not scoped per tag, so no
+  # registry cache ref is safe to import there.
+  if grep -nE '^[[:space:]]*cache-(from|to):' "$ROOT_DIR/.github/workflows/build-push.yml" >/dev/null 2>&1; then
+    fail "the release build must not import or export a build cache"
   fi
+
+  # Cache export is an optimization; BuildKit defaults ignore-error to false,
+  # so a transient cache outage would otherwise fail the whole job.
+  for workflow in helm-integration dependabot-e2e-build; do
+    if grep -nE 'type=gha[^"]*mode=max$' \
+      "$ROOT_DIR/.github/workflows/${workflow}.yml" >/dev/null 2>&1; then
+      fail "${workflow}.yml must export the gha cache with ignore-error=true"
+    fi
+  done
+
+  python3 - "$ROOT_DIR" <<'PY'
+import pathlib
+import re
+import sys
+
+root = pathlib.Path(sys.argv[1])
+failures = []
+
+for workflow in sorted((root / ".github" / "workflows").glob("*.yml")):
+    in_jobs = False
+    current_job = None
+    saw_buildx = False
+
+    for line_number, line in enumerate(workflow.read_text().splitlines(), 1):
+        if line == "jobs:":
+            in_jobs = True
+            continue
+        if not in_jobs:
+            continue
+
+        job_match = re.match(r"^  ([A-Za-z0-9_-]+):\s*$", line)
+        if job_match:
+            current_job = job_match.group(1)
+            saw_buildx = False
+            continue
+
+        if "docker/setup-buildx-action@" in line:
+            saw_buildx = True
+            continue
+
+        if "cache-to:" in line and current_job and not saw_buildx:
+            failures.append(f"{workflow.relative_to(root)}:{line_number}: "
+                            f"job {current_job} uses cache-to before setup-buildx-action")
+
+if failures:
+    print("\n".join(failures), file=sys.stderr)
+    sys.exit(1)
+PY
 }
 
 run_geneva_suppression_gate_scope_check() {
@@ -2137,6 +2246,7 @@ main() {
   run_e2e_route_refresh_metadata_mode_check
   run_e2e_route_up_dev_image_fallback_check
   run_e2e_image_cache_check
+  run_workflow_buildx_cache_order_check
   run_e2e_route_refresh_rejects_prod_namespace_check
   run_makefile_gateway_defaults_check
   run_makefile_gateway_audit_targets_check
