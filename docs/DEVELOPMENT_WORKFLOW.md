@@ -52,9 +52,22 @@ of creating per-worktree copies:
   *downloads*; it does not replace `node_modules`. A worktree that has to run
   lint, tests, or a build still needs its own installed dependency tree —
   `make install` installs into `frontend/` and `backend/` separately.
-  When a worktree's change does not alter the dependency tree, symlinking the
-  main checkout's `node_modules` into it is a cheap alternative to a second
-  full install.
+  When a worktree's change does not alter the dependency tree, you may reuse
+  the main checkout's `node_modules` instead of installing a second copy — but
+  only after proving the two trees actually match, because Section 1 creates
+  worktrees from freshly fetched `origin/main` while the main checkout may be
+  stale:
+
+  ```bash
+  # from the worktree; must print nothing
+  git diff --quiet HEAD "$MAIN_CHECKOUT_REV" -- \
+    frontend/package.json frontend/package-lock.json \
+    backend/package.json backend/package-lock.json || \
+    echo "lockfiles differ: install in the worktree instead"
+  ```
+
+  If the lockfiles differ, or if you are unsure, install in the worktree. The
+  shared download cache already makes that install cheap.
 - Container builds: reuse the shared BuildKit builder
   (`AKS_E2E_CACHE_BUILDER`, default `sre-e2e-cache`) and the registry layer
   cache enabled by `AKS_E2E_IMAGE_CACHE`. See
