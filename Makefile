@@ -253,7 +253,7 @@ validate: lint typecheck typecheck-backend ## Run all linters + type checking
 # ──────────────────────────────────────────────
 security: audit lockfile-lint gitleaks grype ## Run all security checks
 
-audit: ## Check npm dependencies for known vulnerabilities
+audit: ## Check Bun-managed dependencies for known vulnerabilities
 	node scripts/frontend-audit-check.mjs --root . --frontend-dir $(FRONTEND_DIR) --audit-level $(SECURITY_FAIL_LEVEL)
 
 lockfile-lint: ## Validate lockfile integrity (registry & HTTPS)

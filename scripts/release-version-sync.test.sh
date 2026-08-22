@@ -210,6 +210,28 @@ PY
     "$TMP_DIR/prepare-pattern-guard.txt"
 }
 
+run_npm_lockfile_rejected_check() {
+  local repo_dir="$TMP_DIR/repo-npm-lockfile"
+  write_fixture_repo "$repo_dir"
+  cat >"$repo_dir/frontend/bun.lock" <<'EOF'
+{
+  "name": "frontend",
+  "version": "0.1.2",
+  "lockfileVersion": 2,
+  "packages": {}
+}
+EOF
+
+  if node "$ROOT_DIR/scripts/release-version-sync.mjs" verify \
+    --root "$repo_dir" \
+    --tag v0.1.2 >"$TMP_DIR/verify-npm-lockfile.txt" 2>&1; then
+    fail "verify should reject an npm lockfile renamed to bun.lock"
+  fi
+
+  assert_contains "frontend/bun.lock is not a Bun text lockfile" \
+    "$TMP_DIR/verify-npm-lockfile.txt"
+}
+
 run_static_wiring_checks() {
   assert_file_contains "$ROOT_DIR/Makefile" 'release-prepare: ## Update semver surfaces for a release tag'
   assert_file_contains "$ROOT_DIR/Makefile" 'verify-release-version: ## Verify semver surfaces for a release tag'
@@ -229,6 +251,7 @@ main() {
   run_missing_arg_checks
   run_prepare_and_verify_check
   run_prepare_pattern_guard_check
+  run_npm_lockfile_rejected_check
   run_static_wiring_checks
   echo "release version sync tests passed."
 }

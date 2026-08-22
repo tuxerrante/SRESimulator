@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { readFileSync } from "node:fs";
+import { assertBunTextLockfile } from "./bun-lockfile-format.mjs";
 
 function fail(message) {
   throw new Error(message);
@@ -9,11 +10,10 @@ function fail(message) {
 function checkLockfile(relativePath) {
   const contents = readFileSync(relativePath, "utf8");
 
-  if (!contents.includes('"lockfileVersion": 2')) {
-    fail(`${relativePath}: expected Bun text lockfileVersion 2`);
-  }
-  if (!contents.includes('"packages": {')) {
-    fail(`${relativePath}: expected package resolution block`);
+  try {
+    assertBunTextLockfile(contents, relativePath);
+  } catch (error) {
+    fail(error instanceof Error ? error.message : String(error));
   }
   if (/http:\/\//i.test(contents)) {
     fail(`${relativePath}: contains an insecure http:// source`);

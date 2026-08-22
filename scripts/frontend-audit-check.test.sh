@@ -26,7 +26,7 @@ write_fixture_repo() {
   local repo_dir=$1
   mkdir -p "$repo_dir/frontend" "$repo_dir/bin"
 
-  cat >"$repo_dir/frontend/audit-policy-exceptions.json" <<'EOF'
+  cat >"$repo_dir/frontend/audit-policy-exceptions.json" <<'JSON'
 {
   "policyName": "test-policy",
   "approvedOn": "2026-07-31",
@@ -44,46 +44,38 @@ write_fixture_repo() {
     }
   ]
 }
-EOF
+JSON
 
-  cat >"$repo_dir/bin/bun" <<'EOF'
+  cat >"$repo_dir/bin/bun" <<'EOF_STUB'
 #!/usr/bin/env bash
 set -euo pipefail
 cat "${FAKE_BUN_AUDIT_JSON:?}"
 if [ "${FAKE_BUN_EXIT_CODE:-0}" -ne 0 ]; then
   exit "${FAKE_BUN_EXIT_CODE}"
 fi
-EOF
+EOF_STUB
   chmod +x "$repo_dir/bin/bun"
 }
 
 write_audit_json() {
   local target=$1 body=$2
-  cat >"$target" <<EOF
+  cat >"$target" <<JSON
 ${body}
-EOF
+JSON
 }
 
 run_allowed_exception_check() {
   local repo_dir="$TMP_DIR/repo-allowed"
   write_fixture_repo "$repo_dir"
   write_audit_json "$TMP_DIR/allowed-audit.json" '{
-  "vulnerabilities": {
-    "allowed-package": {
-      "name": "allowed-package",
+  "allowed-package": [
+    {
+      "id": 1001,
+      "title": "brace-expansion",
       "severity": "high",
-      "via": [{"name": "brace-expansion"}],
-      "range": "<=1.2.3",
-      "fixAvailable": false
+      "vulnerable_versions": "<=1.2.3"
     }
-  },
-  "metadata": {
-    "vulnerabilities": {
-      "high": 1,
-      "critical": 0,
-      "total": 1
-    }
-  }
+  ]
 }'
 
   if ! env \
@@ -106,22 +98,14 @@ run_blocking_signature_mismatch_check() {
   local repo_dir="$TMP_DIR/repo-blocking"
   write_fixture_repo "$repo_dir"
   write_audit_json "$TMP_DIR/blocking-audit.json" '{
-  "vulnerabilities": {
-    "allowed-package": {
-      "name": "allowed-package",
+  "allowed-package": [
+    {
+      "id": 1002,
+      "title": "totally-new-advisory",
       "severity": "high",
-      "via": [{"name": "totally-new-advisory"}],
-      "range": "<=1.2.3",
-      "fixAvailable": false
+      "vulnerable_versions": "<=1.2.3"
     }
-  },
-  "metadata": {
-    "vulnerabilities": {
-      "high": 1,
-      "critical": 0,
-      "total": 1
-    }
-  }
+  ]
 }'
 
   if env \
@@ -143,22 +127,20 @@ run_expected_count_ceiling_check() {
   local repo_dir="$TMP_DIR/repo-count"
   write_fixture_repo "$repo_dir"
   write_audit_json "$TMP_DIR/count-audit.json" '{
-  "vulnerabilities": {
-    "allowed-package": {
-      "name": "allowed-package",
+  "allowed-package": [
+    {
+      "id": 1003,
+      "title": "brace-expansion",
       "severity": "high",
-      "via": [{"name": "brace-expansion"}],
-      "range": "<=1.2.3",
-      "fixAvailable": false
+      "vulnerable_versions": "<=1.2.3"
+    },
+    {
+      "id": 1004,
+      "title": "brace-expansion",
+      "severity": "high",
+      "vulnerable_versions": "<=1.2.3"
     }
-  },
-  "metadata": {
-    "vulnerabilities": {
-      "high": 2,
-      "critical": 0,
-      "total": 2
-    }
-  }
+  ]
 }'
 
   if env \
@@ -178,16 +160,7 @@ run_expected_count_ceiling_check() {
 run_lower_count_pass_check() {
   local repo_dir="$TMP_DIR/repo-lower-count"
   write_fixture_repo "$repo_dir"
-  write_audit_json "$TMP_DIR/lower-count-audit.json" '{
-  "vulnerabilities": {},
-  "metadata": {
-    "vulnerabilities": {
-      "high": 0,
-      "critical": 0,
-      "total": 0
-    }
-  }
-}'
+  write_audit_json "$TMP_DIR/lower-count-audit.json" '{}'
 
   if ! env \
     PATH="$repo_dir/bin:$PATH" \
@@ -208,22 +181,14 @@ run_critical_gate_skips_high_count_check() {
   local repo_dir="$TMP_DIR/repo-critical"
   write_fixture_repo "$repo_dir"
   write_audit_json "$TMP_DIR/critical-audit.json" '{
-  "vulnerabilities": {
-    "allowed-package": {
-      "name": "allowed-package",
+  "allowed-package": [
+    {
+      "id": 1005,
+      "title": "brace-expansion",
       "severity": "high",
-      "via": [{"name": "brace-expansion"}],
-      "range": "<=1.2.3",
-      "fixAvailable": false
+      "vulnerable_versions": "<=1.2.3"
     }
-  },
-  "metadata": {
-    "vulnerabilities": {
-      "high": 99,
-      "critical": 0,
-      "total": 99
-    }
-  }
+  ]
 }'
 
   if ! env \
@@ -242,6 +207,95 @@ run_critical_gate_skips_high_count_check() {
   assert_not_contains "Expected 1 high vulnerabilities" "$TMP_DIR/critical.out"
 }
 
+run_npm_shape_fails_closed_check() {
+  local repo_dir="$TMP_DIR/repo-npm-shape"
+  write_fixture_repo "$repo_dir"
+  write_audit_json "$TMP_DIR/npm-shape-audit.json" '{
+  "vulnerabilities": {},
+  "metadata": {
+    "vulnerabilities": {
+      "high": 0,
+      "critical": 0,
+      "total": 0
+    }
+  }
+}'
+
+  if env \
+    PATH="$repo_dir/bin:$PATH" \
+    FAKE_BUN_AUDIT_JSON="$TMP_DIR/npm-shape-audit.json" \
+    FAKE_BUN_EXIT_CODE=0 \
+    node "$ROOT_DIR/scripts/frontend-audit-check.mjs" \
+      --root "$repo_dir" \
+      --frontend-dir frontend \
+      --audit-level high >"$TMP_DIR/npm-shape.out" 2>&1; then
+    fail "npm audit shaped JSON should fail closed"
+  fi
+
+  assert_contains "bun audit JSON schema mismatch" "$TMP_DIR/npm-shape.out"
+}
+
+run_real_bun_golden_fixture_check() {
+  local repo_dir="$TMP_DIR/repo-real-bun-golden"
+  write_fixture_repo "$repo_dir"
+  python3 - "$repo_dir/frontend/audit-policy-exceptions.json" <<'PY'
+from pathlib import Path
+import sys
+path = Path(sys.argv[1])
+path.write_text('''{
+  "policyName": "test-policy",
+  "approvedOn": "2026-07-31",
+  "reviewBy": "tests",
+  "expectedCounts": {
+    "critical": 1
+  },
+  "exceptions": [
+    {
+      "name": "minimist",
+      "severity": "critical",
+      "range": "<0.2.4",
+      "via": ["Prototype Pollution in minimist"],
+      "reason": "Approved test exception."
+    }
+  ]
+}
+''')
+PY
+
+  if ! env \
+    PATH="$repo_dir/bin:$PATH" \
+    FAKE_BUN_AUDIT_JSON="$ROOT_DIR/scripts/fixtures/bun-audit-minimist.json" \
+    FAKE_BUN_EXIT_CODE=1 \
+    node "$ROOT_DIR/scripts/frontend-audit-check.mjs" \
+      --root "$repo_dir" \
+      --frontend-dir frontend \
+      --audit-level critical >"$TMP_DIR/real-bun-golden.out" 2>&1; then
+    cat "$TMP_DIR/real-bun-golden.out" >&2 || true
+    fail "real Bun audit golden fixture should pass with the matching exception"
+  fi
+
+  assert_contains "Raw bun audit counts: high=0, critical=1, moderate=1, total=2" \
+    "$TMP_DIR/real-bun-golden.out"
+  assert_contains "Approved exception packages:" "$TMP_DIR/real-bun-golden.out"
+}
+
+run_real_frontend_bun_audit_check() {
+  if ! command -v bun >/dev/null 2>&1; then
+    echo "bun not found; skipping real frontend bun audit check."
+    return
+  fi
+
+  if ! node "$ROOT_DIR/scripts/frontend-audit-check.mjs" \
+    --root "$ROOT_DIR" \
+    --frontend-dir frontend \
+    --audit-level high >"$TMP_DIR/real-frontend.out" 2>&1; then
+    cat "$TMP_DIR/real-frontend.out" >&2 || true
+    fail "real frontend bun audit should pass"
+  fi
+
+  assert_contains "Raw bun audit counts:" "$TMP_DIR/real-frontend.out"
+}
+
 run_missing_arg_check() {
   if node "$ROOT_DIR/scripts/frontend-audit-check.mjs" --root >"$TMP_DIR/missing-root.out" 2>&1; then
     fail "missing --root value should fail"
@@ -256,6 +310,9 @@ main() {
   run_expected_count_ceiling_check
   run_lower_count_pass_check
   run_critical_gate_skips_high_count_check
+  run_npm_shape_fails_closed_check
+  run_real_bun_golden_fixture_check
+  run_real_frontend_bun_audit_check
   run_missing_arg_check
   echo "frontend audit check tests passed."
 }

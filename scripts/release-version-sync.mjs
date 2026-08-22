@@ -2,6 +2,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { assertBunTextLockfile, isBunTextLockfile } from "./bun-lockfile-format.mjs";
 
 const VERSION_FILES = {
   frontendPackage: "frontend/package.json",
@@ -73,9 +74,7 @@ function updatePackageVersion(root, relativePath, version) {
 
 function verifyBunLockfile(root, relativePath) {
   const lockfile = readFile(root, relativePath);
-  if (!lockfile.includes('"lockfileVersion": 2')) {
-    fail(`${relativePath} is not a Bun text lockfile`);
-  }
+  assertBunTextLockfile(lockfile, relativePath);
 }
 
 function replaceOrFail(content, pattern, replacement, errorMessage) {
@@ -134,9 +133,9 @@ function readVersionState(root) {
 
   return {
     frontendPackageVersion: frontendPkg.version,
-    frontendLockfileIsBun: frontendLockfile.includes('"lockfileVersion": 2'),
+    frontendLockfileIsBun: isBunTextLockfile(frontendLockfile),
     backendPackageVersion: backendPkg.version,
-    backendLockfileIsBun: backendLockfile.includes('"lockfileVersion": 2'),
+    backendLockfileIsBun: isBunTextLockfile(backendLockfile),
     chartVersion,
     chartAppVersion,
     appVersion,
