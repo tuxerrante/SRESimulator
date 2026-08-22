@@ -46,7 +46,7 @@ structured SRE method.
 git clone https://github.com/tuxerrante/SRESimulator.git
 cd SRESimulator
 python3 -m pip install --user pre-commit
-# Install Bun 1.4.0 if it is not already available.
+# Install the Bun version pinned in .bun-version if it is not already available.
 make install
 make dev
 ```

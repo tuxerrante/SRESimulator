@@ -247,12 +247,12 @@ run_patch_bc_strategy_bun_version_guard() {
     fail "patch_bc_strategy should not call oc when BUN_VERSION is empty"
   fi
 
-  BUN_VERSION=1.4.0 \
+  BUN_VERSION="$(tr -d '\n' < "$ROOT_DIR/.bun-version")" \
     OC_LOG="$OC_LOG" \
     bash -c 'set -euo pipefail; source "$1"; oc() { printf "%s\n" "$*" >>"$OC_LOG"; }; patch_bc_strategy sre-e2e frontend frontend/Dockerfile' _ \
     "$ROOT_DIR/scripts/aro-deploy.sh"
 
-  assert_contains '"name":"BUN_VERSION","value":"1.4.0"' "$OC_LOG"
+  assert_contains "\"name\":\"BUN_VERSION\",\"value\":\"$(tr -d '\n' < "$ROOT_DIR/.bun-version")\"" "$OC_LOG"
 }
 
 main() {

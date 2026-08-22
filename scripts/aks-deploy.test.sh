@@ -2173,6 +2173,45 @@ if failures:
 PY
 }
 
+run_bun_version_single_source_check() {
+  python3 - "$ROOT_DIR" <<'PY'
+import pathlib
+import subprocess
+import sys
+
+root = pathlib.Path(sys.argv[1])
+bun_version = (root / ".bun-version").read_text().strip()
+allowed = {".bun-version"}
+failures = []
+
+tracked_files = subprocess.check_output(
+    ["git", "-C", str(root), "ls-files"],
+    text=True,
+).splitlines()
+
+for relative in tracked_files:
+    if relative in allowed or relative.endswith("/bun.lock"):
+        continue
+    path = root / relative
+    try:
+        text = path.read_text()
+    except UnicodeDecodeError:
+        continue
+    if bun_version in text:
+        failures.append(relative)
+
+if failures:
+    print(
+        "Bun version literals must come from .bun-version; found "
+        + bun_version
+        + " in:\n"
+        + "\n".join(failures),
+        file=sys.stderr,
+    )
+    sys.exit(1)
+PY
+}
+
 run_geneva_suppression_gate_scope_check() {
   local aks_output aro_output aro_enabled_output
 
@@ -2247,6 +2286,7 @@ main() {
   run_e2e_route_up_dev_image_fallback_check
   run_e2e_image_cache_check
   run_workflow_buildx_cache_order_check
+  run_bun_version_single_source_check
   run_e2e_route_refresh_rejects_prod_namespace_check
   run_makefile_gateway_defaults_check
   run_makefile_gateway_audit_targets_check

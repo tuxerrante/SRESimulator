@@ -210,7 +210,6 @@ jobs:
       DB_SECRET_NAME: ${{ secrets.DB_SECRET_NAME }}
       PROD_NAMESPACE: ${{ secrets.PROD_NAMESPACE }}
       E2E_RELEASE: sre-simulator
-      BUN_VERSION: "1.4.0"
     steps:
       - name: Harden runner
         # v2.21.0
@@ -226,6 +225,13 @@ jobs:
         with:
           ref: ${{ needs.resolve-release-tag.outputs.release_sha }}
           fetch-depth: 0
+
+      - name: Load Bun version
+        id: bun
+        run: |
+          version="$(tr -d '\n' < .bun-version)"
+          echo "BUN_VERSION=${version}" >> "$GITHUB_ENV"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
 
       - name: Verify tag is semver and latest release
         id: verify_release

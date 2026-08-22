@@ -37,7 +37,6 @@
     "typescript-eslint": "^8.67.0",
     "vitest": "^4.1.10"
   },
-  "packageManager": "bun@1.4.0",
   "trustedDependencies": [
     "esbuild"
   ]

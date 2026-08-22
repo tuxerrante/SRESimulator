@@ -295,7 +295,7 @@ Technical setup and operational commands are documented here so
 | Requirement | Version |
 | --- | --- |
 | Node.js | >= 20, with npm CLI available for existing `npm run`/`npx` scripts |
-| Bun | 1.4.0 package manager/installer |
+| Bun | Version pinned in `.bun-version` |
 | gcloud | Optional for Vertex provider |
 | Managed AI endpoint | Vertex or Azure OpenAI/Foundry |
 | Helm | 4+ when `AKS_HELM_FORCE_CONFLICTS=true` |

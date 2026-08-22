@@ -21,7 +21,7 @@
 
 ## Package Management and Runtime Boundary
 
-The repository uses Bun 1.4.0 exclusively for dependency installation.
+The repository uses the Bun version pinned in `.bun-version` exclusively for dependency installation.
 `frontend/bun.lock` and `backend/bun.lock` are the source of truth for
 resolved packages, and `make install` runs `bun install --frozen-lockfile` in
 each app. Runtime and script execution stay on Node.js: development, tests,

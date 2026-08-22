@@ -1,4 +1,4 @@
-ARG BUN_VERSION=1.4.0
+ARG BUN_VERSION
 FROM docker.io/oven/bun:${BUN_VERSION}-alpine AS bun
 
 FROM node:24-alpine AS base

@@ -109,6 +109,13 @@ jobs:
         with:
           ref: ${{ github.event.workflow_run.head_sha }}
 
+      - name: Load Bun version
+        id: bun
+        run: |
+          version="$(tr -d '\n' < .bun-version)"
+          echo "BUN_VERSION=${version}" >> "$GITHUB_ENV"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+
       - name: Login to GHCR
         # v4.1.0
         uses: >-
@@ -145,3 +152,4 @@ jobs:
           file: ${{ matrix.dockerfile }}
           push: true
           tags: ${{ steps.meta.outputs.tags }}
+          build-args: BUN_VERSION=${{ steps.bun.outputs.version }}
