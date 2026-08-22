@@ -23,9 +23,14 @@ function checkLockfile(relativePath) {
   }
   // Bun records a package's resolved source in the first tuple element as
   // `name@<source>` (e.g. `pkg@https://host/pkg.tgz` or `pkg@tarball:...`).
-  // Reject any remote URL/tarball/git source so only registry versions pass.
-  if (/"[^"\n]*@(?:https?:\/\/|tarball:|git\+|git:\/\/|github:)/i.test(contents)) {
-    fail(`${relativePath}: contains a URL-based package source`);
+  // Reject any non-registry source — remote URL/tarball/git as well as local
+  // file/link/workspace schemes — so only registry versions pass the gate.
+  if (
+    /"[^"\n]*@(?:https?:\/\/|tarball:|git\+|git:\/\/|github:|file:|link:|workspace:)/i.test(
+      contents
+    )
+  ) {
+    fail(`${relativePath}: contains a non-registry package source`);
   }
 }
 

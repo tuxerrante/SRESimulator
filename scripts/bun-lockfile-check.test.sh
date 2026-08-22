@@ -56,7 +56,7 @@ run_tarball_source_rejected() {
     >"$TMP_DIR/tarball.txt" 2>&1; then
     fail "an https tarball source in the first tuple element must be rejected"
   fi
-  assert_contains "contains a URL-based package source" "$TMP_DIR/tarball.txt"
+  assert_contains "contains a non-registry package source" "$TMP_DIR/tarball.txt"
 }
 
 run_tarball_prefixed_source_rejected() {
@@ -68,7 +68,7 @@ run_tarball_prefixed_source_rejected() {
     >"$TMP_DIR/tarball-prefixed.txt" 2>&1; then
     fail "a tarball: source must be rejected"
   fi
-  assert_contains "contains a URL-based package source" \
+  assert_contains "contains a non-registry package source" \
     "$TMP_DIR/tarball-prefixed.txt"
 }
 
@@ -81,7 +81,24 @@ run_git_source_rejected() {
     >"$TMP_DIR/git.txt" 2>&1; then
     fail "a git+ source must be rejected"
   fi
-  assert_contains "contains a URL-based package source" "$TMP_DIR/git.txt"
+  assert_contains "contains a non-registry package source" "$TMP_DIR/git.txt"
+}
+
+run_local_scheme_sources_rejected() {
+  local scheme
+  for scheme in "file:../pkg" "link:../pkg" "workspace:pkg"; do
+    local safe_name lock out
+    safe_name="${scheme%%:*}"
+    lock="$TMP_DIR/local-${safe_name}.lock"
+    out="$TMP_DIR/local-${safe_name}.txt"
+    write_lock "$lock" "    \"evil\": [\"evil@${scheme}\", \"\", {}, \"\"],"
+
+    if node "$ROOT_DIR/scripts/bun-lockfile-check.mjs" "$lock" \
+      >"$out" 2>&1; then
+      fail "a ${scheme} source must be rejected"
+    fi
+    assert_contains "contains a non-registry package source" "$out"
+  done
 }
 
 run_npm_lockfile_rejected() {
@@ -106,6 +123,7 @@ main() {
   run_tarball_source_rejected
   run_tarball_prefixed_source_rejected
   run_git_source_rejected
+  run_local_scheme_sources_rejected
   run_npm_lockfile_rejected
   echo "bun lockfile check tests passed."
 }
