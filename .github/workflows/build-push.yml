@@ -118,13 +118,6 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Set up Docker Buildx
-        # v3.11.1
-        uses: >-
-          docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435
-        with:
-          driver: docker-container
-
       - name: Set image name
         id: meta
         run: |
@@ -139,18 +132,9 @@ jobs:
           else
             tags="${release_image_tag}"
           fi
-          # Trust boundary: the mutable ":buildcache" ref is exported by
-          # scripts/aks-deploy.sh from the live-e2e job, which builds PR-head
-          # code with packages: write. Importing it here would let a pull
-          # request feed cache metadata into a trusted release build, so the
-          # release path uses its own ref that only this workflow writes.
-          cache_ref="${REGISTRY}/${OWNER}/${NAME}:buildcache-release"
-          cache_to="type=registry,ref=${cache_ref},mode=max,ignore-error=true"
           echo "tags<<EOF" >> "${GITHUB_OUTPUT}"
           echo "${tags}" >> "${GITHUB_OUTPUT}"
           echo "EOF" >> "${GITHUB_OUTPUT}"
-          echo "cache_ref=${cache_ref}" >> "${GITHUB_OUTPUT}"
-          echo "cache_to=${cache_to}" >> "${GITHUB_OUTPUT}"
 
       - name: Build and push
         # v7.3.0
@@ -161,5 +145,3 @@ jobs:
           file: ${{ matrix.dockerfile }}
           push: true
           tags: ${{ steps.meta.outputs.tags }}
-          cache-from: type=registry,ref=${{ steps.meta.outputs.cache_ref }}
-          cache-to: ${{ steps.meta.outputs.cache_to }}

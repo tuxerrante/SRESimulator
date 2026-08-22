@@ -2110,20 +2110,18 @@ run_workflow_buildx_cache_order_check() {
 
   buildx_action="docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435"
 
-  assert_contains "$buildx_action" "$ROOT_DIR/.github/workflows/build-push.yml"
   assert_contains "$buildx_action" "$ROOT_DIR/.github/workflows/dependabot-e2e-build.yml"
   assert_contains "$buildx_action" "$ROOT_DIR/.github/workflows/helm-integration.yml"
-  assert_contains "# v3.11.1" "$ROOT_DIR/.github/workflows/build-push.yml"
   assert_contains "# v3.11.1" "$ROOT_DIR/.github/workflows/dependabot-e2e-build.yml"
   assert_contains "# v3.11.1" "$ROOT_DIR/.github/workflows/helm-integration.yml"
   assert_contains "# v7.3.0" "$ROOT_DIR/.github/workflows/build-push.yml"
 
-  # The trusted release build must not import the mutable ":buildcache" ref
-  # that the PR-head live-e2e job writes through scripts/aks-deploy.sh.
-  assert_contains 'cache_ref="${REGISTRY}/${OWNER}/${NAME}:buildcache-release"' \
-    "$ROOT_DIR/.github/workflows/build-push.yml"
-  if grep -n 'NAME}:buildcache"' "$ROOT_DIR/.github/workflows/build-push.yml" >/dev/null 2>&1; then
-    fail "the release build must use a release-only registry cache ref"
+  # The trusted release publish must not consume any mutable cache that a
+  # pull-request run can write. live-e2e builds PR-head code with
+  # packages: write, and GHCR permissions are not scoped per tag, so no
+  # registry cache ref is safe to import there.
+  if grep -nE '^\s*cache-(from|to):' "$ROOT_DIR/.github/workflows/build-push.yml" >/dev/null 2>&1; then
+    fail "the release build must not import or export a build cache"
   fi
 
   python3 - "$ROOT_DIR" <<'PY'
