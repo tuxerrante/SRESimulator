@@ -788,14 +788,20 @@ export async function generateAiText(request: AiTextRequest): Promise<string> {
   return generateVertexText(request);
 }
 
+let lastWarmupTime = 0;
+const WARMUP_COOLDOWN_MS = 60000;
+
 export function warmupAiModel(route: AiRoute = "command"): void {
+  const now = Date.now();
+  if (now - lastWarmupTime < WARMUP_COOLDOWN_MS) return;
+  lastWarmupTime = now;
   const readiness = getAiReadiness();
   if (readiness.mockMode) return;
 
   generateAiText({
     system: "You are a keep-alive bot. Respond with 'ping'.",
     messages: [{ role: "user", content: "ping" }],
-    maxTokens: 5,
+    maxTokens: 50,
     route,
     _reasoningEffortOverride: "low",
   }).catch(() => {

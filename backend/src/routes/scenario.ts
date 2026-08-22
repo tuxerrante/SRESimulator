@@ -692,6 +692,7 @@ scenarioRouter.post("/", async (req: Request, res: Response) => {
       reservedClaimKeys = await reserveAnonymousClaimKeys();
 
       if (!getAiReadiness().mockMode) {
+        warmupAiModel("chat");
         warmupAiModel("command");
       }
 
