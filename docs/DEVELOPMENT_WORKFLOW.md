@@ -169,19 +169,29 @@ git worktree prune
 git branch -D chore/my-change
 ```
 
-Then reclaim build storage that the change created. `docker buildx prune`
-only prunes the *currently selected* builder, while `scripts/aks-deploy.sh`
-builds with `buildx build --builder ${AKS_E2E_CACHE_BUILDER:-sre-e2e-cache}`
-without ever selecting it. Target that builder explicitly, and tolerate it not
-existing:
+Then reclaim build storage that the change created. Two details matter here.
+First, the deployment path supports a Podman-only machine
+(`scripts/aks-deploy.sh` selects `docker` or `podman`), so resolve the CLI
+instead of assuming Docker. Second, `buildx prune` only prunes the *currently
+selected* builder, while `scripts/aks-deploy.sh` builds with
+`buildx build --builder ${AKS_E2E_CACHE_BUILDER:-sre-e2e-cache}` without ever
+selecting it, so that builder must be targeted explicitly:
 
 ```bash
-BUILDER="${AKS_E2E_CACHE_BUILDER:-sre-e2e-cache}"
-if docker buildx inspect "$BUILDER" >/dev/null 2>&1; then
-  docker buildx prune --builder "$BUILDER" --filter until=168h -f
+CLI="$(command -v docker || command -v podman)" || {
+  echo "no container CLI in PATH"; exit 1
+}
+
+# Buildx (and therefore the shared builder) only exists on the docker CLI.
+if [ "$(basename "$CLI")" = "docker" ] && "$CLI" buildx version >/dev/null 2>&1; then
+  BUILDER="${AKS_E2E_CACHE_BUILDER:-sre-e2e-cache}"
+  if "$CLI" buildx inspect "$BUILDER" >/dev/null 2>&1; then
+    "$CLI" buildx prune --builder "$BUILDER" --filter until=168h -f
+  fi
+  "$CLI" buildx prune --filter until=168h -f   # default builder
 fi
-docker buildx prune --filter until=168h -f   # default builder
-docker image prune -f
+
+"$CLI" image prune -f
 ```
 
 Leave the shared package-manager caches in place: they are the mechanism that
