@@ -108,6 +108,16 @@ gh api graphql -f query='
   }' -F pullRequestId="$PR_NODE_ID" -f botIds="$COPILOT_BOT_ID"
 ```
 
+`RequestReviewsInput` exposes `userIds`, `botIds`, `teamIds` and `union`;
+Copilot is a `Bot` actor, so it must be passed through `botIds`. The equivalent
+REST call, already documented in `.cursor/rules/pr-lifecycle.mdc`, is a valid
+fallback:
+
+```bash
+gh api "repos/$OWNER/$REPO/pulls/$PR/requested_reviewers" \
+  --method POST -f 'reviewers[]=copilot'
+```
+
 The loop is:
 
 1. Request a review.
