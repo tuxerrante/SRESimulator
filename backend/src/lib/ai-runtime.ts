@@ -1,6 +1,7 @@
 import AnthropicVertex from "@anthropic-ai/vertex-sdk";
 import {
   assertAiReadyForRuntime,
+  getAiReadiness,
   getAzureOpenAiApiVersion,
   getConfiguredModel,
 } from "./ai-config";
@@ -785,6 +786,31 @@ export async function generateAiText(request: AiTextRequest): Promise<string> {
     }
   }
   return generateVertexText(request);
+}
+
+let lastWarmupTime = 0;
+const WARMUP_COOLDOWN_MS = 60000;
+
+export function warmupAiModel(route: AiRoute = "command"): void {
+  const now = Date.now();
+  if (now - lastWarmupTime < WARMUP_COOLDOWN_MS) return;
+  lastWarmupTime = now;
+  const readiness = getAiReadiness();
+  if (readiness.mockMode) return;
+
+  generateAiText({
+    system: "You are a keep-alive bot. Respond with 'ping'.",
+    messages: [{ role: "user", content: "ping" }],
+    maxTokens: 50,
+    route,
+    _reasoningEffortOverride: "low",
+  }).catch(() => {
+    // Intentionally suppress the raw exception. E.g. 'e.message' may leak upstream 503 texts or IP addresses
+    // which should not be emitted to stdout. Instead, use a sanitized invariant logging or just ignore it
+    // since it's fire-and-forget. The structured telemetry logger in generateAiText will have captured the core
+    // upstream request trace already.
+    console.warn("[ai-runtime] Warmup request failed (ignored) due to transient AI error.");
+  });
 }
 
 export async function* streamAiText(

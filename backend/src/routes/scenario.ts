@@ -8,7 +8,7 @@ import {
 } from "../lib/storage";
 import { getAiReadiness } from "../lib/ai-config";
 import { generateMockScenario } from "../lib/mock-ai";
-import { generateAiText, AiThrottledError } from "../lib/ai-runtime";
+import { generateAiText, AiThrottledError, warmupAiModel } from "../lib/ai-runtime";
 import {
   getCatalogScenario,
   isCatalogScenarioSource,
@@ -690,6 +690,12 @@ scenarioRouter.post("/", async (req: Request, res: Response) => {
 
     if (isCatalogScenarioSource()) {
       reservedClaimKeys = await reserveAnonymousClaimKeys();
+
+      if (!getAiReadiness().mockMode) {
+        warmupAiModel("chat");
+        warmupAiModel("command");
+      }
+
       const catalogScenario = await deadline.waitWithin(
         "catalog-scenario-read",
         getCatalogScenario({ platform, difficulty }),

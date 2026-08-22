@@ -14,6 +14,7 @@ import { createSignedClientIp } from "../../../shared/auth/client-ip";
 import { buildAnonymousClaimKeys } from "../lib/anonymous-claim";
 
 const generateAiTextMock = vi.fn();
+const warmupAiModelMock = vi.fn();
 const captureBackendRouteErrorMock = vi.fn();
 
 vi.mock("../lib/ai-config", () => ({
@@ -29,6 +30,7 @@ vi.mock("../lib/knowledge", () => ({
 vi.mock("../lib/ai-runtime", () => ({
   AiThrottledError: class AiThrottledError extends Error {},
   generateAiText: generateAiTextMock,
+  warmupAiModel: warmupAiModelMock,
 }));
 
 vi.mock("../lib/telemetry/capture", () => ({
@@ -536,6 +538,7 @@ describe("scenario reservation before AI generation", () => {
     expect(JSON.stringify(scenario)).not.toContain("{{minutesAgo:");
     expect(JSON.stringify(scenario)).not.toContain("{{daysAgo:");
     expect(generateAiTextMock).not.toHaveBeenCalled();
+    expect(warmupAiModelMock).toHaveBeenCalledTimes(2);
   });
 
   it("fails closed when catalog mode is enabled but no curated scenario is available", async () => {
