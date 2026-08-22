@@ -21,7 +21,10 @@ function checkLockfile(relativePath) {
   if (/registry\.yarnpkg\.com|registry\.npmmirror\.com/i.test(contents)) {
     fail(`${relativePath}: contains a non-npm registry host`);
   }
-  if (/\[[^\n]*@[^\n]*",\s*"https?:\/\//.test(contents)) {
+  // Bun records a package's resolved source in the first tuple element as
+  // `name@<source>` (e.g. `pkg@https://host/pkg.tgz` or `pkg@tarball:...`).
+  // Reject any remote URL/tarball/git source so only registry versions pass.
+  if (/"[^"\n]*@(?:https?:\/\/|tarball:|git\+|git:\/\/|github:)/i.test(contents)) {
     fail(`${relativePath}: contains a URL-based package source`);
   }
 }
