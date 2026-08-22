@@ -61,7 +61,8 @@ jobs:
           build-args: NPM_VERSION=${{ steps.npm.outputs.version }}
           load: true
           cache-from: type=gha,scope=helm-integration-frontend
-          cache-to: type=gha,scope=helm-integration-frontend,mode=max
+          cache-to: >-
+            type=gha,scope=helm-integration-frontend,mode=max,ignore-error=true
 
       - name: Build backend image
         # v7.3.0
@@ -74,7 +75,8 @@ jobs:
           build-args: NPM_VERSION=${{ steps.npm.outputs.version }}
           load: true
           cache-from: type=gha,scope=helm-integration-backend
-          cache-to: type=gha,scope=helm-integration-backend,mode=max
+          cache-to: >-
+            type=gha,scope=helm-integration-backend,mode=max,ignore-error=true
 
       # Keep the Kind runtime path lightweight here.
       # Gateway-specific behavior is covered by this render check plus

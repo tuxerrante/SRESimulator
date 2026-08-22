@@ -2124,6 +2124,15 @@ run_workflow_buildx_cache_order_check() {
     fail "the release build must not import or export a build cache"
   fi
 
+  # Cache export is an optimization; BuildKit defaults ignore-error to false,
+  # so a transient cache outage would otherwise fail the whole job.
+  for workflow in helm-integration dependabot-e2e-build; do
+    if grep -nE 'type=gha[^"]*mode=max$' \
+      "$ROOT_DIR/.github/workflows/${workflow}.yml" >/dev/null 2>&1; then
+      fail "${workflow}.yml must export the gha cache with ignore-error=true"
+    fi
+  done
+
   python3 - "$ROOT_DIR" <<'PY'
 import pathlib
 import re
