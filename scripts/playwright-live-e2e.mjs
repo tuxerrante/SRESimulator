@@ -43,7 +43,11 @@ const platforms = [
       // that covers every `oc` verb used in the knowledge base / scenarios
       // (adm, annotate, auth, create, debug, delete, describe, edit, exec, get,
       // login, logs, new-app, patch, rsh, secrets) plus the common remainder.
-      /\boc\s+(adm|annotate|api-resources|apply|auth|cluster-info|cp|create|debug|delete|describe|edit|events|exec|explain|expose|get|idle|import-image|label|login|logout|logs?|new-app|new-build|new-project|patch|policy|port-forward|process|project|projects|replace|rollout|rsh|scale|secrets|set|start-build|status|tag|top|version|wait|whoami)\b/i,
+      // Allows optional global flags between `oc` and the verb, each optionally
+      // taking a value token, so `oc -n openshift-compliance patch ...` (a real
+      // KB pattern) is still caught. The value token cannot itself start with a
+      // dash, which keeps the match from spanning unrelated prose.
+      /\boc(?:\s+-{1,2}[A-Za-z][\w-]*(?:=\S+|\s+[^\s-]\S*)?)*\s+(adm|annotate|api-resources|apply|auth|cluster-info|cp|create|debug|delete|describe|edit|events|exec|explain|expose|get|idle|import-image|label|login|logout|logs?|new-app|new-build|new-project|patch|policy|port-forward|process|project|projects|replace|rollout|rsh|scale|secrets|set|start-build|status|tag|top|version|wait|whoami)\b/i,
     ],
   },
   {
