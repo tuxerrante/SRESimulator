@@ -181,10 +181,16 @@ bias, the constraint is enforced in depth:
 
 ### Azure OpenAI API version
 
-`AI_AZURE_OPENAI_API_VERSION` (default in `backend/src/lib/ai-config.ts`)
-should stay recent enough for the deployed reasoning models to accept
-`reasoning_effort` / `max_completion_tokens`. Validate the target value against
-the tenant with `az cognitiveservices account list-models` before changing it.
+The code fallback default in `backend/src/lib/ai-config.ts`
+(`DEFAULT_AZURE_OPENAI_API_VERSION`) intentionally stays on a stable GA version
+(`2024-10-21`) so an unconfigured dev or tenant does not break on a preview that
+may not be enabled there. Deployments that run reasoning-capable gpt-5.x models
+set `AI_AZURE_OPENAI_API_VERSION=2024-12-01-preview` explicitly
+(`infra/outputs.tf`, `helm/sre-simulator/values*.yaml`,
+`backend/.env.local.example`) — that preview accepts `reasoning_effort` /
+`max_completion_tokens` and is validated against the ARO SRE tenant. Validate any
+new target value against the tenant (e.g. a `chat/completions` probe, or
+`az cognitiveservices account list-models`) before changing it.
 
 ---
 

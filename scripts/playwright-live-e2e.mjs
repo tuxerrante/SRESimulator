@@ -35,9 +35,15 @@ const platforms = [
     cli: "kubectl",
     difficulty: /The Shift Lead/,
     expectedContext: ["Platformaks", "Node pools:", "Managed RG hint:"],
-    // Any `oc` subcommand is invalid on AKS, not just `oc get` — the observed
-    // defect emitted `oc describe pod/node`. Match `oc <subcommand>` broadly.
-    forbiddenText: [/\bARO\b/i, /\bOpenShift\b/i, /\boc\s+[a-z-]+/i],
+    // Any `oc` command is invalid on AKS, not just `oc get` — the observed
+    // defect emitted `oc describe pod/node`. Match `oc <verb>` against the known
+    // subcommand set only, so investigation prose like "oc is invalid on AKS"
+    // does not trip a false failure (a bare `[a-z-]+` would match "is").
+    forbiddenText: [
+      /\bARO\b/i,
+      /\bOpenShift\b/i,
+      /\boc\s+(get|describe|logs?|adm|debug|rollout|exec|delete|edit|patch|apply|scale|top|explain|project|whoami|status|events|api-resources|cluster-info|version|port-forward|wait|label|annotate|expose|set|create|replace|cp)\b/i,
+    ],
   },
   {
     id: "aro-hcp",

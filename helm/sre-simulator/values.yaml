@@ -148,8 +148,8 @@ ai:
       command: ""
       scenario: ""
       probe: ""
-    # TODO(confirm): validate against the tenant with `az cognitiveservices
-    # account list-models` before merge. Reasoning-capable version for gpt-5.x.
+    # Reasoning-capable version for gpt-5.x (accepts reasoning_effort /
+    # max_completion_tokens). Validated against the ARO SRE tenant.
     apiVersion: 2024-12-01-preview
     credentials:
       existingSecretName: ""

@@ -217,8 +217,9 @@ chatRouter.post("/", async (req: Request, res: Response) => {
       );
       if (cliViolations.length > 0) {
         console.warn(
-          `[cli-scope] chat: model emitted ${cliViolations.join(", ")} block(s) ` +
-            `on platform ${session.platform} (expected ${profile.primaryCli}); ` +
+          `[cli-scope] chat: model emitted fenced blocks using wrong cluster ` +
+            `CLI(s) [${cliViolations.join(", ")}] on platform ${session.platform} ` +
+            `(expected ${profile.primaryCli}); ` +
             `scenario "${scenario?.title ?? "no-scenario"}"`,
         );
       }
