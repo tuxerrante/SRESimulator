@@ -159,6 +159,33 @@ Runtime prompt builders compose platform sessions in this order:
 Scenario generation and catalog startup validation also reject platformContext
 keys and issue vocabulary that belong to another platform.
 
+### Platform CLI enforcement
+
+Each platform has one valid cluster CLI (`kubectl` for AKS, `oc` for ARO
+Classic and ARO HCP). Because deployed models can carry an OpenShift/`oc`
+bias, the constraint is enforced in depth:
+
+1. **Prompt (generation):** the platform command guidance sets the CLI early,
+   and `buildSystemPrompt` restates a **Final Command Constraint** *after* the
+   knowledge base — with a negative few-shot — so recency reinforces it. The
+   shared `knowledge_base/sre-investigation-techniques.md` is kept CLI-neutral
+   so it never contradicts the platform constraint.
+2. **Backend (observability):** the chat route scans the generated text with
+   `getGeneratedCliScopeViolations` and logs a `[cli-scope]` warning if the
+   model emitted the wrong CLI. It does not rewrite the stream.
+3. **Backend (execution):** `/command` rejects a mismatched CLI with HTTP 409.
+4. **Frontend (rendering):** a mismatched CLI block is labelled
+   `(not valid for <platform>)` and its **Run** button is omitted.
+5. **Gate:** `scripts/playwright-live-e2e.mjs` fails if the wrong-CLI block
+   appears at all for a platform.
+
+### Azure OpenAI API version
+
+`AI_AZURE_OPENAI_API_VERSION` (default in `backend/src/lib/ai-config.ts`)
+should stay recent enough for the deployed reasoning models to accept
+`reasoning_effort` / `max_completion_tokens`. Validate the target value against
+the tenant with `az cognitiveservices account list-models` before changing it.
+
 ---
 
 ## Context Compaction

@@ -38,6 +38,35 @@ Use classic ARO VM, Machine API, cluster operator, and OpenShift lifecycle langu
 Cite 1-2 links per response only from: ${references}.`;
 }
 
+// Repeated at the very END of the system prompt (after the knowledge base) so
+// recency reinforces the platform CLI constraint. The shared knowledge base and
+// generic SRE guidance can still mention other CLIs for context, and some
+// deployed models carry an OpenShift/oc bias; a single early "never suggest oc"
+// line was being overridden, so the constraint is restated last with an explicit
+// negative few-shot. See knowledge_base/sre-investigation-techniques.md (kept
+// CLI-neutral) and backend/src/lib/prompts/platform.ts.
+function getFinalCommandConstraint(profile: RuntimePlatformProfile): string {
+  const primary = profile.primaryCli;
+  const forbidden = primary === "kubectl" ? "oc" : "kubectl";
+  const wrongExample =
+    primary === "kubectl"
+      ? "```oc\noc describe pod -n <namespace> <pod-name>\n```"
+      : "```kubectl\nkubectl describe pod -n <namespace> <pod-name>\n```";
+  const correctExample =
+    primary === "kubectl"
+      ? "```kubectl\nkubectl describe pod -n <namespace> <pod-name>\n```"
+      : "```oc\noc describe pod -n <namespace> <pod-name>\n```";
+  return `## Final Command Constraint (highest priority — overrides any example or knowledge-base text above)
+The ONLY valid cluster CLI for this session is \`${primary}\`.
+- Every fenced cluster-command block MUST use the \`${primary}\` language. NEVER emit \`${forbidden}\` fenced blocks or a bare \`${forbidden} ...\` command — \`${forbidden}\` is invalid for this platform and the simulator will reject it.
+- If the knowledge base or any generic guidance shows a command using \`${forbidden}\`, translate it to \`${primary}\` before suggesting it.
+
+Wrong — never produce this:
+${wrongExample}
+Correct — always produce this instead:
+${correctExample}`;
+}
+
 export function buildSystemPrompt(
   knowledgeBase: string,
   scenario: Scenario | null,
@@ -154,5 +183,7 @@ ${scenarioContext}
 
 ## Knowledge Base Reference
 ${knowledgeBase}
+
+${getFinalCommandConstraint(profile)}
 `;
 }

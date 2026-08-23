@@ -3,13 +3,17 @@ ai:
   provider: azure-openai
   mockMode: false
   strictStartup: true
-  model: gpt-5.2
+  # Align with the provisioned deployment default (infra/variables.tf
+  # aoai_model_name / aoai_model_version). Override per environment as needed.
+  model: gpt-5.6-terra
   azureOpenai:
     endpointFromSecret:
       existingSecretName: azure-openai-creds
       key: endpoint
-    deployment: gpt-5.2
-    apiVersion: 2024-10-21
+    deployment: gpt-5.6-terra
+    # TODO(confirm): validate against the tenant with `az cognitiveservices
+    # account list-models` before merge. Reasoning-capable version for gpt-5.x.
+    apiVersion: 2024-12-01-preview
     credentials:
       existingSecretName: azure-openai-creds
       key: api-key

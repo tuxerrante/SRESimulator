@@ -5,6 +5,7 @@ import {
 } from "../../../shared/types/platform";
 import {
   getCommandScopeViolation,
+  getGeneratedCliScopeViolations,
   isCommandTypeAllowedForPlatform,
 } from "./platform-profiles";
 
@@ -61,5 +62,38 @@ describe("platform profiles", () => {
     expect(
       getCommandScopeViolation("aro-hcp", "oc", "oc get pods -A"),
     ).toBeNull();
+  });
+
+  describe("getGeneratedCliScopeViolations", () => {
+    it("flags an oc fenced block emitted on AKS", () => {
+      const text =
+        "Try this:\n```oc\noc describe pod -n openshift-ingress router-default\n```";
+      expect(getGeneratedCliScopeViolations("aks", text)).toEqual(["oc"]);
+    });
+
+    it("flags a kubectl fenced block emitted on an OpenShift platform", () => {
+      const text = "```kubectl\nkubectl get nodes\n```";
+      expect(getGeneratedCliScopeViolations("aro-classic", text)).toEqual([
+        "kubectl",
+      ]);
+    });
+
+    it("returns no violations when the platform-correct CLI is used", () => {
+      const aks = "```kubectl\nkubectl get pods\n```";
+      expect(getGeneratedCliScopeViolations("aks", aks)).toEqual([]);
+      const aro = "```oc\noc get pods\n```";
+      expect(getGeneratedCliScopeViolations("aro-classic", aro)).toEqual([]);
+    });
+
+    it("ignores kql, geneva, and prose mentions of the CLI name", () => {
+      const text =
+        "You could run oc later, but for now:\n```kql\nClusterLogs | take 10\n```";
+      expect(getGeneratedCliScopeViolations("aks", text)).toEqual([]);
+    });
+
+    it("deduplicates repeated violations", () => {
+      const text = "```oc\noc get nodes\n```\n```oc\noc get pods\n```";
+      expect(getGeneratedCliScopeViolations("aks", text)).toEqual(["oc"]);
+    });
   });
 });

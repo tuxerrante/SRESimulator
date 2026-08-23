@@ -148,7 +148,9 @@ ai:
       command: ""
       scenario: ""
       probe: ""
-    apiVersion: 2024-10-21
+    # TODO(confirm): validate against the tenant with `az cognitiveservices
+    # account list-models` before merge. Reasoning-capable version for gpt-5.x.
+    apiVersion: 2024-12-01-preview
     credentials:
       existingSecretName: ""
       key: api-key

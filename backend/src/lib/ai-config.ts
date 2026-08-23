@@ -1,8 +1,15 @@
 import { accessSync, constants } from "fs";
 
 export const DEFAULT_CLAUDE_MODEL = "claude-sonnet-4@20250514";
-export const DEFAULT_AZURE_OPENAI_API_VERSION = "2024-10-21";
-export const DEFAULT_AZURE_MODEL = "gpt-4o";
+// TODO(confirm before merge): validate the target api-version against the tenant
+// with `az cognitiveservices account list-models` / `model list`. Bumped from
+// 2024-10-21 to a reasoning-capable version so gpt-5.x deployments accept
+// `reasoning_effort` / `max_completion_tokens` (see docs/AI_RUNTIME.md). This is
+// only the fallback default; deployments set AI_AZURE_OPENAI_API_VERSION.
+export const DEFAULT_AZURE_OPENAI_API_VERSION = "2024-12-01-preview";
+// Fallback model when AI_MODEL is unset. Aligned with the provisioned Azure
+// deployment default in infra/variables.tf (aoai_model_name). gpt-4o was stale.
+export const DEFAULT_AZURE_MODEL = "gpt-5.6-terra";
 
 export type AiProvider = "vertex" | "azure-openai";
 

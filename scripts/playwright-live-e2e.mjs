@@ -35,7 +35,9 @@ const platforms = [
     cli: "kubectl",
     difficulty: /The Shift Lead/,
     expectedContext: ["Platformaks", "Node pools:", "Managed RG hint:"],
-    forbiddenText: [/\bARO\b/i, /\bOpenShift\b/i, /\boc get\b/i],
+    // Any `oc` subcommand is invalid on AKS, not just `oc get` — the observed
+    // defect emitted `oc describe pod/node`. Match `oc <subcommand>` broadly.
+    forbiddenText: [/\bARO\b/i, /\bOpenShift\b/i, /\boc\s+[a-z-]+/i],
   },
   {
     id: "aro-hcp",
@@ -378,13 +380,24 @@ async function runPlatform(browser, platform) {
     const wrongBlocks = page.getByText(
       new RegExp(`^${wrongLabel} \\(not valid for`),
     );
-    for (let index = 0; index < (await wrongBlocks.count()); index += 1) {
+    const wrongBlockCount = await wrongBlocks.count();
+    for (let index = 0; index < wrongBlockCount; index += 1) {
       const block = wrongBlocks
         .nth(index)
         .locator('xpath=ancestor::div[contains(@class,"my-2")][1]');
       if ((await block.getByRole("button", { name: /^Run$/ }).count()) > 0) {
         throw new Error(`${platform.id} exposed a runnable invalid CLI`);
       }
+    }
+    // Strict: the agent must never emit the wrong cluster CLI at all for this
+    // platform, even a non-runnable one. The previous gate only rejected a
+    // *runnable* wrong block, so an `oc` block alongside a valid `kubectl` block
+    // slipped through — the exact AKS oc-on-AKS defect. See the CLI-neutral
+    // knowledge base and the final command constraint in the system prompt.
+    if (wrongBlockCount > 0) {
+      throw new Error(
+        `${platform.id} emitted ${wrongBlockCount} invalid ${wrongLabel} block(s); expected only ${expectedLabel}`,
+      );
     }
 
     const codeBlock = expectedCodeLabel

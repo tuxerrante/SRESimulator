@@ -87,3 +87,27 @@ export function getCommandScopeViolation(
     )?.label ?? null
   );
 }
+
+// Matches the opening fence of a cluster-CLI code block (```oc / ```kubectl) in
+// generated AI text. Used server-side, after generation, to detect when the
+// model produced the wrong CLI for the session platform (e.g. an `oc` block on
+// AKS). Execution is already blocked at the /command route and the frontend
+// omits the Run button for a mismatched CLI; this is an observability net so the
+// defect is visible in logs even after the prompt fix, without rewriting the
+// stream.
+const CLUSTER_CLI_FENCE = /```[ \t]*(oc|kubectl)\b/gi;
+
+export function getGeneratedCliScopeViolations(
+  platform: PlatformId,
+  generatedText: string,
+): string[] {
+  const primaryCli = getRuntimePlatformProfile(platform).primaryCli;
+  const violations = new Set<string>();
+  for (const match of generatedText.matchAll(CLUSTER_CLI_FENCE)) {
+    const cli = match[1].toLowerCase();
+    if (cli !== primaryCli) {
+      violations.add(cli);
+    }
+  }
+  return [...violations];
+}

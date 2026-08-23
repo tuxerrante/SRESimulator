@@ -217,6 +217,40 @@ describe("buildSystemPrompt", () => {
     expect(aksPrompt).not.toContain("azure/openshift/support-policies-v4");
   });
 
+  describe("final command constraint", () => {
+    const aksProfile = getRuntimePlatformProfile("aks");
+
+    it("restates the kubectl-only constraint after the knowledge base for aks", () => {
+      const prompt = buildSystemPrompt(
+        "KB_SENTINEL_CONTENT",
+        makeScenario({ platform: "aks" }),
+        "facts",
+        aksProfile,
+      );
+
+      expect(prompt).toContain("## Final Command Constraint");
+      expect(prompt).toContain("The ONLY valid cluster CLI for this session is `kubectl`.");
+      expect(prompt).toContain("NEVER emit `oc` fenced blocks");
+      // Recency: the constraint must come AFTER the knowledge base so it is the
+      // last instruction the model reads before generating.
+      expect(prompt.indexOf("## Final Command Constraint")).toBeGreaterThan(
+        prompt.indexOf("KB_SENTINEL_CONTENT"),
+      );
+    });
+
+    it("forbids kubectl for oc-based platforms", () => {
+      const prompt = buildSystemPrompt(
+        "kb",
+        makeScenario({ platform: "aro-classic" }),
+        "facts",
+        classicProfile,
+      );
+
+      expect(prompt).toContain("The ONLY valid cluster CLI for this session is `oc`.");
+      expect(prompt).toContain("NEVER emit `kubectl` fenced blocks");
+    });
+  });
+
   it("keeps ARO HCP references and placeholders guest-cluster scoped", () => {
     const hcpPrompt = buildSystemPrompt(
       "hcp kb",

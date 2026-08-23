@@ -1,6 +1,9 @@
 import { Router, type Request, type Response } from "express";
 import { loadKnowledgeSections, queryKnowledgeSections } from "../lib/knowledge";
-import { getRuntimePlatformProfile } from "../lib/platform-profiles";
+import {
+  getRuntimePlatformProfile,
+  getGeneratedCliScopeViolations,
+} from "../lib/platform-profiles";
 import { buildSystemPrompt } from "../lib/prompts/system";
 import { getAiReadiness } from "../lib/ai-config";
 import { generateMockChatResponse } from "../lib/mock-ai";
@@ -195,13 +198,29 @@ chatRouter.post("/", async (req: Request, res: Response) => {
     res.flushHeaders();
 
     try {
+      let generatedText = "";
       for await (const chunk of stream) {
         if (chunk instanceof AiReasoningRetryEvent) {
           res.write(`data: ${JSON.stringify({ reasoning: true })}\n\n`);
           continue;
         }
+        generatedText += chunk;
         const data = JSON.stringify({ text: chunk });
         res.write(`data: ${data}\n\n`);
+      }
+      // Observability net: the model should never emit a non-platform cluster
+      // CLI (e.g. an `oc` block on AKS). Execution is already blocked and the UI
+      // omits the Run button, so we only warn here rather than mutate the stream.
+      const cliViolations = getGeneratedCliScopeViolations(
+        session.platform,
+        generatedText,
+      );
+      if (cliViolations.length > 0) {
+        console.warn(
+          `[cli-scope] chat: model emitted ${cliViolations.join(", ")} block(s) ` +
+            `on platform ${session.platform} (expected ${profile.primaryCli}); ` +
+            `scenario "${scenario?.title ?? "no-scenario"}"`,
+        );
       }
       res.write("data: [DONE]\n\n");
       res.end();
