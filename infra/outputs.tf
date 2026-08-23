@@ -140,7 +140,7 @@ output "env_file_snippet" {
     AI_MODEL=${var.aoai_model_name}
     AI_AZURE_OPENAI_ENDPOINT=${azurerm_cognitive_account.openai.endpoint}
     AI_AZURE_OPENAI_DEPLOYMENT=${azurerm_cognitive_deployment.model.name}
-    AI_AZURE_OPENAI_API_VERSION=2024-10-21
+    AI_AZURE_OPENAI_API_VERSION=2025-04-01-preview
     AI_AZURE_OPENAI_API_KEY=<run: az cognitiveservices account keys list -g ${azurerm_resource_group.main.name} -n ${azurerm_cognitive_account.openai.name} --query key1 -o tsv>
     EOT
     ,

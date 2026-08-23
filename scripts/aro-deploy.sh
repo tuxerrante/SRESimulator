@@ -184,7 +184,7 @@ helm_deploy_sre() {
     --set ai.azureOpenai.endpointFromSecret.existingSecretName=azure-openai-creds \
     --set ai.azureOpenai.endpointFromSecret.key=endpoint \
     --set ai.azureOpenai.deployment="$AOAI_DEPLOYMENT" \
-    --set ai.azureOpenai.apiVersion=2024-10-21 \
+    --set ai.azureOpenai.apiVersion=2025-04-01-preview \
     --set ai.azureOpenai.credentials.existingSecretName=azure-openai-creds \
     --set ai.azureOpenai.credentials.key=api-key \
     "${aoai_route_flags[@]}" \

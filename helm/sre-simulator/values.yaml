@@ -148,7 +148,10 @@ ai:
       command: ""
       scenario: ""
       probe: ""
-    apiVersion: 2024-10-21
+    # Reasoning-capable version for gpt-5.x (accepts reasoning_effort /
+    # max_completion_tokens). Newest preview available on the ARO SRE tenant
+    # (2025-05+ return 404); validated with a live chat/completions probe.
+    apiVersion: 2025-04-01-preview
     credentials:
       existingSecretName: ""
       key: api-key
