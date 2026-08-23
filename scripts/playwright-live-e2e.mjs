@@ -35,7 +35,20 @@ const platforms = [
     cli: "kubectl",
     difficulty: /The Shift Lead/,
     expectedContext: ["Platformaks", "Node pools:", "Managed RG hint:"],
-    forbiddenText: [/\bARO\b/i, /\bOpenShift\b/i, /\boc get\b/i],
+    forbiddenText: [
+      /\bARO\b/i,
+      /\bOpenShift\b/i,
+      // Match `oc <verb>` invocations (the wrong CLI on AKS) without tripping on
+      // prose like "oc is invalid on AKS". Anchored to an oc-subcommand allowlist
+      // that covers every `oc` verb used in the knowledge base / scenarios
+      // (adm, annotate, auth, create, debug, delete, describe, edit, exec, get,
+      // login, logs, new-app, patch, rsh, secrets) plus the common remainder.
+      // Allows optional global flags between `oc` and the verb, each optionally
+      // taking a value token, so `oc -n openshift-compliance patch ...` (a real
+      // KB pattern) is still caught. The value token cannot itself start with a
+      // dash, which keeps the match from spanning unrelated prose.
+      /\boc(?:\s+-{1,2}[A-Za-z][\w-]*(?:=\S+|\s+[^\s-]\S*)?)*\s+(adm|annotate|api-resources|apply|auth|cluster-info|cp|create|debug|delete|describe|edit|events|exec|explain|expose|get|idle|import-image|label|login|logout|logs?|new-app|new-build|new-project|patch|policy|port-forward|process|project|projects|replace|rollout|rsh|scale|secrets|set|start-build|status|tag|top|version|wait|whoami)\b/i,
+    ],
   },
   {
     id: "aro-hcp",
@@ -378,7 +391,16 @@ async function runPlatform(browser, platform) {
     const wrongBlocks = page.getByText(
       new RegExp(`^${wrongLabel} \\(not valid for`),
     );
-    for (let index = 0; index < (await wrongBlocks.count()); index += 1) {
+    // On AKS the backend kubectl guard must rewrite any slipped `oc` block, so
+    // an "OpenShift CLI (not valid for AKS)" block must never reach the user.
+    // Count once to avoid extra DOM round-trips and races between reads.
+    const wrongBlockCount = await wrongBlocks.count();
+    if (platform.id === "aks" && wrongBlockCount > 0) {
+      throw new Error(
+        `${platform.id} rendered a ${wrongLabel} block; the kubectl guard failed to rewrite a slipped oc command`,
+      );
+    }
+    for (let index = 0; index < wrongBlockCount; index += 1) {
       const block = wrongBlocks
         .nth(index)
         .locator('xpath=ancestor::div[contains(@class,"my-2")][1]');
