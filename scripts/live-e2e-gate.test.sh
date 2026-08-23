@@ -53,7 +53,7 @@ assert_contains 'ghcr.io/${{ github.repository_owner }}/sre-simulator-' \
   "$DEPENDABOT_BUILD_WORKFLOW"
 assert_not_contains "ghcr.io/tuxerrante/" "$DEPENDABOT_BUILD_WORKFLOW"
 assert_contains "Upload immutable image artifact" "$DEPENDABOT_BUILD_WORKFLOW"
-assert_contains "ea165f8d65b6e75b540449e92b4886f43607fa02" \
+assert_contains "043fb46d1a93c77aae656e7c1c64a875d1fc6a0a" \
   "$DEPENDABOT_BUILD_WORKFLOW"
 assert_contains 'workflows: ["Dependabot E2E Build"]' "$DEPENDABOT_WORKFLOW"
 assert_contains "author" "$DEPENDABOT_WORKFLOW"
@@ -71,7 +71,7 @@ assert_not_contains "ghcr.io/tuxerrante/" "$DEPENDABOT_WORKFLOW"
 assert_contains "Download unprivileged image artifact" "$DEPENDABOT_WORKFLOW"
 assert_contains "Validate and load image artifact" "$DEPENDABOT_WORKFLOW"
 assert_contains "Login to GHCR after artifact validation" "$DEPENDABOT_WORKFLOW"
-assert_contains "ea165f8d65b6e75b540449e92b4886f43607fa02" \
+assert_contains "043fb46d1a93c77aae656e7c1c64a875d1fc6a0a" \
   "$DEPENDABOT_WORKFLOW"
 assert_contains "SOURCE_BUILD_RESULT:" "$DEPENDABOT_WORKFLOW"
 assert_contains "Unprivileged image build failed" "$DEPENDABOT_WORKFLOW"
@@ -83,7 +83,7 @@ assert_not_contains "Checkout Dependabot head" "$DEPENDABOT_WORKFLOW"
 assert_not_contains "docker/build-push-action" "$DEPENDABOT_WORKFLOW"
 assert_not_contains '${{ runner.temp }}/dependabot-e2e-kubeconfig' \
   "$DEPENDABOT_WORKFLOW"
-assert_not_contains "ea165f8d65b5e75b540449e92b4886f43607fa02" \
+assert_not_contains "043fb46d1a93c77aae656e7c1c64a875d1fc6a0b" \
   "$DEPENDABOT_WORKFLOW"
 assert_contains "dependabot-e2e-default-deny-egress" "$DEPENDABOT_WORKFLOW"
 assert_contains '[[ "${state}" != "open" ]]' "$DEPENDABOT_WORKFLOW"
