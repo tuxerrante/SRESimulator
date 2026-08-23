@@ -5,7 +5,7 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.5.0] - 2026-08-21
+## [0.5.0] - 2026-08-23
 
 ### Added (0.5.0)
 
@@ -43,6 +43,15 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   transitively through `vitest`; it is test-only tooling and every runtime
   image and workflow already runs Node 24.
   ([#351](https://github.com/tuxerrante/SRESimulator/pull/351))
+- Refreshed the Azure Foundry runtime configuration: deployments now pin the
+  Azure OpenAI `api-version` to `2025-04-01-preview` (the newest version that
+  resolves on the ARO SRE tenant and accepts `reasoning_effort` /
+  `max_completion_tokens`) across `infra/outputs.tf`,
+  `helm/sre-simulator/values*.yaml`, `scripts/aro-deploy.sh` and
+  `backend/.env.local.example`, and default to the `gpt-5.6-terra` model. The
+  code fallback default stays on the stable GA `2024-10-21` so unconfigured
+  dev/tenants do not break.
+  ([#385](https://github.com/tuxerrante/SRESimulator/pull/385))
 
 ### Fixed (0.5.0)
 
@@ -91,6 +100,23 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   returns `503` with `Retry-After` (`scenario_request_deadline_exceeded`)
   instead of an edge 504, and a client disconnect aborts provider work and
   releases the reserved claim.
+- Stopped the AKS Dungeon Master from emitting OpenShift `oc` commands the
+  frontend cannot run. The OpenShift-heavy knowledge base biased the model
+  toward `oc` even on AKS; the shared investigation KB is now CLI-neutral, an
+  AKS-only "Final AKS CLI Constraint" is appended after the knowledge base so
+  recency reinforces `kubectl`, and it instructs the model to propose an
+  AKS-appropriate alternative instead of inventing a command when an `oc`
+  capability has no `kubectl` equivalent. A deterministic backend guard
+  (`enforceAksKubectl`) buffers the AKS chat response and rescopes any slipped
+  `oc` code fence to a runnable `kubectl` block. ARO Classic and ARO HCP
+  responses are unchanged.
+  ([#383](https://github.com/tuxerrante/SRESimulator/pull/383))
+- Tightened the live browser E2E gate so the AKS user can never be shown an
+  OpenShift `oc` block: the AKS run now fails on any rendered wrong-CLI block,
+  and the forbidden-CLI matcher covers every `oc` subcommand used in the
+  knowledge base plus `oc <global-flags> <verb>` forms (e.g.
+  `oc -n <ns> patch ...`) without tripping on prose.
+  ([#386](https://github.com/tuxerrante/SRESimulator/pull/386))
 
 ## [0.4.2] - 2026-08-08
 
