@@ -217,6 +217,56 @@ describe("buildSystemPrompt", () => {
     expect(aksPrompt).not.toContain("azure/openshift/support-policies-v4");
   });
 
+  describe("AKS kubectl-only hardening", () => {
+    function aksPrompt(): string {
+      return buildSystemPrompt(
+        "KB shows `oc get pods` examples",
+        makeScenario({
+          platform: "aks",
+          clusterContext: {
+            ...makeScenario().clusterContext,
+            version: "1.31.2",
+          },
+        }),
+        "facts",
+        getRuntimePlatformProfile("aks"),
+      );
+    }
+
+    it("includes the correct/wrong kubectl few-shot in platform guidance", () => {
+      const prompt = aksPrompt();
+      expect(prompt).toContain("Correct (AKS)");
+      expect(prompt).toContain("Wrong (OpenShift-only");
+      expect(prompt).toContain("`kubectl get nodes`");
+    });
+
+    it("restates the kubectl-only constraint AFTER the knowledge base", () => {
+      const prompt = aksPrompt();
+      const kbIndex = prompt.indexOf("## Knowledge Base Reference");
+      const directiveIndex = prompt.indexOf("## FINAL AKS CLI CONSTRAINT");
+      expect(kbIndex).toBeGreaterThan(-1);
+      expect(directiveIndex).toBeGreaterThan(kbIndex);
+      expect(prompt).toContain("translate any `oc`/OpenShift example");
+    });
+
+    it("does not emit the AKS final directive for ARO platforms", () => {
+      const classicPrompt = buildSystemPrompt(
+        "kb",
+        makeScenario(),
+        "reading",
+        classicProfile,
+      );
+      const hcpPrompt = buildSystemPrompt(
+        "kb",
+        makeScenario({ platform: "aro-hcp" }),
+        "reading",
+        getRuntimePlatformProfile("aro-hcp"),
+      );
+      expect(classicPrompt).not.toContain("FINAL AKS CLI CONSTRAINT");
+      expect(hcpPrompt).not.toContain("FINAL AKS CLI CONSTRAINT");
+    });
+  });
+
   it("keeps ARO HCP references and placeholders guest-cluster scoped", () => {
     const hcpPrompt = buildSystemPrompt(
       "hcp kb",

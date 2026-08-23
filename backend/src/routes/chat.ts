@@ -2,6 +2,7 @@ import { Router, type Request, type Response } from "express";
 import { loadKnowledgeSections, queryKnowledgeSections } from "../lib/knowledge";
 import { getRuntimePlatformProfile } from "../lib/platform-profiles";
 import { buildSystemPrompt } from "../lib/prompts/system";
+import { enforceAksKubectl } from "../lib/aks-command-guard";
 import { getAiReadiness } from "../lib/ai-config";
 import { generateMockChatResponse } from "../lib/mock-ai";
 import { streamAiText, AiThrottledError, AiReasoningRetryEvent } from "../lib/ai-runtime";
@@ -194,14 +195,29 @@ chatRouter.post("/", async (req: Request, res: Response) => {
     res.setHeader("Connection", "keep-alive");
     res.flushHeaders();
 
+    // On AKS the model can slip OpenShift `oc` command blocks despite the
+    // kubectl-only prompt; the frontend then hides the Run button for them. To
+    // deterministically rewrite `oc` fences to runnable `kubectl` blocks we must
+    // see whole code fences, so buffer the AKS response and transform it once.
+    // ARO responses stream chunk-by-chunk exactly as before (byte-identical).
+    const enforceAks = profile.id === "aks";
+    let aksBuffer = "";
     try {
       for await (const chunk of stream) {
         if (chunk instanceof AiReasoningRetryEvent) {
           res.write(`data: ${JSON.stringify({ reasoning: true })}\n\n`);
           continue;
         }
+        if (enforceAks) {
+          aksBuffer += chunk;
+          continue;
+        }
         const data = JSON.stringify({ text: chunk });
         res.write(`data: ${data}\n\n`);
+      }
+      if (enforceAks && aksBuffer.length > 0) {
+        const guarded = enforceAksKubectl(aksBuffer);
+        res.write(`data: ${JSON.stringify({ text: guarded })}\n\n`);
       }
       res.write("data: [DONE]\n\n");
       res.end();
