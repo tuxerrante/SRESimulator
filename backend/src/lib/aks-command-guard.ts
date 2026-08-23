@@ -21,9 +21,16 @@ export function enforceAksKubectl(text: string): string {
     OC_FENCE,
     (_match, lead: string, indent: string, openNl: string, body: string, closeFence: string) => {
       // A slipped `oc` block can hold multiple commands (one per line). Rewrite
-      // the leading `oc ` token of every line (`m` = per-line `^`, `g` = all
-      // lines) so no `oc` invocation survives inside the runnable kubectl block.
-      const rewrittenBody = body.replace(/^([ \t]*)oc(\s)/gm, "$1kubectl$2");
+      // the leading token of every line (`m` = per-line `^`, `g` = all lines)
+      // so no `oc` invocation survives inside the runnable kubectl block.
+      const rewrittenBody = body
+        // `oc adm top nodes|pods` has no direct `kubectl adm` equivalent — the
+        // kubectl form drops `adm` (`kubectl top nodes|pods`). Handle it before
+        // the generic rewrite so the block stays runnable. Other `oc adm`
+        // subcommands have no kubectl analogue and are left best-effort.
+        .replace(/^([ \t]*)oc[ \t]+adm[ \t]+top(\s)/gm, "$1kubectl top$2")
+        // Generic: leading `oc ` token → `kubectl `.
+        .replace(/^([ \t]*)oc(\s)/gm, "$1kubectl$2");
       return `${lead}${indent}\`\`\`kubectl${openNl}${rewrittenBody}${closeFence}`;
     },
   );

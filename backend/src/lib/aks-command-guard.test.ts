@@ -21,9 +21,16 @@ describe("enforceAksKubectl", () => {
   });
 
   it("rewrites the leading oc token on every line of a multi-command block", () => {
-    const input = "```oc\noc get nodes\noc describe node worker-1\noc adm top nodes\n```";
+    const input = "```oc\noc get nodes\noc describe node worker-1\n```";
     expect(enforceAksKubectl(input)).toBe(
-      "```kubectl\nkubectl get nodes\nkubectl describe node worker-1\nkubectl adm top nodes\n```",
+      "```kubectl\nkubectl get nodes\nkubectl describe node worker-1\n```",
+    );
+  });
+
+  it("maps `oc adm top nodes|pods` to the kubectl `top` form (no kubectl `adm`)", () => {
+    const input = "```oc\noc adm top nodes\noc adm top pods -n kube-system\n```";
+    expect(enforceAksKubectl(input)).toBe(
+      "```kubectl\nkubectl top nodes\nkubectl top pods -n kube-system\n```",
     );
   });
 
