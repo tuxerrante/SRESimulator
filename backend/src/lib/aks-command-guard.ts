@@ -4,8 +4,9 @@
  * The OpenShift-heavy knowledge base sometimes leads the model to emit `oc`
  * guidance on AKS despite the kubectl-only system prompt. On AKS the frontend
  * blocks execution of `oc` blocks (they render as "not valid for AKS" with no
- * Run button), leaving the user with an unrunnable command. This helper rewrites
- * a slipped OpenShift command block into an equivalent, runnable `kubectl` block.
+ * Run button), leaving the user with an unrunnable command. This helper rescopes
+ * a slipped OpenShift command block to `kubectl` so it becomes runnable — it
+ * retags/rewrites the CLI rather than semantically translating every command.
  *
  * Scope is intentionally narrow: only the fenced code-block language tag `oc`
  * and the leading `oc ` command token of every line inside such a block are

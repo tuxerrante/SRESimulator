@@ -187,9 +187,12 @@ bias, the AKS constraint is enforced in depth:
    shared `knowledge_base/sre-investigation-techniques.md` is kept CLI-neutral
    so it never contradicts the platform constraint. ARO prompts are unchanged.
 2. **Backend (execution):** for AKS the chat route buffers the response and
-   runs `enforceAksKubectl`, which deterministically rewrites any slipped `oc`
-   code fence — and the leading `oc` token of every line inside it — into a
-   runnable `kubectl` block. ARO responses stream unchanged.
+   runs `enforceAksKubectl`, a deterministic CLI-scoping rewrite: it retags any
+   slipped `oc` code fence as `kubectl` and swaps the leading `oc` token of each
+   line for `kubectl` (with a special case mapping `oc adm top` → `kubectl top`).
+   It rescopes the CLI rather than semantically translating every command — the
+   few `oc`-only subcommands without a kubectl analogue are left best-effort. ARO
+   responses stream unchanged.
 3. **Backend (command run):** `/command` rejects a mismatched CLI with HTTP 409.
 4. **Frontend (rendering):** a mismatched CLI block is labelled
    `(not valid for <platform>)` and its **Run** button is omitted.
