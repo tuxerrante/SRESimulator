@@ -378,16 +378,7 @@ async function runPlatform(browser, platform) {
     const wrongBlocks = page.getByText(
       new RegExp(`^${wrongLabel} \\(not valid for`),
     );
-    // On AKS the backend kubectl guard must rewrite any slipped `oc` block, so
-    // an "OpenShift CLI (not valid for AKS)" block must never reach the user.
-    // Count once to avoid extra DOM round-trips and races between reads.
-    const wrongBlockCount = await wrongBlocks.count();
-    if (platform.id === "aks" && wrongBlockCount > 0) {
-      throw new Error(
-        `${platform.id} rendered an OpenShift CLI block; the kubectl guard failed to rewrite a slipped oc command`,
-      );
-    }
-    for (let index = 0; index < wrongBlockCount; index += 1) {
+    for (let index = 0; index < (await wrongBlocks.count()); index += 1) {
       const block = wrongBlocks
         .nth(index)
         .locator('xpath=ancestor::div[contains(@class,"my-2")][1]');

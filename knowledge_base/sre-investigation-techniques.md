@@ -37,7 +37,7 @@ Every investigation follows these phases **in order**. Skipping ahead costs you 
 
 ## 2. Context Gathering
 
-> **Checkpoint:** Have you checked the cluster's overall health, recent events, and history **before** touching `oc`?
+> **Checkpoint:** Have you checked the cluster's overall health, recent events, and history **before** touching the cluster directly?
 
 **Do:**
 
@@ -62,15 +62,15 @@ Dashboards give you a time-series view for free — no cluster access needed. A 
 - Search **audit logs** for create/update/delete actions just before symptoms appeared
   - Filter by `userAgent` to distinguish human vs. automated changes
 - Check **platform service logs** (resource provider, gateway, monitor) for installation/upgrade issues
-- Use central dashboards and log searches **before** running `oc`/`kubectl`
+- Use central dashboards and log searches **before** running your cluster's CLI
 
-**Why not jump to `oc` first?**
+**Why not jump to the cluster CLI first?**
 
 - Central logs are historized (up to 90 days) and available even if the API server is down
 - Time-series views beat point-in-time snapshots for spotting patterns
-- `oc adm top nodes` is a snapshot — prefer Prometheus or VM-level dashboards for performance trends
+- A live node-resource query (e.g. `top nodes`) is a snapshot — prefer Prometheus or VM-level dashboards for performance trends
 
-**When `oc` is appropriate:**
+**When the cluster CLI is appropriate:**
 
 - Dashboards don't cover the data you need
 - You need real-time reactivity in urgent situations

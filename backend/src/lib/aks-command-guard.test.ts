@@ -20,6 +20,13 @@ describe("enforceAksKubectl", () => {
     expect(enforceAksKubectl(input)).toBe("```kubectl\nkubectl get pods -l app=oc\n```");
   });
 
+  it("rewrites the leading oc token on every line of a multi-command block", () => {
+    const input = "```oc\noc get nodes\noc describe node worker-1\noc adm top nodes\n```";
+    expect(enforceAksKubectl(input)).toBe(
+      "```kubectl\nkubectl get nodes\nkubectl describe node worker-1\nkubectl adm top nodes\n```",
+    );
+  });
+
   it("handles multiple oc blocks", () => {
     const input = "```oc\noc get nodes\n```\n\n```oc\noc describe node worker-1\n```";
     expect(enforceAksKubectl(input)).toBe(

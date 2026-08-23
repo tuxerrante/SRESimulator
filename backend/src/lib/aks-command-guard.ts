@@ -8,10 +8,10 @@
  * a slipped OpenShift command block into an equivalent, runnable `kubectl` block.
  *
  * Scope is intentionally narrow: only the fenced code-block language tag `oc`
- * and a single leading `oc ` command token inside such a block are rewritten.
- * Prose, other fence languages (kql, geneva, bash, ...), and the substring "oc"
- * inside other words are never touched. This function is pure and must ONLY be
- * applied when the active platform is AKS — never to ARO responses.
+ * and the leading `oc ` command token of every line inside such a block are
+ * rewritten. Prose, other fence languages (kql, geneva, bash, ...), and the
+ * substring "oc" inside other words are never touched. This function is pure and
+ * must ONLY be applied when the active platform is AKS — never to ARO responses.
  */
 export function enforceAksKubectl(text: string): string {
   // Match a fenced block whose info string is exactly `oc`:
@@ -20,8 +20,10 @@ export function enforceAksKubectl(text: string): string {
   return text.replace(
     OC_FENCE,
     (_match, lead: string, indent: string, openNl: string, body: string, closeFence: string) => {
-      // Rewrite only a single leading `oc ` command token in the block body.
-      const rewrittenBody = body.replace(/^([ \t]*)oc(\s)/, "$1kubectl$2");
+      // A slipped `oc` block can hold multiple commands (one per line). Rewrite
+      // the leading `oc ` token of every line (`m` = per-line `^`, `g` = all
+      // lines) so no `oc` invocation survives inside the runnable kubectl block.
+      const rewrittenBody = body.replace(/^([ \t]*)oc(\s)/gm, "$1kubectl$2");
       return `${lead}${indent}\`\`\`kubectl${openNl}${rewrittenBody}${closeFence}`;
     },
   );
