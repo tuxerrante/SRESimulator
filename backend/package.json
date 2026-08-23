@@ -12,7 +12,7 @@
     "test:integration": "vitest run -c vitest.integration.config.ts"
   },
   "dependencies": {
-    "@anthropic-ai/vertex-sdk": "^0.19.4",
+    "@anthropic-ai/vertex-sdk": "^0.19.5",
     "@sentry/node": "^10.70.0",
     "compromise": "^14.16.0",
     "cors": "^2.8.5",
