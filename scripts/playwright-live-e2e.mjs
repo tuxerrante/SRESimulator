@@ -39,8 +39,11 @@ const platforms = [
       /\bARO\b/i,
       /\bOpenShift\b/i,
       // Match `oc <verb>` invocations (the wrong CLI on AKS) without tripping on
-      // prose like "oc is invalid on AKS". Anchored to the known oc subcommands.
-      /\boc\s+(get|describe|logs?|adm|debug|rollout|exec|delete|edit|patch|apply|scale|top|explain|project|whoami|status|events|api-resources|cluster-info|version|port-forward|wait|label|annotate|expose|set|create|replace|cp)\b/i,
+      // prose like "oc is invalid on AKS". Anchored to an oc-subcommand allowlist
+      // that covers every `oc` verb used in the knowledge base / scenarios
+      // (adm, annotate, auth, create, debug, delete, describe, edit, exec, get,
+      // login, logs, new-app, patch, rsh, secrets) plus the common remainder.
+      /\boc\s+(adm|annotate|api-resources|apply|auth|cluster-info|cp|create|debug|delete|describe|edit|events|exec|explain|expose|get|idle|import-image|label|login|logout|logs?|new-app|new-build|new-project|patch|policy|port-forward|process|project|projects|replace|rollout|rsh|scale|secrets|set|start-build|status|tag|top|version|wait|whoami)\b/i,
     ],
   },
   {
@@ -390,7 +393,7 @@ async function runPlatform(browser, platform) {
     const wrongBlockCount = await wrongBlocks.count();
     if (platform.id === "aks" && wrongBlockCount > 0) {
       throw new Error(
-        `${platform.id} rendered an OpenShift CLI block; the kubectl guard failed to rewrite a slipped oc command`,
+        `${platform.id} rendered a ${wrongLabel} block; the kubectl guard failed to rewrite a slipped oc command`,
       );
     }
     for (let index = 0; index < wrongBlockCount; index += 1) {
