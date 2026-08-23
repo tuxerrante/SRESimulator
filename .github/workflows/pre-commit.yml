@@ -32,7 +32,7 @@ jobs:
       - name: Ensure SHA-pinned actions
         # v5.0.3
         uses: >-
-          zgosalvez/github-actions-ensure-sha-pinned-actions@3db98c0363e2fa5df3e1c4c471777a7c10b24cc9
+          zgosalvez/github-actions-ensure-sha-pinned-actions@c5fc58bd0be7a4b94b73ce40250322d5b838a108
 
       - name: Install pre-commit
         run: python3 -m pip install --upgrade pre-commit
