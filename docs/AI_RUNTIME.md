@@ -175,6 +175,28 @@ also resolves but is intentionally avoided here because it is non-deterministic)
 Validate any new target value against the tenant (e.g. a `chat/completions`
 probe, or `az cognitiveservices account list-models`) before changing it.
 
+### Platform CLI enforcement
+
+Each platform has one valid cluster CLI (`kubectl` for AKS, `oc` for ARO
+Classic and ARO HCP). Because deployed models can carry an OpenShift/`oc`
+bias, the AKS constraint is enforced in depth:
+
+1. **Prompt (generation):** the AKS command guidance states `kubectl` is the
+   only valid CLI, and `buildSystemPrompt` restates a **Final AKS CLI
+   Constraint** *after* the knowledge base — so recency reinforces it. The
+   shared `knowledge_base/sre-investigation-techniques.md` is kept CLI-neutral
+   so it never contradicts the platform constraint. ARO prompts are unchanged.
+2. **Backend (execution):** for AKS the chat route buffers the response and
+   runs `enforceAksKubectl`, which deterministically rewrites any slipped `oc`
+   code fence — and the leading `oc` token of every line inside it — into a
+   runnable `kubectl` block. ARO responses stream unchanged.
+3. **Backend (command run):** `/command` rejects a mismatched CLI with HTTP 409.
+4. **Frontend (rendering):** a mismatched CLI block is labelled
+   `(not valid for <platform>)` and its **Run** button is omitted.
+
+The live E2E gate additionally fails if a wrong-CLI block ever reaches the AKS
+user (see `scripts/playwright-live-e2e.mjs`).
+
 ---
 
 ## Context Compaction
