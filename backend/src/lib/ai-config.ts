@@ -1,8 +1,19 @@
 import { accessSync, constants } from "fs";
 
 export const DEFAULT_CLAUDE_MODEL = "claude-sonnet-4@20250514";
+// Stable GA fallback used ONLY when AI_AZURE_OPENAI_API_VERSION is unset. Kept
+// on a widely-available GA version so an unconfigured dev/tenant does not break
+// on a preview that may not be enabled. Deployments that run reasoning-capable
+// gpt-5.x models set AI_AZURE_OPENAI_API_VERSION=2025-04-01-preview explicitly
+// (infra/outputs.tf, helm values, backend/.env.local.example) — that preview is
+// the newest available on the ARO SRE tenant (2025-05-01-preview and later
+// return HTTP 404), validated
+// with a live chat/completions probe, and accepts `reasoning_effort` /
+// `max_completion_tokens` (see docs/AI_RUNTIME.md).
 export const DEFAULT_AZURE_OPENAI_API_VERSION = "2024-10-21";
-export const DEFAULT_AZURE_MODEL = "gpt-4o";
+// Fallback model when AI_MODEL is unset. Aligned with the provisioned Azure
+// deployment default in infra/variables.tf (aoai_model_name). gpt-4o was stale.
+export const DEFAULT_AZURE_MODEL = "gpt-5.6-terra";
 
 export type AiProvider = "vertex" | "azure-openai";
 
