@@ -44,7 +44,11 @@ type LooseHistoryEntry = {
   type?: unknown;
 };
 
-const DEFAULT_MAX_COMMAND_TOKENS = 8192;
+// A simulated terminal command (oc/kubectl/kql/geneva output) never legitimately
+// needs 8k+ completion tokens; a large describe/get/logs dump fits well under 4k,
+// which also leaves ample reasoning headroom at reasoning_effort=low. Keeping this
+// tight bounds worst-case gameplay latency and cost. Override via AI_MAX_COMMAND_TOKENS.
+const DEFAULT_MAX_COMMAND_TOKENS = 4096;
 const DEFAULT_COMMAND_TIMEOUT_MS = 12000;
 
 function isRecord(value: unknown): value is Record<string, unknown> {

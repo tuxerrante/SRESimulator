@@ -336,6 +336,27 @@ function validReasoningEffort(raw: string | undefined): "low" | "medium" | "high
   return "medium";
 }
 
+/**
+ * Resolve the reasoning_effort for a request, most specific first:
+ * 1. internal retry override (e.g. reasoning-exhausted fallback, warmup)
+ * 2. route-specific env `AI_REASONING_EFFORT_<ROUTE>`
+ * 3. code default of "low" for the command route — command simulation is a
+ *    deterministic output-formatting task, not a reasoning task, so reasoning
+ *    models (gpt-5.x/o-series) should return within the command timeout instead
+ *    of burning the budget on reasoning and falling back to the degraded mock.
+ * 4. global env `AI_REASONING_EFFORT` (defaults to "medium" via validReasoningEffort)
+ */
+function resolveReasoningEffortSetting(request: AiTextRequest): string | undefined {
+  if (request._reasoningEffortOverride) return request._reasoningEffortOverride;
+  const route = request.route;
+  if (route) {
+    const routeEnv = process.env[`AI_REASONING_EFFORT_${route.toUpperCase()}`]?.trim();
+    if (routeEnv) return routeEnv;
+    if (route === "command") return "low";
+  }
+  return process.env.AI_REASONING_EFFORT;
+}
+
 function isReasoningModelName(value: string): boolean {
   return /^o\d/.test(value) || /^gpt-5/.test(value);
 }
@@ -382,9 +403,7 @@ async function runAzureOpenAiRequest(
 ): Promise<Response> {
   throwIfAborted(request.signal);
   const reasoningEffort = includeReasoningEffort
-    ? validReasoningEffort(
-      request._reasoningEffortOverride ?? process.env.AI_REASONING_EFFORT,
-    )
+    ? validReasoningEffort(resolveReasoningEffortSetting(request))
     : undefined;
 
   const body: Record<string, unknown> = {
