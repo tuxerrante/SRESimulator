@@ -167,7 +167,8 @@ The code fallback default in `backend/src/lib/ai-config.ts`
 may not be enabled there. Deployments that run reasoning-capable gpt-5.x models
 set `AI_AZURE_OPENAI_API_VERSION=2025-04-01-preview` explicitly
 (`infra/outputs.tf`, `helm/sre-simulator/values*.yaml`,
-`backend/.env.local.example`) — that preview accepts `reasoning_effort` /
+`scripts/aro-deploy.sh`, `backend/.env.local.example`) — that preview accepts
+`reasoning_effort` /
 `max_completion_tokens` and is the newest one available on the ARO SRE tenant
 (`2025-05-01-preview` and later currently return HTTP 404; `api-version=latest`
 also resolves but is intentionally avoided here because it is non-deterministic).

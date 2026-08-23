@@ -6,7 +6,8 @@ export const DEFAULT_CLAUDE_MODEL = "claude-sonnet-4@20250514";
 // on a preview that may not be enabled. Deployments that run reasoning-capable
 // gpt-5.x models set AI_AZURE_OPENAI_API_VERSION=2025-04-01-preview explicitly
 // (infra/outputs.tf, helm values, backend/.env.local.example) — that preview is
-// the newest available on the ARO SRE tenant (2025-05+ return 404), validated
+// the newest available on the ARO SRE tenant (2025-05-01-preview and later
+// return HTTP 404), validated
 // with a live chat/completions probe, and accepts `reasoning_effort` /
 // `max_completion_tokens` (see docs/AI_RUNTIME.md).
 export const DEFAULT_AZURE_OPENAI_API_VERSION = "2024-10-21";

@@ -150,7 +150,8 @@ ai:
       probe: ""
     # Reasoning-capable version for gpt-5.x (accepts reasoning_effort /
     # max_completion_tokens). Newest preview available on the ARO SRE tenant
-    # (2025-05+ return 404); validated with a live chat/completions probe.
+    # (2025-05-01-preview and later return HTTP 404); validated with a live
+    # chat/completions probe.
     apiVersion: 2025-04-01-preview
     credentials:
       existingSecretName: ""
