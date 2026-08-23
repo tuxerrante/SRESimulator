@@ -201,7 +201,7 @@ chatRouter.post("/", async (req: Request, res: Response) => {
     // see whole code fences, so buffer the AKS response and transform it once.
     // ARO responses stream chunk-by-chunk exactly as before (byte-identical).
     const enforceAks = profile.id === "aks";
-    let aksBuffer = "";
+    const aksChunks: string[] = [];
     try {
       for await (const chunk of stream) {
         if (chunk instanceof AiReasoningRetryEvent) {
@@ -209,14 +209,14 @@ chatRouter.post("/", async (req: Request, res: Response) => {
           continue;
         }
         if (enforceAks) {
-          aksBuffer += chunk;
+          aksChunks.push(chunk);
           continue;
         }
         const data = JSON.stringify({ text: chunk });
         res.write(`data: ${data}\n\n`);
       }
-      if (enforceAks && aksBuffer.length > 0) {
-        const guarded = enforceAksKubectl(aksBuffer);
+      if (enforceAks && aksChunks.length > 0) {
+        const guarded = enforceAksKubectl(aksChunks.join(""));
         res.write(`data: ${JSON.stringify({ text: guarded })}\n\n`);
       }
       res.write("data: [DONE]\n\n");
