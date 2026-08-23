@@ -109,6 +109,25 @@ jobs:
         with:
           ref: ${{ github.event.workflow_run.head_sha }}
 
+      - name: Load Bun version
+        id: bun
+        # Inlined on purpose: this privileged workflow_run job checks out the
+        # untrusted PR head above, so a `uses: ./.github/actions/...` step would
+        # execute action code from that untrusted checkout with packages:write.
+        # The inline run block comes from the trusted default-branch workflow
+        # file instead. See CodeQL "Checkout of untrusted code in a privileged
+        # context".
+        run: |
+          set -euo pipefail
+          if [ ! -s .bun-version ]; then
+            echo "BUN_VERSION is required;" >&2
+            echo ".bun-version is missing or empty." >&2
+            exit 1
+          fi
+          version="$(tr -d '\n' < .bun-version)"
+          echo "BUN_VERSION=${version}" >> "$GITHUB_ENV"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+
       - name: Login to GHCR
         # v4.1.0
         uses: >-
@@ -145,3 +164,4 @@ jobs:
           file: ${{ matrix.dockerfile }}
           push: true
           tags: ${{ steps.meta.outputs.tags }}
+          build-args: BUN_VERSION=${{ steps.bun.outputs.version }}

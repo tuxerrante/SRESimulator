@@ -1,11 +1,15 @@
 ---
 version: 2
+# Dependabot updates text-based bun.lock files through the dedicated `bun`
+# ecosystem (GA 2025-02, Bun >= 1.1.39); the `npm` ecosystem does not update
+# bun.lock. This repository keeps frontend/bun.lock and backend/bun.lock as the
+# only dependency lockfiles.
 updates:
   # The Dependabot E2E gate claims a namespace from a fixed-size pool, so PRs
   # beyond the pool size queue for a free slot (~20 minutes per run). Keep the
   # number of simultaneous PRs close to the pool size by batching non-major
   # updates, otherwise the ci-gate wait starves.
-  - package-ecosystem: npm
+  - package-ecosystem: bun
     directory: /frontend
     schedule:
       interval: weekly
@@ -27,7 +31,7 @@ updates:
         update-types:
           - version-update:semver-major
 
-  - package-ecosystem: npm
+  - package-ecosystem: bun
     directory: /backend
     schedule:
       interval: weekly

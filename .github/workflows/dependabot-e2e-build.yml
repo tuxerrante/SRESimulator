@@ -42,6 +42,10 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha }}
           persist-credentials: false
 
+      - name: Load Bun version
+        id: bun
+        uses: ./.github/actions/load-bun-version
+
       - name: Set up Docker Buildx
         # v3.11.1
         uses: >-
@@ -68,6 +72,7 @@ jobs:
           # load the image into the local daemon and save it separately
           # instead of using outputs: type=docker,dest=...
           load: true
+          build-args: BUN_VERSION=${{ steps.bun.outputs.version }}
           cache-from: type=gha,scope=${{ env.SCOPE }}
           cache-to: type=gha,scope=${{ env.SCOPE }},mode=max,ignore-error=true
 

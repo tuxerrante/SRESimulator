@@ -28,12 +28,9 @@ jobs:
         uses: >-
           actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
 
-      - name: Load npm version
-        id: npm
-        run: |
-          version="$(tr -d '\n' < .npm-version)"
-          echo "NPM_VERSION=${version}" >> "$GITHUB_ENV"
-          echo "version=${version}" >> "$GITHUB_OUTPUT"
+      - name: Load Bun version
+        id: bun
+        uses: ./.github/actions/load-bun-version
 
       - name: Setup Helm
         # v5.0.0
@@ -58,7 +55,7 @@ jobs:
           context: .
           file: frontend/Dockerfile
           tags: sre-simulator-frontend:test
-          build-args: NPM_VERSION=${{ steps.npm.outputs.version }}
+          build-args: BUN_VERSION=${{ steps.bun.outputs.version }}
           load: true
           cache-from: type=gha,scope=helm-integration-frontend
           cache-to: >-
@@ -72,7 +69,7 @@ jobs:
           context: .
           file: backend/Dockerfile
           tags: sre-simulator-backend:test
-          build-args: NPM_VERSION=${{ steps.npm.outputs.version }}
+          build-args: BUN_VERSION=${{ steps.bun.outputs.version }}
           load: true
           cache-from: type=gha,scope=helm-integration-backend
           cache-to: >-

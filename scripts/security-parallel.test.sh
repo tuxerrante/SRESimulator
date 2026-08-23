@@ -33,7 +33,7 @@ assert_contains 'wait "$$FRONTEND_PID"' "$MAKEFILE"
 assert_contains 'wait "$$BACKEND_PID"' "$MAKEFILE"
 
 assert_contains "Restore Grype vulnerability database" "$WORKFLOW"
-assert_contains "actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809" "$WORKFLOW"
+assert_contains "actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9" "$WORKFLOW"
 assert_contains "path: ~/.cache/grype" "$WORKFLOW"
 assert_not_contains "Grype severity gate" "$WORKFLOW"
 

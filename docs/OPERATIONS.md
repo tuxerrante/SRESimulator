@@ -294,8 +294,8 @@ Technical setup and operational commands are documented here so
 
 | Requirement | Version |
 | --- | --- |
-| Node.js | >= 20 |
-| npm | >= 10 |
+| Node.js | >= 20, with npm CLI available for existing `npm run`/`npx` scripts |
+| Bun | Version pinned in `.bun-version` |
 | gcloud | Optional for Vertex provider |
 | Managed AI endpoint | Vertex or Azure OpenAI/Foundry |
 | Helm | 4+ when `AKS_HELM_FORCE_CONFLICTS=true` |
@@ -303,8 +303,8 @@ Technical setup and operational commands are documented here so
 ## Local development
 
 ```bash
-make install
-make dev
+make install   # bun install --frozen-lockfile in frontend/ and backend/
+make dev       # Node/Next runtime path remains unchanged
 ```
 
 ## AI runtime configuration

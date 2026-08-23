@@ -231,11 +231,47 @@ run_cluster_login_helper_flow() {
   assert_contains "login $ARO_API_SERVER -u kubeadmin -p $KUBEADMIN_PASSWORD --insecure-skip-tls-verify=true" "$OC_LOG"
 }
 
+run_patch_bc_strategy_bun_version_guard() {
+  : >"$OC_LOG"
+
+  # An empty BUN_VERSION now falls back to the pinned .bun-version file, so the
+  # guard must only fire when neither source can supply a value.
+  if BUN_VERSION= \
+    BUN_VERSION_FILE="$TMP_DIR/missing-bun-version" \
+    OC_LOG="$OC_LOG" \
+    bash -c 'set -euo pipefail; source "$1"; oc() { printf "%s\n" "$*" >>"$OC_LOG"; }; patch_bc_strategy sre-e2e frontend frontend/Dockerfile' _ \
+    "$ROOT_DIR/scripts/aro-deploy.sh" >"$TMP_DIR/patch-missing-bun.txt" 2>&1; then
+    fail "patch_bc_strategy should fail when no BUN_VERSION source exists"
+  fi
+
+  assert_contains "BUN_VERSION is required; set BUN_VERSION or provide a non-empty .bun-version." \
+    "$TMP_DIR/patch-missing-bun.txt"
+  if [ -s "$OC_LOG" ]; then
+    fail "patch_bc_strategy should not call oc when BUN_VERSION cannot be resolved"
+  fi
+
+  # With BUN_VERSION unset the pinned file must be used automatically.
+  : >"$OC_LOG"
+  OC_LOG="$OC_LOG" \
+    bash -c 'set -euo pipefail; source "$1"; oc() { printf "%s\n" "$*" >>"$OC_LOG"; }; patch_bc_strategy sre-e2e frontend frontend/Dockerfile' _ \
+    "$ROOT_DIR/scripts/aro-deploy.sh"
+  assert_contains "\"name\":\"BUN_VERSION\",\"value\":\"$(tr -d '\n' < "$ROOT_DIR/.bun-version")\"" "$OC_LOG"
+  : >"$OC_LOG"
+
+  BUN_VERSION="$(tr -d '\n' < "$ROOT_DIR/.bun-version")" \
+    OC_LOG="$OC_LOG" \
+    bash -c 'set -euo pipefail; source "$1"; oc() { printf "%s\n" "$*" >>"$OC_LOG"; }; patch_bc_strategy sre-e2e frontend frontend/Dockerfile' _ \
+    "$ROOT_DIR/scripts/aro-deploy.sh"
+
+  assert_contains "\"name\":\"BUN_VERSION\",\"value\":\"$(tr -d '\n' < "$ROOT_DIR/.bun-version")\"" "$OC_LOG"
+}
+
 main() {
   write_stubs
   run_logged_out_flow
   run_logged_in_flow
   run_cluster_login_helper_flow
+  run_patch_bc_strategy_bun_version_guard
   echo "aro-login target tests passed."
 }
 

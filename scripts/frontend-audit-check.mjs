@@ -91,11 +91,11 @@ function findMatchingException(vulnerability, policy) {
 function runAudit(frontendPath) {
   const result =
     process.platform === "win32"
-      ? spawnSync("cmd.exe", ["/d", "/s", "/c", "npm audit --json"], {
+      ? spawnSync("cmd.exe", ["/d", "/s", "/c", "bun audit --json"], {
           cwd: frontendPath,
           encoding: "utf8",
         })
-      : spawnSync("npm", ["audit", "--json"], {
+      : spawnSync("bun", ["audit", "--json"], {
           cwd: frontendPath,
           encoding: "utf8",
         });
@@ -108,7 +108,7 @@ function runAudit(frontendPath) {
   if (!stdout) {
     const stderr = result.stderr?.trim();
     throw new Error(
-      `npm audit --json did not return JSON output.${stderr ? ` stderr: ${stderr}` : ""}`
+      `bun audit --json did not return JSON output.${stderr ? ` stderr: ${stderr}` : ""}`
     );
   }
 
@@ -116,17 +116,70 @@ function runAudit(frontendPath) {
     return JSON.parse(stdout);
   } catch (error) {
     throw new Error(
-      `Failed to parse npm audit JSON output: ${error instanceof Error ? error.message : String(error)}`
+      `Failed to parse bun audit JSON output: ${error instanceof Error ? error.message : String(error)}`
     );
   }
 }
 
-function summarizeVulnerabilities(report, policy, minimumSeverity) {
+function normalizeBunAuditReport(report) {
+  if (!report || typeof report !== "object" || Array.isArray(report)) {
+    throw new Error("bun audit JSON must be an object keyed by package name");
+  }
+  if ("vulnerabilities" in report || "metadata" in report) {
+    throw new Error(
+      "bun audit JSON schema mismatch: received npm audit fields instead of Bun package advisories"
+    );
+  }
+
+  const vulnerabilities = [];
+  const counts = {
+    info: 0,
+    low: 0,
+    moderate: 0,
+    high: 0,
+    critical: 0,
+    total: 0,
+  };
+
+  for (const [name, advisories] of Object.entries(report)) {
+    if (!Array.isArray(advisories)) {
+      throw new Error(`bun audit JSON entry for ${name} must be an advisory array`);
+    }
+
+    for (const advisory of advisories) {
+      if (!advisory || typeof advisory !== "object") {
+        throw new Error(`bun audit JSON advisory for ${name} must be an object`);
+      }
+      const severity = advisory.severity;
+      if (!(severity in severityRank)) {
+        throw new Error(`bun audit JSON advisory for ${name} has unknown severity`);
+      }
+      const title = advisory.title ?? advisory.url ?? advisory.id;
+      if (title === undefined || title === null || title === "") {
+        throw new Error(`bun audit JSON advisory for ${name} is missing title/url/id`);
+      }
+
+      counts[severity] += 1;
+      counts.total += 1;
+      vulnerabilities.push({
+        name,
+        severity,
+        via: [String(title)],
+        range: advisory.vulnerable_versions ?? "",
+        fixAvailable: false,
+      });
+    }
+  }
+
+  return { counts, vulnerabilities };
+}
+
+function summarizeVulnerabilities(vulnerabilities, policy, minimumSeverity) {
   const considered = [];
   const excepted = [];
   const blocking = [];
 
-  for (const vulnerability of Object.values(report.vulnerabilities ?? {})) {
+  for (const vulnerability of vulnerabilities) {
     if (!vulnerability || typeof vulnerability !== "object") {
       continue;
     }
@@ -164,14 +217,13 @@ function summarizeVulnerabilities(report, policy, minimumSeverity) {
   return { considered, excepted, blocking };
 }
 
-function printSummary(policy, minimumSeverity, report, summary) {
-  const metadata = report.metadata?.vulnerabilities ?? {};
+function printSummary(policy, minimumSeverity, counts, summary) {
   console.log(`Frontend audit policy: ${policy.policyName}`);
   console.log(`Approved on: ${policy.approvedOn}`);
   console.log(`Review by: ${policy.reviewBy}`);
   console.log(`Gate threshold: ${minimumSeverity}`);
   console.log(
-    `Raw npm audit counts: high=${metadata.high ?? 0}, critical=${metadata.critical ?? 0}, moderate=${metadata.moderate ?? 0}, total=${metadata.total ?? 0}`
+    `Raw bun audit counts: high=${counts.high}, critical=${counts.critical}, moderate=${counts.moderate}, total=${counts.total}`
   );
   console.log(
     `Filtered findings at or above ${minimumSeverity}: ${summary.considered.length} (${summary.excepted.length} excepted, ${summary.blocking.length} blocking)`
@@ -210,16 +262,21 @@ function main() {
   const frontendPath = path.join(root, frontendDir);
   const policy = loadPolicy(root, frontendDir);
   const report = runAudit(frontendPath);
-  const summary = summarizeVulnerabilities(report, policy, auditLevel);
+  const normalized = normalizeBunAuditReport(report);
+  const summary = summarizeVulnerabilities(
+    normalized.vulnerabilities,
+    policy,
+    auditLevel
+  );
 
-  printSummary(policy, auditLevel, report, summary);
+  printSummary(policy, auditLevel, normalized.counts, summary);
 
   if (summary.blocking.length > 0) {
     process.exit(1);
   }
 
   const expectedCount = policy.expectedCounts?.[auditLevel];
-  const actualCount = report.metadata?.vulnerabilities?.[auditLevel] ?? 0;
+  const actualCount = normalized.counts[auditLevel];
   if (typeof expectedCount === "number" && Number.isFinite(expectedCount)) {
     if (actualCount > expectedCount) {
       console.error(

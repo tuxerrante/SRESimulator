@@ -2,12 +2,13 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { assertBunTextLockfile, isBunTextLockfile } from "./bun-lockfile-format.mjs";
 
 const VERSION_FILES = {
   frontendPackage: "frontend/package.json",
-  frontendLockfile: "frontend/package-lock.json",
+  frontendLockfile: "frontend/bun.lock",
   backendPackage: "backend/package.json",
-  backendLockfile: "backend/package-lock.json",
+  backendLockfile: "backend/bun.lock",
   chart: "helm/sre-simulator/Chart.yaml",
   releaseMeta: "frontend/src/lib/release.ts",
   changelog: "CHANGELOG.md",
@@ -71,13 +72,9 @@ function updatePackageVersion(root, relativePath, version) {
   writeFile(root, relativePath, `${JSON.stringify(pkg, null, 2)}\n`);
 }
 
-function updateLockfileVersion(root, relativePath, version) {
-  const lockfile = JSON.parse(readFile(root, relativePath));
-  lockfile.version = version;
-  if (lockfile.packages?.[""]) {
-    lockfile.packages[""].version = version;
-  }
-  writeFile(root, relativePath, `${JSON.stringify(lockfile, null, 2)}\n`);
+function verifyBunLockfile(root, relativePath) {
+  const lockfile = readFile(root, relativePath);
+  assertBunTextLockfile(lockfile, relativePath);
 }
 
 function replaceOrFail(content, pattern, replacement, errorMessage) {
@@ -118,11 +115,9 @@ function updateReleaseMeta(root, tag) {
 
 function readVersionState(root) {
   const frontendPkg = JSON.parse(readFile(root, VERSION_FILES.frontendPackage));
-  const frontendLockfile = JSON.parse(
-    readFile(root, VERSION_FILES.frontendLockfile)
-  );
+  const frontendLockfile = readFile(root, VERSION_FILES.frontendLockfile);
   const backendPkg = JSON.parse(readFile(root, VERSION_FILES.backendPackage));
-  const backendLockfile = JSON.parse(readFile(root, VERSION_FILES.backendLockfile));
+  const backendLockfile = readFile(root, VERSION_FILES.backendLockfile);
   const chart = readFile(root, VERSION_FILES.chart);
   const releaseMeta = readFile(root, VERSION_FILES.releaseMeta);
 
@@ -138,11 +133,9 @@ function readVersionState(root) {
 
   return {
     frontendPackageVersion: frontendPkg.version,
-    frontendLockfileVersion: frontendLockfile.version,
-    frontendLockfileRootVersion: frontendLockfile.packages?.[""]?.version,
+    frontendLockfileIsBun: isBunTextLockfile(frontendLockfile),
     backendPackageVersion: backendPkg.version,
-    backendLockfileVersion: backendLockfile.version,
-    backendLockfileRootVersion: backendLockfile.packages?.[""]?.version,
+    backendLockfileIsBun: isBunTextLockfile(backendLockfile),
     chartVersion,
     chartAppVersion,
     appVersion,
@@ -175,19 +168,7 @@ function verifyChangelog(root, version) {
 function verifyState(state, tag, version) {
   const checks = [
     ["frontend/package.json", state.frontendPackageVersion, version],
-    ["frontend/package-lock.json", state.frontendLockfileVersion, version],
-    [
-      'frontend/package-lock.json packages[""].version',
-      state.frontendLockfileRootVersion,
-      version,
-    ],
     ["backend/package.json", state.backendPackageVersion, version],
-    ["backend/package-lock.json", state.backendLockfileVersion, version],
-    [
-      'backend/package-lock.json packages[""].version',
-      state.backendLockfileRootVersion,
-      version,
-    ],
     ["helm/sre-simulator/Chart.yaml version", state.chartVersion, version],
     ["helm/sre-simulator/Chart.yaml appVersion", state.chartAppVersion, version],
     ["frontend/src/lib/release.ts APP_VERSION", state.appVersion, tag],
@@ -201,6 +182,13 @@ function verifyState(state, tag, version) {
       fail(`${source} mismatch: ${actual} != ${expected}`);
     }
   }
+
+  if (!state.frontendLockfileIsBun) {
+    fail("frontend/bun.lock is not a Bun text lockfile");
+  }
+  if (!state.backendLockfileIsBun) {
+    fail("backend/bun.lock is not a Bun text lockfile");
+  }
 }
 
 function main() {
@@ -210,9 +198,9 @@ function main() {
 
   if (mode === "prepare") {
     updatePackageVersion(root, VERSION_FILES.frontendPackage, version);
-    updateLockfileVersion(root, VERSION_FILES.frontendLockfile, version);
+    verifyBunLockfile(root, VERSION_FILES.frontendLockfile);
     updatePackageVersion(root, VERSION_FILES.backendPackage, version);
-    updateLockfileVersion(root, VERSION_FILES.backendLockfile, version);
+    verifyBunLockfile(root, VERSION_FILES.backendLockfile);
     updateChartVersion(root, version);
     updateReleaseMeta(root, tag);
     console.log(`Updated release version surfaces for ${tag}.`);

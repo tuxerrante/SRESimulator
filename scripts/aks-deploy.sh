@@ -492,6 +492,9 @@ build_and_push_ghcr_image() {
   local container_cli=$1 image_repo=$2 image_tag=$3 dockerfile=$4
   local image_platform="${AKS_E2E_DEV_IMAGE_PLATFORM:-linux/amd64}"
   local builder="${AKS_E2E_CACHE_BUILDER:-sre-e2e-cache}"
+  local bun_version
+
+  bun_version="$(resolve_bun_version)" || return 1
 
   # Every pull request push otherwise reinstalls node_modules and rebuilds the
   # frontend bundle from scratch inside the image, which dominated the live E2E
@@ -503,6 +506,7 @@ build_and_push_ghcr_image() {
       --builder "$builder" \
       --platform "$image_platform" \
       -f "$dockerfile" \
+      --build-arg "BUN_VERSION=${bun_version}" \
       -t "${image_repo}:${image_tag}" \
       --cache-from "type=registry,ref=${image_repo}:buildcache" \
       --cache-to "type=registry,ref=${image_repo}:buildcache,mode=max,ignore-error=true" \
@@ -514,6 +518,7 @@ build_and_push_ghcr_image() {
   "$container_cli" build \
     --platform "$image_platform" \
     -f "$dockerfile" \
+    --build-arg "BUN_VERSION=${bun_version}" \
     -t "${image_repo}:${image_tag}" \
     . >/dev/null
   "$container_cli" push "${image_repo}:${image_tag}" >/dev/null

@@ -19,6 +19,15 @@
 - **Markdown:** react-markdown + remark-gfm
 - **Icons:** Lucide React
 
+## Package Management and Runtime Boundary
+
+The repository uses the Bun version pinned in `.bun-version` exclusively for dependency installation.
+`frontend/bun.lock` and `backend/bun.lock` are the source of truth for
+resolved packages, and `make install` runs `bun install --frozen-lockfile` in
+each app. Runtime and script execution stay on Node.js: development, tests,
+Docker build scripts, containers, Sentry, `mssql`, Redis, SSE streaming, and
+signal handling continue to use the existing Node toolchain.
+
 ## Gameplay Platform Boundary
 
 `PlatformId` is a gameplay dimension stored on each simulated session. Supported

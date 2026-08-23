@@ -49,33 +49,29 @@ EOF
 }
 EOF
 
-  cat >"$target_dir/frontend/package-lock.json" <<'EOF'
+  cat >"$target_dir/frontend/bun.lock" <<'EOF'
 {
-  "name": "frontend",
-  "version": "0.1.2",
-  "lockfileVersion": 3,
-  "requires": true,
-  "packages": {
+  "lockfileVersion": 2,
+  "configVersion": 1,
+  "workspaces": {
     "": {
-      "name": "frontend",
-      "version": "0.1.2"
-    }
-  }
+      "name": "frontend"
+    },
+  },
+  "packages": {},
 }
 EOF
 
-  cat >"$target_dir/backend/package-lock.json" <<'EOF'
+  cat >"$target_dir/backend/bun.lock" <<'EOF'
 {
-  "name": "backend",
-  "version": "0.1.2",
-  "lockfileVersion": 3,
-  "requires": true,
-  "packages": {
+  "lockfileVersion": 2,
+  "configVersion": 1,
+  "workspaces": {
     "": {
-      "name": "backend",
-      "version": "0.1.2"
-    }
-  }
+      "name": "backend"
+    },
+  },
+  "packages": {},
 }
 EOF
 
@@ -168,8 +164,8 @@ run_prepare_and_verify_check() {
     "$TMP_DIR/prepare.txt"
   assert_file_contains "$repo_dir/frontend/package.json" '"version": "0.1.3"'
   assert_file_contains "$repo_dir/backend/package.json" '"version": "0.1.3"'
-  assert_file_contains "$repo_dir/frontend/package-lock.json" '"version": "0.1.3"'
-  assert_file_contains "$repo_dir/backend/package-lock.json" '"version": "0.1.3"'
+  assert_file_contains "$repo_dir/frontend/bun.lock" '"lockfileVersion": 2'
+  assert_file_contains "$repo_dir/backend/bun.lock" '"lockfileVersion": 2'
   assert_file_contains "$repo_dir/helm/sre-simulator/Chart.yaml" 'version: 0.1.3'
   assert_file_contains "$repo_dir/helm/sre-simulator/Chart.yaml" 'appVersion: "0.1.3"'
   assert_file_contains "$repo_dir/frontend/src/lib/release.ts" \
@@ -214,6 +210,28 @@ PY
     "$TMP_DIR/prepare-pattern-guard.txt"
 }
 
+run_npm_lockfile_rejected_check() {
+  local repo_dir="$TMP_DIR/repo-npm-lockfile"
+  write_fixture_repo "$repo_dir"
+  cat >"$repo_dir/frontend/bun.lock" <<'EOF'
+{
+  "name": "frontend",
+  "version": "0.1.2",
+  "lockfileVersion": 2,
+  "packages": {}
+}
+EOF
+
+  if node "$ROOT_DIR/scripts/release-version-sync.mjs" verify \
+    --root "$repo_dir" \
+    --tag v0.1.2 >"$TMP_DIR/verify-npm-lockfile.txt" 2>&1; then
+    fail "verify should reject an npm lockfile renamed to bun.lock"
+  fi
+
+  assert_contains "frontend/bun.lock is not a Bun text lockfile" \
+    "$TMP_DIR/verify-npm-lockfile.txt"
+}
+
 run_static_wiring_checks() {
   assert_file_contains "$ROOT_DIR/Makefile" 'release-prepare: ## Update semver surfaces for a release tag'
   assert_file_contains "$ROOT_DIR/Makefile" 'verify-release-version: ## Verify semver surfaces for a release tag'
@@ -233,6 +251,7 @@ main() {
   run_missing_arg_checks
   run_prepare_and_verify_check
   run_prepare_pattern_guard_check
+  run_npm_lockfile_rejected_check
   run_static_wiring_checks
   echo "release version sync tests passed."
 }

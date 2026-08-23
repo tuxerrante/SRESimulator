@@ -64,8 +64,8 @@ of creating per-worktree copies:
 
   # from the worktree; must print nothing
   git diff --quiet HEAD "$MAIN_REV" -- \
-    frontend/package.json frontend/package-lock.json \
-    backend/package.json backend/package-lock.json || \
+    frontend/package.json frontend/bun.lock \
+    backend/package.json backend/bun.lock || \
     echo "lockfiles differ: install in the worktree instead"
   ```
 

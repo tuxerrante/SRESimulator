@@ -1,11 +1,14 @@
+# Kept in sync with .bun-version by run_bun_version_single_source_check.
+ARG BUN_VERSION=1.4.0
+FROM docker.io/oven/bun:${BUN_VERSION}-alpine AS bun
+
 FROM node:24-alpine AS base
-ARG NPM_VERSION
-RUN npm install --global "npm@${NPM_VERSION}"
+COPY --from=bun /usr/local/bin/bun /usr/local/bin/bun
 
 FROM base AS deps
 WORKDIR /app/frontend
-COPY frontend/package.json frontend/package-lock.json ./
-RUN npm ci
+COPY frontend/package.json frontend/bun.lock ./
+RUN bun install --frozen-lockfile
 
 FROM base AS build
 WORKDIR /app/frontend
