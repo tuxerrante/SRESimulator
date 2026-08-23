@@ -57,6 +57,16 @@ export function buildSystemPrompt(
         : "`kubectl describe node <node-name>`";
   const supportGuidance = getSupportGuidance(profile.id);
 
+  // The knowledge base is OpenShift-heavy and appended last, so its `oc`
+  // examples otherwise dominate on AKS via recency. Restate the kubectl-only
+  // constraint AFTER the knowledge base so the final instruction wins. Emitted
+  // only for AKS so ARO prompts stay byte-identical.
+  const finalCliDirective =
+    profile.id === "aks"
+      ? `\n\n## FINAL AKS CLI CONSTRAINT (overrides every example above)
+This is an AKS session, so \`kubectl\` is the only valid cluster CLI. The Knowledge Base above is OpenShift-centric: treat its \`oc\` commands as the WRONG CLI for AKS. Before answering, map any \`oc\`/OpenShift example you would cite to its \`kubectl\` equivalent and place it in a \`kubectl\` fence. When an \`oc\` capability has no direct \`kubectl\` equivalent (e.g. OpenShift-only Routes, MachineConfig, or \`oc adm\` workflows), do NOT invent a \`kubectl\` command: say so plainly and suggest an AKS-appropriate alternative (a supported \`kubectl\`/\`az aks\` action, or the Azure portal). Never emit an \`oc\` command or an \`oc\` code fence in this session.`
+      : "";
+
   const resourceCsv = scenario ? getResourceIdentifiersCsv(scenario) : null;
 
   const scenarioContext = scenario
@@ -153,6 +163,6 @@ Dimensions: efficiency, safety, documentation, accuracy.
 ${scenarioContext}
 
 ## Knowledge Base Reference
-${knowledgeBase}
+${knowledgeBase}${finalCliDirective}
 `;
 }

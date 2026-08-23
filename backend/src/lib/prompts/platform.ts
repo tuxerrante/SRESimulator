@@ -37,7 +37,7 @@ export const PLATFORM_PROMPT_FRAGMENTS: Record<
     docsReferences:
       "Use AKS documentation, Kubernetes docs, and Azure Monitor/KQL references.",
     commandGuidance:
-      "Preferred cluster CLI: kubectl. Use node-pool terminology and managed control plane limits. Never suggest oc, OpenShift Routes, Machine API, MCO, Hive, PUCM, or direct etcd remediation.",
+      "This is an AKS (pure Kubernetes) session. The ONLY valid cluster CLI is `kubectl`; `oc` does not exist on AKS and any `oc` command is unrunnable here. Every command block MUST use a `kubectl` fence — never an `oc` fence. Use node-pool terminology and managed control plane limits. Do not suggest OpenShift Routes, Machine API, MCO, Hive, PUCM, or direct etcd remediation. Correct (AKS): a fenced kubectl block containing `kubectl get nodes`. Wrong (OpenShift-only, never do this on AKS): a fenced block containing `oc get nodes`.",
     scenarioGenerationGuidance:
       "Use AKS-managed cluster language and node-pool-centric incident patterns. Never introduce ARO, OpenShift, hosted-cluster, or classic Machine API concepts.",
   },
