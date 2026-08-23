@@ -246,7 +246,10 @@ describe("buildSystemPrompt", () => {
       const directiveIndex = prompt.indexOf("## FINAL AKS CLI CONSTRAINT");
       expect(kbIndex).toBeGreaterThan(-1);
       expect(directiveIndex).toBeGreaterThan(kbIndex);
-      expect(prompt).toContain("translate any `oc`/OpenShift example");
+      expect(prompt).toContain("map any `oc`/OpenShift example");
+      // No-equivalent guidance: the model must not invent a kubectl command.
+      expect(prompt).toContain("no direct `kubectl` equivalent");
+      expect(prompt).toContain("do NOT invent");
     });
 
     it("does not emit the AKS final directive for ARO platforms", () => {

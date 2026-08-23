@@ -64,7 +64,7 @@ export function buildSystemPrompt(
   const finalCliDirective =
     profile.id === "aks"
       ? `\n\n## FINAL AKS CLI CONSTRAINT (overrides every example above)
-This is an AKS session, so \`kubectl\` is the only valid cluster CLI. The Knowledge Base above is OpenShift-centric: treat its \`oc\` commands as the WRONG CLI for AKS. Before answering, translate any \`oc\`/OpenShift example you would cite into the equivalent \`kubectl\` command, and place it in a \`kubectl\` fence. Never emit an \`oc\` command or an \`oc\` code fence in this session.`
+This is an AKS session, so \`kubectl\` is the only valid cluster CLI. The Knowledge Base above is OpenShift-centric: treat its \`oc\` commands as the WRONG CLI for AKS. Before answering, map any \`oc\`/OpenShift example you would cite to its \`kubectl\` equivalent and place it in a \`kubectl\` fence. When an \`oc\` capability has no direct \`kubectl\` equivalent (e.g. OpenShift-only Routes, MachineConfig, or \`oc adm\` workflows), do NOT invent a \`kubectl\` command: say so plainly and suggest an AKS-appropriate alternative (a supported \`kubectl\`/\`az aks\` action, or the Azure portal). Never emit an \`oc\` command or an \`oc\` code fence in this session.`
       : "";
 
   const resourceCsv = scenario ? getResourceIdentifiersCsv(scenario) : null;

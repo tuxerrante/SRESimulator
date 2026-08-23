@@ -197,8 +197,10 @@ bias, the AKS constraint is enforced in depth:
 4. **Frontend (rendering):** a mismatched CLI block is labelled
    `(not valid for <platform>)` and its **Run** button is omitted.
 
-The live E2E gate additionally fails if a wrong-CLI block ever reaches the AKS
-user (see `scripts/playwright-live-e2e.mjs`).
+Because the backend guard rewrites any slipped `oc` fence before the response is
+sent, a wrong-CLI block should not reach the AKS user. The live E2E gate guards
+against regressions by asserting the AKS user's rendered commands use `kubectl`
+(see `scripts/playwright-live-e2e.mjs`).
 
 ---
 
