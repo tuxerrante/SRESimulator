@@ -6,6 +6,9 @@ const TEST_ENV_KEYS = [
   "AI_PROVIDER",
   "AI_MODEL",
   "AI_REASONING_EFFORT",
+  "AI_REASONING_EFFORT_COMMAND",
+  "AI_REASONING_EFFORT_CHAT",
+  "AI_REASONING_EFFORT_SCENARIO",
   "AI_AZURE_OPENAI_ENDPOINT",
   "AI_AZURE_OPENAI_API_KEY",
   "AI_AZURE_OPENAI_DEPLOYMENT",
@@ -250,9 +253,94 @@ describe("ai-runtime reasoning_effort compatibility", () => {
     const secondBody = JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body));
     const thirdBody = JSON.parse(String(fetchMock.mock.calls[2]?.[1]?.body));
 
-    expect(firstBody.reasoning_effort).toBe("medium");
+    // The command route defaults to "low" reasoning effort (see below).
+    expect(firstBody.reasoning_effort).toBe("low");
     expect(secondBody.reasoning_effort).toBeUndefined();
     expect(thirdBody.reasoning_effort).toBeUndefined();
+  });
+
+  it("defaults the command route to low reasoning effort", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(okResponse("ok"));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await generateAiText({
+      system: "You are helpful.",
+      messages: [{ role: "user", content: "hello" }],
+      maxTokens: 64,
+      route: "command",
+    });
+
+    const body = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
+    expect(body.reasoning_effort).toBe("low");
+  });
+
+  it("keeps the command route at low even when global AI_REASONING_EFFORT is high", async () => {
+    process.env.AI_REASONING_EFFORT = "high";
+
+    const fetchMock = vi.fn().mockResolvedValue(okResponse("ok"));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await generateAiText({
+      system: "You are helpful.",
+      messages: [{ role: "user", content: "hello" }],
+      maxTokens: 64,
+      route: "command",
+    });
+
+    const body = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
+    expect(body.reasoning_effort).toBe("low");
+  });
+
+  it("lets AI_REASONING_EFFORT_COMMAND override the command-route default", async () => {
+    process.env.AI_REASONING_EFFORT_COMMAND = "high";
+
+    const fetchMock = vi.fn().mockResolvedValue(okResponse("ok"));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await generateAiText({
+      system: "You are helpful.",
+      messages: [{ role: "user", content: "hello" }],
+      maxTokens: 64,
+      route: "command",
+    });
+
+    const body = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
+    expect(body.reasoning_effort).toBe("high");
+  });
+
+  it("uses global AI_REASONING_EFFORT for non-command routes", async () => {
+    process.env.AI_REASONING_EFFORT = "high";
+
+    const fetchMock = vi.fn().mockResolvedValue(okResponse("ok"));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await generateAiText({
+      system: "You are helpful.",
+      messages: [{ role: "user", content: "hello" }],
+      maxTokens: 64,
+      route: "chat",
+    });
+
+    const body = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
+    expect(body.reasoning_effort).toBe("high");
+  });
+
+  it("lets AI_REASONING_EFFORT_CHAT override a conflicting global for the chat route", async () => {
+    process.env.AI_REASONING_EFFORT = "high";
+    process.env.AI_REASONING_EFFORT_CHAT = "low";
+
+    const fetchMock = vi.fn().mockResolvedValue(okResponse("ok"));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await generateAiText({
+      system: "You are helpful.",
+      messages: [{ role: "user", content: "hello" }],
+      maxTokens: 64,
+      route: "chat",
+    });
+
+    const body = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
+    expect(body.reasoning_effort).toBe("low");
   });
 });
 

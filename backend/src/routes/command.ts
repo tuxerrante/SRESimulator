@@ -44,6 +44,14 @@ type LooseHistoryEntry = {
   type?: unknown;
 };
 
+// Completion-token ceiling for simulated command output. This is a cap, not a
+// target: normal commands (describe/get/events) emit far less, so lowering it
+// does not speed up the common case — the latency win comes from reasoning_effort
+// =low plus a fast command deployment. Unbounded output (oc logs, -o yaml, broad
+// KQL) can legitimately need this much, and callAzureOpenAi returns partial text
+// on finish_reason=length with exitCode 0, so a tighter cap would silently
+// truncate. Keep it generous and bound latency via timeout instead. Override via
+// AI_MAX_COMMAND_TOKENS.
 const DEFAULT_MAX_COMMAND_TOKENS = 8192;
 const DEFAULT_COMMAND_TIMEOUT_MS = 12000;
 
