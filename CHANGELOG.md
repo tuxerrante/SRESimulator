@@ -12,9 +12,11 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 - Provisioned and wired a dedicated fast deployment for the command route so
   simulated `oc`/`kubectl`/`kql` output stops degrading to a mock ending in
   `Error: timeout` / `exit code: 1`. The earlier command-latency fix set the
-  fast model only in local `backend/.env.local`, which no deploy path reads, so
-  the deployed command route stayed on the heavy global model and kept exceeding
-  the 12s command timeout. `infra/ai.tf` now declares
+  fast model only in local `backend/.env.local`. That file can feed a local
+  operator's `make prod-up` invocation, but GitHub Actions, Terraform, and an
+  already-deployed workload do not consume it, so the deployed command route
+  stayed on the heavy global model and kept exceeding the 12s command timeout.
+  `infra/ai.tf` now declares
   `azurerm_cognitive_deployment.command` (default `gpt-5-mini`, via the new
   `aoai_command_*` / `enable_aoai_command_deployment` variables), the Terraform
   `env_file_snippet` output emits `AOAI_DEPLOYMENT_COMMAND` /

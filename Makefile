@@ -547,7 +547,7 @@ env-check: ## Show source of required e2e vars (values hidden)
 		echo "WARNING: AOAI_DEPLOYMENT_COMMAND is unset. The command route will run on the"; \
 		echo "         global AOAI_DEPLOYMENT (heavy model), which routinely exceeds the 12s"; \
 		echo "         command timeout and degrades to a mock response ending in 'Error: timeout'."; \
-		echo "         Set it to the fast command deployment (terraform output aoai_command_deployment_name)."; \
+		echo "         Set it to the fast command deployment (terraform -chdir=infra output -raw aoai_command_deployment_name)."; \
 	fi
 	@if [ -n "$(E2E_MISSING_VARS)" ]; then \
 		echo "Missing required e2e vars: $(E2E_MISSING_VARS)"; \

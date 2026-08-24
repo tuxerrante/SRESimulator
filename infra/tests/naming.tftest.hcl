@@ -113,6 +113,25 @@ run "aoai_command_deployment_name" {
   }
 }
 
+run "aoai_command_alias_differs_from_model" {
+  command = plan
+
+  variables {
+    aoai_command_deployment_name = "command-fast"
+    aoai_command_model_name      = "gpt-5-mini"
+  }
+
+  assert {
+    condition     = one(azurerm_cognitive_deployment.command[*].name) == "command-fast"
+    error_message = "Command-route deployment alias should be independent of the model name."
+  }
+
+  assert {
+    condition     = one(azurerm_cognitive_deployment.command[*].model[0].name) == "gpt-5-mini"
+    error_message = "Changing the command-route deployment alias must not change the model name."
+  }
+}
+
 run "aoai_command_deployment_disabled" {
   command = plan
 
