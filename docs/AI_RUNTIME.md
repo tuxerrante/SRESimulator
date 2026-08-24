@@ -491,7 +491,7 @@ prevention, rate-limit enforcement, and token-metrics recording.
 | Azure OpenAI | `AI_AZURE_OPENAI_ENDPOINT`, `AI_AZURE_OPENAI_API_KEY`, `AI_AZURE_OPENAI_DEPLOYMENT`, `AI_AZURE_OPENAI_API_VERSION` |
 | Per-route deployments | `AI_AZURE_OPENAI_DEPLOYMENT_CHAT`, `_COMMAND`, `_SCENARIO`, `_PROBE` |
 | Reasoning | `AI_REASONING_EFFORT` (`low` / `medium` / `high`) global default; per-route `AI_REASONING_EFFORT_<ROUTE>` (e.g. `_CHAT`, `_COMMAND`, `_SCENARIO`) overrides it. The `command` route defaults to `low`. |
-| Token budgets | `AI_MAX_CHAT_TOKENS`, `AI_MAX_COMMAND_TOKENS` (default `8192`) |
+| Token budgets | `AI_MAX_CHAT_TOKENS` (default `16384`), `AI_MAX_COMMAND_TOKENS` (default `8192`) |
 | Compaction tuning | `COMPACTION_TOKEN_BUDGET`, `COMPACTION_TAIL_MESSAGES` |
 | Rate limiting | `AI_RATE_LIMIT_WINDOW_MS`, `AI_RATE_LIMIT_MAX`, `AI_RATE_LIMIT_REDIS_URL` |
 | Production gates | `AI_LIVE_PROBE_TOKEN` |
