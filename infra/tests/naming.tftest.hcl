@@ -99,6 +99,33 @@ run "aoai_deployment_name" {
   }
 }
 
+run "aoai_command_deployment_name" {
+  command = plan
+
+  assert {
+    condition     = one(azurerm_cognitive_deployment.command[*].name) == "gpt-5-mini"
+    error_message = "Command-route deployment should default to the gpt-5-mini deployment name."
+  }
+
+  assert {
+    condition     = one(azurerm_cognitive_deployment.command[*].model[0].name) == "gpt-5-mini"
+    error_message = "Command-route deployment should default to the gpt-5-mini model."
+  }
+}
+
+run "aoai_command_deployment_disabled" {
+  command = plan
+
+  variables {
+    enable_aoai_command_deployment = false
+  }
+
+  assert {
+    condition     = length(azurerm_cognitive_deployment.command) == 0
+    error_message = "Command-route deployment must not be created when disabled."
+  }
+}
+
 # Verify naming changes when alias changes
 run "different_alias_propagates" {
   command = plan

@@ -54,6 +54,37 @@ The E2E flow also depends on gitignored local material that must never be commit
 
 When running from WSL against a Windows-authenticated kube context, export `KUBECONFIG=/mnt/c/Users/<user>/.kube/config` before calling the Make target so the shell helpers do not fall back to `localhost:8080`.
 
+### Command-route fast model (avoid the "Error: timeout" degraded mock)
+
+The command route only formats deterministic CLI/KQL output, so it runs on a
+small fast model (`reasoning_effort=low`) rather than the heavy chat/scenario
+model. If it is left on the global deployment, a `describe`/`logs`-sized dump
+routinely exceeds `AI_COMMAND_TIMEOUT_MS` (12s) and the backend degrades to a
+mock response whose terminal output ends in `Error: timeout` / `exit code: 1`.
+
+Wiring the fast model is a **two-step coupling** — provisioning (Terraform) and
+deploy config (Helm/env) are decoupled, and nothing cross-checks them, so both
+must be done:
+
+1. **Provision the deployment (Terraform).** `infra/ai.tf` declares
+   `azurerm_cognitive_deployment.command` (default model `gpt-5-mini`, controlled
+   by the `aoai_command_*` variables). `deploy-prod.yml` does **not** run
+   Terraform — apply it manually:
+
+   ```bash
+   terraform -chdir=infra apply
+   terraform -chdir=infra output -raw aoai_command_deployment_name
+   ```
+
+2. **Point the app at it (deploy).** `make prod-up` reads `AOAI_DEPLOYMENT_COMMAND`
+   and passes it to Helm as `ai.azureOpenai.routeDeployments.command`. Set it to
+   the deployment name from step 1 (the `env_file_snippet` Terraform output
+   emits both `AOAI_DEPLOYMENT_COMMAND` and `AI_AZURE_OPENAI_DEPLOYMENT_COMMAND`
+   ready to paste into `backend/.env.local`).
+
+`make env-check` prints a non-fatal warning when `AOAI_DEPLOYMENT_COMMAND` is
+unset so the silent fallback to the heavy model is visible before deploy.
+
 ## AKS Exposure Modes
 
 The AKS helpers support three exposure modes through `AKS_EXPOSURE_MODE`.
