@@ -337,7 +337,8 @@ describe("POST /api/command", () => {
 
   it("uses the configured max command token budget for live command simulation", async () => {
     enableLiveAiRuntime();
-    process.env.AI_MAX_COMMAND_TOKENS = "8192";
+    // Use a non-default value so this proves the env override is read, not the default.
+    process.env.AI_MAX_COMMAND_TOKENS = "2048";
     generateAiTextMock.mockResolvedValue("NAME   STATUS\nworker-0 Ready");
 
     const app = createApp();
@@ -351,10 +352,10 @@ describe("POST /api/command", () => {
     expect(res.status).toBe(200);
     expect(res.body.exitCode).toBe(0);
     expect(generateAiTextMock).toHaveBeenCalledTimes(1);
-    expect(generateAiTextMock.mock.calls[0]?.[0]?.maxTokens).toBe(8192);
+    expect(generateAiTextMock.mock.calls[0]?.[0]?.maxTokens).toBe(2048);
   });
 
-  it("defaults the command token budget to 4096 when AI_MAX_COMMAND_TOKENS is unset", async () => {
+  it("defaults the command token budget to 8192 when AI_MAX_COMMAND_TOKENS is unset", async () => {
     enableLiveAiRuntime();
     delete process.env.AI_MAX_COMMAND_TOKENS;
     generateAiTextMock.mockResolvedValue("NAME   STATUS\nworker-0 Ready");
@@ -370,7 +371,9 @@ describe("POST /api/command", () => {
     expect(res.status).toBe(200);
     expect(res.body.exitCode).toBe(0);
     expect(generateAiTextMock).toHaveBeenCalledTimes(1);
-    expect(generateAiTextMock.mock.calls[0]?.[0]?.maxTokens).toBe(4096);
+    // A generous cap avoids silently truncating unbounded output (oc logs, -o yaml);
+    // command latency is bounded by reasoning_effort=low + timeout, not this ceiling.
+    expect(generateAiTextMock.mock.calls[0]?.[0]?.maxTokens).toBe(8192);
   });
 
   it("preserves recent command mutations in late-game history overflow", async () => {
