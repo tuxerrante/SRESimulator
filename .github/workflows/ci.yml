@@ -94,6 +94,7 @@ jobs:
     outputs:
       docs_only: ${{ steps.detect.outputs.docs_only }}
       run_integration: ${{ steps.detect.outputs.run_integration }}
+      run_e2e: ${{ steps.detect.outputs.run_e2e }}
     steps:
       - name: Harden runner
         # v2.21.0
@@ -132,7 +133,8 @@ jobs:
           if [[ -z "${base_sha}" ]] || [[ "${base_sha}" =~ ^0+$ ]]; then
             echo "docs_only=false" >> "$GITHUB_OUTPUT"
             echo "run_integration=true" >> "$GITHUB_OUTPUT"
-            echo "Unable to determine diff base; running integration tests." \
+            echo "run_e2e=true" >> "$GITHUB_OUTPUT"
+            echo "Unable to determine diff base; running integration and E2E." \
               >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
@@ -151,19 +153,55 @@ jobs:
           if [[ "${#changed_files[@]}" -eq 0 ]]; then
             echo "docs_only=false" >> "$GITHUB_OUTPUT"
             echo "run_integration=true" >> "$GITHUB_OUTPUT"
-            echo "No changed files detected; running integration tests." \
+            echo "run_e2e=true" >> "$GITHUB_OUTPUT"
+            echo "No changed files detected; running integration and E2E." \
               >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
 
+          # docs_only skips the (cheap) integration suites. e2e_exempt also
+          # skips the expensive, manually-approved live-e2e cluster gate. Both
+          # are strict positive allowlists: any file outside the allowlist
+          # forces the corresponding suite to run (fail-safe default). The e2e
+          # allowlist is a superset of docs (it additionally permits inert
+          # repo-meta files such as .gitignore) because those can never affect
+          # runtime, build, or deploy behavior and so cannot change an E2E
+          # outcome. Anything that can — source, .github/**, scripts/**,
+          # helm/**, infra/**, Dockerfiles, package/lock files, Makefile — is
+          # unlisted and therefore always runs the live gate.
+          #
+          # knowledge_base/*.md is deliberately NOT e2e-exempt: those markdown
+          # files are loaded into the live AI context, so a change there can
+          # alter real model output. live-e2e (real AI) is the only gate that
+          # exercises that path — the integration suites run on mock AI — so a
+          # knowledge_base edit must always run the live gate even though it is
+          # still docs_only for the mock-AI integration suites.
+          #
+          # Note: these are `case` patterns, not filename globs. In a `case`
+          # (and `[[ ==` ]]) the `*` wildcard matches `/`, so `docs/*` and
+          # `knowledge_base/*` already cover arbitrarily nested paths (e.g.
+          # docs/superpowers/deep/guide.md, knowledge_base/aro/x/y.md). Do NOT
+          # rewrite these into a filename-expansion context (globstar, `for f
+          # in docs/*`) where `*` stops at `/` — that would silently narrow the
+          # match to a single segment and break the nested-path coverage.
           docs_only=true
+          e2e_exempt=true
           for file in "${changed_files[@]}"; do
             case "$file" in
               *.md|*.mdx|docs/*)
                 ;;
               *)
                 docs_only=false
-                break
+                ;;
+            esac
+            case "$file" in
+              knowledge_base/*)
+                e2e_exempt=false
+                ;;
+              *.md|*.mdx|docs/*|.gitignore|.gitattributes|LICENSE*|.editorconfig)
+                ;;
+              *)
+                e2e_exempt=false
                 ;;
             esac
           done
@@ -177,6 +215,16 @@ jobs:
             echo "docs_only=false" >> "$GITHUB_OUTPUT"
             echo "run_integration=true" >> "$GITHUB_OUTPUT"
             echo "Code-related change detected; integration suites enabled." \
+              >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+          if [[ "${e2e_exempt}" == "true" ]]; then
+            echo "run_e2e=false" >> "$GITHUB_OUTPUT"
+            echo "Inert change (docs/repo-meta only); live E2E skipped." \
+              >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "run_e2e=true" >> "$GITHUB_OUTPUT"
+            echo "Runtime-relevant change; live E2E enabled." \
               >> "$GITHUB_STEP_SUMMARY"
           fi
 
@@ -570,6 +618,7 @@ jobs:
       github.event.pull_request.user.login != 'dependabot[bot]' &&
       github.event.pull_request.head.repo.full_name == github.repository &&
       needs.changes.result == 'success' &&
+      needs.changes.outputs.run_e2e != 'false' &&
       needs.lint-typecheck.result == 'success' &&
       needs.test.result == 'success' &&
       needs.security.result == 'success' &&
@@ -763,6 +812,7 @@ jobs:
           TAG_MAINLINE_RESULT: ${{ needs.tag-mainline-check.result }}
           DOCS_ONLY: ${{ needs.changes.outputs.docs_only }}
           RUN_INTEGRATION: ${{ needs.changes.outputs.run_integration }}
+          RUN_E2E: ${{ needs.changes.outputs.run_e2e }}
           LINT_RESULT: ${{ needs.lint-typecheck.result }}
           TEST_RESULT: ${{ needs.test.result }}
           INTEGRATION_RESULT: ${{ needs.integration-test.result }}
@@ -793,6 +843,7 @@ jobs:
           echo "  security:                   ${SECURITY_RESULT}"
           echo "  helm-validate:              ${HELM_RESULT}"
           echo "  docker-build:               ${DOCKER_RESULT}"
+          echo "  run live e2e:               ${RUN_E2E}"
           echo "  live-e2e:                   ${LIVE_E2E_RESULT}"
 
           for name_result in \
@@ -862,6 +913,9 @@ jobs:
                     ;;
                 esac
               fi
+            elif [[ "${RUN_E2E}" == "false" ]]; then
+              echo "Live E2E intentionally skipped (inert docs/repo-meta" \
+                "change)."
             elif [[ "${LIVE_E2E_RESULT}" != "success" ]]; then
               failed=true
               failed_jobs+=("live-e2e (${LIVE_E2E_RESULT})")
