@@ -208,8 +208,11 @@ clean and then rejecting a mismatch at the edges:
    only valid CLI, and `buildSystemPrompt` restates a short **AKS CLI reminder**
    *after* the knowledge base so a late, high-recency instruction reinforces it.
    ARO prompts are unchanged.
-3. **Backend (command run):** `/command` rejects a mismatched CLI with HTTP 409
-   (`getCommandScopeViolation`).
+3. **Backend (command run):** `/command` rejects a mismatched CLI type with
+   HTTP 409 via `isCommandTypeAllowedForPlatform` (e.g. an `oc` command on AKS),
+   and separately rejects a platform-incompatible *resource* (after the CLI type
+   is accepted) with HTTP 409 via `getCommandScopeViolation`
+   (`backend/src/routes/command.ts`).
 4. **Frontend (rendering):** a mismatched CLI block is labelled
    `(not valid for <platform>)` and its **Run** button is omitted, so a slipped
    `oc` block is never runnable on AKS.
