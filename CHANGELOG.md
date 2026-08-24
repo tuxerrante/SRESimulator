@@ -5,6 +5,35 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed (Unreleased)
+
+- Simplified the AKS `kubectl`-only enforcement. The root cause of the
+  oc-on-AKS defect ([#381](https://github.com/tuxerrante/SRESimulator/issues/381))
+  is the model's pretraining bias, not knowledge-base contamination: the
+  OpenShift-heavy KB files are already scoped to ARO Classic only and never
+  reach an AKS session. So the deterministic backend rewrite (`enforceAksKubectl`)
+  and the whole-response AKS buffering it required were removed — chat now
+  streams verbatim on every platform, which restores token-by-token streaming
+  on AKS ([#384](https://github.com/tuxerrante/SRESimulator/issues/384)). The
+  post-KB `FINAL AKS CLI CONSTRAINT` (which wrongly told the model the AKS KB
+  was "OpenShift-centric") is trimmed to a short, accurate **AKS CLI reminder**.
+  Correctness now rests on the scoped/CLI-neutral KB, the prompt, the
+  `/command` HTTP 409 CLI guard, the frontend's non-runnable wrong-CLI block,
+  and the live E2E gate as the regression net.
+
+### Fixed (Unreleased)
+
+- Stopped the spurious `Error: timeout` / `exit code: 1` footer under otherwise
+  complete simulated command output. The `/command` route now defaults to
+  `reasoning_effort=low` with a tighter completion-token cap, so deterministic
+  `oc`/`kubectl`/`kql`/`geneva` output returns well inside the command timeout
+  instead of falling back to the degraded mock. Reasoning effort is now resolved
+  per route (internal retry override → `AI_REASONING_EFFORT_<ROUTE>` → code
+  default → global `AI_REASONING_EFFORT`).
+  ([#388](https://github.com/tuxerrante/SRESimulator/pull/388))
+
 ## [0.5.0] - 2026-08-23
 
 ### Added (0.5.0)

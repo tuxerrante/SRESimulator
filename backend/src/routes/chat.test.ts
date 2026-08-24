@@ -362,78 +362,10 @@ describe("chatRouter", () => {
     });
   });
 
-  it("rewrites slipped oc blocks to runnable kubectl blocks on AKS", async () => {
-    const aksScenario = {
-      id: "scenario_test_easy",
-      platform: "aks",
-      title: "Test Scenario",
-      difficulty: "easy",
-      description: "Test scenario description",
-      incidentTicket: {
-        id: "IcM-TEST",
-        severity: "Sev3",
-        title: "Ticket title",
-        description: "Ticket description",
-        customerImpact: "Low",
-        reportedTime: "2026-05-01T10:00:00.000Z",
-        clusterName: "cluster-test",
-        region: "eastus",
-      },
-      clusterContext: {
-        name: "cluster-test",
-        version: "1.31.2",
-        region: "eastus",
-        nodeCount: 3,
-        status: "Degraded",
-        recentEvents: [],
-        alerts: [],
-        upgradeHistory: [],
-      },
-    };
-    mocks.sessionGet.mockResolvedValue({
-      token: "session-123",
-      platform: "aks",
-      difficulty: "easy",
-      scenarioId: "scenario_test_easy",
-      scenarioTitle: "Test Scenario",
-      scenarioPayload: JSON.stringify(aksScenario),
-      startTime: Date.now(),
-      used: false,
-      trafficSource: "player",
-      identityKind: "anonymous",
-      githubUserId: null,
-      githubLogin: null,
-      anonymousClaimKey: null,
-      persistentScoreEligible: false,
-    });
-    // The oc fence is deliberately split across chunks to prove the AKS path
-    // buffers the whole response before rewriting.
-    mocks.streamAiText.mockImplementation(async function* () {
-      yield "Run this:\n```o";
-      yield "c\noc get pods\n";
-      yield "```\nDone.";
-    });
-
-    await withChatServer(async (url) => {
-      const response = await fetch(url, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(defaultChatBody()),
-      });
-
-      expect(response.status).toBe(200);
-      const body = await response.text();
-      expect(body).toContain(
-        `data: ${JSON.stringify({
-          text: "Run this:\n```kubectl\nkubectl get pods\n```\nDone.",
-        })}\n\n`,
-      );
-      expect(body).not.toContain("```oc");
-      expect(body).toContain("data: [DONE]\n\n");
-    });
-  });
-
-  it("streams ARO responses unchanged, leaving oc blocks intact", async () => {
+  it("streams responses chunk-by-chunk unchanged, leaving oc blocks intact", async () => {
+    // Every platform streams verbatim now — there is no AKS-only buffering or
+    // CLI rewrite. AKS kubectl-only correctness is enforced by the prompt,
+    // scoped KB, the frontend, and the `/command` route, not by mutating chunks.
     mocks.streamAiText.mockImplementation(async function* () {
       yield "```oc\n";
       yield "oc get nodes\n```";

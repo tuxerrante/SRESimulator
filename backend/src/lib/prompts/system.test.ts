@@ -240,19 +240,20 @@ describe("buildSystemPrompt", () => {
       expect(prompt).toContain("`kubectl get nodes`");
     });
 
-    it("restates the kubectl-only constraint AFTER the knowledge base", () => {
+    it("restates the kubectl-only reminder AFTER the knowledge base", () => {
       const prompt = aksPrompt();
       const kbIndex = prompt.indexOf("## Knowledge Base Reference");
-      const directiveIndex = prompt.indexOf("## FINAL AKS CLI CONSTRAINT");
+      const directiveIndex = prompt.indexOf("## AKS CLI reminder");
       expect(kbIndex).toBeGreaterThan(-1);
       expect(directiveIndex).toBeGreaterThan(kbIndex);
-      expect(prompt).toContain("map any `oc`/OpenShift example");
-      // No-equivalent guidance: the model must not invent a kubectl command.
+      expect(prompt).toContain("`kubectl` is the only valid cluster CLI");
+      expect(prompt).toContain("Never emit an `oc` command");
+      // No-equivalent guidance: the model must not invent a command.
       expect(prompt).toContain("no direct `kubectl` equivalent");
       expect(prompt).toContain("do NOT invent");
     });
 
-    it("does not emit the AKS final directive for ARO platforms", () => {
+    it("does not emit the AKS CLI reminder for ARO platforms", () => {
       const classicPrompt = buildSystemPrompt(
         "kb",
         makeScenario(),
@@ -265,8 +266,8 @@ describe("buildSystemPrompt", () => {
         "reading",
         getRuntimePlatformProfile("aro-hcp"),
       );
-      expect(classicPrompt).not.toContain("FINAL AKS CLI CONSTRAINT");
-      expect(hcpPrompt).not.toContain("FINAL AKS CLI CONSTRAINT");
+      expect(classicPrompt).not.toContain("AKS CLI reminder");
+      expect(hcpPrompt).not.toContain("AKS CLI reminder");
     });
   });
 
