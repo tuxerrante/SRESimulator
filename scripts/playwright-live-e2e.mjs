@@ -39,15 +39,22 @@ const platforms = [
       /\bARO\b/i,
       /\bOpenShift\b/i,
       // Match `oc <verb>` invocations (the wrong CLI on AKS) without tripping on
-      // prose like "oc is invalid on AKS". Anchored to an oc-subcommand allowlist
-      // that covers every `oc` verb used in the knowledge base / scenarios
-      // (adm, annotate, auth, create, debug, delete, describe, edit, exec, get,
-      // login, logs, new-app, patch, rsh, secrets) plus the common remainder.
-      // Allows optional global flags between `oc` and the verb, each optionally
-      // taking a value token, so `oc -n openshift-compliance patch ...` (a real
-      // KB pattern) is still caught. The value token cannot itself start with a
+      // prose like "oc is invalid on AKS". The primary catch for a slipped `oc`
+      // command is the rendered "OpenShift CLI (not valid for AKS)" block
+      // (`wrongBlocks` below), which the frontend labels for ANY `oc` fence; this
+      // matcher is the secondary net for an `oc` command mislabelled inside a
+      // `kubectl` fence (which `wrongBlocks` would miss). It is anchored to an
+      // oc-subcommand allowlist to stay prose-safe on a flaky-prone gate — an
+      // allowlist-independent `oc \w+` would flag prose such as "oc commands".
+      // The allowlist is kept exhaustive over the real `oc` verb set (every verb
+      // `kubectl`/`oc` share plus oc-only ones like rsh/new-app/adm), so
+      // unlisted-verb cases Copilot flagged (`oc run`, `oc rsync`, `oc extract`,
+      // `oc attach`, `oc cp`, `oc cordon`/`drain`, ...) are now covered. Allows
+      // optional global flags between `oc` and the verb, each optionally taking a
+      // value token, so `oc -n openshift-compliance patch ...` (a real KB
+      // pattern) is still caught. The value token cannot itself start with a
       // dash, which keeps the match from spanning unrelated prose.
-      /\boc(?:\s+-{1,2}[A-Za-z][\w-]*(?:=\S+|\s+[^\s-]\S*)?)*\s+(adm|annotate|api-resources|apply|auth|cluster-info|cp|create|debug|delete|describe|edit|events|exec|explain|expose|get|idle|import-image|label|login|logout|logs?|new-app|new-build|new-project|patch|policy|port-forward|process|project|projects|replace|rollout|rsh|scale|secrets|set|start-build|status|tag|top|version|wait|whoami)\b/i,
+      /\boc(?:\s+-{1,2}[A-Za-z][\w-]*(?:=\S+|\s+[^\s-]\S*)?)*\s+(adm|annotate|api-resources|api-versions|apply|attach|auth|autoscale|cluster-info|completion|config|cordon|cp|create|debug|delete|describe|diff|drain|edit|events|exec|explain|expose|extract|get|idle|image|import-image|kustomize|label|login|logout|logs?|new-app|new-build|new-project|observe|patch|plugin|policy|port-forward|process|project|projects|proxy|registry|replace|rollout|rsh|rsync|run|scale|secrets|set|start-build|status|tag|taint|top|uncordon|version|wait|whoami)\b/i,
     ],
   },
   {
@@ -391,13 +398,14 @@ async function runPlatform(browser, platform) {
     const wrongBlocks = page.getByText(
       new RegExp(`^${wrongLabel} \\(not valid for`),
     );
-    // On AKS the backend kubectl guard must rewrite any slipped `oc` block, so
-    // an "OpenShift CLI (not valid for AKS)" block must never reach the user.
-    // Count once to avoid extra DOM round-trips and races between reads.
+    // On AKS the prompt + platform-scoped, CLI-neutral knowledge base must keep
+    // the model on `kubectl`, so an "OpenShift CLI (not valid for AKS)" block
+    // must never reach the user. Count once to avoid extra DOM round-trips and
+    // races between reads.
     const wrongBlockCount = await wrongBlocks.count();
     if (platform.id === "aks" && wrongBlockCount > 0) {
       throw new Error(
-        `${platform.id} rendered a ${wrongLabel} block; the kubectl guard failed to rewrite a slipped oc command`,
+        `${platform.id} rendered a ${wrongLabel} block; the model slipped an oc command despite the kubectl-only prompt and scoped KB`,
       );
     }
     for (let index = 0; index < wrongBlockCount; index += 1) {

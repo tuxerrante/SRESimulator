@@ -194,27 +194,32 @@ probe, or `az cognitiveservices account list-models`) before changing it.
 
 Each platform has one valid cluster CLI (`kubectl` for AKS, `oc` for ARO
 Classic and ARO HCP). Because deployed models can carry an OpenShift/`oc`
-bias, the AKS constraint is enforced in depth:
+pretraining bias, the AKS constraint is enforced by keeping the model's context
+clean and then rejecting a mismatch at the edges:
 
-1. **Prompt (generation):** the AKS command guidance states `kubectl` is the
-   only valid CLI, and `buildSystemPrompt` restates a **Final AKS CLI
-   Constraint** *after* the knowledge base — so recency reinforces it. The
-   shared `knowledge_base/sre-investigation-techniques.md` is kept CLI-neutral
-   so it never contradicts the platform constraint. ARO prompts are unchanged.
-2. **Backend (execution):** for AKS the chat route buffers the response and
-   runs `enforceAksKubectl`, a deterministic CLI-scoping rewrite: it retags any
-   slipped `oc` code fence as `kubectl` and swaps the leading `oc` token of each
-   line for `kubectl` (with a special case mapping `oc adm top` → `kubectl top`).
-   It rescopes the CLI rather than semantically translating every command — the
-   few `oc`-only subcommands without a kubectl analogue are left best-effort. ARO
-   responses stream unchanged.
-3. **Backend (command run):** `/command` rejects a mismatched CLI with HTTP 409.
+1. **Scoped knowledge base:** the OpenShift-heavy files
+   (`Openshift-clusters-alerts-resolutions.md`, `Community-reported-issues.md`)
+   are listed only in the ARO Classic profile and are **never** loaded for an
+   AKS session (see `knowledgeFiles` in `backend/src/lib/platform-profiles.ts`).
+   The one shared file, `knowledge_base/sre-investigation-techniques.md`, is kept
+   CLI-neutral. An AKS session therefore receives a knowledge base with zero
+   `oc` occurrences — the bias comes from the model, not the context.
+2. **Prompt (generation):** the AKS command guidance states `kubectl` is the
+   only valid CLI, and `buildSystemPrompt` restates a short **AKS CLI reminder**
+   *after* the knowledge base so a late, high-recency instruction reinforces it.
+   ARO prompts are unchanged.
+3. **Backend (command run):** `/command` rejects a mismatched CLI type with
+   HTTP 409 via `isCommandTypeAllowedForPlatform` (e.g. an `oc` command on AKS),
+   and separately rejects a platform-incompatible *resource* (after the CLI type
+   is accepted) with HTTP 409 via `getCommandScopeViolation`
+   (`backend/src/routes/command.ts`).
 4. **Frontend (rendering):** a mismatched CLI block is labelled
-   `(not valid for <platform>)` and its **Run** button is omitted.
+   `(not valid for <platform>)` and its **Run** button is omitted, so a slipped
+   `oc` block is never runnable on AKS.
 
-Because the backend guard rewrites any slipped `oc` fence before the response is
-sent, a wrong-CLI block should not reach the AKS user. The live E2E gate guards
-against regressions by asserting the AKS user's rendered commands use `kubectl`
+There is intentionally no chunk-mutating backend rewrite: chat streams
+verbatim on every platform. The live E2E gate is the regression net — it fails
+the AKS run if the assistant emits any `oc` command or renders a wrong-CLI block
 (see `scripts/playwright-live-e2e.mjs`).
 
 ---
