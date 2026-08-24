@@ -354,6 +354,25 @@ describe("POST /api/command", () => {
     expect(generateAiTextMock.mock.calls[0]?.[0]?.maxTokens).toBe(8192);
   });
 
+  it("defaults the command token budget to 4096 when AI_MAX_COMMAND_TOKENS is unset", async () => {
+    enableLiveAiRuntime();
+    delete process.env.AI_MAX_COMMAND_TOKENS;
+    generateAiTextMock.mockResolvedValue("NAME   STATUS\nworker-0 Ready");
+
+    const app = createApp();
+    const res = await postJson(app, "/api/command", {
+      sessionToken: "session-123",
+      command: "oc get nodes",
+      type: "oc",
+      scenario: makeScenario(),
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body.exitCode).toBe(0);
+    expect(generateAiTextMock).toHaveBeenCalledTimes(1);
+    expect(generateAiTextMock.mock.calls[0]?.[0]?.maxTokens).toBe(4096);
+  });
+
   it("preserves recent command mutations in late-game history overflow", async () => {
     enableLiveAiRuntime();
     const longOutput = "x".repeat(780);

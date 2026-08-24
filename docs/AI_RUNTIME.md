@@ -62,10 +62,12 @@ Azure OpenAI o-series models (o1, o3, o4-mini, etc.) differ from GPT-series
 in two ways the runtime handles automatically:
 
 - **temperature** is omitted (these models only support the default value of 1).
-- **reasoning_effort** is sent (`low` / `medium` / `high`, configurable
-  via `AI_REASONING_EFFORT`, default `medium`). This parameter is also
-  sent to non-reasoning models when configured, as a forward-compatible
-  hint that the API silently ignores if unsupported.
+- **reasoning_effort** is sent (`low` / `medium` / `high`). The value is
+  resolved per route (see [Reasoning effort control](#reasoning-effort-control));
+  the global default is `medium` via `AI_REASONING_EFFORT`, but the `command`
+  route defaults to `low`. This parameter is also sent to non-reasoning models
+  when configured, as a forward-compatible hint that the API silently ignores
+  if unsupported.
 
 Detection is model-name based (`/^o\d/` or `/^gpt-5/`); no manual flag
 is needed.
@@ -74,9 +76,22 @@ is needed.
 
 Azure OpenAI reasoning models share `max_completion_tokens` between
 internal chain-of-thought and output text. The runtime sends
-`reasoning_effort` (default `"medium"`, configurable via
-`AI_REASONING_EFFORT`) to limit how many tokens the model spends
-reasoning, reserving budget for actual output.
+`reasoning_effort` to limit how many tokens the model spends reasoning,
+reserving budget for actual output.
+
+The effort is resolved with the following precedence (most specific first),
+in `resolveReasoningEffortSetting`:
+
+1. an internal retry override (reasoning-budget retry and model warmup use
+   `low`);
+2. the route-specific env var `AI_REASONING_EFFORT_<ROUTE>` (e.g.
+   `AI_REASONING_EFFORT_CHAT`, `AI_REASONING_EFFORT_COMMAND`,
+   `AI_REASONING_EFFORT_SCENARIO`);
+3. a code default of `low` for the **`command`** route — command simulation is
+   deterministic output formatting, not a reasoning task, so keeping it low
+   makes reasoning models return within `AI_COMMAND_TIMEOUT_MS` instead of
+   falling back to the degraded mock;
+4. the global `AI_REASONING_EFFORT` (default `medium`) for every other route.
 
 If the model exhausts its completion budget on reasoning
 (`finish_reason: "length"` with reasoning tokens but no output), the
@@ -475,7 +490,8 @@ prevention, rate-limit enforcement, and token-metrics recording.
 | Vertex | `CLOUD_ML_REGION`, `ANTHROPIC_VERTEX_PROJECT_ID`, `GOOGLE_APPLICATION_CREDENTIALS` |
 | Azure OpenAI | `AI_AZURE_OPENAI_ENDPOINT`, `AI_AZURE_OPENAI_API_KEY`, `AI_AZURE_OPENAI_DEPLOYMENT`, `AI_AZURE_OPENAI_API_VERSION` |
 | Per-route deployments | `AI_AZURE_OPENAI_DEPLOYMENT_CHAT`, `_COMMAND`, `_SCENARIO`, `_PROBE` |
-| Reasoning | `AI_REASONING_EFFORT` (`low` / `medium` / `high`) |
+| Reasoning | `AI_REASONING_EFFORT` (`low` / `medium` / `high`) global default; per-route `AI_REASONING_EFFORT_<ROUTE>` (e.g. `_CHAT`, `_COMMAND`, `_SCENARIO`) overrides it. The `command` route defaults to `low`. |
+| Token budgets | `AI_MAX_CHAT_TOKENS`, `AI_MAX_COMMAND_TOKENS` (default `4096`) |
 | Compaction tuning | `COMPACTION_TOKEN_BUDGET`, `COMPACTION_TAIL_MESSAGES` |
 | Rate limiting | `AI_RATE_LIMIT_WINDOW_MS`, `AI_RATE_LIMIT_MAX`, `AI_RATE_LIMIT_REDIS_URL` |
 | Production gates | `AI_LIVE_PROBE_TOKEN` |

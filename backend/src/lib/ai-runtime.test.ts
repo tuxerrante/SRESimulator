@@ -324,6 +324,24 @@ describe("ai-runtime reasoning_effort compatibility", () => {
     const body = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
     expect(body.reasoning_effort).toBe("high");
   });
+
+  it("lets AI_REASONING_EFFORT_CHAT override a conflicting global for the chat route", async () => {
+    process.env.AI_REASONING_EFFORT = "high";
+    process.env.AI_REASONING_EFFORT_CHAT = "low";
+
+    const fetchMock = vi.fn().mockResolvedValue(okResponse("ok"));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await generateAiText({
+      system: "You are helpful.",
+      messages: [{ role: "user", content: "hello" }],
+      maxTokens: 64,
+      route: "chat",
+    });
+
+    const body = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
+    expect(body.reasoning_effort).toBe("low");
+  });
 });
 
 function deploymentNotFoundResponse(): Response {
