@@ -190,7 +190,7 @@ jobs:
               knowledge_base/*)
                 e2e_exempt=false
                 ;;
-              *.md|*.mdx|docs/*|.gitignore|.gitattributes|LICENSE|LICENSE.*|.editorconfig)
+              *.md|*.mdx|docs/*|.gitignore|.gitattributes|LICENSE*|.editorconfig)
                 ;;
               *)
                 e2e_exempt=false
