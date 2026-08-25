@@ -17,7 +17,7 @@ resource "azurerm_cognitive_account" "openai" {
 }
 
 resource "azurerm_cognitive_deployment" "model" {
-  name                 = var.aoai_model_name
+  name                 = var.aoai_deployment_name
   cognitive_account_id = azurerm_cognitive_account.openai.id
 
   model {

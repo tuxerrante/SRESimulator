@@ -24,6 +24,10 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Fixed (0.5.1)
 
+- Separated the primary Azure OpenAI deployment alias from its backing model.
+  Existing environments can retain a stable alias such as `gpt-5.2` while
+  running `gpt-5.6-terra`, so future model changes no longer force an implicit
+  deployment rename.
 - Provisioned and wired a dedicated fast deployment for the command route so
   simulated `oc`/`kubectl`/`kql` output stops degrading to a mock ending in
   `Error: timeout` / `exit code: 1`. The earlier command-latency fix set the

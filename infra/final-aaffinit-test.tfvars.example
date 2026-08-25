@@ -15,8 +15,12 @@ cluster_flavor = "aks"
 # supported version for the region.
 # aks_kubernetes_version = ""
 
-# The selected model and region must support GlobalStandard.
-aoai_sku_name = "GlobalStandard"
+# Keep deployment alias and model explicit. The live alias remains gpt-5.2
+# until its resource-group deletion lock is deliberately removed for a rename.
+aoai_deployment_name = "gpt-5.2"
+aoai_model_name      = "gpt-5.6-terra"
+aoai_model_version   = "2026-07-09"
+aoai_sku_name        = "GlobalStandard"
 
 # Minimum-cost AKS sizing with node autoscaling.
 aks_node_vm_size   = "Standard_B2s"

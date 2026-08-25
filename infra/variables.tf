@@ -231,6 +231,12 @@ variable "aks_cert_manager_identity_name" {
   default     = ""
 }
 
+variable "aoai_deployment_name" {
+  description = "Deployment alias for the primary Azure OpenAI model. Kept distinct from the model name so existing aliases remain stable when the backing model changes."
+  type        = string
+  default     = "gpt-5.6-terra"
+}
+
 variable "aoai_model_name" {
   description = "Azure OpenAI model to deploy (must be available in the chosen region)."
   type        = string

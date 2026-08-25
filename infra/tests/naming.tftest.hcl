@@ -95,7 +95,26 @@ run "aoai_deployment_name" {
 
   assert {
     condition     = azurerm_cognitive_deployment.model.name == "gpt-5.6-terra"
-    error_message = "Azure OpenAI deployment name should match the model name variable."
+    error_message = "Azure OpenAI deployment should use the default deployment alias."
+  }
+}
+
+run "aoai_deployment_alias_differs_from_model" {
+  command = plan
+
+  variables {
+    aoai_deployment_name = "stable-primary"
+    aoai_model_name      = "gpt-5.6-terra"
+  }
+
+  assert {
+    condition     = azurerm_cognitive_deployment.model.name == "stable-primary"
+    error_message = "Primary deployment alias should be independent of the model name."
+  }
+
+  assert {
+    condition     = azurerm_cognitive_deployment.model.model[0].name == "gpt-5.6-terra"
+    error_message = "Changing the primary deployment alias must not change the model name."
   }
 }
 
