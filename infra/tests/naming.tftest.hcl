@@ -94,8 +94,27 @@ run "aoai_deployment_name" {
   command = plan
 
   assert {
-    condition     = azurerm_cognitive_deployment.model.name == "gpt-5.6-terra"
-    error_message = "Azure OpenAI deployment name should match the model name variable."
+    condition     = azurerm_cognitive_deployment.model.name == var.aoai_deployment_name
+    error_message = "Azure OpenAI deployment should use the default deployment alias."
+  }
+}
+
+run "aoai_deployment_alias_differs_from_model" {
+  command = plan
+
+  variables {
+    aoai_deployment_name = "stable-primary"
+    aoai_model_name      = "gpt-5.6-terra"
+  }
+
+  assert {
+    condition     = azurerm_cognitive_deployment.model.name == var.aoai_deployment_name
+    error_message = "Primary deployment alias should be independent of the model name."
+  }
+
+  assert {
+    condition     = azurerm_cognitive_deployment.model.model[0].name == var.aoai_model_name
+    error_message = "Changing the primary deployment alias must not change the model name."
   }
 }
 
@@ -103,12 +122,12 @@ run "aoai_command_deployment_name" {
   command = plan
 
   assert {
-    condition     = one(azurerm_cognitive_deployment.command[*].name) == "gpt-5-mini"
+    condition     = one(azurerm_cognitive_deployment.command[*].name) == var.aoai_command_deployment_name
     error_message = "Command-route deployment should default to the gpt-5-mini deployment name."
   }
 
   assert {
-    condition     = one(azurerm_cognitive_deployment.command[*].model[0].name) == "gpt-5-mini"
+    condition     = one(azurerm_cognitive_deployment.command[*].model[0].name) == var.aoai_command_model_name
     error_message = "Command-route deployment should default to the gpt-5-mini model."
   }
 }
@@ -122,12 +141,12 @@ run "aoai_command_alias_differs_from_model" {
   }
 
   assert {
-    condition     = one(azurerm_cognitive_deployment.command[*].name) == "command-fast"
+    condition     = one(azurerm_cognitive_deployment.command[*].name) == var.aoai_command_deployment_name
     error_message = "Command-route deployment alias should be independent of the model name."
   }
 
   assert {
-    condition     = one(azurerm_cognitive_deployment.command[*].model[0].name) == "gpt-5-mini"
+    condition     = one(azurerm_cognitive_deployment.command[*].model[0].name) == var.aoai_command_model_name
     error_message = "Changing the command-route deployment alias must not change the model name."
   }
 }

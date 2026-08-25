@@ -7,8 +7,27 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
-### Fixed (Unreleased)
+## [0.5.1] - 2026-08-25
 
+### Changed (0.5.1)
+
+- Made the mandatory live browser gate skip only when every changed file is
+  strictly allowlisted as inert documentation or repository metadata. Unknown
+  or runtime-relevant changes still fail safe to running `live-e2e`, reducing
+  unnecessary cluster use and approval prompts without weakening coverage.
+  ([#391](https://github.com/tuxerrante/SRESimulator/pull/391))
+- Updated `docker/setup-buildx-action` to 4.3.0 in CI workflows and
+  `gpt-tokenizer` to 4.0.0 in the backend, retaining the existing ESM import and
+  token-counting behavior.
+  ([#379](https://github.com/tuxerrante/SRESimulator/pull/379),
+  [#357](https://github.com/tuxerrante/SRESimulator/pull/357))
+
+### Fixed (0.5.1)
+
+- Separated the primary Azure OpenAI deployment alias from its backing model.
+  Existing environments can retain a stable alias such as `gpt-5.2` while
+  running `gpt-5.6-terra`, so future model changes no longer force an implicit
+  deployment rename.
 - Provisioned and wired a dedicated fast deployment for the command route so
   simulated `oc`/`kubectl`/`kql` output stops degrading to a mock ending in
   `Error: timeout` / `exit code: 1`. The earlier command-latency fix set the
@@ -24,7 +43,10 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   `ai.azureOpenai.routeDeployments.command`, and `make env-check` now warns when
   `AOAI_DEPLOYMENT_COMMAND` is unset (the previously silent fallback to the heavy
   model). See `docs/OPERATIONS.md` for the required two-step (Terraform apply +
-  deploy config) coupling.
+  deploy config) coupling. Publishing this release does not apply Terraform or
+  update deployment settings automatically; operators must complete both steps
+  before the runtime fix takes effect.
+  ([#392](https://github.com/tuxerrante/SRESimulator/pull/392))
 
 ## [0.5.0] - 2026-08-23
 

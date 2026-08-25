@@ -41,11 +41,13 @@ location    = "eastus"
 # NOTE: Terraform does not expand "~"; use an absolute path.
 # pull_secret_path = "/absolute/path/to/pull-secret.txt"
 
-# Azure OpenAI model (must be available in the selected region and SKU).
-# aoai_model_name    = "gpt-5.6-terra"
-# aoai_model_version = "2026-07-09"
-# aoai_sku_name      = "GlobalStandard"
-# aoai_capacity      = 80  # 80K TPM rate limit (pay-per-token, not per capacity)
+# Azure OpenAI deployment alias and model (the model must be available in the
+# selected region and SKU). Keep the alias stable when changing the model.
+# aoai_deployment_name = "gpt-5.6-terra"
+# aoai_model_name      = "gpt-5.6-terra"
+# aoai_model_version   = "2026-07-09"
+# aoai_sku_name        = "GlobalStandard"
+# aoai_capacity        = 80  # 80K TPM rate limit (pay-per-token, not per capacity)
 
 # Fast deployment for the command route (deterministic CLI/KQL output at
 # reasoning_effort=low). Wire the app to it via AOAI_DEPLOYMENT_COMMAND /
