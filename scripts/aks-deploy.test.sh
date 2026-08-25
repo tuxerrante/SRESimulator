@@ -2124,12 +2124,12 @@ run_e2e_image_cache_check() {
 run_workflow_buildx_cache_order_check() {
   local buildx_action
 
-  buildx_action="docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435"
+  buildx_action="docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e"
 
   assert_contains "$buildx_action" "$ROOT_DIR/.github/workflows/dependabot-e2e-build.yml"
   assert_contains "$buildx_action" "$ROOT_DIR/.github/workflows/helm-integration.yml"
-  assert_contains "# v3.11.1" "$ROOT_DIR/.github/workflows/dependabot-e2e-build.yml"
-  assert_contains "# v3.11.1" "$ROOT_DIR/.github/workflows/helm-integration.yml"
+  assert_contains "# v4.3.0" "$ROOT_DIR/.github/workflows/dependabot-e2e-build.yml"
+  assert_contains "# v4.3.0" "$ROOT_DIR/.github/workflows/helm-integration.yml"
   assert_contains "# v7.3.0" "$ROOT_DIR/.github/workflows/build-push.yml"
 
   # The trusted release publish must not consume any mutable cache that a
