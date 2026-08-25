@@ -270,6 +270,57 @@ variable "aoai_capacity" {
   }
 }
 
+# ---------------------------------------------------------------------------
+# Fast command-route deployment
+# ---------------------------------------------------------------------------
+# The command route only formats deterministic CLI/KQL output (reasoning_effort
+# =low in the app), so it runs on a small fast model instead of the heavy
+# chat/scenario model. Provisioning this deployment and wiring the app to it via
+# AOAI_DEPLOYMENT_COMMAND / AI_AZURE_OPENAI_DEPLOYMENT_COMMAND is what stops the
+# command route from falling back to the global deployment and exceeding the 12s
+# command timeout (which surfaces in-game as a degraded mock "Error: timeout").
+
+variable "enable_aoai_command_deployment" {
+  description = "Provision a dedicated fast deployment for the command route. Disable only in environments that intentionally run all routes on the single global deployment."
+  type        = bool
+  default     = true
+}
+
+variable "aoai_command_deployment_name" {
+  description = "Deployment (alias) name for the fast command route. Set AOAI_DEPLOYMENT_COMMAND / AI_AZURE_OPENAI_DEPLOYMENT_COMMAND to this value. Kept distinct from the model name because the deployment name and model can differ."
+  type        = string
+  default     = "gpt-5-mini"
+}
+
+variable "aoai_command_model_name" {
+  description = "Fast Azure OpenAI model for the command route (must be available in the chosen region). gpt-5-mini matches the validated local config; gpt-5.4-mini is a newer alternative."
+  type        = string
+  default     = "gpt-5-mini"
+}
+
+variable "aoai_command_model_version" {
+  description = "Model version for the command-route deployment."
+  type        = string
+  default     = "2025-08-07"
+}
+
+variable "aoai_command_sku_name" {
+  description = "SKU for the command-route deployment. Use a SKU supported by the selected model and region, such as GlobalStandard."
+  type        = string
+  default     = "GlobalStandard"
+}
+
+variable "aoai_command_capacity" {
+  description = "Rate limit for the command-route deployment in thousands of tokens per minute (K TPM). The command route is ~4K tokens/request at 1-2 req/min, so a modest cap is plenty. Cost is pay-per-token, not per capacity."
+  type        = number
+  default     = 50
+
+  validation {
+    condition     = var.aoai_command_capacity >= 1 && var.aoai_command_capacity <= 500
+    error_message = "aoai_command_capacity must be between 1 and 500 (K TPM)."
+  }
+}
+
 variable "vnet_address_space" {
   description = "Address space for the ARO virtual network (minimum /22)."
   type        = string

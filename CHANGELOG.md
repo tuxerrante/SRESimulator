@@ -5,6 +5,27 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed (Unreleased)
+
+- Provisioned and wired a dedicated fast deployment for the command route so
+  simulated `oc`/`kubectl`/`kql` output stops degrading to a mock ending in
+  `Error: timeout` / `exit code: 1`. The earlier command-latency fix set the
+  fast model only in local `backend/.env.local`. That file can feed a local
+  operator's `make prod-up` invocation, but GitHub Actions, Terraform, and an
+  already-deployed workload do not consume it, so the deployed command route
+  stayed on the heavy global model and kept exceeding the 12s command timeout.
+  `infra/ai.tf` now declares
+  `azurerm_cognitive_deployment.command` (default `gpt-5-mini`, via the new
+  `aoai_command_*` / `enable_aoai_command_deployment` variables), the Terraform
+  `env_file_snippet` output emits `AOAI_DEPLOYMENT_COMMAND` /
+  `AI_AZURE_OPENAI_DEPLOYMENT_COMMAND`, the Azure Foundry example values wire
+  `ai.azureOpenai.routeDeployments.command`, and `make env-check` now warns when
+  `AOAI_DEPLOYMENT_COMMAND` is unset (the previously silent fallback to the heavy
+  model). See `docs/OPERATIONS.md` for the required two-step (Terraform apply +
+  deploy config) coupling.
+
 ## [0.5.0] - 2026-08-23
 
 ### Added (0.5.0)

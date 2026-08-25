@@ -95,6 +95,25 @@ run "default_aoai_capacity" {
   }
 }
 
+run "default_aoai_command_deployment" {
+  command = plan
+
+  assert {
+    condition     = var.enable_aoai_command_deployment == true
+    error_message = "Command-route deployment should be provisioned by default."
+  }
+
+  assert {
+    condition     = var.aoai_command_capacity == 50
+    error_message = "Default command-route capacity should be 50 (50K TPM – ~4K tokens/request at 1-2 req/min)."
+  }
+
+  assert {
+    condition     = one(azurerm_cognitive_deployment.command[*].sku[0].capacity) == 50
+    error_message = "Command-route deployment SKU capacity should default to 50K TPM."
+  }
+}
+
 run "aoai_sku_is_s0" {
   command = plan
 

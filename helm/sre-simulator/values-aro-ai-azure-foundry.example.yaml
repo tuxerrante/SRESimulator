@@ -11,6 +11,15 @@ ai:
       existingSecretName: azure-openai-creds
       key: endpoint
     deployment: gpt-5.6-terra
+    routeDeployments:
+      # Fast, low-reasoning deployment for the command route (deterministic
+      # CLI/KQL output formatting). Must match the deployment name provisioned
+      # by infra/ai.tf (azurerm_cognitive_deployment.command /
+      # aoai_command_deployment_name). Without it the command route falls back
+      # to the heavy `deployment` above and times out into a degraded mock
+      # ("Error: timeout"). Note: `make prod-up` also honors the
+      # AOAI_DEPLOYMENT_COMMAND env var, which overrides this value.
+      command: gpt-5-mini
     # Reasoning-capable version for gpt-5.x (accepts reasoning_effort /
     # max_completion_tokens). Newest preview available on the ARO SRE tenant
     # (2025-05-01-preview and later return HTTP 404); validated with a live

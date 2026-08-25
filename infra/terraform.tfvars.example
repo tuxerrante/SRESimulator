@@ -47,6 +47,19 @@ location    = "eastus"
 # aoai_sku_name      = "GlobalStandard"
 # aoai_capacity      = 80  # 80K TPM rate limit (pay-per-token, not per capacity)
 
+# Fast deployment for the command route (deterministic CLI/KQL output at
+# reasoning_effort=low). Wire the app to it via AOAI_DEPLOYMENT_COMMAND /
+# AI_AZURE_OPENAI_DEPLOYMENT_COMMAND (see `terraform output env_file_snippet`).
+# Set enable_aoai_command_deployment = false to run all routes on the global
+# deployment (not recommended: the command route then times out into a degraded
+# mock). gpt-5.4-mini is a newer alternative to the gpt-5-mini default.
+# enable_aoai_command_deployment = true
+# aoai_command_deployment_name   = "gpt-5-mini"
+# aoai_command_model_name        = "gpt-5-mini"
+# aoai_command_model_version     = "2025-08-07"
+# aoai_command_sku_name          = "GlobalStandard"
+# aoai_command_capacity          = 50  # 50K TPM rate limit
+
 # Stable namespace for the app (shared cluster + AOAI with e2e namespaces)
 # prod_namespace = "sre-simulator"
 

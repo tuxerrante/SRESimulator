@@ -95,6 +95,11 @@ output "aoai_deployment_name" {
   value       = azurerm_cognitive_deployment.model.name
 }
 
+output "aoai_command_deployment_name" {
+  description = "Fast command-route deployment name (use as AOAI_DEPLOYMENT_COMMAND / AI_AZURE_OPENAI_DEPLOYMENT_COMMAND). Empty when enable_aoai_command_deployment = false."
+  value       = join("", azurerm_cognitive_deployment.command[*].name)
+}
+
 output "aoai_account_name" {
   description = "Azure OpenAI account name (for `az cognitiveservices account keys list`)."
   value       = azurerm_cognitive_account.openai.name
@@ -140,6 +145,8 @@ output "env_file_snippet" {
     AI_MODEL=${var.aoai_model_name}
     AI_AZURE_OPENAI_ENDPOINT=${azurerm_cognitive_account.openai.endpoint}
     AI_AZURE_OPENAI_DEPLOYMENT=${azurerm_cognitive_deployment.model.name}
+    AOAI_DEPLOYMENT_COMMAND=${join("", azurerm_cognitive_deployment.command[*].name)}
+    AI_AZURE_OPENAI_DEPLOYMENT_COMMAND=${join("", azurerm_cognitive_deployment.command[*].name)}
     AI_AZURE_OPENAI_API_VERSION=2025-04-01-preview
     AI_AZURE_OPENAI_API_KEY=<run: az cognitiveservices account keys list -g ${azurerm_resource_group.main.name} -n ${azurerm_cognitive_account.openai.name} --query key1 -o tsv>
     EOT

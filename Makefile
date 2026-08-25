@@ -539,9 +539,16 @@ env-check: ## Show source of required e2e vars (values hidden)
 	@echo "  AOAI_RG: $(call e2e_var_source,AOAI_RG)"
 	@echo "  AOAI_ACCOUNT: $(call e2e_var_source,AOAI_ACCOUNT)"
 	@echo "  AOAI_DEPLOYMENT: $(call e2e_var_source,AOAI_DEPLOYMENT)"
+	@echo "  AOAI_DEPLOYMENT_COMMAND: $(if $(strip $(AOAI_DEPLOYMENT_COMMAND)),set ($(call e2e_var_source,AOAI_DEPLOYMENT_COMMAND)),unset - command route falls back to AOAI_DEPLOYMENT)"
 	@echo "  PROD_NAMESPACE: $(call e2e_var_source,PROD_NAMESPACE)"
 	@echo "  DB_SECRET_NAME: $(if $(strip $(DB_SECRET_NAME)),set ($(call e2e_var_source,DB_SECRET_NAME)),unset - no DB secret copy or Helm DB mode)"
 	@echo "  DB_SECRET_SOURCE_NAMESPACE: $(if $(strip $(DB_SECRET_SOURCE_NAMESPACE)),set ($(call e2e_var_source,DB_SECRET_SOURCE_NAMESPACE)),unset - copy uses PROD_NAMESPACE when DB_SECRET_NAME is set)"
+	@if [ -z "$(strip $(AOAI_DEPLOYMENT_COMMAND))" ]; then \
+		echo "WARNING: AOAI_DEPLOYMENT_COMMAND is unset. The command route will run on the"; \
+		echo "         global AOAI_DEPLOYMENT (heavy model), which routinely exceeds the 12s"; \
+		echo "         command timeout and degrades to a mock response ending in 'Error: timeout'."; \
+		echo "         Set it to the fast command deployment (terraform -chdir=infra output -raw aoai_command_deployment_name)."; \
+	fi
 	@if [ -n "$(E2E_MISSING_VARS)" ]; then \
 		echo "Missing required e2e vars: $(E2E_MISSING_VARS)"; \
 		exit 1; \
