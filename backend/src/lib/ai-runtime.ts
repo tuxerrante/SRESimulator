@@ -50,6 +50,11 @@ export function warmupAiModel(route: AiRoute = "command"): void {
   lastWarmupTime = now;
   const readiness = getAiReadiness();
   if (readiness.mockMode) return;
+  // Keep-alive is worth a request only where it buys latency. Where it buys
+  // nothing and spends a shared daily budget instead, the warmup is the wrong
+  // trade: `/api/scenario` fires one on every catalog-served scenario, which
+  // is precisely the path that needs no model at all.
+  if (getProviderAdapter(readiness.provider).warmupCostsSharedQuota) return;
 
   generateAiText({
     system: "You are a keep-alive bot. Respond with 'ping'.",

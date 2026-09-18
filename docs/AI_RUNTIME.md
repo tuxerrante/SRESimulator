@@ -59,6 +59,16 @@ so `/api/ai/token-metrics` never names a model nothing called. When `AI_STRICT_S
 validation fails, the process exits immediately. `AI_MOCK_MODE=true` bypasses
 all live-provider requirements and returns deterministic fixtures.
 
+**The Helm chart cannot select this provider yet.** `backend-deployment.yaml`
+maps the generic `AI_PROVIDER` / `AI_MODEL` pair plus the Vertex and Azure
+settings, and nothing else: there is no `AI_OPENROUTER_API_KEY` secret key and
+no `AI_OPENROUTER_MODEL_*` configmap entry. Setting `ai.provider=openrouter` in
+a deployed release therefore produces a backend whose readiness is false with
+both required variables absent — a slow way to find out. Until the chart wiring
+lands alongside `values-oci.yaml`, OpenRouter is configured through the process
+environment: `make dev`, a local `.env.local`, or an explicitly patched
+deployment.
+
 ### Azure streaming
 
 For `streamAiText()`, the backend sends `stream: true` to Azure chat
@@ -418,6 +428,21 @@ Azure path still never reads one.
 `AiQuotaExhaustedError` subclasses `AiThrottledError` deliberately: every
 route that already handled a throttle keeps working unedited, and only the
 routes that want to tell the player *why* test for the subclass first.
+
+The mid-stream case is thrown rather than logged, even though text was already
+yielded and the HTTP 200 is long gone. Returning quietly there ends a capped
+stream with a bare `[DONE]`, which on the wire is indistinguishable from a
+complete answer; the chat route's catch is the only thing that writes the
+marker frame, and it already declines to substitute a mock over real text.
+Truncation the player can do nothing about still returns quietly.
+
+**Keep-alive warmups are skipped for OpenRouter.** `warmupAiModel` exists to
+pay down per-deployment cold-start latency, and `/api/scenario` fires one even
+when the scenario comes from the catalog. Against an account-wide daily budget
+that is the whole quota spent on requests no player ever sees, and it happens
+below the route middleware, so nothing counts it. The provider adapter carries
+`warmupCostsSharedQuota` and the warmup returns early; Vertex and Azure are
+unaffected.
 
 ### Degrading on an exhausted budget
 
