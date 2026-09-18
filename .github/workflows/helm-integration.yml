@@ -102,12 +102,13 @@ jobs:
       # `kubectl get pods` and `helm test`, whose pod talks to the Services by
       # their in-cluster names. The value only reaches rendered manifests.
       #
-      # Do not copy the host into a job that does run a browser. Only loopback
-      # and *.localhost are browser secure contexts, and outside one Chromium
-      # hides `crypto.randomUUID` and `crypto.subtle`, which `hooks/useChat.ts`
-      # and `lib/auth/fingerprint.ts` call unguarded. The symptom is brutal to
-      # diagnose: the suite times out with no 5xx, no failed request and no
-      # console error. That is why the browser gate in ci.yml uses
+      # Do not copy the host into a job that serves a browser over plain HTTP.
+      # Over HTTP only loopback and *.localhost are browser secure contexts --
+      # an HTTPS origin always is, whatever its hostname -- and outside a
+      # secure context Chromium hides `crypto.randomUUID` and `crypto.subtle`,
+      # which `hooks/useChat.ts` and `lib/auth/fingerprint.ts` call unguarded.
+      # The symptom is brutal to diagnose: the suite times out with no 5xx, no
+      # failed request and no console error. That is why the gate in ci.yml uses
       # `sre-simulator.localhost`.
       - name: Deploy chart with mock AI mode (publicService runtime)
         run: |
