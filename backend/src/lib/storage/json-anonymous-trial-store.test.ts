@@ -89,6 +89,12 @@ describe("JsonAnonymousTrialStore", () => {
     expect(results).toEqual(results.map(() => false));
   });
 
+  // The test above reproduces the original symptom. This one locks the
+  // property that removes it: a read must not create the file at all. Against
+  // the unfixed store it fails on the existsSync assertion and not with
+  // "Unexpected end of JSON input" -- a lone reader there seeds "[]" and then
+  // parses it happily. That difference is the point: no seeding write means no
+  // window in which another reader can observe a half-written file.
   it("reads an empty claim set before the backing file exists", async () => {
     const store = new JsonAnonymousTrialStore();
 
