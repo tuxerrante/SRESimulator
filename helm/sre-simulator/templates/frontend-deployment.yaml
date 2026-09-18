@@ -94,7 +94,7 @@ spec:
               value: {{ include "sre-simulator.boolString" .Values.frontend.auth.requireGithubCallbackMatch | quote }}
             - name: TRUST_PROXY_HEADERS
               value: {{ ternary "true" "false" .Values.frontend.trustProxyHeaders | quote }}
-            {{- with .Values.frontend.trustedClientIpHeader }}
+            {{- with .Values.frontend.trustedClientIpHeader | default "" | trim }}
             - name: TRUSTED_CLIENT_IP_HEADER
               value: {{ . | quote }}
             {{- end }}

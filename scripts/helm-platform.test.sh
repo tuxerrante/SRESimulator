@@ -413,4 +413,32 @@ fi
 grep -Eq 'replicas: 1' "${lb_no_db_render}" || \
   fail "Backend replicas must stay at the fixed replica count when database mode is disabled."
 
+# frontend.trustedClientIpHeader follows the chart's `| default "" | trim`
+# idiom. Without the trim, Go templates treat " " as a truthy string: the env
+# var renders with a whitespace value, the frontend trims it back to empty and
+# silently falls back to the Envoy default, so an operator's typo reads as a
+# working override. Whitespace must render nothing at all, and a padded value
+# must reach the container already trimmed.
+trusted_ip_blank_render="$(mktemp)"
+trusted_ip_padded_render="$(mktemp)"
+
+helm template sre-simulator "${CHART_DIR}" \
+  --set exposure.mode=route \
+  --set exposure.host=route.example.com \
+  --set-string frontend.trustedClientIpHeader="   " >"${trusted_ip_blank_render}"
+
+if grep -Fq 'TRUSTED_CLIENT_IP_HEADER' "${trusted_ip_blank_render}"; then
+  fail "A whitespace-only frontend.trustedClientIpHeader must render no env var."
+fi
+
+helm template sre-simulator "${CHART_DIR}" \
+  --set exposure.mode=route \
+  --set exposure.host=route.example.com \
+  --set-string frontend.trustedClientIpHeader="  x-real-ip  " >"${trusted_ip_padded_render}"
+
+grep -Fq 'value: "x-real-ip"' "${trusted_ip_padded_render}" || \
+  fail "frontend.trustedClientIpHeader must reach the container trimmed."
+
+rm -f "${trusted_ip_blank_render}" "${trusted_ip_padded_render}"
+
 echo "Helm platform rendering checks passed."
