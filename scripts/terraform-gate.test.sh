@@ -15,6 +15,10 @@
 #      and the oci-shape-e2e job must consume the same bytes; a private copy
 #      would green-light a Traefik config the box never runs.
 #
+# The same three properties are asserted for `oci-shape-e2e`, the companion
+# job that boots real k3s on a free arm64 runner and exercises the deployment
+# shape statically-checked Terraform cannot reach.
+#
 # shellcheck disable=SC2016
 # Every single-quoted string below is a literal to search for in another file,
 # not a shell expression: `${{ needs... }}`, `$(date +%F)` and `$(OWNER_ALIAS)`
@@ -69,11 +73,15 @@ job_block() {
 TERRAFORM_JOB="$(job_block terraform-validate)"
 [ -n "$TERRAFORM_JOB" ] || fail "terraform-validate job not found in $WORKFLOW"
 
+SHAPE_JOB="$(job_block oci-shape-e2e)"
+[ -n "$SHAPE_JOB" ] || fail "oci-shape-e2e job not found in $WORKFLOW"
+
 JOB_FILE="$(mktemp)"
 # Both temp files are declared here so the one trap names both. A trailing
 # `rm` after the last assertion would only run on a passing run, and the run
 # that leaks is the failing one -- which is exactly when someone is iterating.
 K8S_API_FILE="$(mktemp)"
+SHAPE_FILE="$(mktemp)"
 # Section 11 runs the make targets for real against a recording `terraform`
 # stub; both the stub directory and its log belong to the same trap.
 TERRAFORM_STUB_DIR="$(mktemp -d)"
@@ -82,9 +90,11 @@ TERRAFORM_ARGV_FILE="$(mktemp)"
 # *environment* rather than a command line, so the stub records that too.
 TERRAFORM_ENV_FILE="$(mktemp)"
 OCI_MAKE_DIR=""
-trap 'rm -f "$JOB_FILE" "$K8S_API_FILE" "$TERRAFORM_ARGV_FILE" "$TERRAFORM_ENV_FILE"; \
+trap 'rm -f "$JOB_FILE" "$K8S_API_FILE" "$SHAPE_FILE" "$TERRAFORM_ARGV_FILE" \
+      "$TERRAFORM_ENV_FILE"; \
       rm -rf "$TERRAFORM_STUB_DIR" ${OCI_MAKE_DIR:+"$OCI_MAKE_DIR"}' EXIT
 printf '%s\n' "$TERRAFORM_JOB" > "$JOB_FILE"
+printf '%s\n' "$SHAPE_JOB" > "$SHAPE_FILE"
 
 # --- 1. ci-gate must count the result -------------------------------------
 assert_contains "  terraform-validate:" "$WORKFLOW"
@@ -887,6 +897,41 @@ fi
 if ! grep -Fqx 'AWS_ACCESS_KEY_ID=ambient-access-key' "$TERRAFORM_ENV_FILE"; then
   fail "an ambient AWS_ACCESS_KEY_ID was clobbered when .oci-backend.env is absent"
 fi
+# --- 16. the oci-shape-e2e job --------------------------------------------
+# ci-gate must count it, for the same reason terraform-validate is counted.
+assert_contains "  oci-shape-e2e:" "$WORKFLOW"
+assert_contains "      - oci-shape-e2e" "$WORKFLOW"
+assert_contains 'OCI_SHAPE_RESULT: ${{ needs.oci-shape-e2e.result }}' \
+  "$WORKFLOW"
+assert_contains '"oci-shape-e2e:${OCI_SHAPE_RESULT}"' "$WORKFLOW"
+
+# Credential-free, like its sibling: it boots a throwaway cluster on the
+# runner itself and never talks to a cloud.
+assert_not_contains 'secrets.' "$SHAPE_FILE"
+assert_not_contains 'environment:' "$SHAPE_FILE"
+assert_not_contains 'azure/login' "$SHAPE_FILE"
+assert_not_contains 'terraform apply' "$SHAPE_FILE"
+
+# The runner must be the free arm64 image. The box is aarch64, and the point
+# of the job is to run the shape on the architecture that ships.
+assert_contains 'runs-on: ubuntu-24.04-arm' "$SHAPE_FILE"
+
+# The job must install the *shared* config, and must prove it did: the diff
+# is what stops a CI-only tweak from making a red job green.
+assert_contains 'SHARED_CONFIG: infra/oci/traefik-config.yaml' "$SHAPE_FILE"
+assert_contains 'diff -u' "$SHAPE_FILE"
+assert_contains \
+  '/var/lib/rancher/k3s/server/manifests/traefik-config.yaml' "$SHAPE_FILE"
+
+# k3s must be installed with the flags cloud-init renders, not retyped ones.
+assert_contains 'local.cloud_init' "$SHAPE_FILE"
+assert_contains '--disable=servicelb' "$SHAPE_FILE"
+
+# The four things only a running cluster can show.
+assert_contains 'hostNetwork' "$SHAPE_FILE"
+assert_contains 'X-Real-Ip' "$SHAPE_FILE"
+assert_contains 'permanent: true/permanent: false' "$SHAPE_FILE"
+assert_contains 'updateStrategy' "$SHAPE_FILE"
 
 # --- 16. the guards' own variables are not a command-line channel ---------
 # Every character check in infra/oci/Makefile works by subtracting a permitted
