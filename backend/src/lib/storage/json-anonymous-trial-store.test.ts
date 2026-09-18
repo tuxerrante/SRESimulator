@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { JsonAnonymousTrialStore } from "./json-anonymous-trial-store";
@@ -72,5 +73,26 @@ describe("JsonAnonymousTrialStore", () => {
         },
       ),
     ).rejects.toThrow(/Timed out waiting for anonymous trial lock/);
+  });
+
+  it("serves concurrent first-time readers without a partially written file", async () => {
+    // The store used to seed the file with a non-atomic writeFile whenever it
+    // was missing. Concurrent cold-start readers could observe the file after
+    // creation but before its bytes landed and fail with
+    // "Unexpected end of JSON input".
+    const stores = Array.from({ length: 24 }, () => new JsonAnonymousTrialStore());
+
+    const results = await Promise.all(
+      stores.map((store) => store.hasActiveClaim("cold-start")),
+    );
+
+    expect(results).toEqual(results.map(() => false));
+  });
+
+  it("reads an empty claim set before the backing file exists", async () => {
+    const store = new JsonAnonymousTrialStore();
+
+    await expect(store.hasActiveClaim("never-written")).resolves.toBe(false);
+    expect(existsSync(join(dataDir, "anonymous-trial-claims.json"))).toBe(false);
   });
 });
