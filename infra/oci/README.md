@@ -170,7 +170,7 @@ the TCP remote address *is* the client address. Every alternative (ServiceLB,
 
 ## TLS
 
-Traefik-native ACME via `certResolvers`, not cert-manager: cert-manager would
+Traefik-native ACME via `certificatesResolvers`, not cert-manager: cert-manager would
 add three Deployments plus CRDs to a 12 GB box, and the chart's existing
 cert-manager wiring is Gateway-API/Envoy-shaped and does not apply to an
 Ingress. Because the certificate never lands in a Kubernetes Secret,
@@ -179,8 +179,15 @@ explicitly.
 
 For a **first bring-up**, a Cloudflare Origin CA certificate (free, 15-year)
 with Cloudflare in Full (strict) mode is simpler than debugging ACME through
-the proxy. Switch to `certResolvers` afterwards if you want origin certificates
-that do not depend on Cloudflare.
+the proxy. Switch to `certificatesResolvers` afterwards if you want origin
+certificates that do not depend on Cloudflare.
+
+The key name matters. `certResolvers` was removed in Traefik chart v33.0.0 and
+its replacement, `certificatesResolvers`, maps straight onto Traefik's static
+configuration — so it carries an extra `acme:` level that the old key did not.
+Getting the key wrong fails the install outright; getting the nesting wrong is
+silent and the resolver simply never issues. Both are locked in
+`tests/traefik_config.tftest.hcl` and exercised for real by `oci-shape-e2e`.
 
 ## State backend
 
@@ -190,6 +197,9 @@ which sends `x-amz-checksum-*` headers that OCI's S3 shim rejects.
 
 The credentials are **Customer Secret Keys** (an access-key/secret pair
 generated once in the console), not the API signing key the provider uses.
+Terraform reads them from the environment as `AWS_ACCESS_KEY_ID` and
+`AWS_SECRET_ACCESS_KEY`; the Makefile exports both out of `.oci-backend.env`,
+but a bare `terraform init` run by hand has to export them itself.
 
 Worth stating plainly, because it partly defeats the purpose: this makes the
 free path depend on the OCI tenancy for its own state. Back it up —

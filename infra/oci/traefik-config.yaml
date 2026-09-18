@@ -110,9 +110,20 @@ spec:
             - name: data
               mountPath: /data
 
-    certResolvers:
+    # `certResolvers` was removed in chart v33.0.0 and, like `redirectTo`,
+    # is a hard install failure rather than a warning:
+    #
+    #   execution error at (traefik/templates/requirements.yaml:9:6):
+    #   ERROR: certResolvers setting has been removed. See v33.0.0 Changelog.
+    #
+    # Since cloud-init writes this manifest before k3s first starts, that
+    # failure would leave the box with no ingress at all. The replacement is
+    # `certificatesResolvers`, which maps straight onto Traefik's static
+    # configuration and therefore carries an extra `acme:` level.
+    certificatesResolvers:
       letsencrypt:
-        email: ACME_EMAIL_PLACEHOLDER
-        httpChallenge:
-          entryPoint: web
-        storage: /data/acme.json
+        acme:
+          email: ACME_EMAIL_PLACEHOLDER
+          httpChallenge:
+            entryPoint: web
+          storage: /data/acme.json

@@ -110,6 +110,26 @@ variable "vcn_cidr" {
     condition     = can(cidrhost(var.vcn_cidr, 0))
     error_message = "vcn_cidr must be a valid CIDR block."
   }
+
+  # The description above states the constraint; without this it is only a
+  # suggestion. An overlapping VCN makes host routing ambiguous against the
+  # cluster's own ranges, and the symptom is intermittent pod networking
+  # rather than anything that points back here.
+  #
+  # Terraform has no CIDR-overlap function and its comparison operators only
+  # accept numbers, so the test is done by masking: two prefixes overlap iff
+  # one's network address, re-masked to the other's prefix length, equals that
+  # other's network address. Checking both directions covers containment
+  # either way.
+  validation {
+    condition = can(cidrhost(var.vcn_cidr, 0)) && alltrue([
+      for reserved in ["10.42.0.0/16", "10.43.0.0/16"] : !(
+        cidrhost("${cidrhost(reserved, 0)}/${split("/", var.vcn_cidr)[1]}", 0) == cidrhost(var.vcn_cidr, 0) ||
+        cidrhost("${cidrhost(var.vcn_cidr, 0)}/${split("/", reserved)[1]}", 0) == cidrhost(reserved, 0)
+      )
+    ])
+    error_message = "vcn_cidr must not overlap the k3s pod range 10.42.0.0/16 or the service range 10.43.0.0/16."
+  }
 }
 
 variable "subnet_cidr" {
@@ -120,6 +140,17 @@ variable "subnet_cidr" {
   validation {
     condition     = can(cidrhost(var.subnet_cidr, 0))
     error_message = "subnet_cidr must be a valid CIDR block."
+  }
+
+  # Containment, rather than a second overlap test: a subnet inside the VCN
+  # inherits the VCN's non-overlap guarantee, and a subnet outside it is a
+  # mistake OCI would reject later with a far less specific message.
+  validation {
+    condition = can(cidrhost(var.subnet_cidr, 0)) && can(cidrhost(var.vcn_cidr, 0)) && (
+      tonumber(split("/", var.subnet_cidr)[1]) >= tonumber(split("/", var.vcn_cidr)[1]) &&
+      cidrhost("${cidrhost(var.subnet_cidr, 0)}/${split("/", var.vcn_cidr)[1]}", 0) == cidrhost(var.vcn_cidr, 0)
+    )
+    error_message = "subnet_cidr must be contained within vcn_cidr."
   }
 }
 
@@ -136,9 +167,14 @@ variable "ssh_allowed_cidrs" {
   default     = []
 
   # Cross-variable validation, hence required_version >= 1.9.
+  #
+  # Both world CIDRs are listed. The NSG rules are built with a plain
+  # for_each over this list and source_type = "CIDR_BLOCK", which accepts
+  # either family, so an IPv4-only guard is one `enable_ipv6 = true` away
+  # from being no guard at all.
   validation {
-    condition     = !contains(var.ssh_allowed_cidrs, "0.0.0.0/0") || var.allow_ssh_from_anywhere
-    error_message = "Opening SSH to 0.0.0.0/0 requires setting allow_ssh_from_anywhere = true. Brute-force traffic against 22 is the dominant background noise on any public IP."
+    condition     = length(setintersection(toset(var.ssh_allowed_cidrs), toset(["0.0.0.0/0", "::/0"]))) == 0 || var.allow_ssh_from_anywhere
+    error_message = "Opening SSH to 0.0.0.0/0 or ::/0 requires setting allow_ssh_from_anywhere = true. Brute-force traffic against 22 is the dominant background noise on any public IP."
   }
 }
 
@@ -161,8 +197,8 @@ variable "k8s_api_allowed_cidrs" {
   default     = []
 
   validation {
-    condition     = !contains(var.k8s_api_allowed_cidrs, "0.0.0.0/0")
-    error_message = "Refusing to expose the Kubernetes API to 0.0.0.0/0. Use an SSH tunnel instead."
+    condition     = length(setintersection(toset(var.k8s_api_allowed_cidrs), toset(["0.0.0.0/0", "::/0"]))) == 0
+    error_message = "Refusing to expose the Kubernetes API to 0.0.0.0/0 or ::/0. Use an SSH tunnel instead."
   }
 }
 

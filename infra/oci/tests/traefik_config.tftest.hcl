@@ -49,10 +49,11 @@ variables {
 # ---------------------------------------------------------------------------
 # Regression lock on traefik-config.yaml.
 #
-# Three bugs were found by running this exact shape on a real aarch64 k3s VM
-# before any cloud instance existed. Each one is silent in a different way, so
-# each gets an assertion here as well as coverage in the oci-shape-e2e CI job.
-# These run in milliseconds and need no cluster.
+# Four bugs were found by running this exact shape on real k3s -- three on an
+# aarch64 VM before any cloud instance existed, the fourth on the oci-shape-e2e
+# CI runner. Each one is silent in a different way, so each gets an assertion
+# here as well as coverage in that job. These run in milliseconds and need no
+# cluster.
 # ---------------------------------------------------------------------------
 
 run "redirect_uses_v34_syntax" {
@@ -99,6 +100,37 @@ run "host_network_shape_is_intact" {
   assert {
     condition     = strcontains(local.traefik_config_rendered, "enabled: false")
     error_message = "The Traefik Service must be disabled; with hostNetwork it is dead weight that reintroduces NAT."
+  }
+}
+
+run "cert_resolver_uses_the_v33_key_and_nesting" {
+  command = plan
+
+  # Found by the oci-shape-e2e job, not by reading: certResolvers was removed
+  # in chart v33.0.0 with the same `fail` treatment as redirectTo, so it is
+  # the same class of bug -- cloud-init writes the manifest before k3s first
+  # starts, and the box comes up with no ingress at all.
+  assert {
+    condition     = !can(regex("(?m)^[[:space:]]*certResolvers:", local.traefik_config_rendered))
+    error_message = "certResolvers was removed in Traefik chart v33.0.0 and is a hard install failure; use certificatesResolvers."
+  }
+
+  # The replacement is not a rename. certificatesResolvers maps straight onto
+  # Traefik's static configuration, which carries an extra acme: level, and
+  # getting that wrong is silent: the resolver simply never issues.
+  assert {
+    condition     = yamldecode(local.traefik_config_rendered).spec != null
+    error_message = "The rendered manifest must parse as YAML."
+  }
+
+  assert {
+    condition     = yamldecode(yamldecode(local.traefik_config_rendered).spec.valuesContent).certificatesResolvers.letsencrypt.acme.httpChallenge.entryPoint == "web"
+    error_message = "certificatesResolvers requires an acme: level; without it the HTTP-01 challenge is never configured."
+  }
+
+  assert {
+    condition     = yamldecode(yamldecode(local.traefik_config_rendered).spec.valuesContent).certificatesResolvers.letsencrypt.acme.storage == "/data/acme.json"
+    error_message = "ACME storage must sit on the persistent volume or every Traefik restart re-issues and hits Let's Encrypt rate limits."
   }
 }
 
