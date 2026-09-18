@@ -94,6 +94,10 @@ spec:
               value: {{ include "sre-simulator.boolString" .Values.frontend.auth.requireGithubCallbackMatch | quote }}
             - name: TRUST_PROXY_HEADERS
               value: {{ ternary "true" "false" .Values.frontend.trustProxyHeaders | quote }}
+            {{- with .Values.frontend.trustedClientIpHeader }}
+            - name: TRUSTED_CLIENT_IP_HEADER
+              value: {{ . | quote }}
+            {{- end }}
             - name: TURNSTILE_TEST_MODE
               value: {{ include "sre-simulator.boolString" .Values.backend.auth.turnstileTestMode | quote }}
             - name: LOCAL_TEST_VERIFICATION_ENABLED
