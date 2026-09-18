@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   queryKnowledgeSections: vi.fn(),
   buildSystemPrompt: vi.fn(),
   getAiReadiness: vi.fn(),
+  shouldDegradeOnQuotaExhausted: vi.fn(),
   generateMockChatResponse: vi.fn(),
   streamAiText: vi.fn(),
   compactHistory: vi.fn(),
@@ -28,6 +29,7 @@ vi.mock("../lib/prompts/system", () => ({
 
 vi.mock("../lib/ai-config", () => ({
   getAiReadiness: mocks.getAiReadiness,
+  shouldDegradeOnQuotaExhausted: mocks.shouldDegradeOnQuotaExhausted,
 }));
 
 vi.mock("../lib/mock-ai", () => ({
@@ -55,7 +57,7 @@ vi.mock("../lib/storage", () => ({
   getSessionStore: mocks.getSessionStore,
 }));
 
-import { AiReasoningRetryEvent } from "../lib/ai-runtime";
+import { AiQuotaExhaustedError, AiReasoningRetryEvent } from "../lib/ai-runtime";
 import { aiRateLimit } from "../lib/rate-limit";
 import { chatRouter } from "./chat";
 
@@ -193,6 +195,7 @@ describe("chatRouter", () => {
 
     vi.clearAllMocks();
     mocks.getAiReadiness.mockReturnValue({ ready: true, mockMode: false });
+    mocks.shouldDegradeOnQuotaExhausted.mockReturnValue(true);
     mocks.loadKnowledgeSections.mockResolvedValue([]);
     mocks.queryKnowledgeSections.mockReturnValue("");
     mocks.buildSystemPrompt.mockReturnValue("system prompt");
@@ -500,6 +503,70 @@ describe("chatRouter", () => {
       await expect(response.json()).resolves.toEqual({
         error: "Session scenario context is unavailable",
       });
+    });
+  });
+
+  it("answers an exhausted budget in SSE frames, because the 200 is already sent", async () => {
+    mocks.generateMockChatResponse.mockReturnValue("simulated mentor reply");
+    // Yields nothing on purpose: this is the case where the budget is spent
+    // before the model produced a single chunk.
+    // eslint-disable-next-line require-yield
+    mocks.streamAiText.mockImplementation(async function* () {
+      throw new AiQuotaExhaustedError("daily", "The shared budget is spent.");
+    });
+
+    await withChatServer(async (url) => {
+      const response = await fetch(url, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(defaultChatBody()),
+      });
+
+      expect(response.status).toBe(200);
+      const body = await response.text();
+      expect(body).toContain('data: {"text":"simulated mentor reply"}');
+      expect(body).toContain('data: {"degraded":true,"degradedReason":"quota_exhausted"}');
+      expect(body).toContain("data: [DONE]");
+      expect(body).not.toContain('"error"');
+    });
+  });
+
+  it("keeps a partial answer and does not substitute a simulated one over it", async () => {
+    mocks.generateMockChatResponse.mockReturnValue("simulated mentor reply");
+    mocks.streamAiText.mockImplementation(async function* () {
+      yield "the first half of a real answer";
+      throw new AiQuotaExhaustedError("daily", "The shared budget is spent.");
+    });
+
+    await withChatServer(async (url) => {
+      const response = await fetch(url, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(defaultChatBody()),
+      });
+
+      const body = await response.text();
+      expect(body).toContain('data: {"text":"the first half of a real answer"}');
+      expect(body).not.toContain("simulated mentor reply");
+      expect(body).toContain('data: {"degraded":true,"degradedReason":"quota_exhausted"}');
+    });
+  });
+
+  it("reports the stream failure normally when degradation is switched off", async () => {
+    mocks.shouldDegradeOnQuotaExhausted.mockReturnValue(false);
+    // eslint-disable-next-line require-yield
+    mocks.streamAiText.mockImplementation(async function* () {
+      throw new AiQuotaExhaustedError("credits", "The shared account is out of credit.");
+    });
+
+    await withChatServer(async (url) => {
+      const response = await fetch(url, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(defaultChatBody()),
+      });
+
+      await expect(response.text()).resolves.toContain('data: {"error":"Chat stream failed"}');
     });
   });
 });

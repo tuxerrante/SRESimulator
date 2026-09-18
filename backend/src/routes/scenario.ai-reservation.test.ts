@@ -21,17 +21,33 @@ vi.mock("../lib/ai-config", () => ({
   getAiReadiness() {
     return { mockMode: false, ready: true, reasons: [] };
   },
+  shouldDegradeOnQuotaExhausted: () => true,
 }));
 
 vi.mock("../lib/knowledge", () => ({
   loadKnowledgeBase: vi.fn().mockResolvedValue(""),
 }));
 
-vi.mock("../lib/ai-runtime", () => ({
-  AiThrottledError: class AiThrottledError extends Error {},
-  generateAiText: generateAiTextMock,
-  warmupAiModel: warmupAiModelMock,
-}));
+vi.mock("../lib/ai-runtime", () => {
+  // The subclass relationship is the contract every catch site relies on:
+  // an exhausted budget must keep behaving like a throttle unless a branch
+  // explicitly asks for the narrower type.
+  class AiThrottledError extends Error {}
+  class AiQuotaExhaustedError extends AiThrottledError {
+    constructor(
+      readonly scope: "daily" | "credits",
+      message: string,
+    ) {
+      super(message);
+    }
+  }
+  return {
+    AiThrottledError,
+    AiQuotaExhaustedError,
+    generateAiText: generateAiTextMock,
+    warmupAiModel: warmupAiModelMock,
+  };
+});
 
 vi.mock("../lib/telemetry/capture", () => ({
   captureBackendRouteError: captureBackendRouteErrorMock,
@@ -309,6 +325,34 @@ describe("scenario reservation before AI generation", () => {
     expect(
       (response.body.scenario as Record<string, unknown>).platform,
     ).toBe("aro-classic");
+  });
+
+  it("names an exhausted budget apart from an ordinary throttle in the fallback", async () => {
+    const { AiQuotaExhaustedError } = await import("../lib/ai-runtime");
+    generateAiTextMock.mockRejectedValueOnce(
+      new AiQuotaExhaustedError("daily", "The shared budget is spent."),
+    );
+
+    const storageModule = await import("../lib/storage");
+    await storageModule.initStorage();
+    const scenarioModule = await import("./scenario");
+    const app = createApp(scenarioModule.scenarioRouter);
+    const headers = {
+      cookie: createAnonymousProofCookie("fp_quota_fallback"),
+      "user-agent": anonymousUserAgent,
+      ...createSignedClientIpHeaders("203.0.113.46"),
+    };
+
+    const response = await postJson(
+      app,
+      "/api/scenario",
+      { platform: "aro-classic", difficulty: "easy", turnstileToken: "pass" },
+      headers,
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.body.mode).toBe("degraded");
+    expect(response.body.degradedReason).toBe("quota_exhausted");
   });
 
   it("uses the catalog fallback when AI returns schema-invalid JSON", async () => {

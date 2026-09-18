@@ -31,16 +31,31 @@ are expected to run with Azure SQL rather than the JSON fallback:
 
 ## Provider Abstraction
 
-The runtime supports two providers behind a single interface
-(`backend/src/lib/ai-runtime.ts`):
+The runtime supports three providers behind a single interface
+(`backend/src/lib/ai-runtime.ts`, which delegates to
+`backend/src/lib/ai-providers/`):
 
 | Provider | SDK / transport | Streaming |
 | -------------- | ---------------------------------- | ------------------------------------ |
 | **Vertex AI** | `@anthropic-ai/vertex-sdk` (Claude) | Native token-by-token via SDK |
 | **Azure OpenAI** | REST `fetch` to chat completions | True incremental streaming via SSE chunks |
+| **OpenRouter** | REST `fetch` to chat completions | True incremental streaming via SSE chunks |
 
-`ai-config.ts` resolves the active provider from `AI_PROVIDER` and validates
-credentials at startup. When `AI_STRICT_STARTUP` is true (default) and
+Azure OpenAI and OpenRouter share one transport
+(`ai-providers/openai-compatible.ts`). Each contributes only a per-request
+descriptor naming its URL, auth header, model field, token-budget field, and
+which optional parameters it accepts: OpenRouter sends `model` and
+`max_tokens` and neither `reasoning_effort` nor `prompt_cache_key`, while
+Azure keeps the deployment in the URL, `max_completion_tokens`, and its
+deployment-not-found fallback. The Azure request shape is unchanged by the
+extraction.
+
+`ai-config.ts` resolves the active provider from `AI_PROVIDER` (`openrouter`,
+with `open-router` and `open_router` accepted as aliases the way `azure` is)
+and validates credentials at startup. OpenRouter readiness requires both
+`AI_OPENROUTER_API_KEY` and `AI_OPENROUTER_MODEL`, and `AI_OPENROUTER_MODEL`
+takes precedence over any `AI_MODEL` a previous Azure deployment left behind,
+so `/api/ai/token-metrics` never names a model nothing called. When `AI_STRICT_STARTUP` is true (default) and
 validation fails, the process exits immediately. `AI_MOCK_MODE=true` bypasses
 all live-provider requirements and returns deterministic fixtures.
 
@@ -128,6 +143,24 @@ Deployments are **pre-provisioned** in Azure (via Terraform or portal).
 The app never creates or modifies Azure resources at runtime. Separate
 deployments give you independent TPM rate-limit pools, reducing the risk
 that heavy chat usage throttles command execution.
+
+### OpenRouter per-route models
+
+OpenRouter resolves a model slug per route with the same shape and one extra
+rung:
+
+1. Route-specific env var (e.g. `AI_OPENROUTER_MODEL_CHAT`)
+2. For `scenario` and `probe` only, `AI_OPENROUTER_MODEL_COMMAND`
+3. Global fallback (`AI_OPENROUTER_MODEL`)
+
+Scenario and probe fall through to the command model because all three are
+one-shot, non-conversational calls drawing on a single shared free-tier
+budget; curating four slugs out of a catalogue that churns would buy nothing.
+An explicit `AI_OPENROUTER_MODEL_SCENARIO` / `_PROBE` still wins.
+
+Unlike Azure deployments there are no independent rate-limit pools to win
+here: the free tier is capped per account, not per model, which is what
+motivates the quota handling below.
 
 ---
 
@@ -365,6 +398,49 @@ and jitter (up to 3 attempts), respecting the `Retry-After` header. If all
 retries are exhausted, the client receives a 429 with a user-friendly
 message.
 
+### OpenRouter quota exhaustion
+
+OpenRouter reports two failures the caller cannot wait out inside one request.
+They must not enter the backoff loop above: retrying a cap that resets
+tomorrow burns the whole 12-second command budget before the route can answer.
+
+| Signal | Classified as | Retried |
+| --------------------------------- | ----------------------------------- | ------------------------------- |
+| HTTP 402 | `AiQuotaExhaustedError("credits")` | no |
+| HTTP 429 naming a per-day cap | `AiQuotaExhaustedError("daily")` | no |
+| HTTP 429 otherwise (the per-minute cap) | `AiThrottledError` | yes, honouring `Retry-After` |
+| `finish_reason: "error"` mid-stream naming a cap | `AiQuotaExhaustedError` | no — HTTP 200 is already sent |
+
+Classifying a 429 means reading its body, which the retry path does not
+otherwise need, so it is opt-in per provider (`inspectThrottleBody`) and the
+Azure path still never reads one.
+
+`AiQuotaExhaustedError` subclasses `AiThrottledError` deliberately: every
+route that already handled a throttle keeps working unedited, and only the
+routes that want to tell the player *why* test for the subclass first.
+
+### Degrading on an exhausted budget
+
+With `AI_DEGRADE_ON_QUOTA_EXHAUSTED=true` (the default) a spent budget is
+answered at HTTP 200 with simulated output, because a hard error for the rest
+of the day reads as an outage rather than as a limit:
+
+| Route | Degraded response |
+| ------------- | ----------------------------------------------------------------- |
+| `/api/scenario` | curated catalog scenario with `degradedReason: "quota_exhausted"` |
+| `/api/command` | mock command output with `degradedReason: "quota_exhausted"` |
+| `/api/chat` | mock SSE text frames, then `{"degraded":true,"degradedReason":"quota_exhausted"}` before `[DONE]` |
+
+The chat route substitutes nothing if the model already streamed text: the
+player keeps the partial answer and only the marker frame is appended. The
+frontend SSE reader ignores frames it does not recognise, so the marker is
+inert until a banner consumes it.
+
+Setting `AI_DEGRADE_ON_QUOTA_EXHAUSTED=false` restores the pre-OpenRouter
+behaviour on all three routes, down to the reason label: an exhausted budget
+is then an `AiThrottledError` like any other and each route answers it exactly
+as it did before.
+
 ### AOAI capacity sizing
 
 The `aoai_capacity` Terraform variable (default 80K TPM) controls the
@@ -495,6 +571,9 @@ prevention, rate-limit enforcement, and token-metrics recording.
 | Vertex | `CLOUD_ML_REGION`, `ANTHROPIC_VERTEX_PROJECT_ID`, `GOOGLE_APPLICATION_CREDENTIALS` |
 | Azure OpenAI | `AI_AZURE_OPENAI_ENDPOINT`, `AI_AZURE_OPENAI_API_KEY`, `AI_AZURE_OPENAI_DEPLOYMENT`, `AI_AZURE_OPENAI_API_VERSION` |
 | Per-route deployments | `AI_AZURE_OPENAI_DEPLOYMENT_CHAT`, `_COMMAND`, `_SCENARIO`, `_PROBE` |
+| OpenRouter | `AI_OPENROUTER_API_KEY`, `AI_OPENROUTER_MODEL`, `AI_OPENROUTER_BASE_URL` (default `https://openrouter.ai/api/v1`), `AI_OPENROUTER_SITE_URL`, `AI_OPENROUTER_APP_TITLE` |
+| Per-route models | `AI_OPENROUTER_MODEL_CHAT`, `_COMMAND`, `_SCENARIO`, `_PROBE` |
+| Quota degradation | `AI_DEGRADE_ON_QUOTA_EXHAUSTED` (default `true`) |
 | Reasoning | `AI_REASONING_EFFORT` (`low` / `medium` / `high`) global default; per-route `AI_REASONING_EFFORT_<ROUTE>` (e.g. `_CHAT`, `_COMMAND`, `_SCENARIO`) overrides it. The `command` route defaults to `low`. |
 | Token budgets | `AI_MAX_CHAT_TOKENS` (default `16384`), `AI_MAX_COMMAND_TOKENS` (default `8192`) |
 | Compaction tuning | `COMPACTION_TOKEN_BUDGET`, `COMPACTION_TAIL_MESSAGES` |

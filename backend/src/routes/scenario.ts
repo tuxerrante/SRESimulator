@@ -6,9 +6,14 @@ import {
   getPlayerStore,
   getSessionStore,
 } from "../lib/storage";
-import { getAiReadiness } from "../lib/ai-config";
+import { getAiReadiness, shouldDegradeOnQuotaExhausted } from "../lib/ai-config";
 import { generateMockScenario } from "../lib/mock-ai";
-import { generateAiText, AiThrottledError, warmupAiModel } from "../lib/ai-runtime";
+import {
+  generateAiText,
+  AiQuotaExhaustedError,
+  AiThrottledError,
+  warmupAiModel,
+} from "../lib/ai-runtime";
 import {
   getCatalogScenario,
   isCatalogScenarioSource,
@@ -653,7 +658,11 @@ scenarioRouter.post("/", async (req: Request, res: Response) => {
     };
 
     const respondWithCatalogFallback = async (
-      degradedReason: "timeout" | "throttled" | "invalid_payload",
+      degradedReason:
+        | "timeout"
+        | "throttled"
+        | "quota_exhausted"
+        | "invalid_payload",
       error: unknown,
     ): Promise<void> => {
       captureBackendRouteError(req, error);
@@ -803,10 +812,17 @@ scenarioRouter.post("/", async (req: Request, res: Response) => {
         error instanceof ScenarioGenerationTimeoutError ||
         error instanceof AiThrottledError
       ) {
+        // A spent budget already degraded here, because AiQuotaExhaustedError
+        // is an AiThrottledError. Naming it separately is what lets the player
+        // be told the difference between "retry in a moment" and "simulated
+        // until the budget resets".
         const degradedReason =
           error instanceof ScenarioGenerationTimeoutError
             ? "timeout"
-            : "throttled";
+            : error instanceof AiQuotaExhaustedError &&
+                shouldDegradeOnQuotaExhausted()
+              ? "quota_exhausted"
+              : "throttled";
         await respondWithCatalogFallback(degradedReason, error);
         return;
       }

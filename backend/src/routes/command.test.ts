@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   captureBackendRouteError: vi.fn(),
   getAiReadiness: vi.fn(),
+  shouldDegradeOnQuotaExhausted: vi.fn(),
   generateMockCommandOutput: vi.fn(),
   generateAiText: vi.fn(),
   buildScenarioContext: vi.fn(),
@@ -18,6 +19,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("../lib/ai-config", () => ({
   getAiReadiness: mocks.getAiReadiness,
+  shouldDegradeOnQuotaExhausted: mocks.shouldDegradeOnQuotaExhausted,
 }));
 
 vi.mock("../lib/mock-ai", () => ({
@@ -51,6 +53,7 @@ vi.mock("../lib/storage", () => ({
 }));
 
 import { aiRateLimit } from "../lib/rate-limit";
+import { AiQuotaExhaustedError, AiThrottledError } from "../lib/ai-runtime";
 import { commandRouter } from "./command";
 
 async function close(server: Server): Promise<void> {
@@ -97,6 +100,7 @@ describe("commandRouter", () => {
     };
     vi.clearAllMocks();
     mocks.getAiReadiness.mockReturnValue({ ready: true, mockMode: false });
+    mocks.shouldDegradeOnQuotaExhausted.mockReturnValue(true);
     mocks.buildScenarioContext.mockReturnValue("scenario context");
     mocks.buildSimNow.mockReturnValue("sim now");
     mocks.buildCommandSystemPrompt.mockReturnValue("system prompt");
@@ -251,6 +255,75 @@ describe("commandRouter", () => {
     } finally {
       await close(server);
     }
+  });
+
+  async function postCommand(): Promise<Response> {
+    const app = express();
+    app.use(express.json());
+    app.use("/api/command", commandRouter);
+    const server = await new Promise<Server>((resolve) => {
+      const listeningServer = app.listen(0, "127.0.0.1", () => resolve(listeningServer));
+    });
+
+    try {
+      const { port } = server.address() as AddressInfo;
+      return await fetch(`http://127.0.0.1:${port}/api/command`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          sessionToken: "session-123",
+          command: "oc get pods",
+          type: "oc",
+          scenario: null,
+          commandHistory: [],
+        }),
+      });
+    } finally {
+      await close(server);
+    }
+  }
+
+  it("returns simulated output instead of 429 when the AI budget is exhausted", async () => {
+    mocks.generateAiText.mockRejectedValue(
+      new AiQuotaExhaustedError("daily", "The shared budget is spent."),
+    );
+
+    const response = await postCommand();
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      output: "fallback output\nError: quota_exhausted",
+      exitCode: 1,
+      mode: "degraded",
+      degradedReason: "quota_exhausted",
+    });
+  });
+
+  it("keeps the 429 for an ordinary throttle, which retrying can clear", async () => {
+    mocks.generateAiText.mockRejectedValue(
+      new AiThrottledError("Rate-limited. Please wait a moment and try again."),
+    );
+
+    const response = await postCommand();
+
+    expect(response.status).toBe(429);
+    await expect(response.json()).resolves.toEqual({
+      error: "Rate-limited. Please wait a moment and try again.",
+    });
+  });
+
+  it("restores the 429 for an exhausted budget when degradation is switched off", async () => {
+    mocks.shouldDegradeOnQuotaExhausted.mockReturnValue(false);
+    mocks.generateAiText.mockRejectedValue(
+      new AiQuotaExhaustedError("credits", "The shared account is out of credit."),
+    );
+
+    const response = await postCommand();
+
+    expect(response.status).toBe(429);
+    await expect(response.json()).resolves.toEqual({
+      error: "The shared account is out of credit.",
+    });
   });
 
 });
