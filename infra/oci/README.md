@@ -189,6 +189,26 @@ Getting the key wrong fails the install outright; getting the nesting wrong is
 silent and the resolver simply never issues. Both are locked in
 `tests/traefik_config.tftest.hcl` and exercised for real by `oci-shape-e2e`.
 
+### Why Traefik runs as root
+
+`hostNetwork: true` with `service.enabled: false` means Traefik binds :80 and
+:443 itself. The chart's default `podSecurityContext` runs it as uid 65532, and
+`NET_BIND_SERVICE` does not rescue that: on execve a non-root process gets an
+empty effective capability set unless the binary carries file capabilities, and
+the Traefik image does not set them. The container crash-loops on
+`listen tcp :80: bind: permission denied`.
+
+Docker hides this — it sets `net.ipv4.ip_unprivileged_port_start=0` inside
+containers, so the same image binds :80 fine under `docker run --user 65532`.
+Kubernetes sets no such sysctl, which is why only `oci-shape-e2e` caught it.
+
+The trade is uid 0 with `ALL` capabilities dropped except `NET_BIND_SERVICE`,
+`allowPrivilegeEscalation: false` and `readOnlyRootFilesystem: true`. The
+alternative — `net.ipv4.ip_unprivileged_port_start=0` as a node sysctl — was
+rejected: it lets every unprivileged process on the box bind low ports, it is a
+node-level setting that would have to be duplicated outside the shared config,
+and it is the wider grant of the two.
+
 ## State backend
 
 `backend.tf` targets OCI Object Storage through its S3-compatible endpoint.
