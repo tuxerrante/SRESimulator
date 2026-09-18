@@ -80,13 +80,23 @@ describe("JsonAnonymousTrialStore", () => {
     // was missing. Concurrent cold-start readers could observe the file after
     // creation but before its bytes landed and fail with
     // "Unexpected end of JSON input".
+    //
+    // Whether that interleaving actually occurs is up to the scheduler, and it
+    // is host-dependent: against the unfixed store this parse failure
+    // reproduces on every run on macOS and never appears in CI, which is why
+    // the bug survived there in the first place. So the parse failure is the
+    // symptom, not the assertion. The file check is what decides the test on
+    // any host -- the unfixed store has all 24 readers run ensureFile, so the
+    // seed is there afterwards whether or not anyone caught it half-written.
+    // Reading must create nothing.
     const stores = Array.from({ length: 24 }, () => new JsonAnonymousTrialStore());
 
     const results = await Promise.all(
       stores.map((store) => store.hasActiveClaim("cold-start")),
     );
 
-    expect(results).toEqual(results.map(() => false));
+    expect(results).toEqual(new Array(stores.length).fill(false));
+    expect(existsSync(join(dataDir, "anonymous-trial-claims.json"))).toBe(false);
   });
 
   // The test above reproduces the original symptom. This one locks the
