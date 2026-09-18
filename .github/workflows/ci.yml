@@ -728,6 +728,14 @@ jobs:
         # v6.0.2
         uses: >-
           actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          # This job extracts a shell fragment out of the PR's own
+          # cloud-init.yaml.tftpl and runs it under `sudo bash -c`. Left at
+          # the default, checkout writes the workflow GITHUB_TOKEN into
+          # .git/config, so that PR-controlled fragment could read and
+          # exfiltrate it; harden-runner's `egress-policy: audit` records
+          # egress, it does not block it. The job needs no git credentials.
+          persist-credentials: false
 
       - name: Setup Terraform
         # v4.0.1
