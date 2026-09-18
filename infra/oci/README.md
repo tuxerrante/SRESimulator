@@ -62,7 +62,8 @@ retry later. Do not "fix" it by switching to a billable shape.
 
 The primary control is the **NSG attached to the instance VNIC**. It is
 stateful and enforced in the OCI network fabric, so unlike an iptables chain it
-cannot be flushed by anyone who gets root on the box. The subnet security list
+cannot be flushed by anyone who gets root on the box -- for traffic that crosses
+that VNIC. See "What the NSG does not cover" below. The subnet security list
 keeps only the ICMP rule.
 
 | Dir | Proto | Port | Source | Default |
@@ -102,10 +103,17 @@ and never gave the VNIC an address, and left both egress rules IPv4-only.
 Turning it on produced ingress rules that could not match anything, which is
 strictly worse than not offering the option. It has been removed.
 
-The world-CIDR guards on `ssh_allowed_cidrs` and `k8s_api_allowed_cidrs` still
-reject `::/0` as well as `0.0.0.0/0`. The NSG builds its rules with
-`source_type = "CIDR_BLOCK"`, which accepts either family without complaint,
-so an IPv4-only guard would let `::/0` through to a live rule.
+The world-CIDR guards on `ssh_allowed_cidrs` and `k8s_api_allowed_cidrs`
+measure how much address space a list actually covers rather than matching
+`0.0.0.0/0` as a string. A string match was the whole guard until review
+pointed out that `["0.0.0.0/1", "128.0.0.0/1"]` is a pair of ordinary-looking
+CIDRs covering every IPv4 host, and that any decomposition works — four `/2`s,
+256 `/8`s — so the test has to be coverage, not spelling. Both families are
+measured even though the deployment is IPv4-only: the NSG builds its rules with
+`source_type = "CIDR_BLOCK"`, which accepts either family without complaint, so
+an IPv4-only guard would let `::/0` through to a live rule. `cloudflare_ipv4_ranges`
+is measured the same way, because a world-open override there leaves
+`restrict_ingress_to_cloudflare` reading as enabled while the origin is open.
 
 ### The in-VM firewall is deliberately flushed
 
@@ -125,6 +133,25 @@ traffic both hit `-i lo -j ACCEPT` and prove nothing):
 
 So the hazard is specifically **inbound traffic to the hostNetwork ingress**.
 Pod networking and DNS are unaffected either way.
+
+#### What the NSG does not cover
+
+An NSG filters traffic crossing the instance's VNIC. Traffic from a pod to a
+host-bound port never crosses it — it is delivered inside the host's own
+network stack — so with `INPUT` flushed, **any workload on this cluster can
+reach every port the host listens on**, including 22 and the k3s API on 6443.
+
+The table above is the proof, not a caution: `restrict_ingress_to_cloudflare`
+admits port 80 only from Cloudflare's ranges, and the pod sourcing that request
+holds a `10.42.0.0/16` address. It got a 301. The NSG therefore never evaluated
+that traffic, and nothing about ports 22 or 6443 makes them different.
+
+State the boundary accordingly. "6443 is closed" means *closed to the
+internet*, and the SSH tunnel is the supported path **for operators**. It is
+not a control against a compromised container, which reaches the API's TCP port
+directly and is then held off only by Kubernetes authentication and the
+NetworkPolicy the chart ships. If that distinction matters for what you deploy
+here, take the two-layer option below rather than assuming the NSG covers it.
 
 If you want two enforcement layers instead, replace the flush in
 `cloud-init.yaml.tftpl` with explicit accepts inserted *before* the REJECT:
@@ -152,10 +179,12 @@ byte-identical apart from substituting `ACME_EMAIL_PLACEHOLDER`:
 box never runs, which is the entire failure mode the shared file exists to
 prevent.
 
-Three bugs in this config were found by running the shape on a real aarch64 VM
-before any cloud instance existed. Each is silent in a different way, so each
-is locked by an assertion in `tests/traefik_config.tftest.hcl` *and* by the CI
-job:
+Three of the bugs in this config were found by running the shape on a real
+aarch64 VM before any cloud instance existed. They are the original three, not
+the complete set: `certResolvers` and the privileged-port binding came later,
+out of the `oci-shape-e2e` job, and are documented further down. Each is silent
+in a different way, so each is locked by an assertion in
+`tests/traefik_config.tftest.hcl` *and* by the CI job:
 
 1. **`redirectTo` was removed in Traefik chart v34** (k3s v1.33.4 ships
    v34.2.1) and is a hard install failure. Because cloud-init writes the
@@ -304,7 +333,7 @@ therefore run on fork pull requests:
 | --- | --- |
 | `terraform fmt -check -recursive` from `infra/` | both roots, including this nested one |
 | `init -backend=false`, `validate`, `test` in `infra/` | the Azure root, which no workflow ran before |
-| `init -backend=false`, `validate`, `test` here | 48 assertions, all on `mock_provider` |
+| `init -backend=false`, `validate`, `test` here | 86 assertions, all on `mock_provider` |
 | render `local.cloud_init`, then `bash -n` + `shellcheck` | the bootstrap script the instance actually boots |
 
 The last step is worth explaining. It renders through `terraform console`
