@@ -102,6 +102,37 @@ assert_contains "context=dependabot-e2e" "$DEPENDABOT_WORKFLOW"
 assert_contains 'fullnameOverride=${E2E_RELEASE}' "$DEPENDABOT_WORKFLOW"
 assert_contains 'create pods/portforward' "$DEPENDABOT_WORKFLOW"
 
+# --- free-e2e: the credential-free k3d browser gate -------------------------
+# live-e2e stays in the workflow (and keeps every assertion above green) but
+# only runs when vars.LIVE_E2E_ENABLED is set, so free-e2e is what actually
+# blocks merges.
+assert_contains "free-e2e:" "$WORKFLOW"
+assert_contains "vars.LIVE_E2E_ENABLED == 'true'" "$WORKFLOW"
+assert_contains 'FREE_E2E_RESULT: ${{ needs.free-e2e.result }}' "$WORKFLOW"
+assert_contains 'LIVE_E2E_ENABLED: ${{ vars.LIVE_E2E_ENABLED }}' "$WORKFLOW"
+assert_contains 'failed_jobs+=("free-e2e (${FREE_E2E_RESULT})")' "$WORKFLOW"
+assert_contains "values-oci.yaml" "$WORKFLOW"
+assert_contains "values-ci-k3d.yaml" "$WORKFLOW"
+
+# The whole point of free-e2e is that it needs nothing privileged: no GitHub
+# Environment, no cloud login, no repository secret. Assert that block-scoped,
+# because a `secrets.` reference anywhere else in ci.yml is legitimate.
+free_e2e_block="$(
+  awk '
+    /^  free-e2e:$/ { inside = 1 }
+    inside && /^  [a-z0-9-]+:$/ && !/^  free-e2e:$/ { inside = 0 }
+    inside { print }
+  ' "$WORKFLOW"
+)"
+[[ -n "$free_e2e_block" ]] || fail "could not extract the free-e2e job block"
+for forbidden in "secrets." "environment:" "azure/login"; do
+  if grep -Fq -- "$forbidden" <<<"$free_e2e_block"; then
+    fail "free-e2e must stay credential-free but references '$forbidden'"
+  fi
+done
+grep -Fq -- "make test-e2e-live" <<<"$free_e2e_block" || \
+  fail "free-e2e must run the browser suite via make test-e2e-live"
+
 assert_contains "playwright-install:" "$MAKEFILE"
 assert_contains "test-e2e-live:" "$MAKEFILE"
 assert_contains "LIVE_E2E_AUTH_SESSION_SECRET is required." "$MAKEFILE"

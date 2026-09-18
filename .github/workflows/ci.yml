@@ -512,6 +512,21 @@ jobs:
             --values ./helm/sre-simulator/values.yaml \
             --values ./helm/sre-simulator/values-aro-ai-live.example.yaml
 
+      - name: Helm lint (OCI free-tier profile)
+        run: |
+          set -euo pipefail
+          helm lint ./helm/sre-simulator \
+            --values ./helm/sre-simulator/values.yaml \
+            --values ./helm/sre-simulator/values-oci.yaml
+
+      - name: Helm lint (OCI free-tier profile + CI k3d overlay)
+        run: |
+          set -euo pipefail
+          helm lint ./helm/sre-simulator \
+            --values ./helm/sre-simulator/values.yaml \
+            --values ./helm/sre-simulator/values-oci.yaml \
+            --values ./helm/sre-simulator/values-ci-k3d.yaml
+
       - name: Helm template (Route mode)
         run: |
           set -euo pipefail
@@ -524,6 +539,46 @@ jobs:
           helm template sre-simulator ./helm/sre-simulator \
             --values ./helm/sre-simulator/values.yaml \
             --values ./helm/sre-simulator/values-generic.yaml
+
+      - name: Helm template (OCI free-tier profile)
+        run: |
+          set -euo pipefail
+          rendered="$(
+            helm template sre-simulator ./helm/sre-simulator \
+              --values ./helm/sre-simulator/values.yaml \
+              --values ./helm/sre-simulator/values-oci.yaml
+          )"
+          # Traefik terminates TLS with its own ACME resolver, so the router
+          # annotations are the whole TLS story for this profile: no
+          # Kubernetes Secret, no ingress.tls block.
+          for annotation in \
+            "traefik.ingress.kubernetes.io/router.entrypoints: websecure" \
+            "traefik.ingress.kubernetes.io/router.tls: \"true\"" \
+            "traefik.ingress.kubernetes.io/router.tls.certresolver: letsencrypt"
+          do
+            if ! grep -Fq -- "${annotation}" <<<"${rendered}"; then
+              echo "::error::OCI profile did not render ${annotation}"
+              exit 1
+            fi
+          done
+
+      - name: Helm template (OCI free-tier profile + CI k3d overlay)
+        run: |
+          set -euo pipefail
+          rendered="$(
+            helm template sre-simulator ./helm/sre-simulator \
+              --values ./helm/sre-simulator/values.yaml \
+              --values ./helm/sre-simulator/values-oci.yaml \
+              --values ./helm/sre-simulator/values-ci-k3d.yaml
+          )"
+          # An unsatisfiable HTTP-01 challenge inside k3d would leave the
+          # router without a certificate and fail every request, so the CI
+          # overlay must clear the cert resolver entirely.
+          if grep -Fq -- "traefik.ingress.kubernetes.io/router.tls" \
+            <<<"${rendered}"; then
+            echo "::error::CI k3d overlay must not request ACME TLS"
+            exit 1
+          fi
 
       - name: Helm template (legacy route toggle)
         run: |
@@ -602,6 +657,285 @@ jobs:
           -t "sre-simulator-${COMPONENT}"
           .
 
+  # Merge-blocking browser gate. Runs entirely on GitHub-hosted infrastructure
+  # with no cloud credentials, no GitHub Environment and no secrets, so it
+  # works on fork PRs and Dependabot PRs too.
+  #
+  # k3d (not kind) on purpose: it runs the same k3s distribution as the OCI
+  # production box, including the bundled Traefik ingress, local-path storage
+  # and kube-router NetworkPolicy enforcement. That makes this gate double as
+  # the regression test for values-oci.yaml.
+  free-e2e:
+    needs:
+      - changes
+      - lint-typecheck
+      - test
+      - integration-test
+      - integration-test-mssql
+      - security
+      - helm-validate
+      - docker-build
+    if: >-
+      always() &&
+      github.event_name == 'pull_request' &&
+      needs.changes.result == 'success' &&
+      needs.changes.outputs.run_e2e != 'false' &&
+      needs.lint-typecheck.result == 'success' &&
+      needs.test.result == 'success' &&
+      needs.security.result == 'success' &&
+      needs.helm-validate.result == 'success' &&
+      needs.docker-build.result == 'success' &&
+      (
+        needs.changes.outputs.run_integration != 'true' ||
+        (
+          needs.integration-test.result == 'success' &&
+          needs.integration-test-mssql.result == 'success'
+        )
+      )
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    env:
+      E2E_RELEASE: sre-simulator
+      E2E_NAMESPACE: sre-free-e2e
+      K3D_CLUSTER: sre-free-e2e
+      K3D_VERSION: v5.9.0
+      K3D_SHA256: >-
+        06d8f25bc3a971c4eb29e0ff08429b180402db0f4dec838c9eac427e296800a0
+      K3S_IMAGE: docker.io/rancher/k3s:v1.37.0-k3s1
+      E2E_HOST: sre-simulator.localtest.me
+    steps:
+      - name: Harden runner
+        # v2.21.0
+        uses: >-
+          step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        # v6.0.2
+        uses: >-
+          actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+
+      - name: Setup Bun toolchain
+        uses: ./.github/actions/setup-bun-toolchain
+
+      - name: Load Bun version
+        id: bun
+        uses: ./.github/actions/load-bun-version
+
+      - name: Install dependencies
+        run: make install
+
+      - name: Setup Helm
+        # v5.0.0
+        uses: >-
+          azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310
+
+      - name: Set up Docker Buildx
+        # v4.3.0
+        uses: >-
+          docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e
+        with:
+          driver: docker-container
+
+      - name: Build frontend image
+        # v7.3.0
+        uses: >-
+          docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a
+        with:
+          context: .
+          file: frontend/Dockerfile
+          tags: sre-simulator-frontend:pr
+          build-args: BUN_VERSION=${{ steps.bun.outputs.version }}
+          load: true
+          cache-from: type=gha,scope=free-e2e-frontend
+          cache-to: >-
+            type=gha,scope=free-e2e-frontend,mode=max,ignore-error=true
+
+      - name: Build backend image
+        # v7.3.0
+        uses: >-
+          docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a
+        with:
+          context: .
+          file: backend/Dockerfile
+          tags: sre-simulator-backend:pr
+          build-args: BUN_VERSION=${{ steps.bun.outputs.version }}
+          load: true
+          cache-from: type=gha,scope=free-e2e-backend
+          cache-to: >-
+            type=gha,scope=free-e2e-backend,mode=max,ignore-error=true
+
+      - name: Install k3d
+        run: |
+          set -euo pipefail
+          url="https://github.com/k3d-io/k3d/releases/download"
+          curl -fsSL "${url}/${K3D_VERSION}/k3d-linux-amd64" -o /tmp/k3d
+          echo "${K3D_SHA256}  /tmp/k3d" | sha256sum --check --strict
+          chmod +x /tmp/k3d
+          sudo mv /tmp/k3d /usr/local/bin/k3d
+          k3d version
+
+      - name: Create k3d cluster
+        run: |
+          set -euo pipefail
+          # --port 80:80@loadbalancer publishes Traefik on the runner's port
+          # 80, and *.localtest.me resolves to 127.0.0.1, so the browser can
+          # reach the ingress with no /etc/hosts edit and no port-forward.
+          # metrics-server is disabled to match the single-node OCI install,
+          # where there is no HPA to feed.
+          k3d cluster create "${K3D_CLUSTER}" \
+            --agents 0 \
+            --image "${K3S_IMAGE}" \
+            --port "80:80@loadbalancer" \
+            --k3s-arg "--disable=metrics-server@server:0" \
+            --wait \
+            --timeout 180s
+          kubectl cluster-info
+          kubectl wait --for=condition=Ready nodes --all --timeout=120s
+
+      - name: Import images into k3d
+        run: |
+          set -euo pipefail
+          k3d image import \
+            sre-simulator-frontend:pr \
+            sre-simulator-backend:pr \
+            --cluster "${K3D_CLUSTER}"
+
+      - name: Wait for bundled Traefik
+        run: |
+          set -euo pipefail
+          # Traefik arrives via a HelmChart CR, so the Deployment does not
+          # exist immediately after the cluster reports ready.
+          for _ in $(seq 1 60); do
+            if kubectl -n kube-system get deploy/traefik \
+              >/dev/null 2>&1; then
+              break
+            fi
+            sleep 5
+          done
+          kubectl -n kube-system rollout status deploy/traefik --timeout=180s
+
+      - name: Deploy chart (OCI profile, mock AI, JSON storage)
+        run: |
+          set -euo pipefail
+          session_secret="$(openssl rand -hex 32)"
+          anti_abuse_secret="$(openssl rand -hex 32)"
+          echo "::add-mask::${session_secret}"
+          echo "::add-mask::${anti_abuse_secret}"
+          echo "LIVE_E2E_AUTH_SESSION_SECRET=${session_secret}" \
+            >> "$GITHUB_ENV"
+
+          kubectl create namespace "${E2E_NAMESPACE}"
+          kubectl -n "${E2E_NAMESPACE}" create secret generic \
+            free-e2e-runtime \
+            --from-literal=auth-session-secret="${session_secret}" \
+            --from-literal=anti-abuse-hmac-secret="${anti_abuse_secret}" \
+            --from-literal=turnstile-secret-key=free-e2e-test-secret \
+            --dry-run=client -o yaml |
+            kubectl apply -f -
+
+          # Three values files, then the mock-AI / JSON-storage overrides that
+          # the Dependabot E2E path already proves the browser suite passes
+          # against. AI and storage stay at chart defaults in values-oci.yaml
+          # itself, so they have to be set here.
+          helm upgrade --install "${E2E_RELEASE}" ./helm/sre-simulator \
+            --namespace "${E2E_NAMESPACE}" \
+            --values ./helm/sre-simulator/values.yaml \
+            --values ./helm/sre-simulator/values-oci.yaml \
+            --values ./helm/sre-simulator/values-ci-k3d.yaml \
+            --set-string "fullnameOverride=${E2E_RELEASE}" \
+            --set-string "frontend.image.repository=sre-simulator-frontend" \
+            --set-string "frontend.image.tag=pr" \
+            --set frontend.image.pullPolicy=Never \
+            --set-string "backend.image.repository=sre-simulator-backend" \
+            --set-string "backend.image.tag=pr" \
+            --set backend.image.pullPolicy=Never \
+            --set ai.mockMode=true \
+            --set ai.strictStartup=false \
+            --set database.enabled=false \
+            --set storage.enabled=false \
+            --set backend.allowDeployedJsonStorageForTests=true \
+            --set frontend.auth.githubOAuthEnabled=false \
+            --set frontend.auth.existingSecretName=free-e2e-runtime \
+            --set frontend.auth.antiAbuseHmacSecretKey=anti-abuse-hmac-secret \
+            --set backend.auth.existingSecretName=free-e2e-runtime \
+            --set backend.auth.antiAbuseHmacSecretKey=anti-abuse-hmac-secret \
+            --set backend.auth.turnstileSecretKey=turnstile-secret-key \
+            --set backend.auth.turnstileTestMode=true \
+            --set backend.auth.localTestVerificationEnabled=true \
+            --wait --timeout 10m
+
+      - name: Wait for ingress to answer
+        run: |
+          set -euo pipefail
+          ready=0
+          for _ in $(seq 1 60); do
+            if curl -fsS -H "Host: ${E2E_HOST}" http://127.0.0.1/ \
+              >/dev/null; then
+              ready=1
+              break
+            fi
+            sleep 5
+          done
+          if [[ "${ready}" -ne 1 ]]; then
+            echo "::error::Ingress did not answer on http://${E2E_HOST}/"
+            exit 1
+          fi
+
+      - name: Install Playwright Chromium
+        run: make playwright-install
+
+      - name: Run browser E2E
+        env:
+          LIVE_E2E_BASE_URL: http://sre-simulator.localtest.me
+        run: make test-e2e-live
+
+      - name: Helm test
+        run: |
+          set -euo pipefail
+          helm test "${E2E_RELEASE}" \
+            --namespace "${E2E_NAMESPACE}" \
+            --logs \
+            --timeout 4m
+
+      - name: Collect diagnostics
+        if: failure()
+        run: |
+          set -uo pipefail
+          echo "--- ingress ---"
+          kubectl -n "${E2E_NAMESPACE}" get ingress -o wide || true
+          echo "--- workloads ---"
+          kubectl -n "${E2E_NAMESPACE}" get \
+            deploy,pod,svc,endpoints -o wide || true
+          echo "--- pod detail ---"
+          kubectl -n "${E2E_NAMESPACE}" describe pods || true
+          echo "--- frontend logs ---"
+          kubectl -n "${E2E_NAMESPACE}" logs \
+            "deployment/${E2E_RELEASE}-frontend" --tail=200 || true
+          echo "--- backend logs ---"
+          kubectl -n "${E2E_NAMESPACE}" logs \
+            "deployment/${E2E_RELEASE}-backend" --tail=200 || true
+          echo "--- traefik logs ---"
+          kubectl -n kube-system logs deploy/traefik --tail=200 || true
+
+      - name: Upload E2E artifacts
+        if: always()
+        # v4.6.2
+        uses: >-
+          actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: free-e2e-artifacts
+          path: data/playwright-live-e2e*
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Delete k3d cluster
+        if: always()
+        run: k3d cluster delete "${K3D_CLUSTER}" || true
+
   live-e2e:
     needs:
       - changes
@@ -614,6 +948,7 @@ jobs:
       - docker-build
     if: >-
       always() &&
+      vars.LIVE_E2E_ENABLED == 'true' &&
       github.event_name == 'pull_request' &&
       github.event.pull_request.user.login != 'dependabot[bot]' &&
       github.event.pull_request.head.repo.full_name == github.repository &&
@@ -803,6 +1138,7 @@ jobs:
       - security
       - helm-validate
       - docker-build
+      - free-e2e
       - live-e2e
     runs-on: ubuntu-latest
     steps:
@@ -820,7 +1156,11 @@ jobs:
           SECURITY_RESULT: ${{ needs.security.result }}
           HELM_RESULT: ${{ needs.helm-validate.result }}
           DOCKER_RESULT: ${{ needs.docker-build.result }}
+          FREE_E2E_RESULT: ${{ needs.free-e2e.result }}
           LIVE_E2E_RESULT: ${{ needs.live-e2e.result }}
+          # Unset by default, which is what keeps the Azure-backed live-e2e
+          # job skipped and out of the merge decision.
+          LIVE_E2E_ENABLED: ${{ vars.LIVE_E2E_ENABLED }}
           EVENT_NAME: ${{ github.event_name }}
           IS_DEPENDABOT: >-
             ${{ github.event_name == 'pull_request' &&
@@ -843,7 +1183,9 @@ jobs:
           echo "  security:                   ${SECURITY_RESULT}"
           echo "  helm-validate:              ${HELM_RESULT}"
           echo "  docker-build:               ${DOCKER_RESULT}"
-          echo "  run live e2e:               ${RUN_E2E}"
+          echo "  run browser e2e:            ${RUN_E2E}"
+          echo "  free-e2e:                   ${FREE_E2E_RESULT}"
+          echo "  live-e2e enabled:           ${LIVE_E2E_ENABLED:-false}"
           echo "  live-e2e:                   ${LIVE_E2E_RESULT}"
 
           for name_result in \
@@ -913,15 +1255,30 @@ jobs:
                     ;;
                 esac
               fi
-            elif [[ "${RUN_E2E}" == "false" ]]; then
-              echo "Live E2E intentionally skipped (inert docs/repo-meta" \
+            fi
+
+            # free-e2e also gates Dependabot PRs, so this is a separate `if`
+            # rather than another arm of the chain above: during the
+            # transition both the pooled dependabot-e2e status and the free
+            # k3d gate have to be green.
+            if [[ "${RUN_E2E}" == "false" ]]; then
+              echo "Browser E2E intentionally skipped (inert docs/repo-meta" \
                 "change)."
-            elif [[ "${LIVE_E2E_RESULT}" != "success" ]]; then
-              failed=true
-              failed_jobs+=("live-e2e (${LIVE_E2E_RESULT})")
+            else
+              if [[ "${FREE_E2E_RESULT}" != "success" ]]; then
+                failed=true
+                failed_jobs+=("free-e2e (${FREE_E2E_RESULT})")
+              fi
+              # live-e2e is opt-in: without vars.LIVE_E2E_ENABLED the job is
+              # skipped, and a skipped job must not block the merge.
+              if [[ "${LIVE_E2E_ENABLED}" == "true" &&
+                    "${LIVE_E2E_RESULT}" != "success" ]]; then
+                failed=true
+                failed_jobs+=("live-e2e (${LIVE_E2E_RESULT})")
+              fi
             fi
           else
-            echo "Live E2E is required for pull requests only."
+            echo "Browser E2E is required for pull requests only."
           fi
 
           if [[ "${RUN_INTEGRATION}" == "true" ]]; then

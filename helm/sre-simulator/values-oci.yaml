@@ -1,0 +1,59 @@
+---
+# OCI Always Free profile: single-node k3s with the bundled Traefik ingress.
+#
+# Usage:
+#   helm template sre-simulator ./helm/sre-simulator \
+#     --values ./helm/sre-simulator/values.yaml \
+#     --values ./helm/sre-simulator/values-oci.yaml
+#
+# This file is inert for AKS/ARO because it is only ever passed explicitly.
+#
+# AI and database deliberately stay at the chart defaults here. The backend
+# falls back to "vertex" for an unknown AI_PROVIDER and throws outright for an
+# unknown STORAGE_BACKEND, so this profile cannot name "openrouter" or
+# "postgres" until those adapters exist. Flipping them is the last step of the
+# OCI rollout, not part of publishing this profile.
+
+exposure:
+  mode: ingress
+  host: sre-simulator.example.com
+  # Traefik terminates TLS with its own ACME cert resolver, so the certificate
+  # never lands in a Kubernetes Secret and ingress.tls stays disabled. The
+  # scheme therefore has to be stated explicitly instead of being derived from
+  # ingress.tls.enabled.
+  scheme: https
+
+route:
+  enabled: false
+
+ingress:
+  enabled: true
+  className: traefik
+  path: /
+  pathType: Prefix
+  annotations: {}
+  traefik:
+    # Matches the HTTP-01 resolver defined in the k3s HelmChartConfig for
+    # Traefik. The chart turns this into the router.tls / router.certresolver
+    # annotations.
+    certResolver: letsencrypt
+    entryPoint: websecure
+  tls:
+    enabled: false
+    secretName: ""
+
+frontend:
+  # One node, no cloud load balancer: a second frontend replica buys no
+  # availability and doubles the memory footprint on a 12 GB box.
+  replicas: 1
+
+backend:
+  # Must stay 1. The AI budget limiter defaults to the in-memory rate-limit
+  # store, which is per-process: N replicas would each allow the full daily
+  # OpenRouter quota. Set backend.rateLimit.redisUrl before raising this.
+  replicas: 1
+
+storage:
+  # Provided by the k3s bundled local-path provisioner, which is why
+  # local-storage is deliberately NOT disabled at k3s install time.
+  storageClass: local-path

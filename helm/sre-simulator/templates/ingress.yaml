@@ -1,12 +1,29 @@
 {{- $publicHost := include "sre-simulator.publicHost" . -}}
 {{- if eq (include "sre-simulator.exposureMode" .) "ingress" }}
+{{- $annotations := deepCopy (.Values.ingress.annotations | default dict) -}}
+{{- /*
+  Traefik terminates TLS itself with an ACME cert resolver, so the certificate
+  never becomes a Kubernetes Secret and ingress.tls stays off. Deriving the
+  router annotations from a scalar keeps them overridable: a values file cannot
+  delete a key from an inherited annotations map (Helm coalesces maps, and both
+  {} and an explicit null leave the parent key in place), so the empty default
+  is what lets the CI profile turn ACME off. It also keeps every non-Traefik
+  profile's render byte-identical.
+*/ -}}
+{{- with .Values.ingress.traefik }}
+{{- if .certResolver }}
+{{- $_ := set $annotations "traefik.ingress.kubernetes.io/router.entrypoints" (.entryPoint | default "websecure") -}}
+{{- $_ := set $annotations "traefik.ingress.kubernetes.io/router.tls" "true" -}}
+{{- $_ := set $annotations "traefik.ingress.kubernetes.io/router.tls.certresolver" .certResolver -}}
+{{- end }}
+{{- end }}
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: {{ include "sre-simulator.fullname" . }}
   labels:
     {{- include "sre-simulator.labels" . | nindent 4 }}
-  {{- with .Values.ingress.annotations }}
+  {{- with $annotations }}
   annotations:
     {{- toYaml . | nindent 4 }}
   {{- end }}

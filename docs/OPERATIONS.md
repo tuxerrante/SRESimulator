@@ -368,14 +368,36 @@ For provider options, environment variables, and runtime behavior, use:
 
 ## Mandatory pull-request browser gate
 
-Every PR must pass the `live-e2e` CI job. The job is serialized, requires
-approval through the protected `live-e2e` GitHub Environment, creates an
-isolated `sre-pr-<number>-<timestamp>` namespace, publishes non-semver PR
-images, runs one anonymous entry plus three isolated platform users concurrently
-on four distinct scenarios, uploads screenshots/results, and removes the
-namespace in an `always()` cleanup step.
+Every PR must pass the `free-e2e` CI job. It runs entirely on a GitHub-hosted
+runner: it builds both images with buildx, creates a single-node k3d cluster,
+deploys the real chart with `values.yaml` + `values-oci.yaml` +
+`values-ci-k3d.yaml` plus mock-AI/JSON-storage overrides, and runs
+`make test-e2e-live` against the bundled Traefik ingress on
+`http://sre-simulator.localtest.me`. It consumes no cloud credentials, no
+repository secret and no GitHub Environment, so it also gates fork PRs and
+Dependabot PRs, and `scripts/live-e2e-gate.test.sh` asserts that property by
+scanning the job block for `secrets.`, `environment:` and `azure/login`.
 
-Dependabot PRs take a credential-minimized path because GitHub withholds normal
+k3d rather than kind on purpose: it is the same k3s distribution as the OCI
+box, so the gate doubles as the regression test for `values-oci.yaml`.
+
+### Optional Azure `live-e2e`
+
+The Azure-backed `live-e2e` job is still in `ci.yml` but is opt-in: it only
+runs when the repository variable `LIVE_E2E_ENABLED` is set to `true`, and
+`ci-gate` only counts its result when that same variable is `true`. With the
+variable unset the job is skipped and cannot block a merge. Set it once the
+AKS cluster, the `live-e2e` GitHub Environment and the AI credentials behind it
+are available again; everything the job needs is unchanged.
+
+When enabled, the job is serialized, requires approval through the protected
+`live-e2e` GitHub Environment, creates an isolated
+`sre-pr-<number>-<timestamp>` namespace, publishes non-semver PR images, runs
+one anonymous entry plus three isolated platform users concurrently on four
+distinct scenarios, uploads screenshots/results, and removes the namespace in
+an `always()` cleanup step.
+
+Dependabot PRs additionally take a credential-minimized path because GitHub withholds normal
 Actions secrets and gives their pull-request workflows a read-only token. A
 unprivileged `pull_request` workflow builds the dependency-update images and
 uploads immutable, SHA-bound artifacts. A trusted `workflow_run` validates and
@@ -384,9 +406,10 @@ namespace from a pre-provisioned pool, deploys only the trusted `main` chart
 into it, and runs mock-AI/JSON browser coverage. Its kubeconfig is stored only
 in the unprotected `dependabot-e2e` Environment and is bound to those
 namespaces; it cannot read the production namespace, create namespaces, or
-delete namespaces. The main `ci-gate` waits for the `dependabot-e2e` commit
-status, so the bot path remains merge-blocking without Azure login or manual
-approval.
+delete namespaces. The main `ci-gate` still waits for the `dependabot-e2e`
+commit status *in addition to* `free-e2e`, which is defence in depth while the
+free gate settles. That path needs a live AKS cluster, so it is the next thing
+to retire.
 
 ### Dependabot E2E namespace pool
 

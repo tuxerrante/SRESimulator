@@ -64,28 +64,34 @@ The game enforces the "Scientific Method of Investigation" as defined in the ARO
   defined in `docs/DEVELOPMENT_WORKFLOW.md`. Follow it unless the change is a
   single-file doc edit or an emergency rollback.
 
-### Mandatory live browser gate
+### Mandatory browser gate
 
-- Every pull request must pass a merge-blocking browser E2E gate before merge.
-- Dependabot PRs use the separate `dependabot-e2e` status: a trusted
-  default-branch workflow publishes SHA-bound images built by an unprivileged
-  PR workflow, deploys the trusted chart with mock AI/JSON storage into a
-  dedicated namespace claimed from a pre-provisioned pool, and uses a
-  namespace-only Kubernetes identity that cannot create namespaces. It requires
-  no Azure login, production secret, or manual environment approval. Provision
-  or resize the pool with `make dependabot-e2e-pool`; see
-  `docs/OPERATIONS.md`.
-- Human-authored pull requests must pass the protected `live-e2e` GitHub
-  check.
-- The check deploys the PR head to an isolated temporary namespace and runs
-  `make test-e2e-live` with isolated AKS, ARO Classic, and ARO HCP users in
-  parallel. Each user must receive a distinct scenario.
+- Every pull request must pass the merge-blocking `free-e2e` browser gate.
+- `free-e2e` runs on a GitHub-hosted runner with **no cloud credentials, no
+  repository secret and no GitHub Environment**: it builds both images, creates
+  a single-node k3d cluster, deploys the real chart with `values.yaml` +
+  `values-oci.yaml` + `values-ci-k3d.yaml` and mock AI / JSON storage, then runs
+  `make test-e2e-live` through the bundled Traefik ingress on
+  `http://sre-simulator.localtest.me`.
+- Because it is credential-free it also gates fork PRs and Dependabot PRs, and
+  no manual environment approval is ever needed. Keep it that way:
+  `scripts/live-e2e-gate.test.sh` fails if the job block grows a `secrets.`,
+  `environment:` or `azure/login` reference.
+- k3d, not kind, because it is the same k3s distribution as the OCI box — the
+  gate doubles as the regression test for `values-oci.yaml`.
 - Do not call a PR merge-ready when this check is skipped, pending, or failed.
-- The `live-e2e` GitHub Environment requires explicit approval before cluster
-  and AI credentials are released to PR code. Review workflow, deploy, Helm,
-  Dockerfile, and E2E-script changes carefully before approving the job.
-- Fork PRs must be moved to a trusted same-repository branch before this
-  privileged mandatory check can run.
+- The Azure-backed `live-e2e` job still exists but is **opt-in**: it runs only
+  when the repository variable `LIVE_E2E_ENABLED` is `true`, and `ci-gate`
+  counts its result only under the same condition. Unset, it is skipped and
+  irrelevant to merges. When enabled it deploys the PR head to an isolated
+  temporary namespace, runs isolated AKS, ARO Classic and ARO HCP users in
+  parallel on distinct scenarios, requires explicit approval of the protected
+  `live-e2e` GitHub Environment before cluster and AI credentials are released
+  to PR code, and cannot run on fork PRs.
+- Dependabot PRs additionally carry the `dependabot-e2e` status (trusted
+  `workflow_run` deploy into a pooled namespace; see `docs/OPERATIONS.md` and
+  `make dependabot-e2e-pool`). That path needs a live AKS cluster and is
+  scheduled for removal now that `free-e2e` covers the bot PRs too.
 
 ## 4. Public-Only Safety Boundary
 
