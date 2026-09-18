@@ -723,6 +723,14 @@ jobs:
         # v6.0.2
         uses: >-
           actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          # This job builds and runs the PR's own Dockerfiles and app code.
+          # Left at the default, checkout writes the workflow GITHUB_TOKEN
+          # into .git/config, which is inside the build context; the job is
+          # advertised as credential-free and harden-runner is on
+          # `egress-policy: audit`, which records egress rather than
+          # blocking it. Nothing here needs git credentials.
+          persist-credentials: false
 
       - name: Setup Bun toolchain
         uses: ./.github/actions/setup-bun-toolchain
@@ -871,7 +879,6 @@ jobs:
             --set ai.mockMode=true \
             --set ai.strictStartup=false \
             --set database.enabled=false \
-            --set storage.enabled=false \
             --set backend.allowDeployedJsonStorageForTests=true \
             --set frontend.auth.githubOAuthEnabled=false \
             --set frontend.auth.existingSecretName=free-e2e-runtime \
@@ -882,6 +889,35 @@ jobs:
             --set backend.auth.turnstileTestMode=true \
             --set backend.auth.localTestVerificationEnabled=true \
             --wait --timeout 10m
+
+      - name: Assert the OCI profile's storage actually bound
+        run: |
+          set -euo pipefail
+          # values-oci.yaml sets storage.storageClass: local-path, and this
+          # gate exists to be the regression test for that file. The gate used
+          # to pass --set storage.enabled=false, lifted from dependabot-e2e
+          # where the target is AKS; on k3d the whole point is that the k3s
+          # local-path provisioner is there. With the PVC suppressed the
+          # backend ran on an emptyDir and the profile's storage setting was
+          # never read, so the gate reported coverage it did not have.
+          #
+          # helm --wait does not wait on a PVC, and local-path binds
+          # WaitForFirstConsumer, so this reads the bound state rather than
+          # assuming the deploy implies it.
+          phase="$(kubectl -n "${E2E_NAMESPACE}" get pvc \
+            "${E2E_RELEASE}-data" -o jsonpath='{.status.phase}' || true)"
+          class="$(kubectl -n "${E2E_NAMESPACE}" get pvc \
+            "${E2E_RELEASE}-data" -o jsonpath='{.spec.storageClassName}' \
+            || true)"
+          echo "PVC ${E2E_RELEASE}-data: phase=${phase} class=${class}"
+          if [[ "${phase}" != "Bound" ]]; then
+            echo "::error::OCI profile PVC is ${phase:-absent}, not Bound."
+            exit 1
+          fi
+          if [[ "${class}" != "local-path" ]]; then
+            echo "::error::PVC class is '${class}', expected local-path."
+            exit 1
+          fi
 
       - name: Wait for ingress to answer
         run: |
@@ -1191,6 +1227,14 @@ jobs:
           # then.
           DEPENDABOT_E2E_ENABLED: ${{ vars.DEPENDABOT_E2E_ENABLED }}
           EVENT_NAME: ${{ github.event_name }}
+          # live-e2e also skips for fork PRs, because it releases cluster and
+          # AI credentials to PR code. ci-gate has to know that, or enabling
+          # the optional Azure path would fail every fork PR on a job that was
+          # never eligible to run.
+          IS_SAME_REPO_PR: >-
+            ${{ github.event_name == 'pull_request' &&
+                github.event.pull_request.head.repo.full_name ==
+                github.repository }}
           IS_DEPENDABOT: >-
             ${{ github.event_name == 'pull_request' &&
                 github.event.pull_request.user.login == 'dependabot[bot]' }}
@@ -1302,8 +1346,15 @@ jobs:
                 failed_jobs+=("free-e2e (${FREE_E2E_RESULT})")
               fi
               # live-e2e is opt-in: without vars.LIVE_E2E_ENABLED the job is
-              # skipped, and a skipped job must not block the merge.
+              # skipped, and a skipped job must not block the merge. The two
+              # extra conditions mirror the job's own `if:` -- it also skips
+              # for Dependabot and for fork PRs, so without them, turning the
+              # variable on would fail every such PR with "live-e2e (skipped)"
+              # for a job that was never eligible. free-e2e above is what
+              # gates those PRs.
               if [[ "${LIVE_E2E_ENABLED}" == "true" &&
+                    "${IS_DEPENDABOT}" != "true" &&
+                    "${IS_SAME_REPO_PR}" == "true" &&
                     "${LIVE_E2E_RESULT}" != "success" ]]; then
                 failed=true
                 failed_jobs+=("live-e2e (${LIVE_E2E_RESULT})")

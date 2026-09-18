@@ -38,8 +38,19 @@ spec:
       args:
         - |
           BACKEND="{{ include "sre-simulator.fullname" . }}-backend:{{ .Values.backend.port }}"
+          # Bounded by wall clock, not by attempt count. A policy rejection
+          # returns instantly, so 60 attempts is ~2 minutes; a blackholed
+          # backend runs each curl to --max-time, so the same 60 attempts is
+          # ~7 minutes -- past the `helm test --timeout 4m` its callers use
+          # (helm-integration.yml:133, the free-e2e gate). Helm would kill the
+          # hook before the diagnostic below ever printed, turning the one
+          # failure this container exists to report into a bare timeout.
+          # 90 seconds is ~45x the observed need and leaves the rest of the
+          # budget for image pull and the assertions.
+          DEADLINE_SECONDS=90
+          started="$(date +%s)"
           attempt=0
-          while [ "${attempt}" -lt 60 ]; do
+          while [ "$(($(date +%s) - started))" -lt "${DEADLINE_SECONDS}" ]; do
             attempt=$((attempt + 1))
             if curl -fsS -o /dev/null --max-time 5 "http://${BACKEND}/healthz"; then
               echo "backend reachable after ${attempt} attempt(s)"
@@ -47,7 +58,7 @@ spec:
             fi
             sleep 2
           done
-          echo "backend never became reachable from this pod." >&2
+          echo "backend never became reachable from this pod within ${DEADLINE_SECONDS}s." >&2
           echo "If the backend itself is healthy, suspect NetworkPolicy:" >&2
           echo "  kubectl describe networkpolicy {{ include "sre-simulator.fullname" . }}-backend" >&2
           exit 1

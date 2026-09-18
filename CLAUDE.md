@@ -66,7 +66,11 @@ The game enforces the "Scientific Method of Investigation" as defined in the ARO
 
 ### Mandatory browser gate
 
-- Every pull request must pass the merge-blocking `free-e2e` browser gate.
+- Every pull request must pass the merge-blocking `free-e2e` browser gate,
+  unless the `changes` job classifies the diff as inert (`run_e2e=false` — a
+  docs or repo-meta change touching none of the allowlisted paths), in which
+  case `ci-gate` records the skip explicitly rather than treating a missing
+  browser run as a pass.
 - `free-e2e` runs on a GitHub-hosted runner with **no cloud credentials, no
   repository secret and no GitHub Environment**: it builds both images, creates
   a single-node k3d cluster, deploys the real chart with `values.yaml` +

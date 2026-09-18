@@ -174,6 +174,34 @@ done <<<"$free_e2e_actions"
 grep -Fq -- "make test-e2e-live" <<<"$free_e2e_block" || \
   fail "free-e2e must run the browser suite via make test-e2e-live"
 
+# free-e2e builds the PR's own Dockerfiles, and the build context includes
+# .git. Left at the default, actions/checkout writes the workflow GITHUB_TOKEN
+# into .git/config, so PR-controlled build instructions could read and
+# exfiltrate it. The job needs no git credentials, so the write is pure
+# exposure -- and harden-runner's `egress-policy: audit` records egress rather
+# than blocking it.
+grep -Fq -- "persist-credentials: false" <<<"$free_e2e_block" || \
+  fail "free-e2e's checkout must set persist-credentials: false"
+
+# ci-gate promotes live-e2e from optional to required on `vars.LIVE_E2E_ENABLED`,
+# but live-e2e itself also refuses to run for fork PRs, because it releases
+# cluster and AI credentials to PR code. Without the same predicate in ci-gate,
+# switching the Azure path back on would fail every fork PR on a job that was
+# never eligible to run in the first place.
+assert_contains "IS_SAME_REPO_PR:" "$WORKFLOW"
+assert_contains '"${IS_SAME_REPO_PR}" == "true" &&' "$WORKFLOW"
+
+ci_gate_same_repo_expr="$(
+  awk '
+    /^          IS_SAME_REPO_PR:/ { inside = 1; next }
+    inside && /^          [A-Z_]+:/ { inside = 0 }
+    inside { print }
+  ' "$WORKFLOW"
+)"
+grep -Fq -- "github.event.pull_request.head.repo.full_name ==" \
+  <<<"$ci_gate_same_repo_expr" || \
+  fail "IS_SAME_REPO_PR must compare the PR head repo against github.repository"
+
 assert_contains "playwright-install:" "$MAKEFILE"
 assert_contains "test-e2e-live:" "$MAKEFILE"
 assert_contains "LIVE_E2E_AUTH_SESSION_SECRET is required." "$MAKEFILE"
