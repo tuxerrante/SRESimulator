@@ -134,6 +134,43 @@ run "cert_resolver_uses_the_v33_key_and_nesting" {
   }
 }
 
+run "traefik_can_actually_bind_the_privileged_ports" {
+  command = plan
+
+  # Bug 5, and the subtlest of the five: with hostNetwork and no Service,
+  # Traefik binds :80 itself, but the chart's podSecurityContext runs it as
+  # uid 65532. NET_BIND_SERVICE then sits in the permitted set and never
+  # becomes effective, because the image carries no file capabilities -- so
+  # the config reads as correct and the container crash-loops on
+  # "listen tcp :80: bind: permission denied".
+  assert {
+    condition     = yamldecode(yamldecode(local.traefik_config_rendered).spec.valuesContent).podSecurityContext.runAsUser == 0
+    error_message = "Traefik must run as uid 0 to bind :80 in the host network namespace; the chart default of 65532 cannot."
+  }
+
+  assert {
+    condition     = yamldecode(yamldecode(local.traefik_config_rendered).spec.valuesContent).podSecurityContext.runAsNonRoot == false
+    error_message = "runAsNonRoot must be false explicitly, or the kubelet refuses to start a container whose uid is 0."
+  }
+
+  # Root is only tolerable because everything else is taken away. If these
+  # three drift, the trade this file makes stops being a trade.
+  assert {
+    condition     = yamldecode(yamldecode(local.traefik_config_rendered).spec.valuesContent).securityContext.capabilities.add == ["NET_BIND_SERVICE"]
+    error_message = "NET_BIND_SERVICE must be the only capability added back."
+  }
+
+  assert {
+    condition     = yamldecode(yamldecode(local.traefik_config_rendered).spec.valuesContent).securityContext.allowPrivilegeEscalation == false
+    error_message = "allowPrivilegeEscalation must stay false."
+  }
+
+  assert {
+    condition     = yamldecode(yamldecode(local.traefik_config_rendered).spec.valuesContent).securityContext.readOnlyRootFilesystem == true
+    error_message = "readOnlyRootFilesystem must stay true."
+  }
+}
+
 run "acme_email_is_substituted" {
   command = plan
 
