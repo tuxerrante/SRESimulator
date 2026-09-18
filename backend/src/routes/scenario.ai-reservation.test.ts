@@ -16,6 +16,7 @@ import { buildAnonymousClaimKeys } from "../lib/anonymous-claim";
 const generateAiTextMock = vi.fn();
 const warmupAiModelMock = vi.fn();
 const captureBackendRouteErrorMock = vi.fn();
+const loadKnowledgeBaseMock = vi.fn().mockResolvedValue("");
 
 vi.mock("../lib/ai-config", () => ({
   getAiReadiness() {
@@ -25,7 +26,7 @@ vi.mock("../lib/ai-config", () => ({
 }));
 
 vi.mock("../lib/knowledge", () => ({
-  loadKnowledgeBase: vi.fn().mockResolvedValue(""),
+  loadKnowledgeBase: loadKnowledgeBaseMock,
 }));
 
 vi.mock("../lib/ai-runtime", () => {
@@ -198,6 +199,7 @@ describe("scenario reservation before AI generation", () => {
     delete process.env.SCENARIO_CATALOG_DIR;
     delete process.env.AI_SCENARIO_TIMEOUT_MS;
     delete process.env.STORAGE_BACKEND;
+    loadKnowledgeBaseMock.mockClear();
     generateAiTextMock.mockReset().mockImplementation(
       () =>
         new Promise<string>((resolve) => {
@@ -390,6 +392,12 @@ describe("scenario reservation before AI generation", () => {
     // No doomed round trip: the provider is never asked for a request the
     // shared account already cannot afford.
     expect(generateAiTextMock).not.toHaveBeenCalled();
+    // Nor is the prompt built for it. This is the assertion that pins the
+    // check *ahead* of the knowledge-base read: that read shares the request
+    // deadline, so on a slow filesystem it can expire first and relabel a
+    // spent budget as a timeout -- the one degraded reason that sends the
+    // operator looking at latency instead of at the budget.
+    expect(loadKnowledgeBaseMock).not.toHaveBeenCalled();
   });
 
   it("uses the catalog fallback when AI returns schema-invalid JSON", async () => {

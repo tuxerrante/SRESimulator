@@ -461,3 +461,107 @@ describe("keep-alive warmups and a shared account-wide budget", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("the account's own free-tier counter", () => {
+  // The result is cached in a module-level variable, so each case needs a
+  // fresh module graph rather than a reset seam exported only for tests.
+  async function freshKeyStatus(): Promise<
+    typeof import("./openrouter")["fetchOpenRouterKeyStatus"]
+  > {
+    vi.resetModules();
+    return (await import("./openrouter")).fetchOpenRouterKeyStatus;
+  }
+
+  function keyResponse(data: unknown): Response {
+    return new Response(JSON.stringify({ data }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  }
+
+  beforeEach(() => {
+    clearTestEnv();
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+    process.env.AI_OPENROUTER_API_KEY = "test-key";
+  });
+
+  afterAll(() => {
+    vi.resetModules();
+    vi.unstubAllGlobals();
+    restoreTestEnv();
+  });
+
+  it("reads the nested counter object the endpoint actually returns", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockImplementation(() =>
+      keyResponse({
+        label: "sk-or-v1-...",
+        limit_remaining: 18.42,
+        free_model_daily_requests: { used: 60, limit: 1000, remaining: 940 },
+      }),
+    ));
+
+    await expect((await freshKeyStatus())()).resolves.toEqual({
+      dailyLimit: 1000,
+      dailyRemaining: 940,
+    });
+  });
+
+  it("stays quiet rather than reporting a credit balance as a request count", async () => {
+    // `limit_remaining` is the nearest-looking field and it is currency. A
+    // banner reading "18.42 requests left today" is worse than no banner.
+    vi.stubGlobal("fetch", vi.fn().mockImplementation(() =>
+      keyResponse({ limit_remaining: 18.42, usage: 1.58 }),
+    ));
+
+    await expect((await freshKeyStatus())()).resolves.toEqual({
+      dailyLimit: null,
+      dailyRemaining: null,
+    });
+  });
+
+  it("bounds the lookup, because a banner is not worth a hung request", async () => {
+    const fetchMock = vi.fn().mockImplementation(() =>
+      keyResponse({ free_model_daily_requests: { limit: 1000, remaining: 940 } }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await (await freshKeyStatus())();
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(init.signal).toBeInstanceOf(AbortSignal);
+    expect(init.signal?.aborted).toBe(false);
+  });
+
+  it("shares one refresh between callers that arrive together", async () => {
+    // `/api/ai/budget` is public and the banner polls it, so the instant the
+    // TTL expires every concurrent visitor would otherwise open its own
+    // `GET /key` -- a self-inflicted herd against the rate limit this lookup
+    // exists to report on.
+    let release: (() => void) | undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const fetchMock = vi.fn().mockImplementation(async () => {
+      await gate;
+      return keyResponse({ free_model_daily_requests: { limit: 1000, remaining: 940 } });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const fetchKeyStatus = await freshKeyStatus();
+
+    const inFlight = [fetchKeyStatus(), fetchKeyStatus(), fetchKeyStatus()];
+    release?.();
+    const results = await Promise.all(inFlight);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    for (const result of results) {
+      expect(result).toEqual({ dailyLimit: 1000, dailyRemaining: 940 });
+    }
+  });
+
+  it("never throws, whatever the lookup does", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("network unreachable")));
+
+    await expect((await freshKeyStatus())()).resolves.toBeNull();
+  });
+});

@@ -384,10 +384,20 @@ explain why answers may be simulated. Rate-limited with `aiRateLimit` because
 ```
 
 Reporting the budget must not spend it, so the endpoint reads the last
-decision each window made rather than consuming a slot. `upstream` is the
-provider's own view (`GET /api/v1/key`), cached for
-`AI_OPENROUTER_QUOTA_TTL_MS` and best-effort: polling it per request would
-itself burn the rate limit, and it is `null` whenever the lookup fails.
+decision each window made rather than consuming a slot. A remembered decision
+expires with the window it was taken in, so the banner stops reporting a spent
+day once the day has rolled, without waiting for the next AI request to
+refresh it.
+
+`upstream` is the provider's own view, read from `GET /api/v1/key` and taken
+from the nested `free_model_daily_requests` counter (`{ used, limit,
+remaining }`). It is fetched only when OpenRouter is the configured provider,
+cached for `AI_OPENROUTER_QUOTA_TTL_MS`, bounded by a 5-second timeout, and
+coalesced so concurrent banner polls share one refresh rather than opening a
+request each the moment the cache expires. It is `null` whenever the lookup
+fails, and deliberately has **no fallback field**: `limit_remaining` is a
+fractional credit balance, and rendering it as "requests left today" would be
+a confident wrong number where silence is correct.
 
 ---
 
@@ -495,15 +505,27 @@ capped per account (20 requests/minute, and 50 or 1000 requests/day depending
 on lifetime credit), so fifteen well-behaved players are enough to spend a
 day's budget between them.
 
-`aiGlobalBudgetLimit` runs **before** `aiRateLimit` on `/api/chat`,
-`/api/command` and `/api/scenario`, because a request the account cannot
-afford must not depend on who sent it.
+`aiGlobalBudgetLimit` runs **after** `aiRateLimit` on `/api/chat`,
+`/api/command` and `/api/scenario`. The shared budget is still consulted on
+every request that gets that far, which is what makes it independent of who
+sent it; running it second means a caller the per-identity limiter already
+refused cannot spend the shared account on requests that never reach a
+provider.
+
+Two routes are exempt from the charge for the same reason, both checked per
+request rather than at mount time:
+
+- **`AI_MOCK_MODE=true`** — no provider is reached, so there is no balance to
+  protect. This matters most in the `free-e2e` gate, which drives four
+  simulated players through chat and command with mock AI.
+- **`SCENARIO_SOURCE=catalog`** — `/api/scenario` serves a curated scenario and
+  never calls a model.
 
 | Variable | Default | Meaning |
 | --------------------------------- | -------------------------------- | ----------------------------------------------------- |
 | `AI_GLOBAL_BUDGET_ENABLED` | `true` when `AI_PROVIDER=openrouter` | Master switch |
 | `AI_GLOBAL_MINUTE_MAX` | `20` | Requests allowed across all callers per minute |
-| `AI_GLOBAL_DAILY_MAX` | `1000` | Requests allowed across all callers per day |
+| `AI_GLOBAL_DAILY_MAX` | `1000` | Requests allowed across all callers per day. **Set `50` on an account below 10 lifetime credits** — that is OpenRouter's free-model allowance until the credit purchase, and the default matches the post-purchase tier. |
 | `AI_GLOBAL_DAILY_EXHAUSTED_MODE` | `degrade` | `degrade` answers with simulated output; `reject` answers 429 |
 | `AI_GLOBAL_BUDGET_FAIL_MODE` | `closed` | Behaviour when the window store cannot answer |
 
@@ -532,11 +554,17 @@ streaming response can be read without parsing a body:
 | `minute-exhausted` | Refused on the per-minute window (429, retry helps) |
 | `daily-exhausted` | Refused on the daily window (429, `reject` mode only) |
 | `degraded` | Daily budget spent, answering with simulated output |
+| `store-unavailable` | Window store unreadable under `reject` mode (503) |
 | `fail-open` | Store unavailable and `AI_GLOBAL_BUDGET_FAIL_MODE=open` |
 
 The 429 body keeps `error` as its first key so existing clients surface a
 sane message, and adds `code: "ai_budget_exhausted"`, `scope`,
 `retryAfterSeconds`, `resetAt` and `degraded`.
+
+A store outage under `reject` mode answers **503 `ai_budget_unavailable`**, not
+429. Nothing was observed and nothing was spent, so reporting an exhausted day
+would send the client away until tomorrow for what is usually a blip, and send
+the operator reading the response to the budget instead of to the store.
 
 **The counters are process-local unless Redis is configured.** With more than
 one replica each pod would allow the full budget, which is why the OCI values

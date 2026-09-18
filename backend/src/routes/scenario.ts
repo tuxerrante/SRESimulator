@@ -737,6 +737,25 @@ scenarioRouter.post("/", async (req: Request, res: Response) => {
     }
 
     reservedClaimKeys = await reserveAnonymousClaimKeys();
+
+    // Checked here rather than beside the generation call because everything
+    // between the two -- the knowledge-base read, the context extraction, the
+    // remaining-budget arithmetic -- is work done solely to prepare a request
+    // that will not be sent. On a slow filesystem that work can eat the
+    // deadline first, and the player is then told the scenario timed out when
+    // the truth is the shared budget is spent. The reservation stays ahead of
+    // it: the catalog fallback still returns a session.
+    if (isAiBudgetExhausted(res)) {
+      await respondWithCatalogFallback(
+        shouldDegradeOnQuotaExhausted() ? "quota_exhausted" : "throttled",
+        new AiQuotaExhaustedError(
+          "daily",
+          "The shared AI request budget for today is spent.",
+        ),
+      );
+      return;
+    }
+
     const knowledgeBase = await deadline.waitWithin(
       "knowledge-base-load",
       loadKnowledgeBase(platform),
@@ -784,15 +803,6 @@ scenarioRouter.post("/", async (req: Request, res: Response) => {
       return;
     }
     try {
-      // A spent shared budget reaches the same classifier below as a spent
-      // provider budget, so the catalog fallback and its reason label are
-      // decided in exactly one place.
-      if (isAiBudgetExhausted(res)) {
-        throw new AiQuotaExhaustedError(
-          "daily",
-          "The shared AI request budget for today is spent.",
-        );
-      }
       responseText = await withAbortTimeout(
         (signal) =>
           generateAiText({

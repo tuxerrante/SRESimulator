@@ -15,7 +15,8 @@ import {
   jsonRouteParsers,
 } from "./lib/http-hardening";
 import { aiRateLimit } from "./lib/rate-limit";
-import { aiGlobalBudgetLimit } from "./lib/ai-budget";
+import { aiGlobalBudgetLimit, createAiGlobalBudgetLimit } from "./lib/ai-budget";
+import { isCatalogScenarioSource } from "./lib/scenario-catalog";
 import { isSentryEnabled } from "./lib/telemetry/sentry";
 
 export function shouldTrustProxyHeaders(): boolean {
@@ -45,12 +46,25 @@ export function createApp(): express.Express {
     origin: process.env.CORS_ORIGIN || "http://localhost:3000",
   }));
 
-  // The global budget runs before the per-identity limiter: it protects a
-  // shared account balance, so a request that the account cannot afford must
-  // not depend on which player sent it.
-  app.use("/api/chat", jsonRouteParsers.chat, aiGlobalBudgetLimit, aiRateLimit, chatRouter);
-  app.use("/api/command", jsonRouteParsers.command, aiGlobalBudgetLimit, aiRateLimit, commandRouter);
-  app.use("/api/scenario", jsonRouteParsers.scenario, aiGlobalBudgetLimit, aiRateLimit, scenarioRouter);
+  // The global budget runs *after* the per-identity limiter, for the same
+  // reason the daily window is only charged once the minute window allowed the
+  // request: a caller the per-identity limiter refuses never reaches the
+  // provider, so charging the shared account for it would let one player drain
+  // a day's budget on requests that cost nothing. The shared budget is still
+  // consulted on every request that gets that far, which is what makes it
+  // independent of who sent it.
+  app.use("/api/chat", jsonRouteParsers.chat, aiRateLimit, aiGlobalBudgetLimit, chatRouter);
+  app.use("/api/command", jsonRouteParsers.command, aiRateLimit, aiGlobalBudgetLimit, commandRouter);
+  // Under SCENARIO_SOURCE=catalog this route serves a curated scenario and
+  // never calls a model, so it is mounted with a predicate rather than the
+  // shared handler.
+  app.use(
+    "/api/scenario",
+    jsonRouteParsers.scenario,
+    aiRateLimit,
+    createAiGlobalBudgetLimit(() => !isCatalogScenarioSource()),
+    scenarioRouter,
+  );
   app.use("/api/scores", jsonRouteParsers.scores, scoresRouter);
   app.use("/api/gameplay", jsonRouteParsers.gameplay, gameplayRouter);
   app.use("/api/ai", aiRouter);

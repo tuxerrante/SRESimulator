@@ -217,3 +217,121 @@ describe("createApp", { timeout: 15000 }, () => {
     }
   });
 });
+
+describe("AI route middleware order", { timeout: 15000 }, () => {
+  const ENV_KEYS = [
+    "AI_PROVIDER",
+    "AI_MOCK_MODE",
+    "SCENARIO_SOURCE",
+    "AI_GLOBAL_BUDGET_ENABLED",
+  ] as const;
+  const originalEnv: Record<string, string | undefined> = {};
+  for (const key of ENV_KEYS) originalEnv[key] = process.env[key];
+
+  afterEach(() => {
+    vi.doUnmock("./lib/rate-limit");
+    vi.resetModules();
+    for (const key of ENV_KEYS) {
+      const value = originalEnv[key];
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  });
+
+  /**
+   * Mounts the real app with the per-identity limiter replaced by one whose
+   * verdict the test controls, and the shared-window store replaced by one
+   * that records which keys were charged. What the budget *reports* is written
+   * by the middleware only on the path it takes, so only the store can say
+   * whether a refused request cost anything.
+   */
+  async function loadAppWithRecordingBudget(
+    identityVerdict: "allow" | "refuse",
+  ): Promise<{ app: Express; consumedKeys: string[] }> {
+    vi.resetModules();
+    const consumedKeys: string[] = [];
+    const actual = await vi.importActual<typeof import("./lib/rate-limit")>("./lib/rate-limit");
+    vi.doMock("./lib/rate-limit", () => ({
+      ...actual,
+      aiRateLimit:
+        identityVerdict === "allow"
+          ? (_req: unknown, _res: unknown, next: () => void) => next()
+          : (_req: unknown, res: { status: (c: number) => { json: (b: unknown) => void } }) => {
+              res.status(429).json({ error: "Rate limit exceeded" });
+            },
+      consumeSharedWindow: async (
+        key: string,
+        windowMs: number,
+        limit: number,
+        nowMs: number,
+      ) => {
+        consumedKeys.push(key);
+        return {
+          decision: {
+            allowed: true,
+            remaining: limit - 1,
+            resetAtMs: nowMs + windowMs,
+            retryAfterSeconds: Math.ceil(windowMs / 1000),
+          },
+          distributed: false,
+        };
+      },
+    }));
+    const { createApp } = await import("./app");
+    return { app: createApp(), consumedKeys };
+  }
+
+  async function postJson(app: Express, path: string): Promise<number> {
+    const server = await listen(app);
+    try {
+      const { port } = server.address() as AddressInfo;
+      const response = await fetch(`http://127.0.0.1:${port}${path}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: "{}",
+      });
+      await response.text();
+      return response.status;
+    } finally {
+      await close(server);
+    }
+  }
+
+  it("does not charge the shared account for a request the per-identity limiter refused", async () => {
+    process.env.AI_PROVIDER = "openrouter";
+    delete process.env.AI_MOCK_MODE;
+    const { app, consumedKeys } = await loadAppWithRecordingBudget("refuse");
+
+    const status = await postJson(app, "/api/chat");
+
+    // One player must not be able to drain a shared day's budget on requests
+    // their own limiter already stopped -- the same rule that stops the daily
+    // window being charged for a minute-window refusal, one layer out.
+    expect(status).toBe(429);
+    expect(consumedKeys).toEqual([]);
+  });
+
+  it("still charges the shared account for a request the per-identity limiter allowed", async () => {
+    process.env.AI_PROVIDER = "openrouter";
+    delete process.env.AI_MOCK_MODE;
+    const { app, consumedKeys } = await loadAppWithRecordingBudget("allow");
+
+    await postJson(app, "/api/chat");
+
+    expect(consumedKeys).toEqual(["global:ai:minute", "global:ai:day"]);
+  });
+
+  it("charges nothing on /api/scenario when the catalog serves it without a model", async () => {
+    process.env.AI_PROVIDER = "openrouter";
+    process.env.SCENARIO_SOURCE = "catalog";
+    delete process.env.AI_MOCK_MODE;
+    const { app, consumedKeys } = await loadAppWithRecordingBudget("allow");
+
+    await postJson(app, "/api/scenario");
+    // The control within the test: the same app charges chat, so an empty
+    // list here is the exemption and not a dead limiter.
+    await postJson(app, "/api/chat");
+
+    expect(consumedKeys).toEqual(["global:ai:minute", "global:ai:day"]);
+  });
+});

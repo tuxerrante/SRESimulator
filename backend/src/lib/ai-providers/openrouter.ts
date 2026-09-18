@@ -133,6 +133,18 @@ interface CachedKeyStatus {
 
 let cachedKeyStatus: CachedKeyStatus | null = null;
 
+/**
+ * The refresh in flight, shared by every caller that arrives during it.
+ * `/api/ai/budget` is public and the banner polls it, so without this the
+ * moment the TTL expires turns every concurrent visitor into its own
+ * `GET /key` -- a self-inflicted herd against the rate limit this lookup
+ * exists to report on.
+ */
+let inFlightKeyStatus: Promise<OpenRouterKeyStatus | null> | null = null;
+
+/** Bounds the auxiliary lookup; the banner is not worth a hung request. */
+const KEY_STATUS_TIMEOUT_MS = 5000;
+
 function getQuotaTtlMs(): number {
   const parsed = Number.parseInt(process.env.AI_OPENROUTER_QUOTA_TTL_MS ?? "", 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 60_000;
@@ -141,6 +153,27 @@ function getQuotaTtlMs(): number {
 function readOptionalNumber(source: Record<string, unknown>, key: string): number | null {
   const value = source[key];
   return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+/**
+ * `free_model_daily_requests` is an object -- `{ used, limit, remaining }` --
+ * not a request count, and there is no flat sibling holding either number.
+ *
+ * There is no fallback on purpose. `limit_remaining` is the nearest-looking
+ * field and it is a *credit balance*, a fractional currency amount: reporting
+ * 18.42 as "requests left today" is worse than reporting nothing, because the
+ * banner would render a confident wrong number instead of staying quiet.
+ */
+function readFreeModelDailyRequests(data: Record<string, unknown>): OpenRouterKeyStatus {
+  const raw = data.free_model_daily_requests;
+  if (!raw || typeof raw !== "object") {
+    return { dailyLimit: null, dailyRemaining: null };
+  }
+  const counter = raw as Record<string, unknown>;
+  return {
+    dailyLimit: readOptionalNumber(counter, "limit"),
+    dailyRemaining: readOptionalNumber(counter, "remaining"),
+  };
 }
 
 /**
@@ -160,28 +193,30 @@ export async function fetchOpenRouterKeyStatus(): Promise<OpenRouterKeyStatus | 
   if (cachedKeyStatus && nowMs - cachedKeyStatus.fetchedAtMs < getQuotaTtlMs()) {
     return cachedKeyStatus.status;
   }
+  if (inFlightKeyStatus) return inFlightKeyStatus;
 
-  let status: OpenRouterKeyStatus | null = null;
-  try {
-    const response = await fetch(`${getOpenRouterBaseUrl()}/key`, {
-      headers: { authorization: `Bearer ${key}` },
-    });
-    if (response.ok) {
-      const payload = (await response.json()) as { data?: Record<string, unknown> };
-      const data = payload?.data;
-      if (data && typeof data === "object") {
-        status = {
-          dailyLimit: readOptionalNumber(data, "free_model_daily_requests"),
-          dailyRemaining:
-            readOptionalNumber(data, "free_model_daily_requests_remaining") ??
-            readOptionalNumber(data, "limit_remaining"),
-        };
+  inFlightKeyStatus = (async () => {
+    let status: OpenRouterKeyStatus | null = null;
+    try {
+      const response = await fetch(`${getOpenRouterBaseUrl()}/key`, {
+        headers: { authorization: `Bearer ${key}` },
+        signal: AbortSignal.timeout(KEY_STATUS_TIMEOUT_MS),
+      });
+      if (response.ok) {
+        const payload = (await response.json()) as { data?: Record<string, unknown> };
+        const data = payload?.data;
+        if (data && typeof data === "object") {
+          status = readFreeModelDailyRequests(data);
+        }
       }
+    } catch {
+      status = null;
     }
-  } catch {
-    status = null;
-  }
+    cachedKeyStatus = { fetchedAtMs: Date.now(), status };
+    return status;
+  })().finally(() => {
+    inFlightKeyStatus = null;
+  });
 
-  cachedKeyStatus = { fetchedAtMs: nowMs, status };
-  return status;
+  return inFlightKeyStatus;
 }
