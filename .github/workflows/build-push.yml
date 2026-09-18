@@ -19,6 +19,7 @@ jobs:
       should_publish: ${{ steps.resolve.outputs.should_publish }}
       release_tag: ${{ steps.resolve.outputs.release_tag }}
       is_latest: ${{ steps.resolve.outputs.is_latest }}
+      owner: ${{ steps.owner.outputs.owner }}
     steps:
       - name: Harden runner
         # v2.21.0
@@ -76,24 +77,68 @@ jobs:
           echo "release_tag=${release_tag}" >> "$GITHUB_OUTPUT"
           echo "is_latest=${is_latest}" >> "$GITHUB_OUTPUT"
 
+      # Resolved once here rather than in each downstream job. The per-arch
+      # build and the manifest merge must address byte-identical image names --
+      # a digest pushed under one spelling cannot be assembled under another --
+      # and GHCR rejects an uppercase path component, so the lowercasing is
+      # load-bearing rather than cosmetic.
+      - name: Resolve the lowercase registry owner
+        id: owner
+        env:
+          OWNER_RAW: ${{ github.repository_owner }}
+        run: |
+          set -euo pipefail
+          owner="$(echo "${OWNER_RAW}" | tr '[:upper:]' '[:lower:]')"
+          echo "owner=${owner}" >> "$GITHUB_OUTPUT"
+
   build-push:
     needs:
       - resolve-release-tag
     if: needs.resolve-release-tag.outputs.should_publish == 'true'
-    runs-on: ubuntu-latest
+    # One runner per architecture, both native. The alternative -- one amd64
+    # runner emulating arm64 through QEMU -- is 5-15x slower on a Bun plus
+    # Next.js build and would blow the job timeout. This repository is public,
+    # so the free `ubuntu-24.04-arm` runner is available.
+    runs-on: ${{ matrix.runner }}
     strategy:
+      # Both architectures of a component are needed for the manifest list, so
+      # a failure on one leg makes the other leg's image unpublishable anyway.
+      # Letting it finish keeps the log of the *other* failure, which is what a
+      # cross-architecture break usually needs.
+      fail-fast: false
       matrix:
         include:
           - component: frontend
             context: .
             dockerfile: frontend/Dockerfile
+            platform: linux/amd64
+            arch_suffix: amd64
+            runner: ubuntu-latest
+          - component: frontend
+            context: .
+            dockerfile: frontend/Dockerfile
+            platform: linux/arm64
+            arch_suffix: arm64
+            runner: ubuntu-24.04-arm
           - component: backend
             context: .
             dockerfile: backend/Dockerfile
+            platform: linux/amd64
+            arch_suffix: amd64
+            runner: ubuntu-latest
+          - component: backend
+            context: .
+            dockerfile: backend/Dockerfile
+            platform: linux/arm64
+            arch_suffix: arm64
+            runner: ubuntu-24.04-arm
     env:
       REGISTRY: ghcr.io
       RELEASE_TAG: ${{ needs.resolve-release-tag.outputs.release_tag }}
       IS_LATEST: ${{ needs.resolve-release-tag.outputs.is_latest }}
+      IMAGE_REF: >-
+        ghcr.io/${{ needs.resolve-release-tag.outputs.owner
+        }}/sre-simulator-${{ matrix.component }}
     steps:
       - name: Harden runner
         # v2.21.0
@@ -137,31 +182,188 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Set image name
-        id: meta
-        run: |
-          OWNER="$(
-            echo "${GITHUB_REPOSITORY_OWNER}" | tr '[:upper:]' '[:lower:]'
-          )"
-          NAME="sre-simulator-${{ matrix.component }}"
-          release_image_tag="${REGISTRY}/${OWNER}/${NAME}:${RELEASE_TAG}"
-          latest_image_tag="${REGISTRY}/${OWNER}/${NAME}:latest"
-          if [[ "${IS_LATEST}" == "true" ]]; then
-            tags="${release_image_tag}"$'\n'"${latest_image_tag}"
-          else
-            tags="${release_image_tag}"
-          fi
-          echo "tags<<EOF" >> "${GITHUB_OUTPUT}"
-          echo "${tags}" >> "${GITHUB_OUTPUT}"
-          echo "EOF" >> "${GITHUB_OUTPUT}"
+      # push-by-digest needs a BuildKit builder; the default docker driver
+      # cannot produce an untagged, digest-addressed push.
+      - name: Set up Docker Buildx
+        # v4.3.0
+        uses: >-
+          docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e
 
-      - name: Build and push
+      # No tag is applied here, and that is the point. Two runners pushing the
+      # same tag would race, and the loser's architecture would vanish from the
+      # registry -- the second push simply moves the tag. Each leg instead
+      # pushes an untagged, digest-addressed image; the merge job below is the
+      # only thing that ever writes a tag, and it writes a manifest list
+      # naming both digests at once.
+      #
+      # Deliberately no cache-from/cache-to. scripts/aks-deploy.test.sh
+      # asserts their absence in this workflow: live-e2e builds pull-request
+      # code with packages: write, GHCR permissions are not scoped per tag, so
+      # no cache ref a PR run can write is safe to import into a release
+      # publish. Per-architecture cache scopes would have been the natural
+      # thing to add here and are ruled out by that, not by oversight.
+      - name: Build and push by digest
+        id: build
         # v7.3.0
         uses: >-
           docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a
         with:
           context: ${{ matrix.context }}
           file: ${{ matrix.dockerfile }}
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
+          platforms: ${{ matrix.platform }}
           build-args: BUN_VERSION=${{ steps.bun.outputs.version }}
+          # Double-quoted with a trailing backslash, not a folded `>-`
+          # scalar: folding joins the lines with a SPACE, which would land in
+          # the middle of this comma-separated list and produce a
+          # ` name-canonical` key that BuildKit does not recognise. The
+          # backslash continuation is the one YAML form that joins with
+          # nothing at all.
+          outputs: "type=image,name=${{ env.IMAGE_REF }},push-by-digest=true,\
+            name-canonical=true,push=true"
+
+      # The digest travels to the merge job as an empty file named after
+      # itself, which is what upload-artifact can carry between jobs.
+      - name: Export the digest
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${DIGEST}" ]]; then
+            echo "::error::The build produced no digest, so the manifest" \
+              "list cannot be assembled. This usually means the image was" \
+              "not actually pushed."
+            exit 1
+          fi
+          mkdir -p "${RUNNER_TEMP}/digests"
+          touch "${RUNNER_TEMP}/digests/${DIGEST#sha256:}"
+
+      - name: Upload the digest
+        # v4.6.2
+        uses: >-
+          actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: digests-${{ matrix.component }}-${{ matrix.arch_suffix }}
+          path: ${{ runner.temp }}/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  # The only job that writes a tag. Each build-push leg pushed an untagged,
+  # digest-addressed image; this assembles the two digests of one component
+  # into a single manifest list and tags that. A puller on either architecture
+  # then resolves the same tag to its own image, which is the whole point:
+  # `docker pull ghcr.io/.../sre-simulator-backend:vX.Y.Z` has to work on the
+  # aarch64 OCI box and on an amd64 AKS node without the caller knowing.
+  merge:
+    needs:
+      - resolve-release-tag
+      - build-push
+    if: needs.resolve-release-tag.outputs.should_publish == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        component:
+          - frontend
+          - backend
+    env:
+      RELEASE_TAG: ${{ needs.resolve-release-tag.outputs.release_tag }}
+      IS_LATEST: ${{ needs.resolve-release-tag.outputs.is_latest }}
+      IMAGE_REF: >-
+        ghcr.io/${{ needs.resolve-release-tag.outputs.owner
+        }}/sre-simulator-${{ matrix.component }}
+    steps:
+      - name: Harden runner
+        # v2.21.0
+        uses: >-
+          step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c
+        with:
+          egress-policy: audit
+
+      # No checkout: this job only talks to the registry. Keeping the
+      # untrusted PR head out of a packages:write job is the same reasoning
+      # that made the Bun version step above an inline run block.
+
+      - name: Login to GHCR
+        # v4.1.0
+        uses: >-
+          docker/login-action@dbcb813823bdd20940b903addbd779551569679f
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        # v4.3.0
+        uses: >-
+          docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e
+
+      - name: Download the digests
+        # v4.3.0
+        uses: >-
+          actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          path: ${{ runner.temp }}/digests
+          pattern: digests-${{ matrix.component }}-*
+          merge-multiple: true
+
+      - name: Create and push the manifest list
+        working-directory: ${{ runner.temp }}/digests
+        run: |
+          set -euo pipefail
+
+          # One file per architecture, named after its digest. Anything other
+          # than two means a leg silently did not publish, and tagging a
+          # half-populated manifest list is worse than failing: the tag would
+          # exist and resolve on one architecture only, which is exactly the
+          # bug this whole job removes.
+          mapfile -t digests < <(find . -maxdepth 1 -type f -printf '%f\n')
+          if [[ "${#digests[@]}" -ne 2 ]]; then
+            echo "::error::Expected 2 digests for ${{ matrix.component }}," \
+              "found ${#digests[@]}: ${digests[*]-none}. The manifest list" \
+              "must name both linux/amd64 and linux/arm64."
+            exit 1
+          fi
+
+          tag_args=(-t "${IMAGE_REF}:${RELEASE_TAG}")
+          if [[ "${IS_LATEST}" == "true" ]]; then
+            tag_args+=(-t "${IMAGE_REF}:latest")
+          fi
+
+          source_args=()
+          for digest in "${digests[@]}"; do
+            source_args+=("${IMAGE_REF}@sha256:${digest}")
+          done
+
+          docker buildx imagetools create "${tag_args[@]}" "${source_args[@]}"
+
+      # A tag that exists but resolves on one architecture is the failure this
+      # PR exists to prevent, so it is asserted rather than assumed.
+      - name: Verify both architectures are in the published tag
+        run: |
+          set -euo pipefail
+          manifest="$(
+            docker buildx imagetools inspect \
+              --format '{{json .Manifest}}' "${IMAGE_REF}:${RELEASE_TAG}"
+          )"
+          echo "${manifest}"
+
+          # Read the platforms with jq rather than grepping the JSON: the OCI
+          # descriptor marshals `architecture` before `os`, so any assertion
+          # written against a field order is one upstream struct change away
+          # from failing on a correct image.
+          missing="$(
+            jq -r '
+              ["linux/amd64", "linux/arm64"]
+              - [.manifests[]
+                 | select(.platform.os != "unknown")
+                 | "\(.platform.os)/\(.platform.architecture)"]
+              | join(" ")
+            ' <<<"${manifest}"
+          )"
+          if [[ -n "${missing}" ]]; then
+            echo "::error::${IMAGE_REF}:${RELEASE_TAG} does not advertise" \
+              "${missing}. A single-architecture tag is exactly the failure" \
+              "this job exists to prevent: it pulls fine on the architecture" \
+              "that built it and dies with 'exec format error' on the other."
+            exit 1
+          fi
+          echo "Both linux/amd64 and linux/arm64 are present."
