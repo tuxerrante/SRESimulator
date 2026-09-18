@@ -168,8 +168,19 @@ fi
 
 # TF_VAR_FLAGS expands into an unquoted shell command line, so an OWNER_ALIAS
 # containing a semicolon would run a second command and one containing a space
-# would split into two terraform arguments.
-assert_contains "owner_alias='\$(OWNER_ALIAS)'" "$OCI_MAKEFILE"
+# would split into two terraform arguments. Asserted on the emitted recipe
+# rather than on the makefile text: the quoting has already survived one
+# rename (OWNER_ALIAS -> OWNER_ALIAS_RAW, when the guard moved to parse time),
+# and a grep for the old spelling would have failed on a correct makefile
+# while a grep for the new one proves nothing about what the shell receives.
+plan_recipe="$(
+  make -C "$ROOT_DIR/infra/oci" -n tf-oci-plan OWNER_ALIAS=jdoe 2>/dev/null |
+    grep -F 'terraform plan' || true
+)"
+case "$plan_recipe" in
+*"owner_alias='jdoe'"*) ;;
+*) fail "tf-oci-plan emits [$plan_recipe]; owner_alias must reach terraform single-quoted" ;;
+esac
 
 # ...but quoting alone is not the guarantee, which is why this one is executed
 # rather than grepped. Single quotes do not escape an embedded apostrophe: the
@@ -212,25 +223,31 @@ assert_not_contains 'date +%%F' "$OCI_OUTPUTS"
 assert_contains 'make tf-oci-kubeconfig' "$OCI_OUTPUTS"
 assert_not_contains 'make -C infra/oci' "$OCI_OUTPUTS"
 
-# --- 9. the documented assertion count is the real one --------------------
+# --- 9. the documented test-case count is the real one --------------------
 # README.md's CI table states how much the credential-free job covers. That
 # number was written once and was wrong by half within two review rounds,
 # which is the failure mode of every hand-maintained count: nothing reads it,
 # so nothing contradicts it. Deriving it here makes the next stale edit fail.
+#
+# What is counted is `run` blocks, which is what `terraform test` reports as
+# passed/failed. The table used to call them assertions; it is not the same
+# number -- a single run carries up to five `assert` blocks -- and calling
+# them assertions undersold the coverage by roughly a factor of two while
+# reading as if it were precise.
 OCI_TESTS_DIR="$ROOT_DIR/infra/oci/tests"
 OCI_README="$ROOT_DIR/infra/oci/README.md"
 
 actual_runs="$(cat "$OCI_TESTS_DIR"/*.tftest.hcl | grep -c '^run "')"
 documented_runs="$(
-  grep -oE '\| [0-9]+ assertions, all on `mock_provider` \|' "$OCI_README" |
+  grep -oE '\| [0-9]+ test cases, all on `mock_provider` \|' "$OCI_README" |
     grep -oE '[0-9]+'
 )"
 
 [ -n "$documented_runs" ] ||
-  fail "could not find the assertion count in $OCI_README"
+  fail "could not find the test-case count in $OCI_README"
 
 if [ "$actual_runs" != "$documented_runs" ]; then
-  fail "$OCI_README documents $documented_runs assertions; $OCI_TESTS_DIR has $actual_runs"
+  fail "$OCI_README documents $documented_runs test cases; $OCI_TESTS_DIR has $actual_runs"
 fi
 
 echo "terraform gate checks passed."

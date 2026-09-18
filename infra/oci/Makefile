@@ -16,8 +16,8 @@ CONFIRM_DESTROY ?=
 # The check is an allowlist implemented without a shell -- handing the value to
 # `$(shell ...)` to test it would be the same injection under another name.
 # Every permitted character is substituted away; whatever is left is rejected.
-# Make's own expansion runs first and neutralises `$`, and a `#` or a newline
-# aborts the parse below, so each of those fails closed rather than reaching sh.
+# `$` and `#` are handled separately, before the fold, for the reason spelled
+# out at that check; whitespace, including a newline, is rejected first.
 #
 # Division of labour: this guard owns shell safety (the character set),
 # variables.tf owns correctness (length, leading letter, the 15-character OCI
@@ -25,11 +25,33 @@ CONFIRM_DESTROY ?=
 # guarantees it is handed the value the operator actually typed.
 OWNER_ALIAS_ALLOWED := a b c d e f g h i j k l m n o p q r s t u v w x y z \
                        0 1 2 3 4 5 6 7 8 9
-ifneq ($(OWNER_ALIAS),)
-ifneq ($(words $(OWNER_ALIAS)),1)
-$(error OWNER_ALIAS must not contain whitespace (got: '$(OWNER_ALIAS)'))
+
+# Read the *raw* text with $(value ...), never the variable itself. A variable
+# set on the command line is recursively expanded, so the first check that
+# merely reads it is already
+# too late: `make tf-oci-plan OWNER_ALIAS='$$(shell touch /tmp/pwned)'` runs the
+# command inside $(words ...) itself, before a single character has been
+# inspected. Reproduced in a scratch makefile -- the file appeared and
+# TF_VAR_FLAGS came out empty, because $(shell ...) expands to nothing, so the
+# guard reported success on a value it had already executed.
+OWNER_ALIAS_RAW := $(value OWNER_ALIAS)
+
+ifneq ($(OWNER_ALIAS_RAW),)
+ifneq ($(words $(OWNER_ALIAS_RAW)),1)
+$(error OWNER_ALIAS must not contain whitespace (got: '$(OWNER_ALIAS_RAW)'))
 endif
-OWNER_ALIAS_RESIDUE := $(OWNER_ALIAS)
+# `$$` and `#` are rejected here rather than by the fold below, because the
+# fold is built with $(eval), which re-parses its argument as makefile text.
+# A surviving `$$` would be expanded at that point after all, and a `#` would
+# comment out the rest of the generated line -- leaving the residue empty and
+# the value approved.
+ifneq ($(findstring $$,$(OWNER_ALIAS_RAW)),)
+$(error OWNER_ALIAS must be lowercase alphanumeric; it contains a '$$')
+endif
+ifneq ($(findstring \#,$(OWNER_ALIAS_RAW)),)
+$(error OWNER_ALIAS must be lowercase alphanumeric; it contains a hash character)
+endif
+OWNER_ALIAS_RESIDUE := $(OWNER_ALIAS_RAW)
 $(foreach c,$(OWNER_ALIAS_ALLOWED),\
   $(eval OWNER_ALIAS_RESIDUE := $$(subst $(c),,$(OWNER_ALIAS_RESIDUE))))
 ifneq ($(OWNER_ALIAS_RESIDUE),)
@@ -37,9 +59,24 @@ $(error OWNER_ALIAS must be lowercase alphanumeric; rejected: $(OWNER_ALIAS_RESI
 endif
 endif
 
+# Everything downstream uses OWNER_ALIAS_RAW, the value the allowlist actually
+# vetted. Referencing the original variable would expand it again at every use
+# site.
+#
 # Single-quoted as a second barrier, so a future edit that loosens the guard
 # above does not immediately hand an unquoted value to the shell.
-TF_VAR_FLAGS := $(if $(OWNER_ALIAS),-var owner_alias='$(OWNER_ALIAS)',)
+TF_VAR_FLAGS := $(if $(OWNER_ALIAS_RAW),-var owner_alias='$(OWNER_ALIAS_RAW)',)
+
+# The confirmation tokens get no allowlist -- they are free-form by design --
+# so they must never be interpolated into recipe text. `CONFIRM_APPLY='x";
+# touch /tmp/pwned; echo "'` closes the generated quote and runs before the
+# comparison happens. $(value ...) keeps make from expanding them, and
+# exporting a simply-expanded variable puts the stored text into the child
+# environment verbatim, so the recipes below compare shell variables.
+CONFIRM_APPLY_RAW   := $(value CONFIRM_APPLY)
+CONFIRM_DESTROY_RAW := $(value CONFIRM_DESTROY)
+export CONFIRM_APPLY_RAW
+export CONFIRM_DESTROY_RAW
 
 # S3-compatible backend against OCI Object Storage. Populate .oci-backend.env
 # from the console; it is gitignored and holds a Customer Secret Key pair.
@@ -47,7 +84,7 @@ OCI_BACKEND_ENV_FILE ?= .oci-backend.env
 OCI_STATE_BUCKET     ?=
 OCI_STATE_NAMESPACE  ?=
 OCI_STATE_REGION     ?= eu-frankfurt-1
-OCI_STATE_KEY        ?= $(if $(OWNER_ALIAS),$(OWNER_ALIAS)-free-sre-simulator.tfstate,sre-simulator-free.tfstate)
+OCI_STATE_KEY        ?= $(if $(OWNER_ALIAS_RAW),$(OWNER_ALIAS_RAW)-free-sre-simulator.tfstate,sre-simulator-free.tfstate)
 
 -include $(OCI_BACKEND_ENV_FILE)
 
@@ -92,7 +129,10 @@ tf-oci-bootstrap: ## Create the Object Storage bucket that holds Terraform state
 	@echo "  AWS_ACCESS_KEY_ID=<customer secret key id>"
 	@echo "  AWS_SECRET_ACCESS_KEY=<customer secret key>"
 	@echo ""
-	@echo "Then: make tf-oci-init"
+	@echo "Then: make tf-oci-init OWNER_ALIAS=<alias>"
+	@echo ""
+	@echo "Pass OWNER_ALIAS to init as well as to plan/apply: it selects the"
+	@echo "state object key, and init is what records that key in .terraform/."
 
 tf-oci-init: ## Initialize Terraform against the OCI Object Storage backend
 	@if [ -z "$(OCI_STATE_BUCKET)" ] || [ -z "$(OCI_STATE_NAMESPACE)" ]; then \
@@ -136,18 +176,18 @@ tf-oci-plan: ## Generate and show an execution plan
 	terraform plan $(TF_VAR_FLAGS) -out=tfplan
 
 tf-oci-apply: ## Apply the saved plan (run tf-oci-plan first)
-	@if [ -z "$(OWNER_ALIAS)" ]; then \
+	@if [ -z "$(OWNER_ALIAS_RAW)" ]; then \
 		echo "OWNER_ALIAS is required for tf-oci-apply."; \
 		echo "Example: make tf-oci-apply OWNER_ALIAS=aaffinit CONFIRM_APPLY=aaffinit"; \
 		exit 1; \
 	fi
 	@if [ ! -f tfplan ]; then \
-		echo "tfplan not found. Run 'make tf-oci-plan OWNER_ALIAS=$(OWNER_ALIAS)' first."; \
+		echo "tfplan not found. Run 'make tf-oci-plan OWNER_ALIAS=$(OWNER_ALIAS_RAW)' first."; \
 		exit 1; \
 	fi
-	@if [ "$(CONFIRM_APPLY)" != "$(OWNER_ALIAS)" ]; then \
+	@if [ "$${CONFIRM_APPLY_RAW:-}" != "$(OWNER_ALIAS_RAW)" ]; then \
 		echo "REFUSED: missing manual confirmation for apply."; \
-		echo "Re-run with CONFIRM_APPLY=$(OWNER_ALIAS)"; \
+		echo "Re-run with CONFIRM_APPLY=$(OWNER_ALIAS_RAW)"; \
 		exit 1; \
 	fi
 	terraform apply tfplan
@@ -155,7 +195,7 @@ tf-oci-apply: ## Apply the saved plan (run tf-oci-plan first)
 	@terraform output -raw post_apply_checklist 2>/dev/null || true
 
 tf-oci-destroy: ## Destroy the free-tier box and its network
-	@if [ -z "$(OWNER_ALIAS)" ]; then \
+	@if [ -z "$(OWNER_ALIAS_RAW)" ]; then \
 		echo "OWNER_ALIAS is required for tf-oci-destroy."; \
 		echo "Example: make tf-oci-destroy OWNER_ALIAS=aaffinit CONFIRM_DESTROY=aaffinit-free"; \
 		exit 1; \
@@ -172,9 +212,9 @@ tf-oci-destroy: ## Destroy the free-tier box and its network
 		echo "REFUSED: -auto-approve is not allowed for destructive operations."; \
 		exit 1; \
 	esac
-	@if [ "$(CONFIRM_DESTROY)" != "$(OWNER_ALIAS)-free" ]; then \
+	@if [ "$${CONFIRM_DESTROY_RAW:-}" != "$(OWNER_ALIAS_RAW)-free" ]; then \
 		echo "REFUSED: missing manual confirmation for destroy."; \
-		echo "Re-run with CONFIRM_DESTROY=$(OWNER_ALIAS)-free"; \
+		echo "Re-run with CONFIRM_DESTROY=$(OWNER_ALIAS_RAW)-free"; \
 		exit 1; \
 	fi
 	@echo "NOTE: the reserved public IP is destroyed too. Update the Cloudflare"

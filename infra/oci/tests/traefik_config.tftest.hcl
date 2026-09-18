@@ -161,6 +161,17 @@ run "traefik_can_actually_bind_the_privileged_ports" {
     error_message = "NET_BIND_SERVICE must be the only capability added back."
   }
 
+  # The add list is only half the claim. Without drop: [ALL] the container
+  # keeps the runtime's whole default set -- CHOWN, SETUID, DAC_OVERRIDE,
+  # NET_RAW -- and "NET_BIND_SERVICE is the only capability added back" stays
+  # true while the posture it is shorthand for is gone. That matters here more
+  # than anywhere else in this file: this pod runs as uid 0 in the host
+  # network namespace, so the dropped set is the entire boundary.
+  assert {
+    condition     = try(yamldecode(yamldecode(local.traefik_config_rendered).spec.valuesContent).securityContext.capabilities.drop, []) == ["ALL"]
+    error_message = "securityContext.capabilities.drop must stay [ALL]; root in the host netns with the default capability set is not the trade this file makes."
+  }
+
   assert {
     condition     = yamldecode(yamldecode(local.traefik_config_rendered).spec.valuesContent).securityContext.allowPrivilegeEscalation == false
     error_message = "allowPrivilegeEscalation must stay false."
@@ -197,6 +208,16 @@ run "the_traefik_image_is_pinned_away_from_the_chart_default" {
   assert {
     condition     = can(regex("^v?[0-9]+\\.[0-9]+\\.[0-9]+$", yamldecode(yamldecode(local.traefik_config_rendered).spec.valuesContent).image.tag))
     error_message = "The image tag must be a full x.y.z version, not a floating major or minor."
+  }
+
+  # Every assertion above reads the tag, so reverting to
+  # rancher/mirrored-library-traefik:v3.7.13 -- the obvious "keep the rancher
+  # mirror, take the bump" edit -- would leave all three green. The scan that
+  # justified this pin puts the mirror at 2 HIGH against upstream's 0, so the
+  # repository is half of what was decided and has to be asserted as such.
+  assert {
+    condition     = yamldecode(yamldecode(local.traefik_config_rendered).spec.valuesContent).image.repository == "docker.io/library/traefik"
+    error_message = "The image repository must stay docker.io/library/traefik. The rancher mirror still carries an openssl QUIC DoS at the same tag; bump the tag, do not swap the repository."
   }
 }
 

@@ -187,6 +187,24 @@ variable "ssh_allowed_cidrs" {
     error_message = "Every entry in ssh_allowed_cidrs must be a CIDR block, e.g. 203.0.113.4/32. A bare address is not one, and the NSG rule would be built from it verbatim."
   }
 
+  # cidrhost() accepts both families and so does the NSG's CIDR_BLOCK source
+  # type, so an IPv6 entry builds a rule OCI accepts and then never matches.
+  # Nothing downstream has an IPv6 address to match it against: network.tf
+  # gives the VCN no IPv6 CIDR (the half-wired enable_ipv6 path was removed
+  # rather than completed), the VNIC is assigned no IPv6 address, and
+  # Cloudflare reaches an IPv4-only origin over IPv4. The operator would read
+  # "22 is open to my prefix" off a clean plan and then find the box
+  # unreachable, with the rule sitting right there in the console.
+  #
+  # cidrnetmask() is the discriminator -- it errors on anything but IPv4.
+  # The IPv6 arm of the coverage measurement below stays regardless: it is the
+  # second barrier, and it is what catches "::/0" if this one is ever relaxed
+  # to admit IPv6 alongside a completed dual-stack network.
+  validation {
+    condition     = alltrue([for c in var.ssh_allowed_cidrs : can(cidrnetmask(c))])
+    error_message = "ssh_allowed_cidrs must contain IPv4 CIDRs only. This deployment is IPv4-only, so an IPv6 entry produces an NSG rule that can never match and silently leaves SSH closed."
+  }
+
   # Cross-variable validation, hence required_version >= 1.9.
   #
   # This measures how much address space the list actually covers rather than
@@ -243,6 +261,15 @@ variable "k8s_api_allowed_cidrs" {
   validation {
     condition     = alltrue([for c in var.k8s_api_allowed_cidrs : can(cidrhost(c, 0))])
     error_message = "Every entry in k8s_api_allowed_cidrs must be a CIDR block, e.g. 203.0.113.4/32."
+  }
+
+  # Same IPv4-only reasoning as ssh_allowed_cidrs: an IPv6 entry here builds a
+  # rule that can never match, which on this variable reads as "I have scoped
+  # the API to my prefix" while the practical effect is that 6443 stays shut.
+  # That failure is in the safe direction, but it is still a lie in the plan.
+  validation {
+    condition     = alltrue([for c in var.k8s_api_allowed_cidrs : can(cidrnetmask(c))])
+    error_message = "k8s_api_allowed_cidrs must contain IPv4 CIDRs only. This deployment is IPv4-only, so an IPv6 entry produces an NSG rule that can never match."
   }
 
   # Same coverage measurement as ssh_allowed_cidrs, and here it is load-bearing
@@ -307,9 +334,14 @@ variable "ssh_public_key" {
   description = "SSH public key material authorised for the operator user."
   type        = string
 
+  # The three NIST curves are enumerated rather than matched as nistp[0-9]+,
+  # which admitted "ecdsa-sha2-nistp999". RFC 5656 defines exactly these three
+  # for SSH and OpenSSH implements no others, so the open form was only ever
+  # able to wave through a typo -- and a typo here is an authorized_keys line
+  # sshd ignores, on a box whose only other way in is a rebuild.
   validation {
-    condition     = can(regex("^(ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp[0-9]+) ", var.ssh_public_key))
-    error_message = "ssh_public_key must be an OpenSSH public key (ssh-ed25519, ssh-rsa or ecdsa-sha2-nistp*)."
+    condition     = can(regex("^(ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp(256|384|521)) ", var.ssh_public_key))
+    error_message = "ssh_public_key must be an OpenSSH public key (ssh-ed25519, ssh-rsa, ecdsa-sha2-nistp256, ecdsa-sha2-nistp384 or ecdsa-sha2-nistp521)."
   }
 
   # The check above stops at the type prefix and the space, so "ssh-ed25519 "
@@ -320,7 +352,7 @@ variable "ssh_public_key" {
   # result is a box nobody can log into. Rebuilding it is the only recovery,
   # which is a steep price for a truncated copy-paste.
   validation {
-    condition     = can(regex("^(ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp[0-9]+) [A-Za-z0-9+/]{32,}={0,3}([[:space:]].*)?$", var.ssh_public_key))
+    condition     = can(regex("^(ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp(256|384|521)) [A-Za-z0-9+/]{32,}={0,3}([[:space:]].*)?$", var.ssh_public_key))
     error_message = "ssh_public_key must carry base64 key material after the key type, e.g. \"ssh-ed25519 AAAAC3Nza... user@host\". A bare key type installs an authorized-keys line that can never authenticate."
   }
 
