@@ -72,13 +72,26 @@ The game enforces the "Scientific Method of Investigation" as defined in the ARO
   a single-node k3d cluster, deploys the real chart with `values.yaml` +
   `values-oci.yaml` + `values-ci-k3d.yaml` and mock AI / JSON storage, then runs
   `make test-e2e-live` through the bundled Traefik ingress on
-  `http://sre-simulator.localtest.me`.
+  `http://sre-simulator.localhost`.
+- The host must stay a `*.localhost` name. Only loopback and `*.localhost` are
+  browser **secure contexts**, and outside one Chromium hides
+  `crypto.randomUUID` and `crypto.subtle`, which `hooks/useChat.ts` and
+  `lib/auth/fingerprint.ts` call unguarded. The symptom is brutal to diagnose:
+  the suite times out with no 5xx, no failed request and no console error.
 - Because it is credential-free it also gates fork PRs and Dependabot PRs, and
   no manual environment approval is ever needed. Keep it that way:
-  `scripts/live-e2e-gate.test.sh` fails if the job block grows a `secrets.`,
-  `environment:` or `azure/login` reference.
-- k3d, not kind, because it is the same k3s distribution as the OCI box — the
-  gate doubles as the regression test for `values-oci.yaml`.
+  `scripts/live-e2e-gate.test.sh` fails if the job block — or any local
+  composite action it `uses:` — grows a `secrets.` or `azure/login`
+  reference, or if the block grows an `environment:` key.
+- k3d, not kind, because it is the same k3s distribution as the OCI box. That
+  makes the gate a regression test for the **chart-side** half of
+  `values-oci.yaml`: the Ingress object, `className: traefik`, the Traefik
+  annotation derivation, `local-path` and the replica pins. It is **not** a
+  test of the OCI Traefik deployment shape — k3d keeps ServiceLB and the stock
+  Traefik `Service`, whereas the box runs `--disable=servicelb` with
+  `hostNetwork: true` and `service.enabled: false`. That combination, and the
+  client-IP integrity that depends on it, stays unverified until a real VM
+  exists.
 - Do not call a PR merge-ready when this check is skipped, pending, or failed.
 - The Azure-backed `live-e2e` job still exists but is **opt-in**: it runs only
   when the repository variable `LIVE_E2E_ENABLED` is `true`, and `ci-gate`
@@ -88,10 +101,12 @@ The game enforces the "Scientific Method of Investigation" as defined in the ARO
   parallel on distinct scenarios, requires explicit approval of the protected
   `live-e2e` GitHub Environment before cluster and AI credentials are released
   to PR code, and cannot run on fork PRs.
-- Dependabot PRs additionally carry the `dependabot-e2e` status (trusted
-  `workflow_run` deploy into a pooled namespace; see `docs/OPERATIONS.md` and
-  `make dependabot-e2e-pool`). That path needs a live AKS cluster and is
-  scheduled for removal now that `free-e2e` covers the bot PRs too.
+- The `dependabot-e2e` status (trusted `workflow_run` deploy into a pooled
+  namespace; see `docs/OPERATIONS.md` and `make dependabot-e2e-pool`) is
+  **opt-in** on the same pattern, via `DEPENDABOT_E2E_ENABLED`. It needs a live
+  AKS cluster, so while that cluster is gone `ci-gate` must not wait on it —
+  unset, bot PRs are gated by `free-e2e` alone. The path is scheduled for
+  removal now that `free-e2e` covers bot PRs too.
 
 ## 4. Public-Only Safety Boundary
 

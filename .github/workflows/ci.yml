@@ -704,7 +704,13 @@ jobs:
       K3D_SHA256: >-
         06d8f25bc3a971c4eb29e0ff08429b180402db0f4dec838c9eac427e296800a0
       K3S_IMAGE: docker.io/rancher/k3s:v1.37.0-k3s1
-      E2E_HOST: sre-simulator.localtest.me
+      # *.localhost, not *.localtest.me: both resolve to loopback, but only
+      # *.localhost is a browser "secure context". Off a secure context
+      # Chromium hides crypto.randomUUID and crypto.subtle, which the chat
+      # (hooks/useChat.ts) and the anonymous fingerprint
+      # (lib/auth/fingerprint.ts) call unguarded - the suite then fails with
+      # no 5xx, no failed request and no console error.
+      E2E_HOST: sre-simulator.localhost
     steps:
       - name: Harden runner
         # v2.21.0
@@ -733,6 +739,13 @@ jobs:
         uses: >-
           azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310
 
+      # Both images are rebuilt here rather than reused from docker-build.
+      # That job runs a plain `docker build` with no cache export, no artifact
+      # upload and no registry push, so its images never leave its own runner,
+      # and publishing them to GHCR from a PR-head workflow would need the
+      # registry credentials this gate exists to do without. It stays in
+      # `needs:` as the cheap fail-fast check; the dedicated free-e2e-* GHA
+      # cache scopes below are what actually keep the rebuild short.
       - name: Set up Docker Buildx
         # v4.3.0
         uses: >-
@@ -782,8 +795,10 @@ jobs:
         run: |
           set -euo pipefail
           # --port 80:80@loadbalancer publishes Traefik on the runner's port
-          # 80, and *.localtest.me resolves to 127.0.0.1, so the browser can
-          # reach the ingress with no /etc/hosts edit and no port-forward.
+          # 80, and Chromium maps *.localhost to loopback internally, so the
+          # browser reaches the ingress with no /etc/hosts edit and no
+          # port-forward. The readiness poll below sends an explicit Host
+          # header to 127.0.0.1 and so needs no name resolution at all.
           # metrics-server is disabled to match the single-node OCI install,
           # where there is no HPA to feed.
           k3d cluster create "${K3D_CLUSTER}" \
@@ -890,7 +905,7 @@ jobs:
 
       - name: Run browser E2E
         env:
-          LIVE_E2E_BASE_URL: http://sre-simulator.localtest.me
+          LIVE_E2E_BASE_URL: http://sre-simulator.localhost
         run: make test-e2e-live
 
       - name: Helm test
@@ -1161,6 +1176,12 @@ jobs:
           # Unset by default, which is what keeps the Azure-backed live-e2e
           # job skipped and out of the merge decision.
           LIVE_E2E_ENABLED: ${{ vars.LIVE_E2E_ENABLED }}
+          # Likewise unset by default. dependabot-e2e deploys to the same dead
+          # AKS cluster, so its status can never reach success and polling for
+          # it would freeze every bot PR for 70 minutes. The whole path is
+          # deleted in a follow-up; the variable keeps it recoverable until
+          # then.
+          DEPENDABOT_E2E_ENABLED: ${{ vars.DEPENDABOT_E2E_ENABLED }}
           EVENT_NAME: ${{ github.event_name }}
           IS_DEPENDABOT: >-
             ${{ github.event_name == 'pull_request' &&
@@ -1186,6 +1207,7 @@ jobs:
           echo "  run browser e2e:            ${RUN_E2E}"
           echo "  free-e2e:                   ${FREE_E2E_RESULT}"
           echo "  live-e2e enabled:           ${LIVE_E2E_ENABLED:-false}"
+          echo "  dependabot-e2e enabled:     ${DEPENDABOT_E2E_ENABLED:-false}"
           echo "  live-e2e:                   ${LIVE_E2E_RESULT}"
 
           for name_result in \
@@ -1205,7 +1227,8 @@ jobs:
           done
 
           if [[ "${EVENT_NAME}" == "pull_request" ]]; then
-            if [[ "${IS_DEPENDABOT}" == "true" ]]; then
+            if [[ "${IS_DEPENDABOT}" == "true" &&
+                  "${DEPENDABOT_E2E_ENABLED}" == "true" ]]; then
               # Dependabot E2E runs claim a namespace from a fixed-size pool
               # and a single run takes ~20 minutes, so once every slot is busy
               # the wait has to cover a queue of PRs, not a single run.
@@ -1257,10 +1280,11 @@ jobs:
               fi
             fi
 
-            # free-e2e also gates Dependabot PRs, so this is a separate `if`
-            # rather than another arm of the chain above: during the
-            # transition both the pooled dependabot-e2e status and the free
-            # k3d gate have to be green.
+            # free-e2e gates Dependabot PRs too, so this is a separate `if`
+            # rather than another arm of the chain above. With
+            # DEPENDABOT_E2E_ENABLED unset the free k3d gate is the only
+            # browser gate a bot PR has to satisfy; set it to 'true' and the
+            # pooled AKS status has to be green as well.
             if [[ "${RUN_E2E}" == "false" ]]; then
               echo "Browser E2E intentionally skipped (inert docs/repo-meta" \
                 "change)."

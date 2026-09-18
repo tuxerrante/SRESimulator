@@ -6,6 +6,7 @@ WORKFLOW="$ROOT_DIR/.github/workflows/ci.yml"
 DEPENDABOT_BUILD_WORKFLOW="$ROOT_DIR/.github/workflows/dependabot-e2e-build.yml"
 DEPENDABOT_WORKFLOW="$ROOT_DIR/.github/workflows/dependabot-e2e.yml"
 MAKEFILE="$ROOT_DIR/Makefile"
+CI_K3D_VALUES="$ROOT_DIR/helm/sre-simulator/values-ci-k3d.yaml"
 
 fail() {
   echo "FAIL: $*" >&2
@@ -114,6 +115,22 @@ assert_contains 'failed_jobs+=("free-e2e (${FREE_E2E_RESULT})")' "$WORKFLOW"
 assert_contains "values-oci.yaml" "$WORKFLOW"
 assert_contains "values-ci-k3d.yaml" "$WORKFLOW"
 
+# The gate host must stay a *.localhost name in both the workflow and the
+# overlay it deploys. Only loopback and *.localhost are browser secure
+# contexts; off one, Chromium hides crypto.randomUUID and crypto.subtle, which
+# the chat and the anonymous fingerprint call unguarded, and the suite then
+# times out with no 5xx, no failed request and no console error.
+assert_contains "E2E_HOST: sre-simulator.localhost" "$WORKFLOW"
+assert_contains "LIVE_E2E_BASE_URL: http://sre-simulator.localhost" "$WORKFLOW"
+assert_contains "host: sre-simulator.localhost" "$CI_K3D_VALUES"
+
+# dependabot-e2e needs the AKS cluster, so ci-gate must only wait on its status
+# when the path is explicitly switched on. Without the guard every bot PR polls
+# a status that can never arrive.
+assert_contains 'DEPENDABOT_E2E_ENABLED: ${{ vars.DEPENDABOT_E2E_ENABLED }}' \
+  "$WORKFLOW"
+assert_contains '"${DEPENDABOT_E2E_ENABLED}" == "true" ]]; then' "$WORKFLOW"
+
 # The whole point of free-e2e is that it needs nothing privileged: no GitHub
 # Environment, no cloud login, no repository secret. Assert that block-scoped,
 # because a `secrets.` reference anywhere else in ci.yml is legitimate.
@@ -130,6 +147,30 @@ for forbidden in "secrets." "environment:" "azure/login"; do
     fail "free-e2e must stay credential-free but references '$forbidden'"
   fi
 done
+
+# The job block is only half of the job. A composite action it `uses:` runs in
+# the same runner with the same permissions, so a credential could be picked up
+# there instead and the block-scoped scan above would never see it. Follow every
+# local action the block references and scan it too. `environment:` is not
+# checked in action files: it is a job-level key that cannot appear there, and
+# the word occurs in prose ("environment variable") in one of the descriptions.
+free_e2e_actions="$(
+  grep -Eo 'uses: \./[^[:space:]]+' <<<"$free_e2e_block" |
+    sed 's|^uses: \./||' | sort -u
+)"
+[[ -n "$free_e2e_actions" ]] || \
+  fail "expected free-e2e to reuse the repository's composite actions"
+while IFS= read -r action_dir; do
+  action_file="$ROOT_DIR/$action_dir/action.yml"
+  [[ -f "$action_file" ]] || action_file="$ROOT_DIR/$action_dir/action.yaml"
+  [[ -f "$action_file" ]] || \
+    fail "free-e2e uses ./$action_dir but no action.yml exists there"
+  for forbidden in "secrets." "azure/login"; do
+    if grep -Fq -- "$forbidden" "$action_file"; then
+      fail "free-e2e runs ./$action_dir, which references '$forbidden'"
+    fi
+  done
+done <<<"$free_e2e_actions"
 grep -Fq -- "make test-e2e-live" <<<"$free_e2e_block" || \
   fail "free-e2e must run the browser suite via make test-e2e-live"
 

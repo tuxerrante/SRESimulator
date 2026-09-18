@@ -13,10 +13,15 @@
 # public DNS name and a real ACME certificate.
 
 exposure:
-  # k3d publishes the Traefik loadbalancer on host :80, and *.localtest.me
-  # resolves to 127.0.0.1, so this needs no /etc/hosts edit and no
-  # port-forward.
-  host: sre-simulator.localtest.me
+  # k3d publishes the Traefik loadbalancer on host :80, and Chromium maps
+  # *.localhost to loopback internally, so this needs no /etc/hosts edit and
+  # no port-forward.
+  #
+  # It must be *.localhost rather than an ordinary loopback alias such as
+  # *.localtest.me: only loopback and *.localhost are browser secure contexts,
+  # and without one Chromium hides crypto.randomUUID and crypto.subtle, which
+  # the chat and anonymous-trial paths call unguarded.
+  host: sre-simulator.localhost
   scheme: http
 
 ingress:

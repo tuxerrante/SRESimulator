@@ -373,13 +373,41 @@ runner: it builds both images with buildx, creates a single-node k3d cluster,
 deploys the real chart with `values.yaml` + `values-oci.yaml` +
 `values-ci-k3d.yaml` plus mock-AI/JSON-storage overrides, and runs
 `make test-e2e-live` against the bundled Traefik ingress on
-`http://sre-simulator.localtest.me`. It consumes no cloud credentials, no
+`http://sre-simulator.localhost`. It consumes no cloud credentials, no
 repository secret and no GitHub Environment, so it also gates fork PRs and
 Dependabot PRs, and `scripts/live-e2e-gate.test.sh` asserts that property by
-scanning the job block for `secrets.`, `environment:` and `azure/login`.
+scanning the job block for `secrets.`, `environment:` and `azure/login`, and
+every local composite action the block `uses:` for the first and third. Both
+images are rebuilt inside the job: `docker-build` neither pushes nor exports
+its images, and publishing them from a PR-head workflow would need exactly the
+registry credentials this gate does without.
 
 k3d rather than kind on purpose: it is the same k3s distribution as the OCI
-box, so the gate doubles as the regression test for `values-oci.yaml`.
+box. Be precise about what that buys. The gate is a regression test for the
+chart-side half of `values-oci.yaml` — the Ingress object, `className:
+traefik`, the Traefik annotation derivation, `local-path` and the replica
+pins. It does **not** exercise the OCI Traefik deployment shape: k3d keeps
+ServiceLB and the stock Traefik `Service`, while the box runs
+`--disable=servicelb` with `hostNetwork: true` and `service.enabled: false`.
+That combination is the load-bearing decision for client-IP integrity and
+remains unverified until a real VM exists.
+
+### The gate host must be a `*.localhost` name
+
+`E2E_HOST` and `exposure.host` are `sre-simulator.localhost`, and changing that
+to another loopback alias will break the suite in a way that is very hard to
+read. Only loopback addresses and `*.localhost` names are browser **secure
+contexts**. Outside one, Chromium hides `crypto.randomUUID` and
+`crypto.subtle`, which `frontend/src/hooks/useChat.ts`,
+`frontend/src/hooks/useCommand.ts`, `frontend/src/lib/auth/fingerprint.ts` and
+`frontend/src/lib/telemetry/request-context.ts` call without a guard. Chat
+messages then never enter the transcript and anonymous play cannot start,
+while the Playwright run reports no 5xx, no failed request and no console
+error, because an unhandled rejection surfaces as `pageerror`. Verified with a
+Chromium probe on both macOS and Linux: `sre-simulator.localtest.me` reports
+`isSecureContext: false`, `sre-simulator.localhost` reports `true`.
+
+Production is unaffected — the OCI path is HTTPS, hence a secure context.
 
 ### Optional Azure `live-e2e`
 
@@ -406,10 +434,14 @@ namespace from a pre-provisioned pool, deploys only the trusted `main` chart
 into it, and runs mock-AI/JSON browser coverage. Its kubeconfig is stored only
 in the unprotected `dependabot-e2e` Environment and is bound to those
 namespaces; it cannot read the production namespace, create namespaces, or
-delete namespaces. The main `ci-gate` still waits for the `dependabot-e2e`
-commit status *in addition to* `free-e2e`, which is defence in depth while the
-free gate settles. That path needs a live AKS cluster, so it is the next thing
-to retire.
+delete namespaces. That path needs a live AKS cluster, so `ci-gate` only waits
+for the `dependabot-e2e` commit status when the repository variable
+`DEPENDABOT_E2E_ENABLED` is `true` — the same opt-in pattern as
+`LIVE_E2E_ENABLED`. Unset, bot PRs are gated by `free-e2e` alone. Set it to
+`true` to restore the belt-and-braces behaviour once the cluster is back;
+leaving it unset while the cluster is gone is what stops every Dependabot PR
+from polling for 70 minutes and then failing with
+`dependabot-e2e (missing)`. The path is the next thing to retire outright.
 
 ### Dependabot E2E namespace pool
 
