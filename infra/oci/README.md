@@ -458,9 +458,12 @@ by hand a handful of times a year. CI runs only the credential-free
 
 ## What CI does run
 
-`.github/workflows/ci.yml` has a `terraform-validate` job whose result
-`ci-gate` counts, so it is merge-blocking. It holds no credentials and can
-therefore run on fork pull requests:
+`.github/workflows/ci.yml` has two jobs for this root, `terraform-validate`
+and `oci-shape-e2e`. `ci-gate` counts both results, so both are
+merge-blocking, and neither holds credentials, so both run on fork pull
+requests.
+
+`terraform-validate` is the static half:
 
 | Step | Covers |
 | --- | --- |
@@ -482,8 +485,51 @@ parseable YAML.
 `terraform.tfvars.example` doubles as the fixture for that render, so CI also
 proves the documented example still satisfies every variable validation.
 
-`scripts/terraform-gate.test.sh` (run by `make test-shell`) locks the wiring:
-that `ci-gate` counts the result, that the job never grows a `secrets.` or
-`environment:` reference, that both roots stay covered, and that
-`traefik-config.yaml` keeps the three properties the aarch64 dry-run VM proved
-it needs.
+### `oci-shape-e2e`: the same shape, actually running
+
+Every assertion above is static. None of them can observe a Traefik that
+installed cleanly and then refused to update, or a redirect that never fires,
+or a source address quietly rewritten on the way in — and those are precisely
+the three failures the aarch64 dry-run VM found. So a second merge-blocking
+job, `oci-shape-e2e`, boots the real thing.
+
+It runs on `ubuntu-24.04-arm`: a free GitHub-hosted runner for public
+repositories, 4 vCPU / 16 GB, and the same architecture as A1.Flex. The runner
+*is* a Linux VM, so k3s is installed directly on it rather than nested inside
+another one.
+
+| Step | What only a running cluster can show |
+| --- | --- |
+| install `traefik-config.yaml` into `manifests/`, then `diff` it back | the file CI runs is the repository's, differing only in the ACME address |
+| install k3s with the command extracted from the rendered `local.cloud_init` | the flags cannot drift from the ones the instance boots |
+| `rollout status deploy/traefik` | bug 1: an invalid `HelmChartConfig` never produces a rollout |
+| no svclb DaemonSet, no `traefik` Service, `hostNetwork: true`, `podIP == hostIP` | the shape that preserves the client IP |
+| a pod curls the node IP through a `traefik/whoami` Ingress | `301` from the web entrypoint, and `X-Real-Ip` equal to the caller's own pod IP |
+| flip `permanent: true` to `false`, re-apply, wait for a `302` on the wire | bug 2: a deadlocked rolling update keeps serving the old config while helm reports success |
+
+Two details are deliberate. The probe runs **from a pod**, not from the runner:
+loopback traffic would prove nothing about client-IP integrity, exactly as on
+the box, where `-i lo -j ACCEPT` makes a local `curl` meaningless. And the
+re-apply assertion reads the redirect **on the wire** rather than the pod spec,
+because bug 2's whole signature is a spec that updates while the process
+serving traffic does not.
+
+The manifest is written before k3s is installed, reproducing the fresh-boot
+ordering in which a bad config is fatal rather than cosmetic.
+
+CI cannot complete an ACME order — a runner has no public DNS — so Traefik
+serves its self-signed default certificate and the HTTPS probe uses `curl -k`.
+Real certificate issuance is verified on the box, once, at first bring-up.
+
+**Not covered here:** `helm test` and the Playwright suite. They belong to
+`free-e2e`, which runs the application chart on k3d; this job is about the
+node-level shape underneath it, and today's images are amd64-only anyway
+(PR 3). Once multi-arch images land, running the browser suite against this
+arm64 cluster is a worthwhile follow-up.
+
+`scripts/terraform-gate.test.sh` (run by `make test-shell`) locks the wiring of
+both jobs: that `ci-gate` counts each result, that neither ever grows a
+`secrets.` or `environment:` reference, that both roots stay covered, that
+`oci-shape-e2e` keeps consuming the shared `traefik-config.yaml` on an arm64
+runner, and that `traefik-config.yaml` keeps the three properties the aarch64
+dry-run VM proved it needs.
