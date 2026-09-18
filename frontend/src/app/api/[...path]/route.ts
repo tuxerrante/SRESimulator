@@ -12,12 +12,28 @@ import {
 } from "@shared/auth/anonymous-proof";
 import { createSignedClientIp } from "@shared/auth/client-ip";
 import { REQUEST_ID_HEADER } from "@shared/telemetry/constants";
-import { isSecureRequest, shouldTrustProxyHeaders } from "@/lib/auth/request-context";
+import {
+  getTrustedClientIpHeader,
+  isSecureRequest,
+  isValidHeaderName,
+  shouldTrustProxyHeaders,
+} from "@/lib/auth/request-context";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 function assertTrustedProxySigningConfiguration(): void {
+  // Checked whether or not proxy headers are trusted, because the proxy
+  // strips this header on every hop regardless, and `Headers.delete()`
+  // throws on a malformed name. Failing at module load beats a 500 on every
+  // proxied request with a stack trace that never names the variable.
+  const headerName = getTrustedClientIpHeader();
+  if (!isValidHeaderName(headerName)) {
+    throw new Error(
+      `TRUSTED_CLIENT_IP_HEADER is not a valid HTTP header name: "${headerName}"`,
+    );
+  }
+
   if (
     shouldTrustProxyHeaders() &&
     !process.env.ANTI_ABUSE_HMAC_SECRET?.trim()
@@ -46,11 +62,15 @@ function getTrustedClientIp(request: NextRequest): string | null {
     return null;
   }
 
-  // Only the edge-generated address is trustworthy. `x-forwarded-for` and
-  // `x-real-ip` are caller-controlled: the AKS Gateway sits behind a Layer-4
-  // Azure Load Balancer that never sets them, so accepting either would let a
-  // client forge its own identity and mint unlimited anonymous trials.
-  return readIpHeader(request.headers.get("x-envoy-external-address"));
+  // Only the edge-generated address is trustworthy, and exactly one header
+  // carries it -- never a fallback chain. `x-forwarded-for` and `x-real-ip`
+  // are caller-controlled unless a Layer-7 proxy overwrites them: the AKS
+  // Gateway sits behind a Layer-4 Azure Load Balancer that never sets them,
+  // so accepting either there would let a client forge its own identity and
+  // mint unlimited anonymous trials. Which header is authoritative is a
+  // property of the edge, which is why the name is configuration; trying a
+  // second header when the first is absent would hand that guarantee back.
+  return readIpHeader(request.headers.get(getTrustedClientIpHeader()));
 }
 
 function upsertCookieHeader(
@@ -105,6 +125,11 @@ async function proxyRequest(request: NextRequest): Promise<NextResponse> {
   headers.delete("x-forwarded-for");
   headers.delete("x-real-ip");
   headers.delete("x-envoy-external-address");
+  // The configured header too, which is not necessarily one of the three
+  // above: the backend must receive the client address only as the signed
+  // `x-sresim-client-ip` below, so no caller-supplied IP header may survive
+  // this hop and become something a future backend change could read.
+  headers.delete(getTrustedClientIpHeader());
   headers.delete("forwarded");
   headers.delete("x-sresim-client-ip");
   headers.delete("x-sresim-client-ip-signature");

@@ -39,6 +39,7 @@ describe("frontend backend proxy route", () => {
     delete process.env.ANTI_ABUSE_HMAC_SECRET;
     delete process.env.BACKEND_INTERNAL_BASE_URL;
     delete process.env.TRUST_PROXY_HEADERS;
+    delete process.env.TRUSTED_CLIENT_IP_HEADER;
     delete process.env.PUBLIC_APP_ORIGIN;
   });
 
@@ -254,6 +255,136 @@ describe("frontend backend proxy route", () => {
 
     expect(response.status).toBe(400);
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  // The AKS default is Envoy's header. On k3s/Traefik that header is never
+  // set, so without this knob getTrustedClientIp returns null on the OCI box
+  // and -- with requireAnonymousClientIp on -- every anonymous /api/chat,
+  // /api/command and /api/scenario answers 400. These four cases are the
+  // reason the header name is configuration rather than a constant.
+  it("reads the configured header and still ignores a client-supplied X-Forwarded-For", async () => {
+    process.env.ANTI_ABUSE_HMAC_SECRET = "test-hmac";
+    process.env.BACKEND_INTERNAL_BASE_URL = "http://backend.internal";
+    process.env.TRUST_PROXY_HEADERS = "true";
+    process.env.TRUSTED_CLIENT_IP_HEADER = "x-real-ip";
+
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const request = new NextRequest("https://play.example.com/api/scenario", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "user-agent": "Proxy Test Browser",
+        "x-real-ip": "203.0.113.10",
+        // Traefik overwrites X-Real-Ip for an untrusted peer but appends to
+        // X-Forwarded-For, so the left-most entry here is still whatever the
+        // caller sent. Configuring one header must not start a fallback
+        // chain onto another.
+        "x-forwarded-for": "198.51.100.4, 203.0.113.10",
+      },
+      body: JSON.stringify({
+        difficulty: "easy",
+        turnstileToken: "token-123",
+        fingerprintHash: "fingerprint-123",
+      }),
+    });
+
+    await POST(request);
+
+    const [, options] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const headers = options.headers as Headers;
+    expect(headers.get("x-sresim-client-ip")).toBe("203.0.113.10");
+    expect(headers.get("x-forwarded-for")).toBeNull();
+    expect(headers.get("x-real-ip")).toBeNull();
+  });
+
+  it("ignores the Envoy header once a different one is configured", async () => {
+    process.env.ANTI_ABUSE_HMAC_SECRET = "test-hmac";
+    process.env.BACKEND_INTERNAL_BASE_URL = "http://backend.internal";
+    process.env.TRUST_PROXY_HEADERS = "true";
+    process.env.TRUSTED_CLIENT_IP_HEADER = "x-real-ip";
+
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const request = new NextRequest("https://play.example.com/api/scenario", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "user-agent": "Proxy Test Browser",
+        "x-envoy-external-address": "203.0.113.20",
+      },
+      body: JSON.stringify({
+        difficulty: "easy",
+        turnstileToken: "token-123",
+        fingerprintHash: "fingerprint-123",
+      }),
+    });
+
+    const response = await POST(request);
+
+    expect(response.status).toBe(400);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("strips the configured header before forwarding, even when it is not one of the well-known three", async () => {
+    process.env.ANTI_ABUSE_HMAC_SECRET = "test-hmac";
+    process.env.BACKEND_INTERNAL_BASE_URL = "http://backend.internal";
+    process.env.TRUST_PROXY_HEADERS = "true";
+    process.env.TRUSTED_CLIENT_IP_HEADER = "cf-connecting-ip";
+
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const request = new NextRequest("https://play.example.com/api/scenario", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "user-agent": "Proxy Test Browser",
+        "cf-connecting-ip": "203.0.113.30",
+      },
+      body: JSON.stringify({
+        difficulty: "easy",
+        turnstileToken: "token-123",
+        fingerprintHash: "fingerprint-123",
+      }),
+    });
+
+    await POST(request);
+
+    const [, options] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const headers = options.headers as Headers;
+    expect(headers.get("x-sresim-client-ip")).toBe("203.0.113.30");
+    // The backend must see the address only as the signed header. The static
+    // strip list cannot cover a name that is configuration, so the proxy
+    // deletes the configured one too.
+    expect(headers.get("cf-connecting-ip")).toBeNull();
+  });
+
+  it("refuses to load with a malformed TRUSTED_CLIENT_IP_HEADER", async () => {
+    process.env.TRUSTED_CLIENT_IP_HEADER = "x real ip";
+
+    vi.resetModules();
+    await expect(import("./route")).rejects.toThrow(
+      /TRUSTED_CLIENT_IP_HEADER is not a valid HTTP header name/,
+    );
+    vi.resetModules();
   });
 
   it.each(["/api/chat", "/api/command"])(

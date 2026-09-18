@@ -45,6 +45,20 @@ frontend:
     antiAbuseHmacSecretKey: ""
     turnstileSiteKeyKey: ""
   trustProxyHeaders: false
+  # Which forwarded header carries the edge-derived client address. Empty
+  # means the app default, x-envoy-external-address, which is what the AKS
+  # Envoy Gateway publishes -- leave it empty on that path.
+  #
+  # Set it only when a DIFFERENT Layer-7 proxy terminates the connection and
+  # OVERWRITES the header for untrusted peers, which is the precondition that
+  # makes a forwarded header non-forgeable (see gateway.clientIpDetection
+  # below for why AKS cannot meet it). On k3s the bundled Traefik overwrites
+  # X-Real-Ip and never sets the Envoy header, so the default matches nothing
+  # there; behind Cloudflare the correct value is cf-connecting-ip.
+  #
+  # An empty value renders no env var at all, so every existing deployment's
+  # manifest is byte-identical to before this key existed.
+  trustedClientIpHeader: ""
   adminAnalyticsEnabled: false
   podSecurityContext:
     runAsNonRoot: true
