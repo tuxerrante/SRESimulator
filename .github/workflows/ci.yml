@@ -1014,6 +1014,41 @@ jobs:
             failed=1
           fi
 
+          echo "--- the pinned image is the one actually running ---"
+          # Every other assertion in this job passes just as happily against
+          # the chart's default image, so without this one a misplaced `image:`
+          # key would silently leave k3s running
+          # rancher/mirrored-library-traefik:3.3.6 -- 4 CRITICAL CVEs in the
+          # TLS path this pod terminates -- and the gate would stay green.
+          #
+          # The expectation is read out of the shared file rather than
+          # hardcoded here, because that file's own comment says the tag no
+          # longer tracks the chart appVersion and has to be bumped by hand.
+          # A hardcoded copy would turn every bump into a two-file edit and
+          # would eventually be the stale one.
+          pinned_repo="$(
+            sed -n 's/^ *repository: *//p' "${SHARED_CONFIG}" | head -1
+          )"
+          pinned_tag="$(sed -n 's/^ *tag: *//p' "${SHARED_CONFIG}" | head -1)"
+          if [[ -z "${pinned_repo}" || -z "${pinned_tag}" ]]; then
+            echo "::error::Could not read image.repository/image.tag out of" \
+              "${SHARED_CONFIG}. The pin is what keeps an internet-facing" \
+              "ingress off a 4-critical-CVE base image; a gate that cannot" \
+              "find it must fail, not skip."
+            failed=1
+          fi
+          running_image="$(
+            kubectl -n kube-system get deploy/traefik \
+              -o jsonpath='{.spec.template.spec.containers[0].image}'
+          )"
+          echo "pinned=${pinned_repo}:${pinned_tag} running=${running_image}"
+          if [[ "${running_image}" != "${pinned_repo}:${pinned_tag}" ]]; then
+            echo "::error::Traefik is running '${running_image}' but" \
+              "${SHARED_CONFIG} pins '${pinned_repo}:${pinned_tag}'. The" \
+              "image override did not take effect."
+            failed=1
+          fi
+
           exit "${failed}"
 
       - name: Deploy a header-echoing probe behind the Ingress
