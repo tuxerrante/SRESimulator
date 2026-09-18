@@ -634,13 +634,17 @@ the name form returns `NotFound`. Add
 namespace.
 
 A timeout there with a healthy backend points at the NetworkPolicy rather than
-at the application. The policy name is derived the same way the pod name is, so
-select it by label too -- it is `sre-simulator-backend` only at the default
-release name:
+at the application. Its name is derived the same way the pod name is, so it is
+`sre-simulator-backend` only at the default release name -- but unlike the test
+pod it cannot be selected by label: `sre-simulator.labels` emits only
+`helm.sh/chart`, `app.kubernetes.io/managed-by` and `app.kubernetes.io/version`,
+and the `app.kubernetes.io/instance` entries in the rendered policy are all
+inside `spec`, which `kubectl -l` does not read. List the namespace and take the
+name from there:
 
 ```bash
-kubectl -n <namespace> describe networkpolicy \
-  -l app.kubernetes.io/instance=<release>
+kubectl -n <namespace> get networkpolicy
+kubectl -n <namespace> describe networkpolicy <name>
 ```
 
 ## Live platform-session verification
