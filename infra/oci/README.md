@@ -88,6 +88,25 @@ cap is an availability *and* a billing risk. Cloudflare's proxy is the actual
 mitigation. Layered on top: Traefik `rateLimit` / `inFlightReq` middlewares,
 the application's own rate limiter, and Turnstile.
 
+### Why there is no IPv6
+
+This root is IPv4-only, and that is a decision rather than an omission.
+Cloudflare reaches an origin over IPv4 whenever an `A` record exists, so the
+box never needs an IPv6 address; giving it one would add a second address
+family to reason about in the NSG for no reachability gain.
+
+An earlier revision carried an `enable_ipv6` variable that set
+`is_ipv6enabled` on the VCN, added a `::/0` route rule and admitted
+Cloudflare's IPv6 ranges — but never assigned the subnet an `ipv6cidr_block`
+and never gave the VNIC an address, and left both egress rules IPv4-only.
+Turning it on produced ingress rules that could not match anything, which is
+strictly worse than not offering the option. It has been removed.
+
+The world-CIDR guards on `ssh_allowed_cidrs` and `k8s_api_allowed_cidrs` still
+reject `::/0` as well as `0.0.0.0/0`. The NSG builds its rules with
+`source_type = "CIDR_BLOCK"`, which accepts either family without complaint,
+so an IPv4-only guard would let `::/0` through to a live rule.
+
 ### The in-VM firewall is deliberately flushed
 
 OCI's Ubuntu images ship `iptables-persistent` with a default-DROP `INPUT`
@@ -151,6 +170,34 @@ job:
 3. **The key is `updateStrategy`, not `deployment.strategy`.** The chart's
    `templates/deployment.yaml` reads `.Values.updateStrategy`; the other
    spelling is accepted and ignored.
+
+## Why apt runs from the bootstrap script
+
+There is no `package_update` / `package_upgrade` / `packages:` block in
+`cloud-init.yaml.tftpl`. cloud-init runs its `package-update-upgrade-install`
+module **before** `runcmd`, and at that point the instance has no route out:
+`compute.tf` launches it with `assign_public_ip = false` and attaches the
+reserved public IP immediately afterwards, and there is no NAT gateway.
+
+The failure mode if apt ran there is silent and total. `iptables-persistent`
+and `unattended-upgrades` would be missing, `runcmd`'s first item would fail,
+and `/opt/bootstrap-k3s.sh` would never run — a box that boots, answers SSH,
+and has no k3s on it.
+
+So the apt phase lives in the bootstrap script, immediately after the
+connectivity wait that already had to exist for the k3s installer download.
+Two details that cloud-init used to handle and the script now handles itself:
+
+- `DEBIAN_FRONTEND=noninteractive`, because `iptables-persistent` asks through
+  debconf whether to save the current rules and an unanswered prompt hangs the
+  boot;
+- retries — `Acquire::Retries=3`, an outer five-attempt loop, and
+  `DPkg::Lock::Timeout=300` to absorb the `unattended-upgrades` run Ubuntu
+  starts on first boot.
+
+The firewall flush runs *after* the apt phase, because `netfilter-persistent`
+comes from `iptables-persistent`. That ordering is safe: the measured table
+above shows egress works with the OCI default chain in place.
 
 ## Why these k3s flags
 

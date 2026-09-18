@@ -168,10 +168,10 @@ variable "ssh_allowed_cidrs" {
 
   # Cross-variable validation, hence required_version >= 1.9.
   #
-  # Both world CIDRs are listed. The NSG rules are built with a plain
-  # for_each over this list and source_type = "CIDR_BLOCK", which accepts
-  # either family, so an IPv4-only guard is one `enable_ipv6 = true` away
-  # from being no guard at all.
+  # Both world CIDRs are listed even though this deployment is IPv4-only. The
+  # NSG rules are built with a plain for_each over this list and source_type =
+  # "CIDR_BLOCK", which accepts either family without complaint, so an
+  # IPv4-only guard would silently pass "::/0" straight through to a live rule.
   validation {
     condition     = length(setintersection(toset(var.ssh_allowed_cidrs), toset(["0.0.0.0/0", "::/0"]))) == 0 || var.allow_ssh_from_anywhere
     error_message = "Opening SSH to 0.0.0.0/0 or ::/0 requires setting allow_ssh_from_anywhere = true. Brute-force traffic against 22 is the dominant background noise on any public IP."
@@ -216,24 +216,6 @@ variable "restrict_ingress_to_cloudflare" {
 
 variable "cloudflare_ipv4_ranges" {
   description = "Override Cloudflare's IPv4 ranges. Empty fetches https://www.cloudflare.com/ips-v4 at plan time."
-  type        = list(string)
-  default     = []
-}
-
-variable "enable_ipv6" {
-  description = <<-EOT
-    Enable IPv6 on the VCN and open 80/443 to Cloudflare's IPv6 ranges.
-
-    Off by default: Cloudflare reaches an origin over IPv4 whenever an A record
-    exists, so IPv6 buys nothing here, and an IPv6 NSG rule on a VCN without
-    IPv6 enabled is a hard apply error.
-  EOT
-  type        = bool
-  default     = false
-}
-
-variable "cloudflare_ipv6_ranges" {
-  description = "Override Cloudflare's IPv6 ranges. Empty fetches https://www.cloudflare.com/ips-v6 at plan time."
   type        = list(string)
   default     = []
 }
@@ -316,7 +298,6 @@ locals {
   ].name
 
   fetch_cloudflare_ipv4 = var.restrict_ingress_to_cloudflare && length(var.cloudflare_ipv4_ranges) == 0
-  fetch_cloudflare_ipv6 = var.enable_ipv6 && var.restrict_ingress_to_cloudflare && length(var.cloudflare_ipv6_ranges) == 0
 
   cloudflare_ipv4 = (
     var.restrict_ingress_to_cloudflare
@@ -328,23 +309,9 @@ locals {
     : ["0.0.0.0/0"]
   )
 
-  cloudflare_ipv6 = (
-    !var.enable_ipv6
-    ? []
-    : (
-      !var.restrict_ingress_to_cloudflare
-      ? ["::/0"]
-      : (
-        length(var.cloudflare_ipv6_ranges) > 0
-        ? var.cloudflare_ipv6_ranges
-        : compact(split("\n", trimspace(data.http.cloudflare_ipv6[0].response_body)))
-      )
-    )
-  )
-
   # Every source permitted to reach the Traefik entrypoints, as one flat list
-  # so the NSG rules can for_each over it.
-  web_ingress_cidrs = concat(local.cloudflare_ipv4, local.cloudflare_ipv6)
+  # so the NSG rules can for_each over it. IPv4 only: see network.tf.
+  web_ingress_cidrs = local.cloudflare_ipv4
 
   tags = merge(var.extra_tags, {
     environment = "free"

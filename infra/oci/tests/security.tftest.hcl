@@ -169,3 +169,41 @@ run "public_ip_is_reserved_not_ephemeral" {
     error_message = "An ephemeral IP changes on stop/start and would silently break the Cloudflare A record."
   }
 }
+
+# ---------------------------------------------------------------------------
+# IPv4 only, on purpose.
+#
+# An earlier revision had an `enable_ipv6` flag that set is_ipv6enabled on the
+# VCN and added a ::/0 route rule and Cloudflare IPv6 ingress rules, but never
+# gave the subnet an ipv6cidr_block, never assigned the VNIC an address, and
+# left egress IPv4-only. It produced ingress rules that could match nothing.
+# It was removed rather than completed, because Cloudflare reaches an origin
+# over IPv4 whenever an A record exists.
+#
+# These assertions exist so that a future half-wiring fails here rather than
+# on the box.
+# ---------------------------------------------------------------------------
+
+run "the_network_is_ipv4_only" {
+  command = plan
+
+  assert {
+    condition = alltrue([
+      for rule in oci_core_route_table.main.route_rules :
+      !strcontains(rule.destination, ":")
+    ])
+    error_message = "A ::/0 route rule is useless without a subnet ipv6cidr_block and a VNIC address; complete the IPv6 path or leave it out."
+  }
+
+  assert {
+    condition     = !strcontains(oci_core_network_security_group_security_rule.egress_all.destination, ":")
+    error_message = "Egress is IPv4-only, so any IPv6 ingress rule would admit traffic the box cannot answer."
+  }
+
+  assert {
+    condition = alltrue([
+      for cidr in local.web_ingress_cidrs : !strcontains(cidr, ":")
+    ])
+    error_message = "web_ingress_cidrs must stay IPv4-only while the VNIC has no IPv6 address."
+  }
+}

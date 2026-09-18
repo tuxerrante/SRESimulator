@@ -209,9 +209,11 @@ run "availability_domain_index_out_of_range_rejected" {
   ]
 }
 
-# The IPv6 world CIDR is a separate string from the IPv4 one, so a guard
-# written against "0.0.0.0/0" alone stops guarding the moment anyone sets
-# enable_ipv6. The NSG rules accept either family without complaint.
+# The IPv6 world CIDR is a separate string from the IPv4 one, and this
+# deployment being IPv4-only does not make "::/0" harmless: the NSG builds its
+# rules with source_type = "CIDR_BLOCK", which accepts either family without
+# complaint, so a guard written against "0.0.0.0/0" alone would pass "::/0"
+# straight through to a live rule.
 
 run "ssh_open_to_the_ipv6_world_requires_explicit_opt_in" {
   command = plan

@@ -171,6 +171,34 @@ run "traefik_can_actually_bind_the_privileged_ports" {
   }
 }
 
+run "the_traefik_image_is_pinned_away_from_the_chart_default" {
+  command = plan
+
+  # The chart default that k3s v1.33.4+k3s1 ships is
+  # rancher/mirrored-library-traefik:3.3.6, which carried 4 critical and 68
+  # high CVEs when scanned on 2026-09-18 -- including an OpenSSL X.509 heap
+  # overflow and a Go crypto/tls session-resumption validation bug, both in
+  # the TLS path this pod terminates. That is not acceptable for an
+  # internet-facing ingress, and it is less acceptable still now that the pod
+  # runs as uid 0 (see the run above).
+  assert {
+    condition     = yamldecode(yamldecode(local.traefik_config_rendered).spec.valuesContent).image.tag != ""
+    error_message = "The Traefik image tag must be pinned; falling back to the chart appVersion reintroduces 3.3.6."
+  }
+
+  assert {
+    condition     = !strcontains(yamldecode(yamldecode(local.traefik_config_rendered).spec.valuesContent).image.tag, "3.3.")
+    error_message = "Traefik 3.3.x carries 4 critical CVEs. Bump the pin rather than reverting it."
+  }
+
+  # A floating tag would make the box and the CI gate run different binaries,
+  # which is the same class of mistake as forking this file.
+  assert {
+    condition     = can(regex("^v?[0-9]+\\.[0-9]+\\.[0-9]+$", yamldecode(yamldecode(local.traefik_config_rendered).spec.valuesContent).image.tag))
+    error_message = "The image tag must be a full x.y.z version, not a floating major or minor."
+  }
+}
+
 run "acme_email_is_substituted" {
   command = plan
 
@@ -219,6 +247,67 @@ run "cloud_init_writes_the_manifest_under_a_name_k3s_does_not_own" {
   assert {
     condition     = !strcontains(local.cloud_init, "/var/lib/rancher/k3s/server/manifests/traefik.yaml")
     error_message = "k3s owns manifests/traefik.yaml and rewrites it on every server restart."
+  }
+}
+
+run "apt_runs_after_the_connectivity_wait_not_before_runcmd" {
+  command = plan
+
+  # cloud-init orders package-update-upgrade-install BEFORE runcmd, and the
+  # instance has no route out until Terraform attaches the reserved public IP.
+  # apt in the cloud-config body would therefore run with no egress, and its
+  # failure is silent and total: iptables-persistent and unattended-upgrades
+  # go missing, runcmd's first item fails, and the bootstrap script never runs.
+  assert {
+    condition     = !can(regex("(?m)^package_(update|upgrade):", local.cloud_init))
+    error_message = "package_update/package_upgrade run before runcmd, when the box still has no route out."
+  }
+
+  assert {
+    condition     = !can(regex("(?m)^packages:", local.cloud_init))
+    error_message = "A top-level packages: block runs before runcmd, when the box still has no route out."
+  }
+
+  # Ordering inside the script is the whole point of the move, so assert the
+  # position rather than mere presence.
+  assert {
+    condition     = can(regex("(?s)waiting for outbound connectivity.*updating the package index", local.cloud_init))
+    error_message = "The apt phase must sit after the connectivity wait, not before it."
+  }
+
+  # debconf asks iptables-persistent whether to save the current rules. Under
+  # runcmd nothing sets this for us, and an unanswered prompt hangs the boot.
+  assert {
+    condition     = strcontains(local.cloud_init, "export DEBIAN_FRONTEND=noninteractive")
+    error_message = "apt from runcmd must set DEBIAN_FRONTEND=noninteractive or iptables-persistent's debconf prompt hangs the boot."
+  }
+
+  # netfilter-persistent ships with iptables-persistent, so the flush cannot
+  # run before the install.
+  assert {
+    condition     = can(regex("(?s)upgrading and installing packages.*flushing the host INPUT chain", local.cloud_init))
+    error_message = "netfilter-persistent comes from iptables-persistent; the firewall flush must run after the install."
+  }
+}
+
+run "runcmd_invokes_only_the_bootstrap_script" {
+  command = plan
+
+  # unattended-upgrades used to be enabled here, ahead of a script that now
+  # installs it. One entry point means one place where a failure is visible.
+  assert {
+    condition     = length(yamldecode(local.cloud_init).runcmd) == 1
+    error_message = "runcmd should contain exactly the bootstrap script; anything else runs before its dependencies are installed."
+  }
+
+  assert {
+    condition     = yamldecode(local.cloud_init).runcmd[0] == ["/opt/bootstrap-k3s.sh"]
+    error_message = "runcmd's only entry must be /opt/bootstrap-k3s.sh."
+  }
+
+  assert {
+    condition     = strcontains(local.cloud_init, "systemctl enable --now unattended-upgrades")
+    error_message = "unattended-upgrades must still be enabled, now from inside the script."
   }
 }
 

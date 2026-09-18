@@ -3,17 +3,11 @@ data "http" "cloudflare_ipv4" {
   url   = "https://www.cloudflare.com/ips-v4"
 }
 
-data "http" "cloudflare_ipv6" {
-  count = local.fetch_cloudflare_ipv6 ? 1 : 0
-  url   = "https://www.cloudflare.com/ips-v6"
-}
-
 resource "oci_core_vcn" "main" {
   compartment_id = var.compartment_ocid
   cidr_blocks    = [var.vcn_cidr]
   display_name   = local.vcn_name
   dns_label      = replace(local.prefix, "-", "")
-  is_ipv6enabled = var.enable_ipv6
   freeform_tags  = local.tags
 }
 
@@ -31,19 +25,14 @@ resource "oci_core_route_table" "main" {
   display_name   = "${local.prefix}-rt"
   freeform_tags  = local.tags
 
+  # IPv4 only, deliberately. Cloudflare reaches an origin over IPv4 whenever an
+  # A record exists, so the origin never needs an IPv6 address; a half-enabled
+  # IPv6 path is worse than none, because the NSG would carry ingress rules that
+  # can never match. See README "Why there is no IPv6".
   route_rules {
     destination       = "0.0.0.0/0"
     destination_type  = "CIDR_BLOCK"
     network_entity_id = oci_core_internet_gateway.main.id
-  }
-
-  dynamic "route_rules" {
-    for_each = var.enable_ipv6 ? [1] : []
-    content {
-      destination       = "::/0"
-      destination_type  = "CIDR_BLOCK"
-      network_entity_id = oci_core_internet_gateway.main.id
-    }
   }
 }
 
