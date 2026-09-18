@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdir, mkdtemp, rm, writeFile } from "fs/promises";
+import { existsSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
 import { JsonLeaderboardStore } from "./json-leaderboard-store";
@@ -31,6 +32,18 @@ describe("JsonLeaderboardStore", () => {
         originalLockTimeoutMs;
     }
     await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  // The read path no longer seeds leaderboard.json, so the missing-file branch
+  // of readEntries is the one a fresh deployment takes on its very first page
+  // load -- before any score has ever been submitted. Against the unfixed
+  // store this passed for the wrong reason: the reader created the file and
+  // then parsed its own seed. Hence the assertion that nothing was written.
+  it("returns an empty leaderboard before the backing file exists", async () => {
+    const store = new JsonLeaderboardStore();
+
+    await expect(store.getLeaderboard()).resolves.toEqual([]);
+    expect(existsSync(join(tmpDir, "leaderboard.json"))).toBe(false);
   });
 
   it("uses the latest timestamp to choose a hall of fame nickname", async () => {
