@@ -10,6 +10,47 @@ metadata:
     helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
 spec:
   restartPolicy: Never
+  initContainers:
+    # Wait for this pod to become allowed to reach the backend before any
+    # assertion runs.
+    #
+    # templates/networkpolicy.yaml restricts backend ingress to the frontend
+    # and to this pod. Enforcement is the CNI's job, and on k3s that is the
+    # bundled kube-router, which programs a newly created pod's IP into the
+    # allowed-source ipset asynchronously. Nothing in Kubernetes orders pod
+    # start after policy programming, so for roughly the first second the
+    # backend rejects this pod outright and the first curl fails instantly
+    # with "Failed to connect ... after 1 ms". Verified on k3d: without this
+    # wait the first request fails on every single run, and the second one,
+    # a second later, always succeeds.
+    #
+    # The wait lives here rather than as retry flags on the assertions below
+    # so those assertions stay strict: an init container shares the pod's
+    # network namespace and IP, so once it gets through, the policy is
+    # programmed for the whole pod, and a single failed curl in the test body
+    # is then a real failure rather than a startup artefact.
+    #
+    # Platforms that do not enforce NetworkPolicy (AKS by default, and kind in
+    # helm-integration.yml) succeed on the first attempt and pay nothing.
+    - name: wait-for-network-policy
+      image: curlimages/curl:8.13.0
+      command: ["/bin/sh", "-c"]
+      args:
+        - |
+          BACKEND="{{ include "sre-simulator.fullname" . }}-backend:{{ .Values.backend.port }}"
+          attempt=0
+          while [ "${attempt}" -lt 60 ]; do
+            attempt=$((attempt + 1))
+            if curl -fsS -o /dev/null --max-time 5 "http://${BACKEND}/healthz"; then
+              echo "backend reachable after ${attempt} attempt(s)"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "backend never became reachable from this pod." >&2
+          echo "If the backend itself is healthy, suspect NetworkPolicy:" >&2
+          echo "  kubectl describe networkpolicy {{ include "sre-simulator.fullname" . }}-backend" >&2
+          exit 1
   containers:
     - name: test
       image: curlimages/curl:8.13.0
