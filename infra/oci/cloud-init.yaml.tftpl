@@ -21,7 +21,12 @@ users:
     shell: /bin/bash
     sudo: "ALL=(ALL) NOPASSWD:ALL"
     ssh_authorized_keys:
-      - ${ssh_public_key}
+      # jsonencode, not a bare interpolation. YAML is a superset of JSON, so
+      # this emits a double-quoted scalar that cannot terminate early no matter
+      # what the value contains. variables.tf already rejects newlines; this is
+      # the structural half of the same guard, and it is the half that keeps
+      # holding if that validation is ever loosened.
+      - ${jsonencode(ssh_public_key)}
 
 write_files:
   # Written before k3s is installed so the k3s server picks it up on its very

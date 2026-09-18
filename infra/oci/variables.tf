@@ -5,9 +5,18 @@ variable "owner_alias" {
   description = "Your corporate / Red Hat alias (e.g. jdoe). Used as prefix for all resource names."
   type        = string
 
+  # 11, not 16, and the ceiling is not arbitrary. network.tf derives the VCN
+  # DNS label as replace(local.prefix, "-", ""), i.e. this alias with "free"
+  # appended, and OCI caps VCN and subnet DNS labels at 15 alphanumeric
+  # characters starting with a letter. 11 + len("free") == 15 exactly.
+  #
+  # Without this the failure lands at apply time on an input that passed
+  # terraform validate, which is the worst place for it: the VCN is one of the
+  # first resources created, so the operator watches a plan succeed and the
+  # apply die on a name.
   validation {
-    condition     = can(regex("^[a-z][a-z0-9]{2,15}$", var.owner_alias))
-    error_message = "owner_alias must be 3-16 lowercase alphanumeric characters starting with a letter."
+    condition     = can(regex("^[a-z][a-z0-9]{2,10}$", var.owner_alias))
+    error_message = "owner_alias must be 3-11 lowercase alphanumeric characters starting with a letter. The 11-character ceiling comes from OCI's 15-character VCN DNS label limit: network.tf appends \"free\" to this value."
   }
 }
 
@@ -45,8 +54,12 @@ variable "availability_domain_index" {
   default     = 0
 
   validation {
-    condition     = var.availability_domain_index >= 0 && var.availability_domain_index < 3
-    error_message = "availability_domain_index must be 0, 1 or 2."
+    condition = (
+      var.availability_domain_index >= 0 &&
+      var.availability_domain_index < 3 &&
+      floor(var.availability_domain_index) == var.availability_domain_index
+    )
+    error_message = "availability_domain_index must be the whole number 0, 1 or 2. A fractional value passes a bare range check and then fails at plan time with \"Invalid index\"."
   }
 }
 
@@ -228,6 +241,21 @@ variable "ssh_public_key" {
     condition     = can(regex("^(ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp[0-9]+) ", var.ssh_public_key))
     error_message = "ssh_public_key must be an OpenSSH public key (ssh-ed25519, ssh-rsa or ecdsa-sha2-nistp*)."
   }
+
+  # The regex above is unanchored at the end, and compute.tf's trimspace only
+  # strips leading and trailing whitespace -- so a value whose *first* line is a
+  # valid key passes while carrying arbitrary further lines. cloud-init.yaml.tftpl
+  # interpolates this into a YAML sequence item, so those lines land as
+  # top-level cloud-config directives. Verified by rendering the real template:
+  # a key with one embedded newline injected a new top-level key alongside
+  # runcmd, users and write_files.
+  #
+  # The template also quotes the value now, so this is the second of two
+  # independent barriers rather than the only one.
+  validation {
+    condition     = !can(regex("[\r\n]", var.ssh_public_key))
+    error_message = "ssh_public_key must be a single line. Embedded newlines are interpolated into cloud-init as additional YAML directives."
+  }
 }
 
 # ---------------------------------------------------------------------------
@@ -271,8 +299,12 @@ variable "swap_size_mb" {
   default     = 2048
 
   validation {
-    condition     = var.swap_size_mb >= 0 && var.swap_size_mb <= 8192
-    error_message = "swap_size_mb must be between 0 and 8192."
+    condition = (
+      var.swap_size_mb >= 0 &&
+      var.swap_size_mb <= 8192 &&
+      floor(var.swap_size_mb) == var.swap_size_mb
+    )
+    error_message = "swap_size_mb must be a whole number between 0 and 8192. It is interpolated into fallocate -l and dd count=, neither of which takes a fraction."
   }
 }
 

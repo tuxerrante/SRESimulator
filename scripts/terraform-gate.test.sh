@@ -14,6 +14,13 @@
 #   3. infra/oci/traefik-config.yaml stays a single shared file. cloud-init
 #      and the oci-shape-e2e job must consume the same bytes; a private copy
 #      would green-light a Traefik config the box never runs.
+#
+# shellcheck disable=SC2016
+# Every single-quoted string below is a literal to search for in another file,
+# not a shell expression: `${{ needs... }}`, `$(date +%F)` and `$(OWNER_ALIAS)`
+# are the exact bytes the workflow, the runbook and the makefile must contain.
+# Expanding any of them here would assert on this script's environment instead
+# of on the file under test, which is the one thing these checks must not do.
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -21,6 +28,8 @@ WORKFLOW="$ROOT_DIR/.github/workflows/ci.yml"
 GITIGNORE="$ROOT_DIR/.gitignore"
 COMPUTE_TF="$ROOT_DIR/infra/oci/compute.tf"
 TRAEFIK_CONFIG="$ROOT_DIR/infra/oci/traefik-config.yaml"
+OCI_MAKEFILE="$ROOT_DIR/infra/oci/Makefile"
+OCI_OUTPUTS="$ROOT_DIR/infra/oci/outputs.tf"
 
 fail() {
   echo "FAIL: $*" >&2
@@ -134,5 +143,29 @@ assert_contains 'infra/oci/.terraform/' "$GITIGNORE"
 assert_contains 'infra/oci/*.tfstate*' "$GITIGNORE"
 assert_contains 'infra/oci/terraform.tfvars' "$GITIGNORE"
 assert_contains 'infra/oci/*_override.tf' "$GITIGNORE"
+
+# --- 8. The destroy guard and the operator-facing strings -----------------
+# These three are shell-level: terraform never sees a malformed make
+# invocation, and it cannot tell a working runbook line from a broken one.
+
+# terraform accepts both -auto-approve and -auto-approve=true. The original
+# guard matched on a trailing space, so the assignment form walked straight
+# past the confirmation on a destroy.
+assert_matches '\*" -auto-approve"\*' "$OCI_MAKEFILE"
+if grep -Eq '\*" -auto-approve "\*' "$OCI_MAKEFILE"; then
+  fail "the -auto-approve guard requires a trailing space, so -auto-approve=true bypasses it"
+fi
+
+# TF_VAR_FLAGS expands into an unquoted shell command line, so an OWNER_ALIAS
+# containing a semicolon would run a second command and one containing a space
+# would split into two terraform arguments.
+assert_contains "owner_alias='\$(OWNER_ALIAS)'" "$OCI_MAKEFILE"
+
+# Terraform only escapes %{, so a bare %% survives into the rendered output and
+# the shell then prints a literal %F. The state-backup line is the one an
+# operator copy-pastes mid-incident, which is the worst time to hand them a
+# file called backup-%F.tfstate.
+assert_contains 'backup-$(date +%F).tfstate' "$OCI_OUTPUTS"
+assert_not_contains 'date +%%F' "$OCI_OUTPUTS"
 
 echo "terraform gate checks passed."

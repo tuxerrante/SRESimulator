@@ -3,7 +3,12 @@
 OWNER_ALIAS ?=
 CONFIRM_APPLY ?=
 CONFIRM_DESTROY ?=
-TF_VAR_FLAGS := $(if $(OWNER_ALIAS),-var owner_alias=$(OWNER_ALIAS),)
+# Single-quoted because this expands into an unquoted shell command line. An
+# OWNER_ALIAS of "foo; rm -rf /" would otherwise run the second command, and an
+# alias with a space would silently split into two terraform arguments.
+# terraform's own validation cannot help here -- it never sees a malformed
+# invocation.
+TF_VAR_FLAGS := $(if $(OWNER_ALIAS),-var owner_alias='$(OWNER_ALIAS)',)
 
 # S3-compatible backend against OCI Object Storage. Populate .oci-backend.env
 # from the console; it is gitignored and holds a Customer Secret Key pair.
@@ -128,7 +133,11 @@ tf-oci-destroy: ## Destroy the free-tier box and its network
 	@# they reach `terraform destroy` without passing through TF_VAR_FLAGS. A
 	@# guard that reads only TF_VAR_FLAGS therefore inspects the one channel
 	@# nobody would use to sneak the flag in.
-	@case " $(TF_VAR_FLAGS) $${TF_CLI_ARGS:-} $${TF_CLI_ARGS_destroy:-} " in *" -auto-approve "*|*" --auto-approve "*) \
+	@# The patterns deliberately stop at the flag name rather than requiring a
+	@# trailing space: terraform also accepts the assignment form, and
+	@# -auto-approve=true slipped straight through the space-delimited version
+	@# of this guard.
+	@case " $(TF_VAR_FLAGS) $${TF_CLI_ARGS:-} $${TF_CLI_ARGS_destroy:-} " in *" -auto-approve"*|*" --auto-approve"*) \
 		echo "REFUSED: -auto-approve is not allowed for destructive operations."; \
 		exit 1; \
 	esac

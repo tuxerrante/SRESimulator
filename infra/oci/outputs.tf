@@ -75,6 +75,6 @@ output "post_apply_checklist" {
      5. Only once DNS resolves: let Traefik order a certificate, and watch it.
           kubectl -n kube-system logs deploy/traefik -f | grep -i acme
 
-    Back up state now: terraform state pull > backup-$(date +%%F).tfstate
+    Back up state now: terraform state pull > backup-$(date +%F).tfstate
   EOT
 }
