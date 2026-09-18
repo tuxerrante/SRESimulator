@@ -96,7 +96,10 @@ The game enforces the "Scientific Method of Investigation" as defined in the ARO
   `hostNetwork: true` and `service.enabled: false`. That combination, and the
   client-IP integrity that depends on it, stays unverified until a real VM
   exists.
-- Do not call a PR merge-ready when this check is skipped, pending, or failed.
+- Do not call a PR merge-ready when the gate is pending or failed, or when it
+  was skipped for any reason other than the inert-diff classification above.
+  Read `ci-gate`, not `free-e2e`: it is the only required check, and it is what
+  tells a deliberate skip apart from a browser run that never happened.
 - The Azure-backed `live-e2e` job still exists but is **opt-in**: it runs only
   when the repository variable `LIVE_E2E_ENABLED` is `true`, and `ci-gate`
   counts its result only under the same condition. Unset, it is skipped and

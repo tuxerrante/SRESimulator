@@ -151,35 +151,65 @@ done
 # The job block is only half of the job. A composite action it `uses:` runs in
 # the same runner with the same permissions, so a credential could be picked up
 # there instead and the block-scoped scan above would never see it. Follow every
-# local action the block references and scan it too. `environment:` is not
+# local action the block reaches and scan it too. `environment:` is not
 # checked in action files: it is a job-level key that cannot appear there, and
 # the word occurs in prose ("environment variable") in one of the descriptions.
-free_e2e_actions="$(
-  grep -Eo 'uses: \./[^[:space:]]+' <<<"$free_e2e_block" |
-    sed 's|^uses: \./||' | sort -u
-)"
+#
+# "Reaches", not "references": a composite action can itself `uses: ./...` a
+# second one, which runs with the same permissions and is just as invisible to
+# the block-scoped scan. Neither of today's two actions does, so this walk
+# visits exactly the two the job names -- but a one-hop scan would be a
+# guarantee that quietly stops holding the first time someone factors a step
+# out into a nested action, which is precisely when nobody re-reads this file.
+collect_local_uses() {
+  grep -Eo 'uses: \./[^[:space:]]+' | sed 's|^uses: \./||' | sort -u
+}
+
+free_e2e_actions="$( collect_local_uses <<<"$free_e2e_block" )"
 [[ -n "$free_e2e_actions" ]] || \
   fail "expected free-e2e to reuse the repository's composite actions"
+
+pending=()
 while IFS= read -r action_dir; do
+  [[ -n "$action_dir" ]] && pending+=("$action_dir")
+done <<<"$free_e2e_actions"
+
+scanned_actions=""
+while [[ ${#pending[@]} -gt 0 ]]; do
+  action_dir="${pending[0]}"
+  pending=("${pending[@]:1}")
+  # A cycle between two local actions would otherwise spin here forever.
+  case " ${scanned_actions} " in
+    *" ${action_dir} "*) continue ;;
+  esac
+  scanned_actions="${scanned_actions} ${action_dir}"
+
   action_file="$ROOT_DIR/$action_dir/action.yml"
   [[ -f "$action_file" ]] || action_file="$ROOT_DIR/$action_dir/action.yaml"
   [[ -f "$action_file" ]] || \
-    fail "free-e2e uses ./$action_dir but no action.yml exists there"
+    fail "free-e2e reaches ./$action_dir but no action.yml exists there"
   for forbidden in "secrets." "azure/login"; do
     if grep -Fq -- "$forbidden" "$action_file"; then
       fail "free-e2e runs ./$action_dir, which references '$forbidden'"
     fi
   done
-done <<<"$free_e2e_actions"
+
+  # A local `uses:` inside a composite action resolves against the repository
+  # root, the same as one in the workflow, so the path needs no rebasing.
+  while IFS= read -r nested_dir; do
+    [[ -n "$nested_dir" ]] && pending+=("$nested_dir")
+  done < <(collect_local_uses <"$action_file")
+done
 grep -Fq -- "make test-e2e-live" <<<"$free_e2e_block" || \
   fail "free-e2e must run the browser suite via make test-e2e-live"
 
-# free-e2e builds the PR's own Dockerfiles, and the build context includes
-# .git. Left at the default, actions/checkout writes the workflow GITHUB_TOKEN
-# into .git/config, so PR-controlled build instructions could read and
-# exfiltrate it. The job needs no git credentials, so the write is pure
-# exposure -- and harden-runner's `egress-policy: audit` records egress rather
-# than blocking it.
+# Left at the default, actions/checkout writes the workflow GITHUB_TOKEN into
+# .git/config. The build context is not the path that matters -- `.dockerignore`
+# excludes `.git` -- but free-e2e also runs the PR's own code straight on the
+# runner, at `make install` and again at `make test-e2e-live`, and that code can
+# read the file out of the workspace. The job needs no git credentials, so the
+# write is pure exposure, and harden-runner's `egress-policy: audit` records
+# egress rather than blocking it.
 grep -Fq -- "persist-credentials: false" <<<"$free_e2e_block" || \
   fail "free-e2e's checkout must set persist-credentials: false"
 

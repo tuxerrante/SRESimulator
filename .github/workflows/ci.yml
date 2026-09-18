@@ -724,12 +724,16 @@ jobs:
         uses: >-
           actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          # This job builds and runs the PR's own Dockerfiles and app code.
           # Left at the default, checkout writes the workflow GITHUB_TOKEN
-          # into .git/config, which is inside the build context; the job is
-          # advertised as credential-free and harden-runner is on
-          # `egress-policy: audit`, which records egress rather than
-          # blocking it. Nothing here needs git credentials.
+          # into .git/config. Not a build-context concern -- `.dockerignore`
+          # excludes `.git`, so it never reaches the image build. The exposure
+          # is host-side: this job runs the PR's own code directly on the
+          # runner, starting at `make install` (which executes the PR's
+          # dependency lifecycle scripts) and again at `make test-e2e-live`,
+          # and any of it can read the file off the workspace. The job is
+          # advertised as credential-free, nothing in it needs git
+          # credentials, and harden-runner is on `egress-policy: audit`,
+          # which records egress rather than blocking it.
           persist-credentials: false
 
       - name: Setup Bun toolchain
