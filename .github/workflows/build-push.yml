@@ -328,15 +328,49 @@ jobs:
             tag_args+=(-t "${IMAGE_REF}:latest")
           fi
 
+          # The check above counts digests; this one identifies them, and it
+          # has to run before the tag exists. Verifying after `imagetools
+          # create` -- which is where this started -- leaves a broken
+          # ${RELEASE_TAG} published for as long as it takes someone to
+          # notice, and deleting a released tag is not a thing this job should
+          # be doing. Two digests of the same platform (a matrix edit that
+          # duplicates a leg, which is the realistic way this breaks) satisfy
+          # the count and would otherwise be caught only once live.
+          #
+          # A by-digest push has no platform in its descriptor, so the source
+          # is the image config: `.Image` is populated for a single-platform
+          # reference and carries OS/Architecture.
           source_args=()
+          platforms=()
           for digest in "${digests[@]}"; do
-            source_args+=("${IMAGE_REF}@sha256:${digest}")
+            ref="${IMAGE_REF}@sha256:${digest}"
+            source_args+=("${ref}")
+            platforms+=("$(
+              docker buildx imagetools inspect \
+                --format '{{.Image.OS}}/{{.Image.Architecture}}' "${ref}"
+            )")
           done
+          echo "Digest platforms: ${platforms[*]}"
+
+          absent="$(
+            jq -rn --args \
+              '["linux/amd64", "linux/arm64"] - $ARGS.positional | join(" ")' \
+              "${platforms[@]}"
+          )"
+          if [[ -n "${absent}" ]]; then
+            echo "::error::The digests for ${{ matrix.component }} cover" \
+              "${platforms[*]} and do not include ${absent}. Refusing to" \
+              "tag: a published single-architecture tag is the failure this" \
+              "job exists to prevent."
+            exit 1
+          fi
 
           docker buildx imagetools create "${tag_args[@]}" "${source_args[@]}"
 
-      # A tag that exists but resolves on one architecture is the failure this
-      # PR exists to prevent, so it is asserted rather than assumed.
+      # The pre-tag check above is what prevents a broken tag from being
+      # published; this one confirms the artefact that actually exists, which
+      # is the contract consumers pull against. Keeping both is deliberate:
+      # the first covers bad inputs, the second covers a bad assembly.
       - name: Verify both architectures are in the published tag
         run: |
           set -euo pipefail

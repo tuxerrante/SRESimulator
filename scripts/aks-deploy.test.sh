@@ -2214,6 +2214,57 @@ run_multi_arch_release_check() {
   assert_contains "push-by-digest=true" "$workflow"
   assert_contains "docker buildx imagetools create" "$workflow"
 
+  # The registry owner is lowercased exactly once, in resolve-release-tag, and
+  # both jobs consume that output. GHCR rejects an uppercase path component,
+  # and a digest pushed under one spelling cannot be assembled under another --
+  # so reverting either wiring to a raw ${{ github.repository_owner }} breaks
+  # a release for any owner whose login is not already lowercase, which is
+  # nothing a same-owner test run would ever surface.
+  assert_contains "tr '[:upper:]' '[:lower:]'" "$workflow"
+  assert_contains 'owner: ${{ steps.owner.outputs.owner }}' "$workflow"
+  owner_refs="$(grep -c 'needs.resolve-release-tag.outputs.owner' "$workflow")"
+  if [ "$owner_refs" -ne 2 ]; then
+    fail "expected both IMAGE_REF definitions to consume the normalized owner output, found $owner_refs reference(s)"
+  fi
+  if grep -q 'ghcr.io/${{ github.repository_owner' "$workflow"; then
+    fail "an image reference bypasses the lowercased owner output"
+  fi
+
+  # Two properties of the platform verification that a rewrite would quietly
+  # drop, both of which make a correct image fail or a broken one pass:
+  #
+  #   - the platform set is compared with jq, not grepped out of the JSON. The
+  #     OCI descriptor marshals `architecture` before `os`, so any assertion
+  #     written against a field order is one upstream struct change away from
+  #     failing on an image that is perfectly fine.
+  #   - attestation manifests carry platform.os == "unknown" and must be
+  #     filtered out. Without the filter the set difference still succeeds, so
+  #     dropping it is invisible until it is not.
+  assert_contains 'select(.platform.os != "unknown")' "$workflow"
+  assert_contains '"\(.platform.os)/\(.platform.architecture)"' "$workflow"
+  if grep -Eq 'grep .*"architecture":' "$workflow"; then
+    fail "the platform check must use jq, not a field-order-sensitive grep"
+  fi
+
+  # The published tag is verified twice over, and the earlier of the two is
+  # the one that matters: it reads each digest's own platform *before*
+  # imagetools create, so a pair of same-platform digests -- which satisfies
+  # the count check -- never reaches a tag. Verification only after publishing
+  # leaves a broken ${RELEASE_TAG} live until someone notices.
+  assert_contains "{{.Image.OS}}/{{.Image.Architecture}}" "$workflow"
+  python3 - "$workflow" <<'PY_INNER'
+import sys
+
+text = open(sys.argv[1]).read()
+probe = text.index("{{.Image.OS}}/{{.Image.Architecture}}")
+publish = text.index("docker buildx imagetools create \"${tag_args[@]}\"")
+if probe > publish:
+    print("the per-digest platform probe must run before imagetools create, "
+          "or a broken tag is published before anything checks it",
+          file=sys.stderr)
+    sys.exit(1)
+PY_INNER
+
   # `outputs:` is a comma-separated list, and a YAML folded scalar (`>-`)
   # joins its lines with a SPACE. Written that way the value carries a
   # " name-canonical" key that BuildKit does not recognise, and the image is
