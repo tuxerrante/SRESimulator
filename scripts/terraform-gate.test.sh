@@ -587,4 +587,25 @@ assert_contains 'X-Real-Ip' "$SHAPE_FILE"
 assert_contains 'permanent: true/permanent: false' "$SHAPE_FILE"
 assert_contains 'updateStrategy' "$SHAPE_FILE"
 
+# The image assertion must read the *running* container. Reading the Deployment
+# template instead reports desired state: with the rollout paused and the pin
+# applied to the template, a k3d reproduction showed the template reading
+# v3.7.13 while the pod ran v3.3.6 and every other assertion here still passed.
+assert_contains 'status.containerStatuses[0].image' "$SHAPE_FILE"
+assert_not_contains 'spec.template.spec.containers[0].image' "$SHAPE_FILE"
+
+# The route poll must go over https. Entrypoint-level redirections answer every
+# :80 request with a 301 before any router matches -- confirmed against traefik
+# v3.7.13 with no routers configured -- so polling :80 for a 301 would report a
+# reconciled Ingress that does not exist.
+assert_contains 'whoami route observed after' "$SHAPE_FILE"
+if grep -Eq 'http://127\.0\.0\.1/ \|\| true' "$SHAPE_FILE"; then
+  fail "the route poll must use https; a :80 301 is answered before routing"
+fi
+
+# Under `set -euo pipefail` a missing X-Real-Ip makes grep exit 1 and takes the
+# step down before the branch that reports it, so the one failure this job
+# exists to catch is the one it cannot report.
+assert_contains "| tr -d '[:space:]' || true" "$SHAPE_FILE"
+
 echo "terraform gate checks passed."

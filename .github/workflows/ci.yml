@@ -897,10 +897,24 @@ jobs:
               "find it must fail, not skip."
             failed=1
           fi
+          # Read the *running* container, not the Deployment template. The
+          # template is desired state: anything that rewrites the image on the
+          # way to the pod -- a mutating webhook, a paused rollout, a manual
+          # edit -- leaves the template reading correct while the node runs
+          # something else. Reproduced on k3d before writing this: with the
+          # rollout paused and the pin applied to the template, the template
+          # read v3.7.13 while the pod ran v3.3.6 and every other assertion in
+          # this job still passed. That is bug 6 again, one level down.
           running_image="$(
-            kubectl -n kube-system get deploy/traefik \
-              -o jsonpath='{.spec.template.spec.containers[0].image}'
+            kubectl -n kube-system get pods \
+              -l app.kubernetes.io/name=traefik \
+              -o jsonpath='{.items[0].status.containerStatuses[0].image}'
           )"
+          if [[ -z "${running_image}" ]]; then
+            echo "::error::No Traefik container status to read. The pod is" \
+              "not running, so nothing here proves which image it would use."
+            failed=1
+          fi
           echo "pinned=${pinned_repo}:${pinned_tag} running=${running_image}"
           if [[ "${running_image}" != "${pinned_repo}:${pinned_tag}" ]]; then
             echo "::error::Traefik is running '${running_image}' but" \
@@ -925,6 +939,35 @@ jobs:
             --class=traefik \
             --rule="${PROBE_HOST}/*=whoami:80"
           kubectl -n shape-probe rollout status deploy/whoami --timeout=180s
+
+          # A Ready backend is not a programmed route. Traefik's Kubernetes
+          # provider reconciles Ingresses asynchronously, so the client pod can
+          # run while the router still does not exist and the first request
+          # 404s -- which would fail the client-IP assertion on timing rather
+          # than on substance, the flakiest possible way to lose a real signal.
+          #
+          # The poll must go over https. Entrypoint-level `redirections` answer
+          # *every* :80 request with a 301 before any router is matched:
+          # verified against traefik v3.7.13 with zero routers configured,
+          # where :80 returned 301 and :443 returned 404. So a 301 on :80 says
+          # nothing about whether this Ingress was ever reconciled, and only
+          # the https 200 does.
+          for attempt in $(seq 1 60); do
+            code="$(
+              curl -sk -o /dev/null -w '%{http_code}' --max-time 5 \
+                -H "Host: ${PROBE_HOST}" https://127.0.0.1/ || true
+            )"
+            if [[ "${code}" == "200" ]]; then
+              echo "whoami route observed after ${attempt} attempt(s)"
+              break
+            fi
+            if [[ "${attempt}" -eq 60 ]]; then
+              echo "::error::Traefik never routed ${PROBE_HOST} (last status" \
+                "'${code}'). The Ingress exists but no router matched it."
+              exit 1
+            fi
+            sleep 2
+          done
 
       - name: Assert the redirect and client-IP integrity
         run: |
@@ -961,9 +1004,14 @@ jobs:
           redirect_code="$(
             sed -n 's/^REDIRECT_CODE=//p' <<<"${out}" | tr -d '[:space:]'
           )"
+          # `|| true` is load-bearing under `set -euo pipefail`: with no
+          # X-Real-Ip in the output grep exits 1, pipefail propagates it, and
+          # the assignment takes the step down *before* the empty-header branch
+          # below can run. The one failure this assertion exists to report --
+          # the header missing entirely -- was the one it could not report.
           real_ip="$(
             grep -i '^X-Real-Ip:' <<<"${out}" | head -1 | cut -d: -f2- \
-              | tr -d '[:space:]'
+              | tr -d '[:space:]' || true
           )"
 
           failed=0
