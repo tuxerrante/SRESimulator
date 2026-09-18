@@ -705,6 +705,108 @@ jobs:
             --set database.enabled=true \
             --set database.existingSecretName=sre-sql-creds
 
+  terraform-validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Harden runner
+        # v2.21.0
+        uses: >-
+          step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        # v6.0.2
+        uses: >-
+          actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+
+      - name: Setup Terraform
+        # v4.0.1
+        uses: >-
+          hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e
+        with:
+          # infra/oci/versions.tf floors at 1.9 (cross-variable validation);
+          # infra/ floors lower. Pin one version so a CI failure is never an
+          # unannounced Terraform upgrade.
+          terraform_version: "1.16.3"
+          # The wrapper wraps stdout in a GitHub-Actions output block, which
+          # corrupts the `terraform console` render below.
+          terraform_wrapper: false
+
+      - name: Terraform fmt
+        # -recursive from infra/ covers the nested infra/oci/ root too.
+        run: terraform -chdir=infra fmt -check -recursive
+
+      # Both roots are validated and unit-tested with no cloud credentials:
+      # -backend=false skips remote state entirely and every tftest.hcl uses
+      # mock_provider. Applying either root stays a manual, operator-run
+      # step (see infra/oci/README.md for why).
+      - name: Terraform validate and test (Azure root)
+        working-directory: infra
+        run: |
+          set -euo pipefail
+          terraform init -backend=false -input=false
+          terraform validate
+          terraform test
+
+      - name: Terraform validate and test (OCI free-tier root)
+        working-directory: infra/oci
+        run: |
+          set -euo pipefail
+          terraform init -backend=false -input=false
+          terraform validate
+          terraform test
+
+      - name: Lint the bootstrap script cloud-init actually writes
+        working-directory: infra/oci
+        run: |
+          set -euo pipefail
+
+          # `terraform console` refuses to run against an uninitialised
+          # backend, and the real one is OCI Object Storage behind credentials
+          # CI deliberately does not hold. An override file swaps in the local
+          # backend for this step alone.
+          #
+          # Going through console rather than re-rendering the template here
+          # is the whole point: the script linted below is the output of
+          # compute.tf's own local.cloud_init, so it cannot drift from what
+          # the instance boots. A CI-private templatefile() call could.
+          printf 'terraform {\n  backend "local" {}\n}\n' > backend_override.tf
+          terraform init -reconfigure -input=false
+
+          # terraform.tfvars.example doubles as the fixture, so this step also
+          # proves the documented example still satisfies every variable
+          # validation.
+          #
+          # yamldecode() is load-bearing: the step fails if the rendered
+          # user_data is not parseable YAML. jsonencode() collapses the result
+          # to one line; console then applies its own HCL string quoting on
+          # top, hence two jq passes to unescape.
+          #
+          # The expression has to be a single line: `terraform console`
+          # evaluates stdin one line at a time and errors on a wrapped one.
+          script_path="/opt/bootstrap-k3s.sh"
+          expression="jsonencode(one(["
+          expression+="for f in yamldecode(local.cloud_init).write_files : "
+          expression+="f.content if f.path == \"${script_path}\""
+          expression+="]))"
+          printf '%s\n' "${expression}" \
+            | terraform console -var-file=terraform.tfvars.example \
+            | jq -r . \
+            | jq -r . \
+            > "${RUNNER_TEMP}/bootstrap-k3s.sh"
+
+          rm -f backend_override.tf
+
+          if [[ ! -s "${RUNNER_TEMP}/bootstrap-k3s.sh" ]]; then
+            echo "Rendered bootstrap script is empty; the write_files entry" \
+              "for /opt/bootstrap-k3s.sh was not found." >&2
+            exit 1
+          fi
+
+          bash -n "${RUNNER_TEMP}/bootstrap-k3s.sh"
+          shellcheck "${RUNNER_TEMP}/bootstrap-k3s.sh"
+
   docker-build:
     runs-on: ubuntu-latest
     strategy:
@@ -1286,6 +1388,7 @@ jobs:
       - integration-test-mssql
       - security
       - helm-validate
+      - terraform-validate
       - docker-build
       - free-e2e
       - live-e2e
@@ -1304,6 +1407,7 @@ jobs:
           INTEGRATION_MSSQL_RESULT: ${{ needs.integration-test-mssql.result }}
           SECURITY_RESULT: ${{ needs.security.result }}
           HELM_RESULT: ${{ needs.helm-validate.result }}
+          TERRAFORM_RESULT: ${{ needs.terraform-validate.result }}
           DOCKER_RESULT: ${{ needs.docker-build.result }}
           FREE_E2E_RESULT: ${{ needs.free-e2e.result }}
           LIVE_E2E_RESULT: ${{ needs.live-e2e.result }}
@@ -1348,6 +1452,7 @@ jobs:
           echo "  integration-test-mssql:     ${INTEGRATION_MSSQL_RESULT}"
           echo "  security:                   ${SECURITY_RESULT}"
           echo "  helm-validate:              ${HELM_RESULT}"
+          echo "  terraform-validate:         ${TERRAFORM_RESULT}"
           echo "  docker-build:               ${DOCKER_RESULT}"
           echo "  run browser e2e:            ${RUN_E2E}"
           echo "  free-e2e:                   ${FREE_E2E_RESULT}"
@@ -1362,6 +1467,7 @@ jobs:
             "test:${TEST_RESULT}" \
             "security:${SECURITY_RESULT}" \
             "helm-validate:${HELM_RESULT}" \
+            "terraform-validate:${TERRAFORM_RESULT}" \
             "docker-build:${DOCKER_RESULT}"; do
             name="${name_result%%:*}"
             result="${name_result#*:}"

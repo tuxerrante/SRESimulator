@@ -1,0 +1,89 @@
+locals {
+  # The one documented substitution into the shared Traefik config. See the
+  # header of traefik-config.yaml: CI performs the same replace with a dummy
+  # address, and nothing else about the file may differ between the two.
+  traefik_config_rendered = replace(
+    file("${path.module}/traefik-config.yaml"),
+    "ACME_EMAIL_PLACEHOLDER",
+    var.acme_email,
+  )
+
+  # indent() pads blank lines too, which leaves trailing whitespace that
+  # yamllint rejects in the rendered user_data. Strip it here rather than in
+  # the template, so the template stays readable.
+  traefik_config_indented = replace(
+    indent(6, local.traefik_config_rendered),
+    "/(?m)[ \t]+$/",
+    "",
+  )
+
+  cloud_init = templatefile("${path.module}/cloud-init.yaml.tftpl", {
+    k3s_version       = var.k3s_version
+    operator_username = var.operator_username
+    ssh_public_key    = trimspace(var.ssh_public_key)
+    swap_size_mb      = var.swap_size_mb
+    traefik_config    = local.traefik_config_indented
+  })
+}
+
+resource "oci_core_instance" "k3s" {
+  compartment_id      = var.compartment_ocid
+  availability_domain = local.availability_domain
+  display_name        = local.instance_name
+  shape               = var.instance_shape
+  freeform_tags       = local.tags
+
+  shape_config {
+    ocpus         = var.instance_ocpus
+    memory_in_gbs = var.instance_memory_gbs
+  }
+
+  source_details {
+    source_type             = "image"
+    source_id               = data.oci_core_images.ubuntu_arm.images[0].id
+    boot_volume_size_in_gbs = var.boot_volume_size_gbs
+  }
+
+  create_vnic_details {
+    subnet_id      = oci_core_subnet.public.id
+    nsg_ids        = [oci_core_network_security_group.instance.id]
+    hostname_label = replace(local.prefix, "-", "")
+
+    # No ephemeral public IP: a private IP can carry only one public IP, and
+    # this one gets the RESERVED address below. The cost is that the instance
+    # has no route to the internet for the few seconds between launch and the
+    # reserved IP attaching, which is why cloud-init waits for connectivity
+    # before its first download.
+    assign_public_ip = false
+  }
+
+  metadata = {
+    ssh_authorized_keys = trimspace(var.ssh_public_key)
+    user_data           = base64encode(local.cloud_init)
+  }
+
+  lifecycle {
+    # A newer Ubuntu image published upstream must not silently destroy and
+    # recreate the box on an unrelated apply.
+    ignore_changes = [source_details[0].source_id]
+  }
+}
+
+data "oci_core_vnic_attachments" "k3s" {
+  compartment_id = var.compartment_ocid
+  instance_id    = oci_core_instance.k3s.id
+}
+
+data "oci_core_private_ips" "k3s" {
+  vnic_id = data.oci_core_vnic_attachments.k3s.vnic_attachments[0].vnic_id
+}
+
+# A reserved (not ephemeral) address so that a stop/start, or a rebuild after
+# OCI reclaims an idle instance, does not invalidate the Cloudflare A record.
+resource "oci_core_public_ip" "k3s" {
+  compartment_id = var.compartment_ocid
+  display_name   = "${local.prefix}-ip"
+  lifetime       = "RESERVED"
+  private_ip_id  = data.oci_core_private_ips.k3s.private_ips[0].id
+  freeform_tags  = local.tags
+}

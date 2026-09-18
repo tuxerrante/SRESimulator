@@ -1,0 +1,34 @@
+# Copy to terraform.tfvars and fill in. terraform.tfvars is gitignored.
+#
+# Authentication is NOT configured here: the provider reads ~/.oci/config,
+# so no private key ever reaches a tfvars file or Terraform state. Run
+# `oci setup config` once if you have not already.
+
+owner_alias      = "jdoe"
+compartment_ocid = "ocid1.compartment.oc1..aaaaaaaa_replace_me"
+region           = "eu-frankfurt-1"
+
+# Substituted into traefik-config.yaml for Let's Encrypt registration.
+acme_email = "you@example.com"
+
+ssh_public_key = "ssh-ed25519 AAAAC3Nza... you@example.com"
+
+# SSH is closed to the internet by default. Add your own address to open it.
+# Use a /32. Leaving this empty is supported; you simply cannot SSH in.
+ssh_allowed_cidrs = ["203.0.113.10/32"]
+
+# Leave this empty. The API is reached over an SSH tunnel:
+#   make tf-oci-kubeconfig
+# Setting it to 0.0.0.0/0 is rejected outright by a variable validation.
+k8s_api_allowed_cidrs = []
+
+# A1 capacity in eu-frankfurt-1 is frequently exhausted. When apply fails with
+# "Out of host capacity", increment this (0, 1, 2) and try again. That is the
+# expected workflow, not a sign anything is misconfigured.
+availability_domain_index = 0
+
+# Ports 80/443 are restricted to Cloudflare's published ranges by default,
+# which is what makes cf-connecting-ip trustworthy and stops anyone bypassing
+# the proxy by hitting the origin IP. Set to false only for a first bring-up
+# before DNS exists, and remember to set it back.
+# restrict_ingress_to_cloudflare = false
