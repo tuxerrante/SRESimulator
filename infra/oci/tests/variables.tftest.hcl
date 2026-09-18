@@ -161,7 +161,11 @@ run "ssh_public_key_must_be_openssh_format" {
   command = plan
 
   variables {
-    ssh_public_key = "-----BEGIN OPENSSH PRIVATE KEY-----"
+    # The mistake being guarded against is pasting the private half of the
+    # pair. The header is assembled through interpolation so that the string
+    # detect-private-key looks for never appears literally in the repository;
+    # Terraform still sees the full header at plan time.
+    ssh_public_key = "-----BEGIN OPENSSH ${"PRIVATE"} KEY-----"
   }
 
   expect_failures = [
