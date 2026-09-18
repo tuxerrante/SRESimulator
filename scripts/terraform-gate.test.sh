@@ -1081,6 +1081,15 @@ assert_not_contains 'environment:' "$SHAPE_FILE"
 assert_not_contains 'azure/login' "$SHAPE_FILE"
 assert_not_contains 'terraform apply' "$SHAPE_FILE"
 
+# Credential-free has to include the one credential checkout hands out for
+# free. This job renders the PR's own cloud-init.yaml.tftpl and runs the
+# extracted fragment under `sudo bash -c`, so a GITHUB_TOKEN left in
+# .git/config is readable by PR-controlled shell. harden-runner is on
+# `egress-policy: audit`, which records egress rather than blocking it, so it
+# is not the control here. dependabot-e2e{,-build}.yml already set this flag
+# for the same reason.
+assert_contains 'persist-credentials: false' "$SHAPE_FILE"
+
 # The runner must be the free arm64 image. The box is aarch64, and the point
 # of the job is to run the shape on the architecture that ships.
 assert_contains 'runs-on: ubuntu-24.04-arm' "$SHAPE_FILE"
