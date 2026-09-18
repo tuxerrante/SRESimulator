@@ -622,8 +622,16 @@ When `helm test` fails, `helm test --logs` shows only the test container, which
 never starts if the wait timed out. Read the init container directly:
 
 ```bash
-kubectl -n <namespace> logs sre-simulator-test -c wait-for-network-policy
+kubectl -n <namespace> logs -l app.kubernetes.io/component=helm-test \
+  -c wait-for-network-policy
 ```
+
+Select by label rather than by name: the pod is named from
+`sre-simulator.fullname`, so a release installed under a different name or with
+`fullnameOverride` set is called something other than `sre-simulator-test` and
+the name form returns `NotFound`. Add
+`-l app.kubernetes.io/instance=<release>` when several releases share the
+namespace.
 
 A timeout there with a healthy backend points at the NetworkPolicy rather than
 at the application:

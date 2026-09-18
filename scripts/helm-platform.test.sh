@@ -413,4 +413,40 @@ fi
 grep -Eq 'replicas: 1' "${lb_no_db_render}" || \
   fail "Backend replicas must stay at the fixed replica count when database mode is disabled."
 
+# The helm-test pod's NetworkPolicy wait must finish inside the timeout its
+# callers give `helm test`. The bound has to be wall clock, not an attempt
+# count: measured in curlimages/curl:8.13.0, the same 6-attempt loop takes
+# 12.4s when the peer rejects instantly (the kube-router race this wait exists
+# for) and 42.5s when the peer blackholes and every curl runs to --max-time.
+# At the shipped iteration count that is ~2 minutes versus ~7, and only the
+# second one blows the caller's budget -- so a loop that reads as safe is the
+# one that silently turns a reportable failure into a bare Helm timeout.
+test_pod_render="$(mktemp)"
+helm template sre-simulator "${CHART_DIR}" \
+  --show-only templates/tests/test-connection.yaml >"${test_pod_render}"
+
+# `|| true`: under `set -euo pipefail` a grep that matches nothing exits 1 and
+# takes the script down inside the command substitution, before the explicit
+# check below can name what is wrong.
+wait_deadline="$(grep -Eo 'DEADLINE_SECONDS=[0-9]+' "${test_pod_render}" | head -1 | cut -d= -f2 || true)"
+[ -n "${wait_deadline}" ] || \
+  fail "The helm-test NetworkPolicy wait must be bounded by a wall-clock deadline, not an attempt count."
+
+if grep -Eq '\[ "\$\{attempt\}" -lt [0-9]+ \]' "${test_pod_render}"; then
+  fail "The helm-test wait must not loop on an attempt count; a blackholed peer makes its wall time unbounded."
+fi
+
+helm_test_timeout_minutes="$(grep -Eo 'helm test [^|]*--timeout ([0-9]+)m' \
+  "${ROOT_DIR}/.github/workflows/helm-integration.yml" | grep -Eo '[0-9]+m$' | tr -d m | head -1 || true)"
+[ -n "${helm_test_timeout_minutes}" ] || \
+  fail "Could not read the helm test timeout from .github/workflows/helm-integration.yml."
+
+# A final iteration can overshoot the deadline by --max-time plus the sleep,
+# and the pod still has to pull its image and run the assertions afterwards.
+if [ "$(( wait_deadline + 60 ))" -ge "$(( helm_test_timeout_minutes * 60 ))" ]; then
+  fail "The wait deadline (${wait_deadline}s) leaves under 60s of the ${helm_test_timeout_minutes}m helm test timeout for image pull and the assertions."
+fi
+
+rm -f "${test_pod_render}"
+
 echo "Helm platform rendering checks passed."
