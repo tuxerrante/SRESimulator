@@ -231,7 +231,12 @@ run "ssh_open_to_the_ipv6_world_requires_explicit_opt_in" {
   ]
 }
 
-run "ssh_open_to_the_ipv6_world_accepted_with_opt_in" {
+# allow_ssh_from_anywhere is an opt-in for *breadth*, not for family. Once the
+# IPv4-only guard exists, "::/0" is refused whether or not the operator opted
+# in -- there is nothing on the other side of that rule to match. Asserting it
+# here keeps the two guards from being conflated later: the opt-in path is
+# still exercised with an IPv4 world CIDR two runs above.
+run "ssh_ipv6_world_is_refused_even_with_the_opt_in" {
   command = plan
 
   variables {
@@ -239,10 +244,9 @@ run "ssh_open_to_the_ipv6_world_accepted_with_opt_in" {
     allow_ssh_from_anywhere = true
   }
 
-  assert {
-    condition     = length(oci_core_network_security_group_security_rule.ingress_ssh) == 1
-    error_message = "With the explicit opt-in the rule should be created."
-  }
+  expect_failures = [
+    var.ssh_allowed_cidrs,
+  ]
 }
 
 run "kubernetes_api_open_to_the_ipv6_world_is_always_rejected" {
@@ -459,7 +463,11 @@ run "ssh_quartered_world_still_needs_the_opt_in" {
   ]
 }
 
-run "ssh_split_ipv6_world_still_needs_the_opt_in" {
+# Reached by the IPv4-only guard first now, but kept as-is: the coverage
+# measurement it was written for is the barrier that survives if this
+# deployment ever becomes dual-stack, and that is exactly when a split IPv6
+# world would stop being unreachable and start being open.
+run "ssh_split_ipv6_world_is_refused" {
   command = plan
 
   variables {
@@ -641,5 +649,87 @@ run "operator_username_may_not_be_root" {
 
   expect_failures = [
     var.operator_username,
+  ]
+}
+
+# ---------------------------------------------------------------------------
+# IPv4-only deployment
+# ---------------------------------------------------------------------------
+
+run "ssh_allowed_cidrs_rejects_ipv6" {
+  command = plan
+
+  variables {
+    # A perfectly well-formed CIDR that cidrhost() accepts and the NSG's
+    # CIDR_BLOCK source type accepts, against a VNIC that has no IPv6 address.
+    ssh_allowed_cidrs = ["2001:db8::/64"]
+  }
+
+  expect_failures = [
+    var.ssh_allowed_cidrs,
+  ]
+}
+
+run "k8s_api_allowed_cidrs_rejects_ipv6" {
+  command = plan
+
+  variables {
+    k8s_api_allowed_cidrs = ["2001:db8::/64"]
+  }
+
+  expect_failures = [
+    var.k8s_api_allowed_cidrs,
+  ]
+}
+
+run "ssh_allowed_cidrs_still_accepts_ipv4" {
+  command = plan
+
+  variables {
+    ssh_allowed_cidrs = ["203.0.113.4/32", "198.51.100.0/24"]
+  }
+
+  assert {
+    condition     = length(oci_core_network_security_group_security_rule.ingress_ssh) == 2
+    error_message = "Both IPv4 source CIDRs should still produce one NSG rule each."
+  }
+}
+
+# ---------------------------------------------------------------------------
+# availability_domain_index against the region's real domain count
+# ---------------------------------------------------------------------------
+
+run "ssh_public_key_rejects_a_curve_that_does_not_exist" {
+  command = plan
+
+  variables {
+    ssh_public_key = "ecdsa-sha2-nistp999 AAAAE2VjZHNhLXNoYTItbmlzdHA1MjEAAAAIbmlzdHA1MjEexample test@example.com"
+  }
+
+  expect_failures = [
+    var.ssh_public_key,
+  ]
+}
+
+run "availability_domain_index_beyond_the_regions_domain_count" {
+  command = plan
+
+  override_data {
+    target = data.oci_identity_availability_domains.ads
+    values = {
+      availability_domains = [
+        { name = "AAAA:EU-FRANKFURT-1-AD-1" },
+      ]
+    }
+  }
+
+  variables {
+    # Passes the variable's own static 0-2 bound, and there is exactly one
+    # domain to index.
+    availability_domain_index = 1
+  }
+
+  expect_failures = [
+    data.oci_identity_availability_domains.ads,
   ]
 }

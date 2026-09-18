@@ -55,9 +55,20 @@ write_files:
       # RESERVED one immediately afterwards. That is normally a few seconds,
       # but "normally" is not a guarantee.
       # -------------------------------------------------------------------
+      #
+      # The probe cannot use curl. curl is in the apt install list below --
+      # Canonical's minimal cloud image does not ship it -- so on that image a
+      # curl-based probe fails for the full five minutes and exits, and apt
+      # and k3s never run at all. The check for connectivity would be the
+      # thing that prevented the boot.
+      #
+      # bash's /dev/tcp needs nothing installed: the shell resolves the name
+      # and opens the socket itself, which is exactly the DNS and egress that
+      # have to work before apt can. `timeout` is coreutils, which is
+      # essential on every Ubuntu image.
       log "waiting for outbound connectivity"
       for attempt in $(seq 1 60); do
-        if curl -fsS --max-time 5 -o /dev/null https://get.k3s.io; then
+        if timeout 5 bash -c 'exec 3<>/dev/tcp/get.k3s.io/443' 2>/dev/null; then
           log "network is up after $${attempt} attempt(s)"
           break
         fi

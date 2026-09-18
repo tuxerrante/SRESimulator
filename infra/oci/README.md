@@ -37,7 +37,9 @@ storage per tenancy). The variable validations refuse to exceed it.
 ```sh
 cd infra/oci
 cp terraform.tfvars.example terraform.tfvars   # then edit
-make tf-oci-init-local                          # or tf-oci-init for remote state
+make tf-oci-init-local                          # validation/testing only, no remote state
+# ...or, for remote state, pass the same OWNER_ALIAS used for every later target:
+make tf-oci-init  OWNER_ALIAS=jdoe
 make tf-oci-validate tf-oci-test
 make tf-oci-plan  OWNER_ALIAS=jdoe
 make tf-oci-apply OWNER_ALIAS=jdoe CONFIRM_APPLY=jdoe
@@ -297,6 +299,14 @@ Terraform reads them from the environment as `AWS_ACCESS_KEY_ID` and
 `AWS_SECRET_ACCESS_KEY`; the Makefile exports both out of `.oci-backend.env`,
 but a bare `terraform init` run by hand has to export them itself.
 
+**Pass `OWNER_ALIAS` to `tf-oci-init`, not only to `plan` and `apply`.** The
+object key is derived from it — `<alias>-free-sre-simulator.tfstate`, falling
+back to a shared `sre-simulator-free.tfstate` when it is unset — and `init` is
+the one target that writes the key into `.terraform/`. Omitting it there and
+supplying it everywhere else does not fail: every later target reads the key
+`init` already recorded, so two operators who each skipped it land on the same
+state file and the second `apply` proposes destroying the first one's box.
+
 Worth stating plainly, because it partly defeats the purpose: this makes the
 free path depend on the OCI tenancy for its own state. Back it up —
 `terraform state pull > backup-$(date +%F).tfstate` — and note that deleting
@@ -333,7 +343,7 @@ therefore run on fork pull requests:
 | --- | --- |
 | `terraform fmt -check -recursive` from `infra/` | both roots, including this nested one |
 | `init -backend=false`, `validate`, `test` in `infra/` | the Azure root, which no workflow ran before |
-| `init -backend=false`, `validate`, `test` here | 86 assertions, all on `mock_provider` |
+| `init -backend=false`, `validate`, `test` here | 91 test cases, all on `mock_provider` |
 | render `local.cloud_init`, then `bash -n` + `shellcheck` | the bootstrap script the instance actually boots |
 
 The last step is worth explaining. It renders through `terraform console`
