@@ -1,12 +1,12 @@
 import { Router, type Request, type Response } from "express";
-import { getAiReadiness } from "../lib/ai-config";
+import { getAiReadiness, shouldDegradeOnQuotaExhausted } from "../lib/ai-config";
 import { generateMockCommandOutput } from "../lib/mock-ai";
 import {
   getCommandScopeViolation,
   getRuntimePlatformProfile,
   isCommandTypeAllowedForPlatform,
 } from "../lib/platform-profiles";
-import { generateAiText, AiThrottledError } from "../lib/ai-runtime";
+import { generateAiText, AiQuotaExhaustedError, AiThrottledError } from "../lib/ai-runtime";
 import {
   buildScenarioContext,
   buildSimNow,
@@ -235,20 +235,18 @@ commandRouter.post("/", async (req: Request, res: Response) => {
     const message =
       error instanceof Error ? error.message : "Command simulation failed";
 
-    if (
-      error instanceof CommandGenerationTimeoutError ||
-      message.includes("without output text") ||
-      message.includes("did not include text content")
-    ) {
-      captureBackendRouteError(req, error);
-      const requestBody = isRecord(req.body) ? req.body : {};
-      const fallbackType = typeof requestBody.type === "string" &&
-          VALID_COMMAND_TYPES.includes(requestBody.type as (typeof VALID_COMMAND_TYPES)[number])
-        ? (requestBody.type as (typeof VALID_COMMAND_TYPES)[number])
-        : requestType ??
-          (requestPlatform
-            ? getRuntimePlatformProfile(requestPlatform).primaryCli
-            : "oc");
+    // Shared by every degraded path: the request body is re-read because the
+    // failure can predate the point where the validated locals were assigned.
+    const requestBody = isRecord(req.body) ? req.body : {};
+    const fallbackType = typeof requestBody.type === "string" &&
+        VALID_COMMAND_TYPES.includes(requestBody.type as (typeof VALID_COMMAND_TYPES)[number])
+      ? (requestBody.type as (typeof VALID_COMMAND_TYPES)[number])
+      : requestType ??
+        (requestPlatform
+          ? getRuntimePlatformProfile(requestPlatform).primaryCli
+          : "oc");
+
+    const buildFallbackFromRequest = (degradedReason: string) => {
       const fallbackCommandRaw = typeof requestBody.command === "string" ? requestBody.command : "";
       const fallbackScenario = requestScenario ?? (isScenario(requestBody.scenario)
         ? requestBody.scenario
@@ -257,19 +255,39 @@ commandRouter.post("/", async (req: Request, res: Response) => {
         fallbackCommandRaw,
         fallbackScenario,
       );
+      return buildMockCommandResponse(fallbackCommand, fallbackType, { degradedReason });
+    };
+
+    if (
+      error instanceof CommandGenerationTimeoutError ||
+      message.includes("without output text") ||
+      message.includes("did not include text content")
+    ) {
+      captureBackendRouteError(req, error);
       if (error instanceof CommandGenerationTimeoutError) {
         console.warn(
           `[command] timed out after ${getCommandTimeoutMs()}ms; returning mock fallback for ${fallbackType} command`,
         );
       }
       res.json(
-        buildMockCommandResponse(fallbackCommand, fallbackType, {
-          degradedReason:
-            error instanceof CommandGenerationTimeoutError
-              ? "timeout"
-              : "missing_output",
-        }),
+        buildFallbackFromRequest(
+          error instanceof CommandGenerationTimeoutError
+            ? "timeout"
+            : "missing_output",
+        ),
       );
+      return;
+    }
+
+    // A spent budget is not transient: the caller retrying cannot fix it, and a
+    // 429 here reads as an outage for the rest of the day. Simulated output at
+    // HTTP 200 keeps the session playable, labelled so the UI can say why.
+    if (error instanceof AiQuotaExhaustedError && shouldDegradeOnQuotaExhausted()) {
+      captureBackendRouteError(req, error);
+      console.warn(
+        `[command] AI budget exhausted (${error.scope}); returning simulated output`,
+      );
+      res.json(buildFallbackFromRequest("quota_exhausted"));
       return;
     }
 
