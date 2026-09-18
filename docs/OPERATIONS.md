@@ -599,6 +599,54 @@ For AKS, `publicService` remains the rollback exposure mode when operators need
 to temporarily expose only the frontend through a `LoadBalancer` service. ARO
 still uses the Route-based fallback described in the architecture doc.
 
+### `helm test` on clusters that enforce NetworkPolicy
+
+`templates/networkpolicy.yaml` restricts backend ingress to the frontend and to
+the `helm test` pod. Whether that is enforced is up to the CNI: AKS ignores it
+unless network policy was enabled on the cluster, and so does `kind`, but k3s
+enforces it through the bundled kube-router.
+
+kube-router programs a newly created pod's IP into the allowed-source ipset
+asynchronously, and nothing in Kubernetes orders pod start after policy
+programming. For roughly the first second the backend therefore rejects the
+brand-new test pod outright, and a bare first request fails instantly with
+`curl: (7) Failed to connect ... after 1 ms`. This is a startup race, not a
+policy mismatch — the pod's labels do match the rule.
+
+The test pod absorbs that window in a `wait-for-network-policy` init container,
+which shares the pod's network namespace and IP, so once it gets through the
+policy is programmed for the whole pod. The assertions in the test container
+then run with no retry, and a failure there is a real failure.
+
+When `helm test` fails, `helm test --logs` shows only the test container, which
+never starts if the wait timed out. Read the init container directly:
+
+```bash
+kubectl -n <namespace> logs -l app.kubernetes.io/component=helm-test \
+  -c wait-for-network-policy
+```
+
+Select by label rather than by name: the pod is named from
+`sre-simulator.fullname`, so a release installed under a different name or with
+`fullnameOverride` set is called something other than `sre-simulator-test` and
+the name form returns `NotFound`. Add
+`-l app.kubernetes.io/instance=<release>` when several releases share the
+namespace.
+
+A timeout there with a healthy backend points at the NetworkPolicy rather than
+at the application. Its name is derived the same way the pod name is, so it is
+`sre-simulator-backend` only at the default release name -- but unlike the test
+pod it cannot be selected by label: `sre-simulator.labels` emits only
+`helm.sh/chart`, `app.kubernetes.io/managed-by` and `app.kubernetes.io/version`,
+and the `app.kubernetes.io/instance` entries in the rendered policy are all
+inside `spec`, which `kubectl -l` does not read. List the namespace and take the
+name from there:
+
+```bash
+kubectl -n <namespace> get networkpolicy
+kubectl -n <namespace> describe networkpolicy <name>
+```
+
 ## Live platform-session verification
 
 For impactful gameplay changes, run the full deployed platform-session probe:
