@@ -257,9 +257,19 @@ describe("commandRouter", () => {
     }
   });
 
-  async function postCommand(): Promise<Response> {
+  async function postCommand(
+    options: { budgetExhausted?: boolean } = {},
+  ): Promise<Response> {
     const app = express();
     app.use(express.json());
+    if (options.budgetExhausted) {
+      // What aiGlobalBudgetLimit leaves behind for the route when the shared
+      // daily budget is spent and the mode is degrade.
+      app.use("/api/command", (_req, res, next) => {
+        res.locals.aiBudgetExhausted = true;
+        next();
+      });
+    }
     app.use("/api/command", commandRouter);
     const server = await new Promise<Server>((resolve) => {
       const listeningServer = app.listen(0, "127.0.0.1", () => resolve(listeningServer));
@@ -324,6 +334,33 @@ describe("commandRouter", () => {
     await expect(response.json()).resolves.toEqual({
       error: "The shared account is out of credit.",
     });
+  });
+
+  it("answers a spent shared budget without asking the provider first", async () => {
+    const response = await postCommand({ budgetExhausted: true });
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      output: "fallback output\nError: quota_exhausted",
+      exitCode: 1,
+      mode: "degraded",
+      degradedReason: "quota_exhausted",
+    });
+    // The point of checking the budget in the route: the request that the
+    // shared account cannot afford never leaves the process.
+    expect(mocks.generateAiText).not.toHaveBeenCalled();
+  });
+
+  it("keeps the 429 for a spent shared budget when degradation is switched off", async () => {
+    mocks.shouldDegradeOnQuotaExhausted.mockReturnValue(false);
+
+    const response = await postCommand({ budgetExhausted: true });
+
+    expect(response.status).toBe(429);
+    await expect(response.json()).resolves.toEqual({
+      error: "The shared AI request budget for today is spent.",
+    });
+    expect(mocks.generateAiText).not.toHaveBeenCalled();
   });
 
 });

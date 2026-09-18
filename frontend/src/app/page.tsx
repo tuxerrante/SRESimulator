@@ -10,6 +10,10 @@ import { Github } from "@/components/icons/Github";
 import { DifficultyGrid } from "@/components/home/DifficultyGrid";
 import { PlatformSelector } from "@/components/home/PlatformSelector";
 import { TurnstileWidget } from "@/components/home/TurnstileWidget";
+import {
+  AiBudgetBanner,
+  type AiBudgetSnapshot,
+} from "@/components/home/AiBudgetBanner";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
 import { APP_RELEASE_URL, APP_VERSION } from "@/lib/release";
@@ -52,6 +56,7 @@ export default function HomePage() {
   const [turnstileToken, setTurnstileToken] = useState<string | null>(null);
   const [turnstileSiteKey, setTurnstileSiteKey] = useState<string | null>(null);
   const [turnstileTestMode, setTurnstileTestMode] = useState(false);
+  const [aiBudget, setAiBudget] = useState<AiBudgetSnapshot | null>(null);
   const hasCallsign = Boolean(nickname);
   const turnstileConfigured = turnstileTestMode || Boolean(turnstileSiteKey);
   const anonymousVerificationMessage = getAnonymousVerificationMessage({
@@ -111,6 +116,23 @@ export default function HomePage() {
         clearViewer();
       } finally {
         setSessionReady(true);
+      }
+    })();
+
+    void (async () => {
+      try {
+        setAiBudget(
+          (await fetchJsonObject(
+            "/api/ai/budget",
+            { cache: "no-store" },
+            "Failed to load AI budget",
+          )) as unknown as AiBudgetSnapshot,
+        );
+      } catch {
+        // Deliberately silent: the budget is an explanation, not a feature.
+        // Failing to read it must never look like the game is broken, and it
+        // is not worth an error report on every visit when AI is unreachable.
+        setAiBudget(null);
       }
     })();
 
@@ -401,6 +423,8 @@ export default function HomePage() {
             {error}
           </div>
         )}
+
+        <AiBudgetBanner snapshot={aiBudget} />
       </div>
 
       <footer className="flex flex-col items-center gap-4 py-6 px-6">

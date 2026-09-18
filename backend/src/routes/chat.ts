@@ -3,6 +3,7 @@ import { loadKnowledgeSections, queryKnowledgeSections } from "../lib/knowledge"
 import { getRuntimePlatformProfile } from "../lib/platform-profiles";
 import { buildSystemPrompt } from "../lib/prompts/system";
 import { getAiReadiness, shouldDegradeOnQuotaExhausted } from "../lib/ai-config";
+import { isAiBudgetExhausted } from "../lib/ai-budget";
 import { generateMockChatResponse } from "../lib/mock-ai";
 import {
   streamAiText,
@@ -140,6 +141,34 @@ chatRouter.post("/", async (req: Request, res: Response) => {
         error: "AI runtime configuration is invalid",
         details: readiness.reasons,
       });
+      return;
+    }
+
+    // Answered before any prompt is built: the shared budget is spent, so the
+    // provider can only answer 429, and a 429 here would read as an outage for
+    // the rest of the day. These are the same frames the mid-stream quota path
+    // emits, so the client cannot tell which side of the call ran out.
+    if (isAiBudgetExhausted(res) && !shouldDegradeOnQuotaExhausted()) {
+      // Degradation switched off: answer the way a provider throttle is
+      // answered, but without spending a request proving what is already known.
+      res.status(429).json({
+        error: "The shared AI request budget for today is spent.",
+      });
+      return;
+    }
+    if (isAiBudgetExhausted(res)) {
+      console.warn("[chat] AI budget exhausted (daily); returning simulated response");
+      res.setHeader("Content-Type", "text/event-stream");
+      res.setHeader("Cache-Control", "no-cache");
+      res.setHeader("Connection", "keep-alive");
+      res.flushHeaders();
+      const mockText = generateMockChatResponse(currentPhase, session.platform);
+      res.write(`data: ${JSON.stringify({ text: mockText })}\n\n`);
+      res.write(
+        `data: ${JSON.stringify({ degraded: true, degradedReason: "quota_exhausted" })}\n\n`,
+      );
+      res.write("data: [DONE]\n\n");
+      res.end();
       return;
     }
 

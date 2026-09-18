@@ -120,3 +120,68 @@ export function buildOpenRouterTarget(request: AiTextRequest): OpenAiCompatibleT
     inspectThrottleBody: true,
   };
 }
+
+export interface OpenRouterKeyStatus {
+  dailyLimit: number | null;
+  dailyRemaining: number | null;
+}
+
+interface CachedKeyStatus {
+  fetchedAtMs: number;
+  status: OpenRouterKeyStatus | null;
+}
+
+let cachedKeyStatus: CachedKeyStatus | null = null;
+
+function getQuotaTtlMs(): number {
+  const parsed = Number.parseInt(process.env.AI_OPENROUTER_QUOTA_TTL_MS ?? "", 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 60_000;
+}
+
+function readOptionalNumber(source: Record<string, unknown>, key: string): number | null {
+  const value = source[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+/**
+ * Best-effort live view of the account's free-tier budget, cached for
+ * AI_OPENROUTER_QUOTA_TTL_MS.
+ *
+ * Every field is optional on purpose: this response has gained and renamed
+ * keys before, and the banner it feeds must degrade to "no upstream number"
+ * rather than break. It never throws and never rejects -- a budget display
+ * failing is not a reason for an AI route to fail.
+ */
+export async function fetchOpenRouterKeyStatus(): Promise<OpenRouterKeyStatus | null> {
+  const key = process.env.AI_OPENROUTER_API_KEY?.trim();
+  if (!key) return null;
+
+  const nowMs = Date.now();
+  if (cachedKeyStatus && nowMs - cachedKeyStatus.fetchedAtMs < getQuotaTtlMs()) {
+    return cachedKeyStatus.status;
+  }
+
+  let status: OpenRouterKeyStatus | null = null;
+  try {
+    const response = await fetch(`${getOpenRouterBaseUrl()}/key`, {
+      headers: { authorization: `Bearer ${key}` },
+    });
+    if (response.ok) {
+      const payload = (await response.json()) as { data?: Record<string, unknown> };
+      const data = payload?.data;
+      if (data && typeof data === "object") {
+        status = {
+          dailyLimit: readOptionalNumber(data, "free_model_daily_requests"),
+          dailyRemaining:
+            readOptionalNumber(data, "free_model_daily_requests_remaining") ??
+            readOptionalNumber(data, "limit_remaining"),
+        };
+      }
+    }
+  } catch {
+    status = null;
+  }
+
+  cachedKeyStatus = { fetchedAtMs: nowMs, status };
+  return status;
+}
