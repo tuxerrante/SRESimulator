@@ -133,3 +133,23 @@ run "availability_domain_index_selects_the_right_ad" {
     error_message = "availability_domain_index must select the matching AD; this is the knob used to work around 'Out of host capacity'."
   }
 }
+
+run "the_vcn_dns_label_fits_ocis_fifteen_character_limit" {
+  command = plan
+
+  variables {
+    # The longest alias owner_alias now admits. If that ceiling is ever raised
+    # without re-deriving it from this limit, this run fails.
+    owner_alias = "abcdefghijk"
+  }
+
+  assert {
+    condition     = length(oci_core_vcn.main.dns_label) <= 15
+    error_message = "OCI caps VCN DNS labels at 15 characters. Exceeding it fails at apply, on an input terraform validate accepted."
+  }
+
+  assert {
+    condition     = can(regex("^[a-z][a-z0-9]*$", oci_core_vcn.main.dns_label))
+    error_message = "A VCN DNS label must be alphanumeric and start with a letter; hyphens and underscores are rejected by the API."
+  }
+}

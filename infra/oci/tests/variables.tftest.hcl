@@ -338,3 +338,71 @@ run "subnet_cidr_may_not_be_wider_than_the_vcn" {
     var.subnet_cidr,
   ]
 }
+
+# ---------------------------------------------------------------------------
+# Inputs that pass validation and then fail at apply
+#
+# Each of these was a real gap: the variable accepted a value that terraform
+# validate waved through and that only failed later, either in the OCI API or
+# in the shell of the rendered bootstrap script. That is the worst shape for an
+# infra bug, because the operator has already committed to the apply.
+# ---------------------------------------------------------------------------
+run "owner_alias_must_leave_room_for_the_vcn_dns_label" {
+  command = plan
+
+  variables {
+    # 12 characters. The old regex allowed up to 16, and network.tf derives the
+    # VCN DNS label by appending "free", so this produced a 16-character label
+    # against OCI's documented 15-character limit.
+    owner_alias = "abcdefghijkl"
+  }
+
+  expect_failures = [
+    var.owner_alias,
+  ]
+}
+
+run "ssh_public_key_must_be_a_single_line" {
+  command = plan
+
+  variables {
+    # The first line is a valid key, so the format regex -- which is unanchored
+    # at the end -- matches. cloud-init.yaml.tftpl interpolates this into a YAML
+    # sequence item, so the second line lands as a top-level cloud-config
+    # directive. Rendering the real template with a value like this injected a
+    # new top-level key alongside runcmd, users and write_files.
+    ssh_public_key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExampleKeyMaterialForTests test@example.com\nruncmd:\n  - [touch, /tmp/injected]"
+  }
+
+  expect_failures = [
+    var.ssh_public_key,
+  ]
+}
+
+run "availability_domain_index_must_be_a_whole_number" {
+  command = plan
+
+  variables {
+    # Passes a bare >= 0 && < 3 range check, then fails at plan with
+    # "Invalid index" when it is used to subscript the AD list.
+    availability_domain_index = 1.5
+  }
+
+  expect_failures = [
+    var.availability_domain_index,
+  ]
+}
+
+run "swap_size_mb_must_be_a_whole_number" {
+  command = plan
+
+  variables {
+    # Interpolated into fallocate -l "<n>M" and dd count="<n>", neither of
+    # which takes a fraction.
+    swap_size_mb = 2048.5
+  }
+
+  expect_failures = [
+    var.swap_size_mb,
+  ]
+}

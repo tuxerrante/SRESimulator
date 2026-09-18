@@ -388,3 +388,26 @@ run "rendered_user_data_carries_no_trailing_whitespace" {
     error_message = "compute.tf must strip the trailing whitespace that indent() introduces on blank lines."
   }
 }
+
+run "the_ssh_key_cannot_escape_its_yaml_scalar" {
+  command = plan
+
+  # The paired negative case lives in variables.tftest.hcl
+  # (ssh_public_key_must_be_a_single_line). This run covers the structural half:
+  # even if that validation is loosened or bypassed, the value is emitted as a
+  # quoted scalar and cannot terminate early.
+  assert {
+    condition     = strcontains(local.cloud_init, "- \"ssh-ed25519 ")
+    error_message = "The authorized key must be emitted as a quoted YAML scalar. A bare interpolation lets any newline in the value become a top-level cloud-config directive."
+  }
+
+  assert {
+    condition = sort(keys(yamldecode(local.cloud_init))) == sort([
+      "final_message",
+      "runcmd",
+      "users",
+      "write_files",
+    ])
+    error_message = "The rendered cloud-config has an unexpected set of top-level keys. Either a directive was added deliberately and this list needs updating, or an interpolated value broke out of its scalar."
+  }
+}
