@@ -19,7 +19,9 @@ gw_missing_host_err="$(mktemp)"
 gw_route_host_bypass_err="$(mktemp)"
 gw_ingress_host_bypass_err="$(mktemp)"
 gw_whitespace_host_err="$(mktemp)"
-trap 'rm -f "${route_render}" "${auth_render}" "${auth_guard_render}" "${auth_disabled_render}" "${lb_render}" "${lb_no_db_render}" "${ingress_render}" "${gw_render}" "${hostless_render}" "${legacy_kv_render}" "${gw_bad_scheme_err}" "${gw_missing_host_err}" "${gw_route_host_bypass_err}" "${gw_ingress_host_bypass_err}" "${gw_whitespace_host_err}"' EXIT
+trusted_ip_blank_render="$(mktemp)"
+trusted_ip_padded_render="$(mktemp)"
+trap 'rm -f "${route_render}" "${auth_render}" "${auth_guard_render}" "${auth_disabled_render}" "${lb_render}" "${lb_no_db_render}" "${ingress_render}" "${gw_render}" "${hostless_render}" "${legacy_kv_render}" "${gw_bad_scheme_err}" "${gw_missing_host_err}" "${gw_route_host_bypass_err}" "${gw_ingress_host_bypass_err}" "${gw_whitespace_host_err}" "${trusted_ip_blank_render}" "${trusted_ip_padded_render}"' EXIT
 
 fail() {
   echo "FAIL: $*" >&2
@@ -419,9 +421,6 @@ grep -Eq 'replicas: 1' "${lb_no_db_render}" || \
 # silently falls back to the Envoy default, so an operator's typo reads as a
 # working override. Whitespace must render nothing at all, and a padded value
 # must reach the container already trimmed.
-trusted_ip_blank_render="$(mktemp)"
-trusted_ip_padded_render="$(mktemp)"
-
 helm template sre-simulator "${CHART_DIR}" \
   --set exposure.mode=route \
   --set exposure.host=route.example.com \
@@ -438,7 +437,5 @@ helm template sre-simulator "${CHART_DIR}" \
 
 grep -Fq 'value: "x-real-ip"' "${trusted_ip_padded_render}" || \
   fail "frontend.trustedClientIpHeader must reach the container trimmed."
-
-rm -f "${trusted_ip_blank_render}" "${trusted_ip_padded_render}"
 
 echo "Helm platform rendering checks passed."
