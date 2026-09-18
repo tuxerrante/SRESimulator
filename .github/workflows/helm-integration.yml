@@ -97,6 +97,18 @@ jobs:
           kind load docker-image sre-simulator-frontend:test --name helm-test
           kind load docker-image sre-simulator-backend:test --name helm-test
 
+      # exposure.host is a *.localtest.me name here, and that is inert: this
+      # job never opens a browser and never resolves the host. It verifies with
+      # `kubectl get pods` and `helm test`, whose pod talks to the Services by
+      # their in-cluster names. The value only reaches rendered manifests.
+      #
+      # Do not copy the host into a job that does run a browser. Only loopback
+      # and *.localhost are browser secure contexts, and outside one Chromium
+      # hides `crypto.randomUUID` and `crypto.subtle`, which `hooks/useChat.ts`
+      # and `lib/auth/fingerprint.ts` call unguarded. The symptom is brutal to
+      # diagnose: the suite times out with no 5xx, no failed request and no
+      # console error. That is why the browser gate in ci.yml uses
+      # `sre-simulator.localhost`.
       - name: Deploy chart with mock AI mode (publicService runtime)
         run: |
           set -euo pipefail
