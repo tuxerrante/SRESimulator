@@ -311,11 +311,45 @@ describe("openrouter provider", () => {
     expect((error as AiQuotaExhaustedError).scope).toBe("daily");
   });
 
-  it("keeps a partial streamed answer when the error arrives after text", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(
+  it("yields the partial answer and then throws, so the route can mark it degraded", async () => {
+    // Swallowing this error would end a capped stream with a bare `[DONE]`,
+    // which on the wire is indistinguishable from a complete answer: the chat
+    // route writes the `quota_exhausted` marker from its catch, and it already
+    // declines to substitute a mock over text the model really produced.
+    const fetchMock = vi.fn().mockImplementation(() =>
       streamResponse([
         { choices: [{ delta: { content: "partial" } }] },
         { error: { code: 429, message: "free-models-per-day limit reached" } },
+      ]),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const chunks: string[] = [];
+    const error = await (async () => {
+      try {
+        for await (const chunk of streamAiText({ ...BASIC_REQUEST, route: "chat" })) {
+          if (typeof chunk === "string") chunks.push(chunk);
+        }
+        return null;
+      } catch (e) {
+        return e;
+      }
+    })();
+
+    expect(chunks.join("")).toBe("partial");
+    expect(error).toBeInstanceOf(AiQuotaExhaustedError);
+    expect((error as AiQuotaExhaustedError).scope).toBe("daily");
+  });
+
+  it("still ends a non-quota truncation quietly, keeping the partial answer", async () => {
+    // The quiet return is the right answer for a truncation the player can do
+    // nothing about, and it is the only behaviour the Azure path has -- Azure
+    // classifies nothing but DeploymentNotFound, so nothing it sees mid-stream
+    // can reach the throw above.
+    const fetchMock = vi.fn().mockImplementation(() =>
+      streamResponse([
+        { choices: [{ delta: { content: "partial" } }] },
+        { error: { code: 500, message: "upstream provider hung up" } },
       ]),
     );
     vi.stubGlobal("fetch", fetchMock);
@@ -370,5 +404,60 @@ describe("azure openai is unaffected by the openrouter throttle classifier", () 
 
     expect(result).toBe("ok");
     expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("keep-alive warmups and a shared account-wide budget", () => {
+  // `warmupAiModel` keeps a module-level cooldown timestamp, so each case gets
+  // a fresh module graph rather than a reset seam exported only for tests.
+  async function freshWarmup(): Promise<(route?: "chat" | "command") => void> {
+    vi.resetModules();
+    const runtime = await import("../ai-runtime");
+    return runtime.warmupAiModel;
+  }
+
+  beforeEach(() => {
+    clearTestEnv();
+    _resetForTests();
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  afterAll(() => {
+    vi.resetModules();
+    vi.unstubAllGlobals();
+    restoreTestEnv();
+  });
+
+  it("does not warm up OpenRouter, whose quota is account-wide and daily", async () => {
+    // `/api/scenario` fires a warmup on every catalog-served scenario -- the
+    // one path that needs no model at all. On a 50/day free tier that is the
+    // whole budget spent on requests no player ever sees, and it happens
+    // outside the Express middleware that accounts for the budget.
+    process.env.AI_PROVIDER = "openrouter";
+    process.env.AI_OPENROUTER_API_KEY = "test-key";
+    process.env.AI_OPENROUTER_MODEL = "vendor/global:free";
+    const fetchMock = vi.fn().mockImplementation(() => okResponse("ping"));
+    vi.stubGlobal("fetch", fetchMock);
+
+    (await freshWarmup())("chat");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("still warms up Azure, where the request buys latency and spends nothing shared", async () => {
+    process.env.AI_PROVIDER = "azure-openai";
+    process.env.AI_MODEL = "gpt-5.2";
+    process.env.AI_AZURE_OPENAI_ENDPOINT = "https://example.openai.azure.com";
+    process.env.AI_AZURE_OPENAI_API_KEY = "test-key";
+    process.env.AI_AZURE_OPENAI_DEPLOYMENT = "gpt-5.2";
+    const fetchMock = vi.fn().mockImplementation(() => okResponse("ping"));
+    vi.stubGlobal("fetch", fetchMock);
+
+    (await freshWarmup())("chat");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });

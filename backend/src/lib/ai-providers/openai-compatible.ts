@@ -9,6 +9,7 @@ import {
   toAbortError,
 } from "./abort";
 import {
+  AiQuotaExhaustedError,
   AiReasoningExhaustedError,
   AiThrottledError,
   type AiTextRequest,
@@ -489,6 +490,18 @@ export async function* streamOpenAiCompatible(
     if (!sawText) {
       if (request.route) logTokenError(request.route, detail);
       throw classified ?? new Error(`${target.providerLabel} stream failed: ${detail}`);
+    }
+    // A spent quota is the one mid-stream failure the caller can act on, so it
+    // is thrown even though text was yielded: the chat route's catch is what
+    // writes the `quota_exhausted` marker frame, and swallowing the error here
+    // ends a capped stream with a bare `[DONE]` that is indistinguishable from
+    // a complete answer. Nothing is lost by throwing -- the route tracks
+    // whether it streamed text and appends only the marker when it did.
+    // Non-quota truncation keeps the original quiet return; Azure classifies
+    // only DeploymentNotFound, so its behaviour here is unchanged.
+    if (classified instanceof AiQuotaExhaustedError) {
+      if (request.route) logTokenError(request.route, detail);
+      throw classified;
     }
     console.warn(
       `[ai-runtime] ${target.providerLabel} stream ended early on route=${request.route ?? "none"}: ${detail}`,
