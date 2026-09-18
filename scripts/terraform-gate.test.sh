@@ -33,6 +33,12 @@ assert_contains() {
     fail "expected '$expected' in $file"
 }
 
+assert_matches() {
+  local pattern=$1 file=$2
+  grep -Eq -- "$pattern" "$file" ||
+    fail "expected /$pattern/ in $file"
+}
+
 assert_not_contains() {
   local unexpected=$1 file=$2
   if grep -Fq -- "$unexpected" "$file"; then
@@ -78,8 +84,11 @@ assert_contains 'terraform init -backend=false -input=false' "$JOB_FILE"
 
 # --- 3. both roots are actually covered -----------------------------------
 # infra/tests/*.tftest.hcl was run by no workflow before this job existed.
-assert_contains 'working-directory: infra' "$JOB_FILE"
-assert_contains 'working-directory: infra/oci' "$JOB_FILE"
+# Anchored: a substring match for 'working-directory: infra' is also satisfied
+# by 'working-directory: infra/oci', so the plain form would let the Azure root
+# fall out of the job while the test stayed green.
+assert_matches '^[[:space:]]*working-directory: infra$' "$JOB_FILE"
+assert_matches '^[[:space:]]*working-directory: infra/oci$' "$JOB_FILE"
 assert_contains 'terraform -chdir=infra fmt -check -recursive' "$JOB_FILE"
 
 # --- 4. action pinned by SHA, wrapper off ---------------------------------

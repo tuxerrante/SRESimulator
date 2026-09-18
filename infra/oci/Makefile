@@ -15,6 +15,15 @@ OCI_STATE_KEY        ?= $(if $(OWNER_ALIAS),$(OWNER_ALIAS)-free-sre-simulator.tf
 
 -include $(OCI_BACKEND_ENV_FILE)
 
+# `-include` only creates make variables, and make exports nothing it did not
+# inherit. Terraform's S3 backend reads its credentials from the *environment*,
+# so without these two lines .oci-backend.env is read and then ignored, and
+# tf-oci-init fails with a credentials error that points nowhere near the file
+# that was supposed to supply them. Exporting an unset variable is a no-op, so
+# an ambient AWS profile still works.
+export AWS_ACCESS_KEY_ID
+export AWS_SECRET_ACCESS_KEY
+
 OCI_STATE_ENDPOINT ?= https://$(OCI_STATE_NAMESPACE).compat.objectstorage.$(OCI_STATE_REGION).oraclecloud.com
 
 help: ## Show this help
@@ -115,7 +124,11 @@ tf-oci-destroy: ## Destroy the free-tier box and its network
 		echo "Example: make tf-oci-destroy OWNER_ALIAS=aaffinit CONFIRM_DESTROY=aaffinit-free"; \
 		exit 1; \
 	fi
-	@case " $(TF_VAR_FLAGS) " in *" -auto-approve "*|*" --auto-approve "*) \
+	@# TF_CLI_ARGS and TF_CLI_ARGS_destroy are appended by Terraform itself, so
+	@# they reach `terraform destroy` without passing through TF_VAR_FLAGS. A
+	@# guard that reads only TF_VAR_FLAGS therefore inspects the one channel
+	@# nobody would use to sneak the flag in.
+	@case " $(TF_VAR_FLAGS) $${TF_CLI_ARGS:-} $${TF_CLI_ARGS_destroy:-} " in *" -auto-approve "*|*" --auto-approve "*) \
 		echo "REFUSED: -auto-approve is not allowed for destructive operations."; \
 		exit 1; \
 	esac
