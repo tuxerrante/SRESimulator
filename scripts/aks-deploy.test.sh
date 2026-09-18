@@ -2189,6 +2189,83 @@ if failures:
 PY
 }
 
+run_multi_arch_release_check() {
+  local workflow="$ROOT_DIR/.github/workflows/build-push.yml"
+
+  # The OCI free-tier box is an aarch64 A1.Flex. Until this workflow published
+  # arm64, every GHCR image was amd64-only and the pods there would have died
+  # with "exec format error" -- a CrashLoopBackOff with no other clue.
+  assert_contains "platform: linux/amd64" "$workflow"
+  assert_contains "platform: linux/arm64" "$workflow"
+
+  # Native runners, not emulation. A QEMU leg would still produce a correct
+  # arm64 image, so nothing downstream would notice -- it would just take
+  # 5-15x longer on a Bun + Next.js build and eventually time out. That makes
+  # it exactly the kind of regression a human reviewer waves through.
+  assert_contains "runner: ubuntu-24.04-arm" "$workflow"
+  if grep -q "setup-qemu-action" "$workflow"; then
+    fail "the release build must use native arm64 runners, not QEMU emulation"
+  fi
+
+  # Each architecture pushes by digest and the merge job applies the only tag.
+  # If a per-architecture leg ever tags directly, the two runners race for one
+  # tag and the loser's architecture disappears from the registry -- the
+  # manifest is simply overwritten, with no error anywhere.
+  assert_contains "push-by-digest=true" "$workflow"
+  assert_contains "docker buildx imagetools create" "$workflow"
+
+  # `outputs:` is a comma-separated list, and a YAML folded scalar (`>-`)
+  # joins its lines with a SPACE. Written that way the value carries a
+  # " name-canonical" key that BuildKit does not recognise, and the image is
+  # pushed under a name nobody can assemble. The double-quoted backslash
+  # continuation is the one YAML form that joins with nothing, so the absence
+  # of a space here is a correctness property, not formatting.
+  python3 - "$workflow" <<'PY_INNER'
+import re
+import sys
+
+lines = open(sys.argv[1]).read().splitlines()
+# `outputs:` with a value on the same line -- not the job-level `outputs:`
+# mapping key in resolve-release-tag, which is a different thing that happens
+# to share a name.
+index = next(
+    (
+        i for i, line in enumerate(lines)
+        if re.match(r"^\s*outputs:\s*\S", line)
+    ),
+    None,
+)
+if index is None:
+    print("the release build step has no outputs: value, so nothing is "
+          "pushed by digest", file=sys.stderr)
+    sys.exit(1)
+
+current = lines[index].split("outputs:", 1)[1].strip()
+if current.startswith((">", "|")):
+    print("outputs: must not use a folded or literal block scalar -- folding "
+          "inserts a space into the comma-separated list", file=sys.stderr)
+    sys.exit(1)
+
+# Join exactly the way YAML does: a trailing backslash inside a double-quoted
+# scalar continues the line with no separator at all.
+value = ""
+while current.endswith("\\"):
+    value += current[:-1]
+    index += 1
+    current = lines[index].strip()
+value = (value + current).strip().strip('"')
+
+if ", " in value or " ," in value:
+    print("outputs: contains a space beside a comma: %r" % value,
+          file=sys.stderr)
+    sys.exit(1)
+for key in ("push-by-digest=true", "name-canonical=true", "push=true"):
+    if key not in value:
+        print("outputs: is missing %s: %r" % (key, value), file=sys.stderr)
+        sys.exit(1)
+PY_INNER
+}
+
 run_bun_version_single_source_check() {
   python3 - "$ROOT_DIR" <<'PY'
 import pathlib
@@ -2326,6 +2403,7 @@ main() {
   run_e2e_image_cache_check
   run_workflow_buildx_cache_order_check
   run_bun_version_single_source_check
+  run_multi_arch_release_check
   run_e2e_route_refresh_rejects_prod_namespace_check
   run_makefile_gateway_defaults_check
   run_makefile_gateway_audit_targets_check
