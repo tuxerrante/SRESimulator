@@ -1,0 +1,129 @@
+#!/usr/bin/env bash
+# Regression locks for the credential-free `terraform-validate` CI job and the
+# infra/oci/ free-tier root it guards.
+#
+# The job is only useful if three properties hold, and all three are easy to
+# break with a well-meaning edit:
+#
+#   1. ci-gate counts its result. ci-gate is the *only* status check the
+#      branch ruleset requires, so a job missing from that aggregation is a
+#      job nobody has to pass.
+#   2. It stays credential-free. The moment it grows a `secrets.` reference it
+#      can no longer run on fork PRs, and it acquires a blast radius that a
+#      fmt/validate/test job has no business having.
+#   3. infra/oci/traefik-config.yaml stays a single shared file. cloud-init
+#      and the oci-shape-e2e job must consume the same bytes; a private copy
+#      would green-light a Traefik config the box never runs.
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+WORKFLOW="$ROOT_DIR/.github/workflows/ci.yml"
+GITIGNORE="$ROOT_DIR/.gitignore"
+COMPUTE_TF="$ROOT_DIR/infra/oci/compute.tf"
+TRAEFIK_CONFIG="$ROOT_DIR/infra/oci/traefik-config.yaml"
+
+fail() {
+  echo "FAIL: $*" >&2
+  exit 1
+}
+
+assert_contains() {
+  local expected=$1 file=$2
+  grep -Fq -- "$expected" "$file" ||
+    fail "expected '$expected' in $file"
+}
+
+assert_not_contains() {
+  local unexpected=$1 file=$2
+  if grep -Fq -- "$unexpected" "$file"; then
+    fail "did not expect '$unexpected' in $file"
+  fi
+}
+
+# Extract a single top-level job block from ci.yml so the assertions below
+# cannot be satisfied by an unrelated job elsewhere in the file.
+job_block() {
+  local job=$1
+  awk -v job="  ${job}:" '
+    $0 == job { inblock = 1; next }
+    inblock && /^  [A-Za-z0-9_-]+:[[:space:]]*$/ { inblock = 0 }
+    inblock { print }
+  ' "$WORKFLOW"
+}
+
+TERRAFORM_JOB="$(job_block terraform-validate)"
+[ -n "$TERRAFORM_JOB" ] || fail "terraform-validate job not found in $WORKFLOW"
+
+JOB_FILE="$(mktemp)"
+trap 'rm -f "$JOB_FILE"' EXIT
+printf '%s\n' "$TERRAFORM_JOB" > "$JOB_FILE"
+
+# --- 1. ci-gate must count the result -------------------------------------
+assert_contains "  terraform-validate:" "$WORKFLOW"
+assert_contains "      - terraform-validate" "$WORKFLOW"
+assert_contains 'TERRAFORM_RESULT: ${{ needs.terraform-validate.result }}' \
+  "$WORKFLOW"
+assert_contains '"terraform-validate:${TERRAFORM_RESULT}"' "$WORKFLOW"
+
+# --- 2. the job must stay credential-free ---------------------------------
+assert_not_contains 'secrets.' "$JOB_FILE"
+assert_not_contains 'environment:' "$JOB_FILE"
+assert_not_contains 'azure/login' "$JOB_FILE"
+# No apply path. Provisioning the box is a manual, operator-run step; wiring
+# it here would mean storing a tenancy-wide API signing key as a repo secret.
+assert_not_contains 'terraform apply' "$JOB_FILE"
+assert_not_contains 'terraform destroy' "$JOB_FILE"
+# -backend=false is what keeps the unit runs off the real OCI state bucket.
+assert_contains 'terraform init -backend=false -input=false' "$JOB_FILE"
+
+# --- 3. both roots are actually covered -----------------------------------
+# infra/tests/*.tftest.hcl was run by no workflow before this job existed.
+assert_contains 'working-directory: infra' "$JOB_FILE"
+assert_contains 'working-directory: infra/oci' "$JOB_FILE"
+assert_contains 'terraform -chdir=infra fmt -check -recursive' "$JOB_FILE"
+
+# --- 4. action pinned by SHA, wrapper off ---------------------------------
+# terraform_wrapper: true would wrap stdout in a GitHub Actions output block
+# and corrupt the `terraform console` render the next step parses.
+assert_contains \
+  'hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e' \
+  "$JOB_FILE"
+assert_contains 'terraform_wrapper: false' "$JOB_FILE"
+
+# --- 5. the rendered bootstrap script is linted, not the template ---------
+# Linting cloud-init.yaml.tftpl directly would lint Terraform directives, not
+# shell. Going through local.cloud_init is what makes bash -n and shellcheck
+# meaningful.
+assert_contains 'local.cloud_init' "$JOB_FILE"
+assert_contains 'yamldecode' "$JOB_FILE"
+assert_contains 'shellcheck' "$JOB_FILE"
+assert_contains 'bash -n' "$JOB_FILE"
+
+# --- 6. the shared Traefik config contract --------------------------------
+[ -f "$TRAEFIK_CONFIG" ] || fail "missing $TRAEFIK_CONFIG"
+assert_contains 'traefik-config.yaml' "$COMPUTE_TF"
+assert_contains 'ACME_EMAIL_PLACEHOLDER' "$COMPUTE_TF"
+assert_contains 'ACME_EMAIL_PLACEHOLDER' "$TRAEFIK_CONFIG"
+# The three bugs found on the aarch64 dry-run VM, locked here as well as in
+# infra/oci/tests/traefik_config.tftest.hcl.
+assert_contains 'updateStrategy:' "$TRAEFIK_CONFIG"
+assert_contains 'type: Recreate' "$TRAEFIK_CONFIG"
+assert_contains 'redirections:' "$TRAEFIK_CONFIG"
+assert_contains 'hostNetwork: true' "$TRAEFIK_CONFIG"
+# Anchored, because the file's own comments name both forbidden keys.
+if grep -Eq '^[[:space:]]*redirectTo:' "$TRAEFIK_CONFIG"; then
+  fail "redirectTo was removed in Traefik chart v34; use redirections"
+fi
+if grep -Eq '^[[:space:]]*strategy:' "$TRAEFIK_CONFIG"; then
+  fail "the chart reads .Values.updateStrategy; deployment.strategy is ignored"
+fi
+
+# --- 7. OCI state and local overrides stay out of git ---------------------
+# .gitignore's terraform block hardcodes one directory level, so infra/oci/
+# needs its own entries or a tfstate can be committed by accident.
+assert_contains 'infra/oci/.terraform/' "$GITIGNORE"
+assert_contains 'infra/oci/*.tfstate*' "$GITIGNORE"
+assert_contains 'infra/oci/terraform.tfvars' "$GITIGNORE"
+assert_contains 'infra/oci/*_override.tf' "$GITIGNORE"
+
+echo "terraform gate checks passed."

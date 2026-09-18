@@ -1,0 +1,118 @@
+# Traefik configuration for the single-node OCI k3s box.
+#
+# THIS FILE IS SHARED. It is consumed by exactly two callers, and they must
+# stay byte-identical apart from one documented substitution:
+#
+#   1. infra/oci/cloud-init.yaml.tftpl embeds it via file() and writes it to
+#      /var/lib/rancher/k3s/server/manifests/traefik-config.yaml on the box.
+#   2. The oci-shape-e2e job in .github/workflows/ci.yml copies it into the
+#      same path on a real k3s installed on a GitHub-hosted arm64 runner.
+#
+# The substitution is ACME_EMAIL_PLACEHOLDER -> a real address. Terraform uses
+# var.acme_email; CI uses a dummy, because it cannot complete an ACME order.
+#
+# Do not fork this file. A private copy in CI would green-light a configuration
+# the box never runs, which is the entire failure mode this file exists to
+# prevent.
+#
+# The filename must NOT be traefik.yaml: k3s owns that name in the manifests
+# directory and rewrites it on every server restart.
+---
+apiVersion: helm.cattle.io/v1
+kind: HelmChartConfig
+metadata:
+  name: traefik
+  namespace: kube-system
+spec:
+  valuesContent: |-
+    # Bind the host network namespace directly. This is the decision that
+    # preserves the client IP: the TCP remote address *is* the client
+    # address, so Traefik's X-Real-Ip / X-Forwarded-For rewrite carries a
+    # true value. Every alternative (ServiceLB, externalTrafficPolicy:
+    # Local, hostPort) either NATs or loses it. Requires --disable=servicelb
+    # on the k3s server, or the svclb DaemonSet fights for ports 80/443.
+    hostNetwork: true
+    service:
+      enabled: false
+
+    # REQUIRED on a single node with hostNetwork.
+    #
+    # The chart defaults to RollingUpdate/maxSurge=1/maxUnavailable=0. With
+    # hostNetwork on one node the surge pod can never schedule:
+    #
+    #   0/1 nodes are available: 1 node(s) didn't have free ports for the
+    #   requested pod ports
+    #
+    # The old pod keeps serving the OLD config while helm reports "deployed
+    # successfully" and `kubectl get deploy` shows the NEW args, so every
+    # Traefik change after the first silently no-ops. Verified on k3s
+    # v1.33.4+k3s1.
+    #
+    # The key is `updateStrategy`, NOT `deployment.strategy`:
+    # templates/deployment.yaml reads .Values.updateStrategy, and the chart
+    # reports success either way.
+    updateStrategy:
+      type: Recreate
+
+    securityContext:
+      capabilities:
+        drop:
+          - ALL
+        add:
+          - NET_BIND_SERVICE
+
+    ports:
+      web:
+        port: 80
+        exposedPort: 80
+        # v34 syntax. `redirectTo` was REMOVED in Traefik chart v34 and is a
+        # hard install failure, not a warning:
+        #
+        #   ERROR: redirectTo syntax has been removed in v34 of this Chart.
+        #
+        # On a fresh box cloud-init writes this manifest before k3s first
+        # starts, so that failure leaves Traefik at chart defaults
+        # (service.enabled: true, hostNetwork: false) with servicelb already
+        # disabled -- i.e. no ingress at all. k3s v1.33.4 ships chart v34.2.1.
+        redirections:
+          entryPoint:
+            to: websecure
+            scheme: https
+            permanent: true
+      websecure:
+        port: 443
+        exposedPort: 443
+        tls:
+          enabled: true
+
+    # ACME storage. The chart's own NOTES warn that enabling persistence can
+    # lose the 0600 permissions on acme.json across restarts; the
+    # initContainer below restores them before Traefik reads the file.
+    persistence:
+      enabled: true
+      storageClass: local-path
+      path: /data
+      size: 128Mi
+
+    deployment:
+      initContainers:
+        - name: volume-permissions
+          image: busybox:1.37
+          command:
+            - sh
+            - -c
+            - "touch /data/acme.json && chmod -v 600 /data/acme.json"
+          securityContext:
+            runAsNonRoot: true
+            runAsGroup: 65532
+            runAsUser: 65532
+          volumeMounts:
+            - name: data
+              mountPath: /data
+
+    certResolvers:
+      letsencrypt:
+        email: ACME_EMAIL_PLACEHOLDER
+        httpChallenge:
+          entryPoint: web
+        storage: /data/acme.json

@@ -62,6 +62,19 @@ infra/*.tfstate*
 infra/terraform.tfvars
 infra/crash.log
 
+# Terraform (OCI free-tier root). The block above hardcodes one directory
+# level, so infra/oci/ needs its own entries.
+infra/oci/.terraform/
+infra/oci/.terraform.lock.hcl
+infra/oci/.oci-backend.env
+infra/oci/tfplan
+infra/oci/*.tfstate*
+infra/oci/terraform.tfvars
+infra/oci/crash.log
+# ci.yml's terraform-validate job writes a local-backend override so
+# `terraform console` can render cloud-init without OCI credentials.
+infra/oci/*_override.tf
+
 # Worktrees (agent-managed isolated checkouts)
 .worktrees/
 

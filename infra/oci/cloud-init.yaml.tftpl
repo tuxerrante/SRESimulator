@@ -1,0 +1,158 @@
+#cloud-config
+# Rendered by infra/oci/compute.tf. Do not apply this file by hand.
+
+package_update: true
+package_upgrade: true
+
+packages:
+  - curl
+  - ca-certificates
+  - iptables-persistent
+  - unattended-upgrades
+
+users:
+  - default
+  - name: ${operator_username}
+    groups: [sudo]
+    shell: /bin/bash
+    sudo: "ALL=(ALL) NOPASSWD:ALL"
+    ssh_authorized_keys:
+      - ${ssh_public_key}
+
+write_files:
+  # Written before k3s is installed so the k3s server picks it up on its very
+  # first start. The name must not be traefik.yaml: k3s owns that one and
+  # rewrites it on every restart.
+  - path: /var/lib/rancher/k3s/server/manifests/traefik-config.yaml
+    permissions: "0600"
+    owner: root:root
+    content: |
+      ${traefik_config}
+
+  - path: /opt/bootstrap-k3s.sh
+    permissions: "0700"
+    owner: root:root
+    content: |
+      #!/usr/bin/env bash
+      set -euo pipefail
+
+      log() { echo "[bootstrap] $*"; }
+
+      # -------------------------------------------------------------------
+      # Firewall
+      #
+      # OCI's Ubuntu images ship iptables-persistent with a default-DROP INPUT
+      # chain ending in REJECT icmp-host-prohibited. The NSG on the VNIC is
+      # this deployment's single source of truth for ingress, so the host
+      # chain is flushed rather than maintained in parallel.
+      #
+      # Measured effect of leaving it in place, using a genuine non-loopback
+      # source (a pod curling the node IP -- loopback and SSH-tunnelled
+      # traffic both hit "-i lo -j ACCEPT" and prove nothing):
+      #
+      #   INPUT flushed      -> node:80 returns 301
+      #   OCI default-REJECT -> node:80 returns 000, "Failed to connect after 0 ms"
+      #
+      # Pod-to-pod traffic and egress are unaffected either way. The hazard is
+      # specifically inbound traffic to the hostNetwork Traefik pod.
+      #
+      # README.md documents the defence-in-depth alternative for operators who
+      # want two enforcement layers.
+      # -------------------------------------------------------------------
+      log "flushing the host INPUT chain; the NSG is the firewall"
+      iptables -P INPUT ACCEPT
+      iptables -P FORWARD ACCEPT
+      iptables -F INPUT
+      iptables -F FORWARD
+      if command -v ip6tables >/dev/null 2>&1; then
+        ip6tables -P INPUT ACCEPT
+        ip6tables -P FORWARD ACCEPT
+        ip6tables -F INPUT
+        ip6tables -F FORWARD
+      fi
+      netfilter-persistent save || true
+
+      # -------------------------------------------------------------------
+      # Swap. OCI A1 images ship none, and an OOM kill part-way through a
+      # container build leaves a confusing mess behind.
+      # -------------------------------------------------------------------
+%{ if swap_size_mb > 0 ~}
+      if [ ! -f /swapfile ]; then
+        log "creating a ${swap_size_mb}MB swapfile"
+        fallocate -l "${swap_size_mb}M" /swapfile || \
+          dd if=/dev/zero of=/swapfile bs=1M count="${swap_size_mb}"
+        chmod 600 /swapfile
+        mkswap /swapfile
+        swapon /swapfile
+        grep -q '^/swapfile' /etc/fstab || echo '/swapfile none swap sw 0 0' >> /etc/fstab
+      fi
+%{ else ~}
+      log "swap disabled by swap_size_mb = 0"
+%{ endif ~}
+
+      # -------------------------------------------------------------------
+      # Wait for connectivity.
+      #
+      # The instance launches with no public IP; Terraform attaches the
+      # RESERVED one immediately afterwards. That is normally a few seconds,
+      # but "normally" is not a guarantee and the k3s installer is a download.
+      # -------------------------------------------------------------------
+      log "waiting for outbound connectivity"
+      for attempt in $(seq 1 60); do
+        if curl -fsS --max-time 5 -o /dev/null https://get.k3s.io; then
+          log "network is up after $${attempt} attempt(s)"
+          break
+        fi
+        if [ "$${attempt}" -eq 60 ]; then
+          log "no outbound connectivity after 5 minutes; check that the reserved public IP attached"
+          exit 1
+        fi
+        sleep 5
+      done
+
+      # -------------------------------------------------------------------
+      # k3s
+      #
+      # --disable=servicelb is REQUIRED, not an optimisation: Traefik runs
+      #   with hostNetwork: true, and the svclb DaemonSet would contend for
+      #   ports 80 and 443.
+      # --disable=metrics-server because HPA is off on a single node.
+      # local-storage is deliberately KEPT: it provides the local-path
+      #   StorageClass that values-oci.yaml and Traefik's ACME volume need.
+      # --node-external-ip is deliberately NOT set: OCI's public IP is 1:1
+      #   NAT, the OS only ever sees the private address, and k3s documents
+      #   that setting it breaks externalTrafficPolicy: Local.
+      # -------------------------------------------------------------------
+      if ! command -v k3s >/dev/null 2>&1; then
+        log "installing k3s ${k3s_version}"
+        curl -sfL https://get.k3s.io | \
+          INSTALL_K3S_VERSION="${k3s_version}" sh -s - server \
+            --disable=metrics-server \
+            --disable=servicelb \
+            --write-kubeconfig-mode 600 \
+            --tls-san "$(hostname -I | awk '{print $1}')"
+      fi
+
+      log "waiting for the node object to exist"
+      for attempt in $(seq 1 60); do
+        if k3s kubectl get nodes >/dev/null 2>&1; then
+          break
+        fi
+        sleep 5
+      done
+      k3s kubectl wait --for=condition=Ready node --all --timeout=300s
+
+      # Give the operator a kubeconfig without needing sudo. Still only
+      # reachable over an SSH tunnel: 6443 is closed in the NSG.
+      install -d -m 0700 -o "${operator_username}" -g "${operator_username}" \
+        "/home/${operator_username}/.kube"
+      install -m 0600 -o "${operator_username}" -g "${operator_username}" \
+        /etc/rancher/k3s/k3s.yaml "/home/${operator_username}/.kube/config"
+
+      log "bootstrap complete"
+
+runcmd:
+  - [systemctl, enable, --now, unattended-upgrades]
+  - [/opt/bootstrap-k3s.sh]
+
+final_message: "sre-simulator free-tier box ready after $UPTIME seconds"
