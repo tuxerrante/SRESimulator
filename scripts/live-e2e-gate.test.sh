@@ -121,7 +121,7 @@ assert_contains "values-ci-k3d.yaml" "$WORKFLOW"
 # the chat and the anonymous fingerprint call unguarded, and the suite then
 # times out with no 5xx, no failed request and no console error.
 assert_contains "E2E_HOST: sre-simulator.localhost" "$WORKFLOW"
-assert_contains "LIVE_E2E_BASE_URL: http://sre-simulator.localhost" "$WORKFLOW"
+assert_contains 'LIVE_E2E_BASE_URL: http://${{ env.E2E_HOST }}' "$WORKFLOW"
 assert_contains "host: sre-simulator.localhost" "$CI_K3D_VALUES"
 
 # dependabot-e2e needs the AKS cluster, so ci-gate must only wait on its status

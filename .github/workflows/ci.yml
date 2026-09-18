@@ -905,7 +905,10 @@ jobs:
 
       - name: Run browser E2E
         env:
-          LIVE_E2E_BASE_URL: http://sre-simulator.localhost
+          # Derived from E2E_HOST so the gate host has exactly one definition
+          # in this workflow. It has to stay a *.localhost name; see the
+          # E2E_HOST comment above.
+          LIVE_E2E_BASE_URL: http://${{ env.E2E_HOST }}
         run: make test-e2e-live
 
       - name: Helm test
@@ -935,6 +938,11 @@ jobs:
             "deployment/${E2E_RELEASE}-backend" --tail=200 || true
           echo "--- traefik logs ---"
           kubectl -n kube-system logs deploy/traefik --tail=200 || true
+          # `helm test --logs` prints only the test container, which never
+          # starts when the wait-for-network-policy init container times out.
+          echo "--- helm test pod logs (all containers) ---"
+          kubectl -n "${E2E_NAMESPACE}" logs "${E2E_RELEASE}-test" \
+            --all-containers=true --tail=200 || true
 
       - name: Upload E2E artifacts
         if: always()
