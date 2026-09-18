@@ -11,7 +11,13 @@ region           = "eu-frankfurt-1"
 # Substituted into traefik-config.yaml for Let's Encrypt registration.
 acme_email = "you@example.com"
 
-ssh_public_key = "ssh-ed25519 AAAAC3Nza... you@example.com"
+# Paste the full contents of ~/.ssh/id_ed25519.pub -- the whole base64 blob,
+# not an abbreviated one. A truncated key installs an authorized-keys line
+# that can never authenticate, and with 22 closed by default and no console
+# password the only recovery is rebuilding the box. variables.tf rejects the
+# abbreviated form for that reason, and the credential-free CI job renders
+# cloud-init with this exact file, so the placeholder has to stay well-formed.
+ssh_public_key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIREPLACETHISWITHYOUROWNPUBLICKEYBLOB00000000 you@example.com"
 
 # SSH is closed to the internet by default. Add your own address to open it.
 # Use a /32. Leaving this empty is supported; you simply cannot SSH in.

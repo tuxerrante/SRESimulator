@@ -47,7 +47,11 @@ variables {
   cloudflare_ipv4_ranges = ["198.51.100.0/24", "203.0.113.0/24"]
 }
 # ---------------------------------------------------------------------------
-# owner_alias -- same contract as the Azure root
+# owner_alias -- deliberately stricter than the Azure root
+#
+# The Azure root allows {2,15}; this one caps at {2,10} because network.tf
+# derives the VCN DNS label from the prefix and OCI caps those at 15
+# alphanumeric characters. The shapes are otherwise the same.
 # ---------------------------------------------------------------------------
 
 run "owner_alias_valid_short" {
@@ -404,5 +408,238 @@ run "swap_size_mb_must_be_a_whole_number" {
 
   expect_failures = [
     var.swap_size_mb,
+  ]
+}
+
+# ---------------------------------------------------------------------------
+# World coverage, however it is spelled
+#
+# The guards above matched "0.0.0.0/0" and "::/0" as strings. A pair of
+# ordinary-looking CIDRs covers the same space and passed, so the guards now
+# measure coverage instead. These runs are the ones the string form failed.
+# ---------------------------------------------------------------------------
+
+run "ssh_split_world_still_needs_the_opt_in" {
+  command = plan
+
+  variables {
+    # Together these two are 0.0.0.0/0 with extra steps.
+    ssh_allowed_cidrs = ["0.0.0.0/1", "128.0.0.0/1"]
+  }
+
+  expect_failures = [
+    var.ssh_allowed_cidrs,
+  ]
+}
+
+run "ssh_split_world_is_accepted_with_the_opt_in" {
+  command = plan
+
+  variables {
+    ssh_allowed_cidrs       = ["0.0.0.0/1", "128.0.0.0/1"]
+    allow_ssh_from_anywhere = true
+  }
+
+  assert {
+    condition     = length(oci_core_network_security_group_security_rule.ingress_ssh) == 2
+    error_message = "The opt-in should still permit a deliberately world-open list."
+  }
+}
+
+run "ssh_quartered_world_still_needs_the_opt_in" {
+  command = plan
+
+  variables {
+    # Any decomposition works, so the check cannot enumerate spellings.
+    ssh_allowed_cidrs = ["0.0.0.0/2", "64.0.0.0/2", "128.0.0.0/2", "192.0.0.0/2"]
+  }
+
+  expect_failures = [
+    var.ssh_allowed_cidrs,
+  ]
+}
+
+run "ssh_split_ipv6_world_still_needs_the_opt_in" {
+  command = plan
+
+  variables {
+    ssh_allowed_cidrs = ["::/1", "8000::/1"]
+  }
+
+  expect_failures = [
+    var.ssh_allowed_cidrs,
+  ]
+}
+
+run "a_genuinely_narrow_ssh_list_is_untouched" {
+  command = plan
+
+  variables {
+    # The guard has to stay usable, or it gets discovered by locking an
+    # operator out rather than by this test.
+    ssh_allowed_cidrs = ["203.0.113.4/32", "198.51.100.0/24", "10.0.0.0/8"]
+  }
+
+  assert {
+    condition     = length(oci_core_network_security_group_security_rule.ingress_ssh) == 3
+    error_message = "Ordinary operator CIDRs must not trip the world-coverage guard."
+  }
+}
+
+run "ssh_entries_must_be_cidrs_not_bare_addresses" {
+  command = plan
+
+  variables {
+    ssh_allowed_cidrs = ["203.0.113.4"]
+  }
+
+  expect_failures = [
+    var.ssh_allowed_cidrs,
+  ]
+}
+
+run "kubernetes_api_split_world_is_always_rejected" {
+  command = plan
+
+  variables {
+    # No opt-in exists for this list, so this is the case that decides whether
+    # the description's "can never be opened to the world" is true.
+    k8s_api_allowed_cidrs = ["0.0.0.0/1", "128.0.0.0/1"]
+  }
+
+  expect_failures = [
+    var.k8s_api_allowed_cidrs,
+  ]
+}
+
+run "kubernetes_api_entries_must_be_cidrs" {
+  command = plan
+
+  variables {
+    k8s_api_allowed_cidrs = ["203.0.113.4"]
+  }
+
+  expect_failures = [
+    var.k8s_api_allowed_cidrs,
+  ]
+}
+
+run "cloudflare_override_may_not_open_the_origin_to_everyone" {
+  command = plan
+
+  variables {
+    # restrict_ingress_to_cloudflare stays true, so this would read as a
+    # restricted origin while admitting the whole internet to 80/443.
+    cloudflare_ipv4_ranges = ["0.0.0.0/0"]
+  }
+
+  expect_failures = [
+    var.cloudflare_ipv4_ranges,
+  ]
+}
+
+run "cloudflare_override_split_world_is_rejected_too" {
+  command = plan
+
+  variables {
+    cloudflare_ipv4_ranges = ["0.0.0.0/1", "128.0.0.0/1"]
+  }
+
+  expect_failures = [
+    var.cloudflare_ipv4_ranges,
+  ]
+}
+
+run "cloudflare_override_must_be_ipv4" {
+  command = plan
+
+  variables {
+    # The box is assigned no IPv6 address, so an IPv6 range here builds an NSG
+    # rule that can never match.
+    cloudflare_ipv4_ranges = ["2400:cb00::/32"]
+  }
+
+  expect_failures = [
+    var.cloudflare_ipv4_ranges,
+  ]
+}
+
+run "acme_email_may_not_carry_yaml_significant_characters" {
+  command = plan
+
+  variables {
+    # Passes any ordinary email regex, and begins a folded block scalar in the
+    # values document k3s's helm-controller parses.
+    acme_email = ">ops@example.com"
+  }
+
+  expect_failures = [
+    var.acme_email,
+  ]
+}
+
+run "acme_email_alias_character_is_rejected" {
+  command = plan
+
+  variables {
+    acme_email = "*ops@example.com"
+  }
+
+  expect_failures = [
+    var.acme_email,
+  ]
+}
+
+run "an_ordinary_acme_email_is_still_accepted" {
+  command = plan
+
+  variables {
+    acme_email = "sre-ops.team+acme@sub.example.co.uk"
+  }
+
+  assert {
+    condition     = strcontains(local.traefik_config_rendered, "sre-ops.team+acme@sub.example.co.uk")
+    error_message = "A conventional address must still be accepted and substituted."
+  }
+}
+
+run "ssh_public_key_must_carry_key_material" {
+  command = plan
+
+  variables {
+    # Passes the key-type check, trimspaces to a bare type name, and installs
+    # an authorized-keys line that can never authenticate. With 22 closed by
+    # default that is an unreachable box.
+    ssh_public_key = "ssh-ed25519 "
+  }
+
+  expect_failures = [
+    var.ssh_public_key,
+  ]
+}
+
+run "ssh_public_key_rejects_non_base64_material" {
+  command = plan
+
+  variables {
+    ssh_public_key = "ssh-ed25519 not the key you are looking for"
+  }
+
+  expect_failures = [
+    var.ssh_public_key,
+  ]
+}
+
+run "operator_username_may_not_be_root" {
+  command = plan
+
+  variables {
+    # Matches the username pattern, and defeats the non-root boundary the
+    # variable exists to create.
+    operator_username = "root"
+  }
+
+  expect_failures = [
+    var.operator_username,
   ]
 }

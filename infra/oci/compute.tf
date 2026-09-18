@@ -2,10 +2,25 @@ locals {
   # The one documented substitution into the shared Traefik config. See the
   # header of traefik-config.yaml: CI performs the same replace with a dummy
   # address, and nothing else about the file may differ between the two.
+  #
+  # jsonencode, not the bare value. The placeholder sits on an unquoted scalar
+  # inside `valuesContent: |-`, which is a literal block scalar -- so the
+  # HelmChartConfig itself always parses, and the damage is one level down, in
+  # the values YAML that k3s's helm-controller parses to feed Helm. An address
+  # beginning `>`, `*` or `{` reads there as a block scalar, an alias or a flow
+  # mapping, and all three pass an email regex. Verified with go-yaml: the
+  # outer document loads and the inner parse fails.
+  #
+  # That failure mode is bug 1 and bug 4 again. cloud-init writes this manifest
+  # before k3s first starts, so a broken values document leaves Traefik at
+  # chart defaults with servicelb already disabled -- no ingress at all.
+  # YAML is a superset of JSON, so the emitted double-quoted scalar is inert
+  # whatever the value contains. acme_email's own validation is the first of
+  # the two barriers.
   traefik_config_rendered = replace(
     file("${path.module}/traefik-config.yaml"),
     "ACME_EMAIL_PLACEHOLDER",
-    var.acme_email,
+    jsonencode(var.acme_email),
   )
 
   # indent() pads blank lines too, which leaves trailing whitespace that

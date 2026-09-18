@@ -172,22 +172,53 @@ variable "subnet_cidr" {
 #
 # The primary firewall is an NSG on the instance VNIC: it is stateful, enforced
 # in the OCI network fabric, and therefore cannot be flushed by anyone who gets
-# root on the box. Everything below defaults to closed.
+# root on the box -- for traffic that crosses that VNIC. Pod-to-host traffic
+# does not, so these lists govern internet exposure, not what a workload on the
+# cluster can reach. See "What the NSG does not cover" in README.md.
+# Everything below defaults to closed.
 # ---------------------------------------------------------------------------
 variable "ssh_allowed_cidrs" {
   description = "Source CIDRs allowed to reach TCP 22. Empty means SSH is closed to the internet."
   type        = list(string)
   default     = []
 
+  validation {
+    condition     = alltrue([for c in var.ssh_allowed_cidrs : can(cidrhost(c, 0))])
+    error_message = "Every entry in ssh_allowed_cidrs must be a CIDR block, e.g. 203.0.113.4/32. A bare address is not one, and the NSG rule would be built from it verbatim."
+  }
+
   # Cross-variable validation, hence required_version >= 1.9.
   #
-  # Both world CIDRs are listed even though this deployment is IPv4-only. The
+  # This measures how much address space the list actually covers rather than
+  # matching "0.0.0.0/0" as a string. The string form was the whole guard until
+  # it was pointed out that ["0.0.0.0/1", "128.0.0.0/1"] is a pair of ordinary
+  # -looking CIDRs that together cover every IPv4 host and sailed straight
+  # past it. Any decomposition does -- four /2s, 256 /8s -- so the test has to
+  # be coverage, not spelling.
+  #
+  # Both families are measured even though this deployment is IPv4-only. The
   # NSG rules are built with a plain for_each over this list and source_type =
   # "CIDR_BLOCK", which accepts either family without complaint, so an
   # IPv4-only guard would silently pass "::/0" straight through to a live rule.
+  #
+  # Entries that are not valid CIDRs are filtered out of both sums rather than
+  # crashing the expression; the validation above is what reports them.
   validation {
-    condition     = length(setintersection(toset(var.ssh_allowed_cidrs), toset(["0.0.0.0/0", "::/0"]))) == 0 || var.allow_ssh_from_anywhere
-    error_message = "Opening SSH to 0.0.0.0/0 or ::/0 requires setting allow_ssh_from_anywhere = true. Brute-force traffic against 22 is the dominant background noise on any public IP."
+    condition = (
+      var.allow_ssh_from_anywhere ||
+      (
+        sum(concat([0], [
+          for c in var.ssh_allowed_cidrs :
+          pow(2, 32 - tonumber(split("/", c)[1])) if can(cidrnetmask(c))
+        ])) < pow(2, 32) &&
+        sum(concat([0], [
+          for c in var.ssh_allowed_cidrs :
+          pow(2, 128 - tonumber(split("/", c)[1]))
+          if !can(cidrnetmask(c)) && can(cidrhost(c, 0))
+        ])) < pow(2, 128)
+      )
+    )
+    error_message = "ssh_allowed_cidrs covers the entire IPv4 or IPv6 address space, which requires setting allow_ssh_from_anywhere = true. Splitting the range (0.0.0.0/1 plus 128.0.0.0/1) is still opening SSH to the world. Brute-force traffic against 22 is the dominant background noise on any public IP."
   }
 }
 
@@ -210,8 +241,28 @@ variable "k8s_api_allowed_cidrs" {
   default     = []
 
   validation {
-    condition     = length(setintersection(toset(var.k8s_api_allowed_cidrs), toset(["0.0.0.0/0", "::/0"]))) == 0
-    error_message = "Refusing to expose the Kubernetes API to 0.0.0.0/0 or ::/0. Use an SSH tunnel instead."
+    condition     = alltrue([for c in var.k8s_api_allowed_cidrs : can(cidrhost(c, 0))])
+    error_message = "Every entry in k8s_api_allowed_cidrs must be a CIDR block, e.g. 203.0.113.4/32."
+  }
+
+  # Same coverage measurement as ssh_allowed_cidrs, and here it is load-bearing
+  # for a promise the description makes outright: this list has no escape hatch,
+  # so a guard that only recognised the canonical spelling would have let
+  # ["0.0.0.0/1", "128.0.0.0/1"] expose the API to the entire internet while
+  # still reading as "can never be opened to the world".
+  validation {
+    condition = (
+      sum(concat([0], [
+        for c in var.k8s_api_allowed_cidrs :
+        pow(2, 32 - tonumber(split("/", c)[1])) if can(cidrnetmask(c))
+      ])) < pow(2, 32) &&
+      sum(concat([0], [
+        for c in var.k8s_api_allowed_cidrs :
+        pow(2, 128 - tonumber(split("/", c)[1]))
+        if !can(cidrnetmask(c)) && can(cidrhost(c, 0))
+      ])) < pow(2, 128)
+    )
+    error_message = "Refusing to expose the Kubernetes API to the entire address space, however it is spelled -- 0.0.0.0/0, ::/0, or a split such as 0.0.0.0/1 plus 128.0.0.0/1. Use an SSH tunnel instead."
   }
 }
 
@@ -231,6 +282,25 @@ variable "cloudflare_ipv4_ranges" {
   description = "Override Cloudflare's IPv4 ranges. Empty fetches https://www.cloudflare.com/ips-v4 at plan time."
   type        = list(string)
   default     = []
+
+  # This override is consumed whenever restrict_ingress_to_cloudflare is true,
+  # so an unvalidated value defeats the setting it is supposed to configure:
+  # ["0.0.0.0/0"] leaves the restriction switched on while admitting the whole
+  # internet to 80/443, and with it the origin-IP bypass that restriction
+  # exists to prevent -- which is also what makes cf-connecting-ip trustworthy.
+  # restrict_ingress_to_cloudflare = false is the honest way to open the origin.
+  validation {
+    condition     = alltrue([for c in var.cloudflare_ipv4_ranges : can(cidrnetmask(c))])
+    error_message = "Every entry in cloudflare_ipv4_ranges must be an IPv4 CIDR block. Cloudflare reaches an IPv4 origin over IPv4, and this deployment assigns no IPv6 address."
+  }
+
+  validation {
+    condition = sum(concat([0], [
+      for c in var.cloudflare_ipv4_ranges :
+      pow(2, 32 - tonumber(split("/", c)[1])) if can(cidrnetmask(c))
+    ])) < pow(2, 32)
+    error_message = "cloudflare_ipv4_ranges covers the entire IPv4 address space, which leaves 80/443 open to the world while restrict_ingress_to_cloudflare still reads as enabled. Set restrict_ingress_to_cloudflare = false instead."
+  }
 }
 
 variable "ssh_public_key" {
@@ -240,6 +310,18 @@ variable "ssh_public_key" {
   validation {
     condition     = can(regex("^(ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp[0-9]+) ", var.ssh_public_key))
     error_message = "ssh_public_key must be an OpenSSH public key (ssh-ed25519, ssh-rsa or ecdsa-sha2-nistp*)."
+  }
+
+  # The check above stops at the type prefix and the space, so "ssh-ed25519 "
+  # passed it. compute.tf then trimspaces that down to a bare type name and
+  # cloud-init installs it as an authorized-keys line with no key material.
+  # Nothing fails loudly: the instance comes up, the key is simply unusable --
+  # and because 22 is closed by default and there is no console password, the
+  # result is a box nobody can log into. Rebuilding it is the only recovery,
+  # which is a steep price for a truncated copy-paste.
+  validation {
+    condition     = can(regex("^(ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp[0-9]+) [A-Za-z0-9+/]{32,}={0,3}([[:space:]].*)?$", var.ssh_public_key))
+    error_message = "ssh_public_key must carry base64 key material after the key type, e.g. \"ssh-ed25519 AAAAC3Nza... user@host\". A bare key type installs an authorized-keys line that can never authenticate."
   }
 
   # The regex above is unanchored at the end, and compute.tf's trimspace only
@@ -270,6 +352,17 @@ variable "operator_username" {
     condition     = can(regex("^[a-z_][a-z0-9_-]{2,31}$", var.operator_username))
     error_message = "operator_username must be a valid lowercase Linux username."
   }
+
+  # "root" satisfies the pattern above, and the description's promise of a
+  # non-root operator is the whole reason this variable exists. cloud-init
+  # would add the authorized key to the root account directly, and the
+  # bootstrap would install the kubeconfig into /home/root -- a directory that
+  # is not root's home on Ubuntu, so the file would also land somewhere the
+  # operator never looks.
+  validation {
+    condition     = var.operator_username != "root"
+    error_message = "operator_username must not be root. The operator account is created with passwordless sudo precisely so that the key does not authorise the root account directly."
+  }
 }
 
 variable "k3s_version" {
@@ -287,9 +380,16 @@ variable "acme_email" {
   description = "Contact address for Let's Encrypt registration. Substituted into traefik-config.yaml."
   type        = string
 
+  # Deliberately narrower than RFC 5321, which permits characters such as
+  # `>`, `*` and `{` in a local part. compute.tf substitutes this value onto an
+  # unquoted YAML scalar that k3s's helm-controller parses, where each of those
+  # begins a block scalar, an alias or a flow mapping -- and a values document
+  # that fails to parse leaves the box with no ingress at all. No ACME contact
+  # address needs them, so the conservative set is the right trade here, and
+  # compute.tf quotes the value as a second barrier.
   validation {
-    condition     = can(regex("^[^@[:space:]]+@[^@[:space:]]+\\.[^@[:space:]]+$", var.acme_email))
-    error_message = "acme_email must be a valid email address."
+    condition     = can(regex("^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}$", var.acme_email))
+    error_message = "acme_email must be a valid email address using the conventional character set (letters, digits, and . _ % + - before the @)."
   }
 }
 

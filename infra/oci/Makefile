@@ -3,11 +3,42 @@
 OWNER_ALIAS ?=
 CONFIRM_APPLY ?=
 CONFIRM_DESTROY ?=
-# Single-quoted because this expands into an unquoted shell command line. An
-# OWNER_ALIAS of "foo; rm -rf /" would otherwise run the second command, and an
-# alias with a space would silently split into two terraform arguments.
-# terraform's own validation cannot help here -- it never sees a malformed
-# invocation.
+
+# OWNER_ALIAS reaches the shell from several recipes below -- TF_VAR_FLAGS,
+# OCI_STATE_KEY, and the CONFIRM_* hint messages -- so it is validated once
+# here, at parse time, before any of them can expand it. Quoting each call site
+# is not enough: single quotes stop `foo; rm -rf /` but not an embedded
+# apostrophe, and `x'; touch /tmp/pwned; echo '` closes the generated quote and
+# runs while the shell is still building terraform's argv. Terraform's own
+# `^[a-z][a-z0-9]{2,10}$` validation cannot help, because it never sees a
+# malformed invocation.
+#
+# The check is an allowlist implemented without a shell -- handing the value to
+# `$(shell ...)` to test it would be the same injection under another name.
+# Every permitted character is substituted away; whatever is left is rejected.
+# Make's own expansion runs first and neutralises `$`, and a `#` or a newline
+# aborts the parse below, so each of those fails closed rather than reaching sh.
+#
+# Division of labour: this guard owns shell safety (the character set),
+# variables.tf owns correctness (length, leading letter, the 15-character OCI
+# DNS label ceiling). Terraform can enforce the second only once the first
+# guarantees it is handed the value the operator actually typed.
+OWNER_ALIAS_ALLOWED := a b c d e f g h i j k l m n o p q r s t u v w x y z \
+                       0 1 2 3 4 5 6 7 8 9
+ifneq ($(OWNER_ALIAS),)
+ifneq ($(words $(OWNER_ALIAS)),1)
+$(error OWNER_ALIAS must not contain whitespace (got: '$(OWNER_ALIAS)'))
+endif
+OWNER_ALIAS_RESIDUE := $(OWNER_ALIAS)
+$(foreach c,$(OWNER_ALIAS_ALLOWED),\
+  $(eval OWNER_ALIAS_RESIDUE := $$(subst $(c),,$(OWNER_ALIAS_RESIDUE))))
+ifneq ($(OWNER_ALIAS_RESIDUE),)
+$(error OWNER_ALIAS must be lowercase alphanumeric; rejected: $(OWNER_ALIAS_RESIDUE))
+endif
+endif
+
+# Single-quoted as a second barrier, so a future edit that loosens the guard
+# above does not immediately hand an unquoted value to the shell.
 TF_VAR_FLAGS := $(if $(OWNER_ALIAS),-var owner_alias='$(OWNER_ALIAS)',)
 
 # S3-compatible backend against OCI Object Storage. Populate .oci-backend.env

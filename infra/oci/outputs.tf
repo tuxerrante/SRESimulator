@@ -30,7 +30,11 @@ output "ssh_command" {
 
 output "kubeconfig_command" {
   description = "Fetch a kubeconfig that talks to the API through an SSH tunnel."
-  value       = "make -C infra/oci tf-oci-kubeconfig"
+  # No -C. README.md's workflow runs `cd infra/oci` first, so `-C infra/oci`
+  # would resolve to infra/oci/infra/oci and fail for the reader most likely to
+  # copy this line. The bare target is defined in both this root's Makefile and
+  # the repository-root wrapper, so it works from either directory.
+  value = "make tf-oci-kubeconfig"
 }
 
 output "api_tunnel_command" {

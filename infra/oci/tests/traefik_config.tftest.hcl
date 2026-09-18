@@ -49,11 +49,12 @@ variables {
 # ---------------------------------------------------------------------------
 # Regression lock on traefik-config.yaml.
 #
-# Four bugs were found by running this exact shape on real k3s -- three on an
-# aarch64 VM before any cloud instance existed, the fourth on the oci-shape-e2e
-# CI runner. Each one is silent in a different way, so each gets an assertion
-# here as well as coverage in that job. These run in milliseconds and need no
-# cluster.
+# Six concerns are locked here. Four were bugs found by running this exact
+# shape on real k3s -- three on an aarch64 VM before any cloud instance
+# existed, the fourth on the oci-shape-e2e CI runner -- and two more came out
+# of review: the image pin, and the ACME address's YAML scalar. Each is silent
+# in a different way, which is why each gets an assertion here as well as
+# coverage in that job. These run in milliseconds and need no cluster.
 # ---------------------------------------------------------------------------
 
 run "redirect_uses_v34_syntax" {
@@ -202,9 +203,26 @@ run "the_traefik_image_is_pinned_away_from_the_chart_default" {
 run "acme_email_is_substituted" {
   command = plan
 
+  # Read back through both parsers rather than matched as a substring. The
+  # placeholder sits on an unquoted scalar inside `valuesContent: |-`, so the
+  # outer HelmChartConfig parses no matter what the address contains and the
+  # only thing that can break is the inner document -- which is precisely the
+  # document a substring assertion never looks at.
   assert {
-    condition     = strcontains(local.traefik_config_rendered, "email: ops@example.com")
-    error_message = "ACME_EMAIL_PLACEHOLDER should be replaced with var.acme_email."
+    condition = yamldecode(
+      yamldecode(local.traefik_config_rendered).spec.valuesContent
+    ).certificatesResolvers.letsencrypt.acme.email == var.acme_email
+    error_message = "The rendered values document must parse, and ACME_EMAIL_PLACEHOLDER must be replaced with var.acme_email."
+  }
+
+  # The quoting is the second barrier, independent of acme_email's validation.
+  # An address beginning `>`, `*` or `{` would otherwise read as a block
+  # scalar, an alias or a flow mapping in the values document k3s's
+  # helm-controller parses, and a values document that fails to parse leaves
+  # Traefik at chart defaults with servicelb disabled -- no ingress at all.
+  assert {
+    condition     = strcontains(local.traefik_config_rendered, "email: \"${var.acme_email}\"")
+    error_message = "The ACME address must be emitted as a quoted YAML scalar."
   }
 
   assert {

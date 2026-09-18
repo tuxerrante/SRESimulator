@@ -116,6 +116,16 @@ assert_contains 'local.cloud_init' "$JOB_FILE"
 assert_contains 'yamldecode' "$JOB_FILE"
 assert_contains 'shellcheck' "$JOB_FILE"
 assert_contains 'bash -n' "$JOB_FILE"
+# Rendering with -var-file is what makes terraform.tfvars.example a tested
+# artefact rather than a comment: this step is the only thing anywhere that
+# feeds the documented example through the variable validations. Tightening
+# ssh_public_key broke the example and this step is what reported it. Switch
+# the render to inline -var flags and the example silently stops being checked.
+assert_contains '-var-file=terraform.tfvars.example' "$JOB_FILE"
+# ...and an empty render must fail the job rather than lint an empty file:
+# linting zero bytes reports SC2148 and nothing else, which reads as a finding
+# about the template instead of as the broken extraction it actually is.
+assert_contains 'Rendered bootstrap script is empty' "$JOB_FILE"
 
 # --- 6. the shared Traefik config contract --------------------------------
 [ -f "$TRAEFIK_CONFIG" ] || fail "missing $TRAEFIK_CONFIG"
@@ -161,11 +171,66 @@ fi
 # would split into two terraform arguments.
 assert_contains "owner_alias='\$(OWNER_ALIAS)'" "$OCI_MAKEFILE"
 
+# ...but quoting alone is not the guarantee, which is why this one is executed
+# rather than grepped. Single quotes do not escape an embedded apostrophe: the
+# payload below closes the quote the recipe just opened and runs while the shell
+# is still assembling terraform's argv, long before any terraform validation.
+# A string assertion approved exactly that Makefile, so the lock has to be
+# behavioural. `-n` and the `help` target keep this free of terraform.
+owner_alias_is_refused() {
+  local payload=$1 label=$2
+  if make -C "$ROOT_DIR/infra/oci" -n help OWNER_ALIAS="$payload" \
+    >/dev/null 2>&1; then
+    fail "infra/oci/Makefile accepted a $label OWNER_ALIAS"
+  fi
+}
+
+owner_alias_is_refused "x'; touch /tmp/pwned; echo '" "quote-closing"
+owner_alias_is_refused 'x; id' "command-separating"
+owner_alias_is_refused 'x y' "argument-splitting"
+owner_alias_is_refused 'x`id`' "backquoted"
+owner_alias_is_refused 'x&&id' "and-listed"
+
+# The guard has to stay narrow enough to pass the value an operator really uses,
+# or it would be discovered by breaking a release rather than by this test.
+make -C "$ROOT_DIR/infra/oci" -n help OWNER_ALIAS=aaffinit >/dev/null 2>&1 ||
+  fail "infra/oci/Makefile rejected a well-formed OWNER_ALIAS"
+make -C "$ROOT_DIR/infra/oci" -n help >/dev/null 2>&1 ||
+  fail "infra/oci/Makefile failed with no OWNER_ALIAS set"
+
 # Terraform only escapes %{, so a bare %% survives into the rendered output and
 # the shell then prints a literal %F. The state-backup line is the one an
 # operator copy-pastes mid-incident, which is the worst time to hand them a
 # file called backup-%F.tfstate.
 assert_contains 'backup-$(date +%F).tfstate' "$OCI_OUTPUTS"
 assert_not_contains 'date +%%F' "$OCI_OUTPUTS"
+
+# Same class: README.md's workflow cds into infra/oci before running any of
+# these, so a `-C infra/oci` in an output resolves to infra/oci/infra/oci for
+# the one reader guaranteed to copy the line verbatim. The bare target is
+# defined in both makefiles and works from either directory.
+assert_contains 'make tf-oci-kubeconfig' "$OCI_OUTPUTS"
+assert_not_contains 'make -C infra/oci' "$OCI_OUTPUTS"
+
+# --- 9. the documented assertion count is the real one --------------------
+# README.md's CI table states how much the credential-free job covers. That
+# number was written once and was wrong by half within two review rounds,
+# which is the failure mode of every hand-maintained count: nothing reads it,
+# so nothing contradicts it. Deriving it here makes the next stale edit fail.
+OCI_TESTS_DIR="$ROOT_DIR/infra/oci/tests"
+OCI_README="$ROOT_DIR/infra/oci/README.md"
+
+actual_runs="$(cat "$OCI_TESTS_DIR"/*.tftest.hcl | grep -c '^run "')"
+documented_runs="$(
+  grep -oE '\| [0-9]+ assertions, all on `mock_provider` \|' "$OCI_README" |
+    grep -oE '[0-9]+'
+)"
+
+[ -n "$documented_runs" ] ||
+  fail "could not find the assertion count in $OCI_README"
+
+if [ "$actual_runs" != "$documented_runs" ]; then
+  fail "$OCI_README documents $documented_runs assertions; $OCI_TESTS_DIR has $actual_runs"
+fi
 
 echo "terraform gate checks passed."
