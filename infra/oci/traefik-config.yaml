@@ -97,6 +97,32 @@ spec:
         add:
           - NET_BIND_SERVICE
 
+    # Pinned because the chart's default is not acceptable for an
+    # internet-facing ingress that, per the block above, runs as uid 0.
+    #
+    # k3s v1.33.4+k3s1's own manifests/traefik.yaml sets
+    # image.repository: rancher/mirrored-library-traefik, image.tag: "3.3.6".
+    # Scanned 2026-09-18 with trivy (linux/arm64, vuln scanner):
+    #
+    #   rancher/mirrored-library-traefik:3.3.6   4 CRITICAL, 68 HIGH
+    #   rancher/mirrored-library-traefik:3.7.13  0 CRITICAL,  2 HIGH
+    #   library/traefik:v3.7.13                  0 CRITICAL,  0 HIGH
+    #
+    # 3.3.6's criticals are CVE-2026-31789 (OpenSSL X.509 heap overflow),
+    # CVE-2026-33186 (grpc-go authz bypass) and CVE-2025-68121 (Go crypto/tls
+    # cert validation on session resumption) -- all fixed upstream, all in the
+    # TLS path this pod terminates. The two the rancher mirror still carries at
+    # 3.7.13 are one openssl QUIC DoS on alpine 3.24.1; upstream is already on
+    # 3.24.2, so upstream is the one pinned here.
+    #
+    # The cost of pinning: the image no longer tracks the chart's appVersion,
+    # so it has to be bumped by hand. It is deliberately in this file rather
+    # than a Terraform variable, because oci-shape-e2e installs this same file
+    # on real k3s and is therefore what proves a bumped tag still boots.
+    image:
+      repository: docker.io/library/traefik
+      tag: v3.7.13
+
     ports:
       web:
         port: 80

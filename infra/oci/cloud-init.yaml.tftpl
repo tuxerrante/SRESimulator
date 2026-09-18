@@ -1,14 +1,18 @@
 #cloud-config
 # Rendered by infra/oci/compute.tf. Do not apply this file by hand.
 
-package_update: true
-package_upgrade: true
-
-packages:
-  - curl
-  - ca-certificates
-  - iptables-persistent
-  - unattended-upgrades
+# There is deliberately no package_update / package_upgrade / packages: block
+# here. cloud-init runs its package-update-upgrade-install module BEFORE
+# runcmd, and at that point the instance has no route out: compute.tf launches
+# it with assign_public_ip = false and attaches the RESERVED public IP
+# immediately afterwards, and there is no NAT gateway. apt would therefore run
+# against a box with no egress, and a failure there is silent and total --
+# iptables-persistent and unattended-upgrades would be missing, runcmd's first
+# item would fail, and /opt/bootstrap-k3s.sh would never run at all.
+#
+# The apt work lives in the bootstrap script instead, after the connectivity
+# wait that already exists there. That costs cloud-init's own retry handling,
+# so the script does its own.
 
 users:
   - default
@@ -37,6 +41,69 @@ write_files:
       set -euo pipefail
 
       log() { echo "[bootstrap] $*"; }
+
+      # -------------------------------------------------------------------
+      # Wait for connectivity. This has to come first: everything below it
+      # downloads something.
+      #
+      # The instance launches with no public IP; Terraform attaches the
+      # RESERVED one immediately afterwards. That is normally a few seconds,
+      # but "normally" is not a guarantee.
+      # -------------------------------------------------------------------
+      log "waiting for outbound connectivity"
+      for attempt in $(seq 1 60); do
+        if curl -fsS --max-time 5 -o /dev/null https://get.k3s.io; then
+          log "network is up after $${attempt} attempt(s)"
+          break
+        fi
+        if [ "$${attempt}" -eq 60 ]; then
+          log "no outbound connectivity after 5 minutes; check that the reserved public IP attached"
+          exit 1
+        fi
+        sleep 5
+      done
+
+      # -------------------------------------------------------------------
+      # Packages.
+      #
+      # This is cloud-init's packages: block, relocated behind the wait above
+      # -- see the comment at the top of this file for why it cannot stay
+      # where cloud-init would run it.
+      #
+      # DEBIAN_FRONTEND=noninteractive is load-bearing: iptables-persistent
+      # asks, through debconf, whether to save the current rules, and an
+      # unanswered prompt hangs the boot. cloud-init's own module sets this;
+      # runcmd does not.
+      #
+      # DPkg::Lock::Timeout absorbs the unattended-upgrades run that Ubuntu
+      # starts on first boot and that would otherwise lose the apt lock race.
+      # -------------------------------------------------------------------
+      export DEBIAN_FRONTEND=noninteractive
+      apt_opts=(-y -o Acquire::Retries=3 -o DPkg::Lock::Timeout=300)
+
+      log "updating the package index"
+      for attempt in $(seq 1 5); do
+        if apt-get "$${apt_opts[@]}" update; then
+          break
+        fi
+        if [ "$${attempt}" -eq 5 ]; then
+          log "apt-get update failed five times"
+          exit 1
+        fi
+        sleep 10
+      done
+
+      log "upgrading and installing packages"
+      apt-get "$${apt_opts[@]}" upgrade
+      apt-get "$${apt_opts[@]}" install \
+        curl \
+        ca-certificates \
+        iptables-persistent \
+        unattended-upgrades
+
+      # Was runcmd's first item, back when the package it needs was installed
+      # before runcmd ran.
+      systemctl enable --now unattended-upgrades
 
       # -------------------------------------------------------------------
       # Firewall
@@ -91,26 +158,6 @@ write_files:
 %{ endif ~}
 
       # -------------------------------------------------------------------
-      # Wait for connectivity.
-      #
-      # The instance launches with no public IP; Terraform attaches the
-      # RESERVED one immediately afterwards. That is normally a few seconds,
-      # but "normally" is not a guarantee and the k3s installer is a download.
-      # -------------------------------------------------------------------
-      log "waiting for outbound connectivity"
-      for attempt in $(seq 1 60); do
-        if curl -fsS --max-time 5 -o /dev/null https://get.k3s.io; then
-          log "network is up after $${attempt} attempt(s)"
-          break
-        fi
-        if [ "$${attempt}" -eq 60 ]; then
-          log "no outbound connectivity after 5 minutes; check that the reserved public IP attached"
-          exit 1
-        fi
-        sleep 5
-      done
-
-      # -------------------------------------------------------------------
       # k3s
       #
       # --disable=servicelb is REQUIRED, not an optimisation: Traefik runs
@@ -152,7 +199,6 @@ write_files:
       log "bootstrap complete"
 
 runcmd:
-  - [systemctl, enable, --now, unattended-upgrades]
   - [/opt/bootstrap-k3s.sh]
 
 final_message: "sre-simulator free-tier box ready after $UPTIME seconds"
