@@ -634,10 +634,13 @@ the name form returns `NotFound`. Add
 namespace.
 
 A timeout there with a healthy backend points at the NetworkPolicy rather than
-at the application:
+at the application. The policy name is derived the same way the pod name is, so
+select it by label too -- it is `sre-simulator-backend` only at the default
+release name:
 
 ```bash
-kubectl -n <namespace> describe networkpolicy <release>-backend
+kubectl -n <namespace> describe networkpolicy \
+  -l app.kubernetes.io/instance=<release>
 ```
 
 ## Live platform-session verification

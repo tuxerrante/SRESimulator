@@ -19,7 +19,8 @@ gw_missing_host_err="$(mktemp)"
 gw_route_host_bypass_err="$(mktemp)"
 gw_ingress_host_bypass_err="$(mktemp)"
 gw_whitespace_host_err="$(mktemp)"
-trap 'rm -f "${route_render}" "${auth_render}" "${auth_guard_render}" "${auth_disabled_render}" "${lb_render}" "${lb_no_db_render}" "${ingress_render}" "${gw_render}" "${hostless_render}" "${legacy_kv_render}" "${gw_bad_scheme_err}" "${gw_missing_host_err}" "${gw_route_host_bypass_err}" "${gw_ingress_host_bypass_err}" "${gw_whitespace_host_err}"' EXIT
+test_pod_render="$(mktemp)"
+trap 'rm -f "${route_render}" "${auth_render}" "${auth_guard_render}" "${auth_disabled_render}" "${lb_render}" "${lb_no_db_render}" "${ingress_render}" "${gw_render}" "${hostless_render}" "${legacy_kv_render}" "${gw_bad_scheme_err}" "${gw_missing_host_err}" "${gw_route_host_bypass_err}" "${gw_ingress_host_bypass_err}" "${gw_whitespace_host_err}" "${test_pod_render}"' EXIT
 
 fail() {
   echo "FAIL: $*" >&2
@@ -421,7 +422,6 @@ grep -Eq 'replicas: 1' "${lb_no_db_render}" || \
 # At the shipped iteration count that is ~2 minutes versus ~7, and only the
 # second one blows the caller's budget -- so a loop that reads as safe is the
 # one that silently turns a reportable failure into a bare Helm timeout.
-test_pod_render="$(mktemp)"
 helm template sre-simulator "${CHART_DIR}" \
   --show-only templates/tests/test-connection.yaml >"${test_pod_render}"
 
@@ -446,7 +446,5 @@ helm_test_timeout_minutes="$(grep -Eo 'helm test [^|]*--timeout ([0-9]+)m' \
 if [ "$(( wait_deadline + 60 ))" -ge "$(( helm_test_timeout_minutes * 60 ))" ]; then
   fail "The wait deadline (${wait_deadline}s) leaves under 60s of the ${helm_test_timeout_minutes}m helm test timeout for image pull and the assertions."
 fi
-
-rm -f "${test_pod_render}"
 
 echo "Helm platform rendering checks passed."
