@@ -897,42 +897,6 @@ fi
 if ! grep -Fqx 'AWS_ACCESS_KEY_ID=ambient-access-key' "$TERRAFORM_ENV_FILE"; then
   fail "an ambient AWS_ACCESS_KEY_ID was clobbered when .oci-backend.env is absent"
 fi
-# --- 16. the oci-shape-e2e job --------------------------------------------
-# ci-gate must count it, for the same reason terraform-validate is counted.
-assert_contains "  oci-shape-e2e:" "$WORKFLOW"
-assert_contains "      - oci-shape-e2e" "$WORKFLOW"
-assert_contains 'OCI_SHAPE_RESULT: ${{ needs.oci-shape-e2e.result }}' \
-  "$WORKFLOW"
-assert_contains '"oci-shape-e2e:${OCI_SHAPE_RESULT}"' "$WORKFLOW"
-
-# Credential-free, like its sibling: it boots a throwaway cluster on the
-# runner itself and never talks to a cloud.
-assert_not_contains 'secrets.' "$SHAPE_FILE"
-assert_not_contains 'environment:' "$SHAPE_FILE"
-assert_not_contains 'azure/login' "$SHAPE_FILE"
-assert_not_contains 'terraform apply' "$SHAPE_FILE"
-
-# The runner must be the free arm64 image. The box is aarch64, and the point
-# of the job is to run the shape on the architecture that ships.
-assert_contains 'runs-on: ubuntu-24.04-arm' "$SHAPE_FILE"
-
-# The job must install the *shared* config, and must prove it did: the diff
-# is what stops a CI-only tweak from making a red job green.
-assert_contains 'SHARED_CONFIG: infra/oci/traefik-config.yaml' "$SHAPE_FILE"
-assert_contains 'diff -u' "$SHAPE_FILE"
-assert_contains \
-  '/var/lib/rancher/k3s/server/manifests/traefik-config.yaml' "$SHAPE_FILE"
-
-# k3s must be installed with the flags cloud-init renders, not retyped ones.
-assert_contains 'local.cloud_init' "$SHAPE_FILE"
-assert_contains '--disable=servicelb' "$SHAPE_FILE"
-
-# The four things only a running cluster can show.
-assert_contains 'hostNetwork' "$SHAPE_FILE"
-assert_contains 'X-Real-Ip' "$SHAPE_FILE"
-assert_contains 'permanent: true/permanent: false' "$SHAPE_FILE"
-assert_contains 'updateStrategy' "$SHAPE_FILE"
-
 # --- 16. the guards' own variables are not a command-line channel ---------
 # Every character check in infra/oci/Makefile works by subtracting a permitted
 # alphabet from the value and erroring on what is left. Both halves of that --
@@ -1101,5 +1065,62 @@ case "$INIT_REGION_RENDER" in
   *us-ashburn-1*) : ;;
   *) fail "tf-oci-init does not carry OCI_STATE_REGION, so section 17 is comparing bootstrap against nothing" ;;
 esac
+
+# --- 18. the oci-shape-e2e job --------------------------------------------
+# ci-gate must count it, for the same reason terraform-validate is counted.
+assert_contains "  oci-shape-e2e:" "$WORKFLOW"
+assert_contains "      - oci-shape-e2e" "$WORKFLOW"
+assert_contains 'OCI_SHAPE_RESULT: ${{ needs.oci-shape-e2e.result }}' \
+  "$WORKFLOW"
+assert_contains '"oci-shape-e2e:${OCI_SHAPE_RESULT}"' "$WORKFLOW"
+
+# Credential-free, like its sibling: it boots a throwaway cluster on the
+# runner itself and never talks to a cloud.
+assert_not_contains 'secrets.' "$SHAPE_FILE"
+assert_not_contains 'environment:' "$SHAPE_FILE"
+assert_not_contains 'azure/login' "$SHAPE_FILE"
+assert_not_contains 'terraform apply' "$SHAPE_FILE"
+
+# The runner must be the free arm64 image. The box is aarch64, and the point
+# of the job is to run the shape on the architecture that ships.
+assert_contains 'runs-on: ubuntu-24.04-arm' "$SHAPE_FILE"
+
+# The job must install the *shared* config, and must prove it did: the diff
+# is what stops a CI-only tweak from making a red job green.
+assert_contains 'SHARED_CONFIG: infra/oci/traefik-config.yaml' "$SHAPE_FILE"
+assert_contains 'diff -u' "$SHAPE_FILE"
+assert_contains \
+  '/var/lib/rancher/k3s/server/manifests/traefik-config.yaml' "$SHAPE_FILE"
+
+# k3s must be installed with the flags cloud-init renders, not retyped ones.
+assert_contains 'local.cloud_init' "$SHAPE_FILE"
+assert_contains '--disable=servicelb' "$SHAPE_FILE"
+
+# The four things only a running cluster can show.
+assert_contains 'hostNetwork' "$SHAPE_FILE"
+assert_contains 'X-Real-Ip' "$SHAPE_FILE"
+assert_contains 'permanent: true/permanent: false' "$SHAPE_FILE"
+assert_contains 'updateStrategy' "$SHAPE_FILE"
+
+# The image assertion must read the *running* container. Reading the Deployment
+# template instead reports desired state: with the rollout paused and the pin
+# applied to the template, a k3d reproduction showed the template reading
+# v3.7.13 while the pod ran v3.3.6 and every other assertion here still passed.
+assert_contains 'status.containerStatuses[0].image' "$SHAPE_FILE"
+assert_not_contains 'spec.template.spec.containers[0].image' "$SHAPE_FILE"
+
+# The route poll must go over https. Entrypoint-level redirections answer every
+# :80 request with a 301 before any router matches -- confirmed against traefik
+# v3.7.13 with no routers configured -- so polling :80 for a 301 would report a
+# reconciled Ingress that does not exist.
+assert_contains 'whoami route observed after' "$SHAPE_FILE"
+if grep -Eq 'http://127\.0\.0\.1/ \|\| true' "$SHAPE_FILE"; then
+  fail "the route poll must use https; a :80 301 is answered before routing"
+fi
+
+# Under `set -euo pipefail` a missing X-Real-Ip makes grep exit 1 and takes the
+# step down before the branch that reports it, so the one failure this job
+# exists to catch is the one it cannot report.
+assert_contains "| tr -d '[:space:]' || true" "$SHAPE_FILE"
 
 echo "terraform gate checks passed."
