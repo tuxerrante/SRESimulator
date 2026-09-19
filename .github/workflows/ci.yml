@@ -594,6 +594,47 @@ jobs:
             fi
           done
 
+          # The profile has no deployable storage backend yet: database.enabled
+          # is false, so the backend renders no STORAGE_BACKEND, defaults to
+          # json, and initStorage() refuses json in a pod unless the test-only
+          # ALLOW_DEPLOYED_JSON_STORAGE_FOR_TESTS + AI_MOCK_MODE pair is set --
+          # which free-e2e sets and a real deploy must not. Saying so in the
+          # file is the honest fix, but a comment drifts, so this holds the
+          # notice and the render in step in both directions: it fails if the
+          # notice goes while the render is still JSON-only, and it fails if
+          # the profile gains a backend and the stale notice stays.
+          backend_rendered="$(
+            helm template sre-simulator ./helm/sre-simulator \
+              --values ./helm/sre-simulator/values.yaml \
+              --values ./helm/sre-simulator/values-oci.yaml \
+              --set "exposure.host=${oci_host}" \
+              --show-only "templates/backend-deployment.yaml"
+          )"
+          renders_backend=false
+          if grep -Eq '^ +- name: STORAGE_BACKEND$' <<<"${backend_rendered}"
+          then
+            renders_backend=true
+          fi
+          carries_notice=false
+          if grep -Fq -- "NOT A COMPLETE DEPLOY PROFILE" \
+            ./helm/sre-simulator/values-oci.yaml; then
+            carries_notice=true
+          fi
+          if [[ "${renders_backend}" == "false" \
+            && "${carries_notice}" == "false" ]]; then
+            echo "::error::OCI profile renders no STORAGE_BACKEND, so a real" \
+              "deploy crashloops on initStorage(). Restore the render-only" \
+              "notice in values-oci.yaml or give the profile a backend."
+            exit 1
+          fi
+          if [[ "${renders_backend}" == "true" \
+            && "${carries_notice}" == "true" ]]; then
+            echo "::error::OCI profile now renders a STORAGE_BACKEND but" \
+              "still calls itself render-only. Drop the notice from" \
+              "values-oci.yaml."
+            exit 1
+          fi
+
           # The guard that makes the placeholder host safe to ship. Without
           # this, the profile could quietly go back to requesting an ACME
           # certificate for a domain the deployment does not own.

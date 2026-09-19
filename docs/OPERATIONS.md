@@ -396,6 +396,17 @@ ServiceLB and the stock Traefik `Service`, while the box runs
 That combination is the load-bearing decision for client-IP integrity and
 remains unverified until a real VM exists.
 
+`values-oci.yaml` is not yet a deployable profile, and the gate does not make
+it one. It keeps `database.enabled: false`, so the backend renders no
+`STORAGE_BACKEND`, defaults to JSON, and `initStorage()` refuses JSON in a pod
+unless `ALLOW_DEPLOYED_JSON_STORAGE_FOR_TESTS` and `AI_MOCK_MODE` are both
+true — the test-only pair that `free-e2e` sets and a real deploy must not.
+Applying the profile to a real cluster today crashloops the backend. Storage
+and AI are flipped in the last step of the OCI rollout, once the Postgres
+adapter and the OpenRouter provider exist; until then `helm-validate` fails if
+the file drops its render-only notice, and fails again if the notice outlives
+the gap it describes.
+
 ### The gate host must be a `*.localhost` name
 
 `E2E_HOST` and `exposure.host` are `sre-simulator.localhost`, and changing that

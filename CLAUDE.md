@@ -96,6 +96,14 @@ The game enforces the "Scientific Method of Investigation" as defined in the ARO
   `hostNetwork: true` and `service.enabled: false`. That combination, and the
   client-IP integrity that depends on it, stays unverified until a real VM
   exists.
+- `values-oci.yaml` is the chart-side shape only, **not yet a deployable
+  profile**: with `database.enabled: false` the backend renders no
+  `STORAGE_BACKEND` and `initStorage()` refuses the JSON default in a pod
+  unless the test-only `ALLOW_DEPLOYED_JSON_STORAGE_FOR_TESTS` + `AI_MOCK_MODE`
+  pair is set, which is what `free-e2e` does and a real deploy must not.
+  Storage and AI are flipped once the Postgres adapter and the OpenRouter
+  provider land; `helm-validate` keeps the file's notice and its render in
+  step until then.
 - Do not call a PR merge-ready when the gate is pending or failed, or when it
   was skipped for any reason other than the inert-diff classification above.
   Read `ci-gate`, not `free-e2e`: it is the only required check, and it is what

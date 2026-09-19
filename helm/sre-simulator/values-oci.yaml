@@ -12,11 +12,27 @@
 #
 # This file is inert for AKS/ARO because it is only ever passed explicitly.
 #
-# AI and database deliberately stay at the chart defaults here. The backend
-# falls back to "vertex" for an unknown AI_PROVIDER and throws outright for an
-# unknown STORAGE_BACKEND, so this profile cannot name "openrouter" or
-# "postgres" until those adapters exist. Flipping them is the last step of the
-# OCI rollout, not part of publishing this profile.
+# NOT A COMPLETE DEPLOY PROFILE YET -- it is the chart-side shape of the OCI
+# box (ingress, Traefik ACME annotations, replica pins, storage class), and
+# free-e2e deploys it for real to regression-test that shape. What it does not
+# carry is a storage backend a real deployment can use, so `helm upgrade` with
+# this profile alone leaves the backend crashlooping: database.enabled stays
+# false, backend-deployment.yaml therefore renders no STORAGE_BACKEND, the
+# backend defaults to json, and initStorage() refuses json whenever
+# KUBERNETES_SERVICE_HOST is set unless ALLOW_DEPLOYED_JSON_STORAGE_FOR_TESTS
+# and AI_MOCK_MODE are both true. That pair is the free-e2e path and is
+# test-only on purpose, so it is not set here.
+#
+# AI is at chart defaults for a quieter reason: the backend falls back to
+# "vertex" for an unknown AI_PROVIDER without complaining, so naming
+# "openrouter" before the provider exists would misconfigure silently rather
+# than fail.
+#
+# Both are flipped in the last step of the OCI rollout, once the Postgres
+# adapter and the OpenRouter provider are in the tree. Until then the
+# helm-validate job holds this notice and the rendered backend in step, in
+# both directions -- see "Helm template (OCI free-tier profile)" in
+# .github/workflows/ci.yml.
 
 exposure:
   mode: ingress
