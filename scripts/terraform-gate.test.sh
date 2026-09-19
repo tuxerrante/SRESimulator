@@ -78,8 +78,11 @@ K8S_API_FILE="$(mktemp)"
 # stub; both the stub directory and its log belong to the same trap.
 TERRAFORM_STUB_DIR="$(mktemp -d)"
 TERRAFORM_ARGV_FILE="$(mktemp)"
+# Section 15 asserts the two backend credentials reach terraform's
+# *environment* rather than a command line, so the stub records that too.
+TERRAFORM_ENV_FILE="$(mktemp)"
 OCI_MAKE_DIR=""
-trap 'rm -f "$JOB_FILE" "$K8S_API_FILE" "$TERRAFORM_ARGV_FILE"; \
+trap 'rm -f "$JOB_FILE" "$K8S_API_FILE" "$TERRAFORM_ARGV_FILE" "$TERRAFORM_ENV_FILE"; \
       rm -rf "$TERRAFORM_STUB_DIR" ${OCI_MAKE_DIR:+"$OCI_MAKE_DIR"}' EXIT
 printf '%s\n' "$TERRAFORM_JOB" > "$JOB_FILE"
 
@@ -315,6 +318,8 @@ assert_contains 'kubernetes.default.svc' "$K8S_API_FILE"
 cat > "$TERRAFORM_STUB_DIR/terraform" <<STUB
 #!/usr/bin/env bash
 printf '%s\n' "\$*" >> "$TERRAFORM_ARGV_FILE"
+printf 'AWS_ACCESS_KEY_ID=%s\nAWS_SECRET_ACCESS_KEY=%s\n' \
+  "\${AWS_ACCESS_KEY_ID-}" "\${AWS_SECRET_ACCESS_KEY-}" >> "$TERRAFORM_ENV_FILE"
 STUB
 chmod +x "$TERRAFORM_STUB_DIR/terraform"
 
@@ -646,6 +651,176 @@ if ! oci_make_raw OCI_BACKEND_ENV_FILE=/dev/null OWNER_ALIAS=jdoe \
 fi
 if ! grep -Fq 'endpoints={s3="https://s3.example.com/path"}' "$TERRAFORM_ARGV_FILE"; then
   fail "an explicit OCI_STATE_ENDPOINT no longer reaches terraform: $(cat "$TERRAFORM_ARGV_FILE")"
+fi
+
+
+# --- 15. .oci-backend.env is read as data, never executed -----------------
+# `-include` does not read a file, it *runs* it: every line is makefile text,
+# evaluated with make's own privileges before any of the guards in section 14
+# have been reached. So a state file that one operator edits by hand -- the
+# one channel with no validation on it at all -- could define targets, run
+# `$(shell ...)` at parse time, or set OWNER_ALIAS and walk straight past the
+# allowlist that exists precisely because that value reaches a shell. The
+# include is gone; the file is now parsed as KEY=VALUE lines by sed and only
+# the seven documented keys are bound.
+#
+# Executed against a fixture, not grepped, for the reason section 8 gives.
+# The canary is the half that matters here: an exit code cannot tell "the
+# payload was refused" from "the payload ran and the build failed afterwards".
+OCI_DOTENV_FIXTURE="$OCI_MAKE_DIR/dotenv.env"
+
+# AWS_* are unset for every run below. An operator running this suite may have
+# real credentials in their environment, and they must neither reach the
+# recording stub's log nor stand in for the fixture values the happy path
+# asserts on.
+dotenv_make() {
+  : > "$TERRAFORM_ARGV_FILE"
+  : > "$TERRAFORM_ENV_FILE"
+  rm -f "$OCI_CANARY"
+  PATH="$TERRAFORM_STUB_DIR:$PATH" \
+    env -u AWS_ACCESS_KEY_ID -u AWS_SECRET_ACCESS_KEY \
+    make -C "$OCI_MAKE_DIR" OCI_BACKEND_ENV_FILE="$OCI_DOTENV_FIXTURE" "$@" \
+    >/dev/null 2>&1
+}
+
+dotenv_is_refused() {
+  local label=$1
+  shift
+  if dotenv_make "$@"; then
+    fail "infra/oci/Makefile accepted $label in .oci-backend.env"
+  fi
+  if [ -e "$OCI_CANARY" ]; then
+    fail "$label ran its payload out of .oci-backend.env"
+  fi
+}
+
+# Four shapes the file can take as makefile text. Measured against the
+# pre-fix makefile rather than assumed: the simply-expanded assignment and
+# the bare call really did run their payload (canary CREATED, make exit 0),
+# and the target definition was accepted silently. The recursive assignment
+# was already refused -- section 14's guard reads it with $(value ...), which
+# never expands it -- so that one is a lock rather than a control. All four
+# now fail the line regex and are refused by line number; the canary is what
+# separates "refused" from "ran, then failed for some other reason".
+printf 'OCI_STATE_BUCKET := $(shell touch %s)\n' "$OCI_CANARY" \
+  > "$OCI_DOTENV_FIXTURE"
+dotenv_is_refused "a simply-expanded makefile assignment" help
+
+printf 'OCI_STATE_BUCKET = $(shell touch %s)\n' "$OCI_CANARY" \
+  > "$OCI_DOTENV_FIXTURE"
+dotenv_is_refused "a recursive makefile assignment" help
+
+printf '$(shell touch %s)\n' "$OCI_CANARY" > "$OCI_DOTENV_FIXTURE"
+dotenv_is_refused "a bare function call" help
+
+printf 'all:\n\ttouch %s\n' "$OCI_CANARY" > "$OCI_DOTENV_FIXTURE"
+dotenv_is_refused "a target definition" help
+
+# The narrowing. `-include` could define any make variable; only the seven
+# documented keys bind now. OWNER_ALIAS is the one worth asserting, because
+# it is the variable an operator is most likely to try to keep beside the
+# bucket -- and it never worked: TF_VAR_FLAGS and the derived state key are
+# both `:=` well above the include, so a value arriving from the file was
+# bound too late to reach either. Verified against the pre-fix makefile,
+# which refuses this exactly as the fixed one does. The lock is that the new
+# reader does not quietly start honouring it, which would hand the file a
+# value that the parse-time allowlist has already run past.
+printf 'OWNER_ALIAS=evilalias\n' > "$OCI_DOTENV_FIXTURE"
+if dotenv_make tf-oci-plan; then
+  fail ".oci-backend.env supplied OWNER_ALIAS; only the documented keys may bind"
+fi
+if [ -s "$TERRAFORM_ARGV_FILE" ]; then
+  fail "tf-oci-plan reached terraform with an OWNER_ALIAS from .oci-backend.env: $(cat "$TERRAFORM_ARGV_FILE")"
+fi
+
+# A repeated key is refused rather than resolved. make would take the last one
+# without saying so, and an operator who left an old bucket above a new one
+# would be pointed at the wrong state object.
+printf 'OCI_STATE_BUCKET=one\nOCI_STATE_BUCKET=two\n' > "$OCI_DOTENV_FIXTURE"
+dotenv_is_refused "a duplicate key" help
+
+# A value with a space in it is refused by line number rather than bound to
+# its first word. The pre-fix makefile refused this too, on the alphabet
+# guard, so this is a lock and not a control -- but the line regex has to
+# keep the whitespace-free value capture for it to stay one: relax that and
+# the bucket silently becomes `two`.
+printf 'OCI_STATE_BUCKET=two words\n' > "$OCI_DOTENV_FIXTURE"
+dotenv_is_refused "a value containing a space" help
+
+# The happy path, which is what keeps the reader from being discovered by
+# breaking a bring-up: a comment, a commented-out previous value that must
+# not come back, `export` (shell habits), spaces around the equals, a
+# trailing comment, and CRLF from an editor on another platform.
+#
+# This one discriminates in the other direction -- the pre-fix makefile
+# *rejects* this fixture. `KEY=value # note` keeps the blanks before the
+# comment in the value, so the alphabet guard refused the bucket with
+# `rejected:    .`, naming neither the file nor the line. Reading the file as
+# data is what makes that shape work.
+{
+  printf '# state settings for this operator\n'
+  printf '#OCI_STATE_BUCKET=stale-bucket\n'
+  printf 'export OCI_STATE_BUCKET = new-bucket   # the one in use\n'
+  printf 'OCI_STATE_NAMESPACE=abc123\r\n'
+  printf 'AWS_ACCESS_KEY_ID=fixture-access-key\n'
+  printf 'AWS_SECRET_ACCESS_KEY=fixture-secret-key\n'
+} > "$OCI_DOTENV_FIXTURE"
+
+if ! dotenv_make tf-oci-init OWNER_ALIAS=jdoe; then
+  fail "infra/oci/Makefile rejected a well-formed .oci-backend.env"
+fi
+if ! grep -Fq 'bucket=new-bucket' "$TERRAFORM_ARGV_FILE"; then
+  fail "the bucket did not bind from .oci-backend.env: $(cat "$TERRAFORM_ARGV_FILE")"
+fi
+if grep -Fq 'stale-bucket' "$TERRAFORM_ARGV_FILE"; then
+  fail "a commented-out value came back from .oci-backend.env"
+fi
+if ! grep -Fq 'endpoints={s3="https://abc123.compat.objectstorage.eu-frankfurt-1.oraclecloud.com"}' \
+  "$TERRAFORM_ARGV_FILE"; then
+  fail "the CRLF namespace line did not bind cleanly: $(cat "$TERRAFORM_ARGV_FILE")"
+fi
+# Binding a value only creates a make variable. Terraform's S3 backend reads
+# its credentials from the environment, so without the two `export` lines the
+# file is read and then ignored, and init fails with a credentials error that
+# points nowhere near the file that was supposed to supply them.
+if ! grep -Fqx 'AWS_ACCESS_KEY_ID=fixture-access-key' "$TERRAFORM_ENV_FILE"; then
+  fail "AWS_ACCESS_KEY_ID from .oci-backend.env did not reach terraform's environment"
+fi
+if ! grep -Fqx 'AWS_SECRET_ACCESS_KEY=fixture-secret-key' "$TERRAFORM_ENV_FILE"; then
+  fail "AWS_SECRET_ACCESS_KEY from .oci-backend.env did not reach terraform's environment"
+fi
+
+# The precedence `-include` had, in both directions: the command line still
+# wins over the file, and the file still wins over the environment.
+if ! dotenv_make tf-oci-init OWNER_ALIAS=jdoe OCI_STATE_BUCKET=cli-bucket; then
+  fail "infra/oci/Makefile rejected a command-line OCI_STATE_BUCKET beside the file"
+fi
+if ! grep -Fq 'bucket=cli-bucket' "$TERRAFORM_ARGV_FILE"; then
+  fail "the command line no longer beats .oci-backend.env: $(cat "$TERRAFORM_ARGV_FILE")"
+fi
+
+export OCI_STATE_BUCKET=environment-bucket
+if ! dotenv_make tf-oci-init OWNER_ALIAS=jdoe; then
+  fail "infra/oci/Makefile rejected an ambient OCI_STATE_BUCKET beside the file"
+fi
+unset OCI_STATE_BUCKET
+if ! grep -Fq 'bucket=new-bucket' "$TERRAFORM_ARGV_FILE"; then
+  fail ".oci-backend.env no longer beats the environment: $(cat "$TERRAFORM_ARGV_FILE")"
+fi
+
+# And with no file at all, an ambient AWS profile still works: make exports
+# nothing it did not inherit, so `export AWS_ACCESS_KEY_ID` on an unset
+# variable is a no-op rather than an empty override.
+: > "$TERRAFORM_ARGV_FILE"
+: > "$TERRAFORM_ENV_FILE"
+if ! PATH="$TERRAFORM_STUB_DIR:$PATH" \
+  env AWS_ACCESS_KEY_ID=ambient-access-key \
+  make -C "$OCI_MAKE_DIR" OCI_BACKEND_ENV_FILE=/dev/null OWNER_ALIAS=jdoe \
+  OCI_STATE_BUCKET=b OCI_STATE_NAMESPACE=n tf-oci-init >/dev/null 2>&1; then
+  fail "infra/oci/Makefile refused an ambient AWS_ACCESS_KEY_ID with no .oci-backend.env"
+fi
+if ! grep -Fqx 'AWS_ACCESS_KEY_ID=ambient-access-key' "$TERRAFORM_ENV_FILE"; then
+  fail "an ambient AWS_ACCESS_KEY_ID was clobbered when .oci-backend.env is absent"
 fi
 
 echo "terraform gate checks passed."

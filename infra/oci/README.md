@@ -442,6 +442,27 @@ pass `-backend-config=key=<alias>-free-sre-simulator.tfstate` as well.
 with `The attribute "key" is required by the backend` rather than quietly
 picking a shared object. Prefer `make tf-oci-init`, which derives the key.
 
+### `.oci-backend.env` is data, not makefile text
+
+The Makefile reads the file as `KEY=VALUE` lines and binds only these seven
+keys: `OCI_STATE_BUCKET`, `OCI_STATE_NAMESPACE`, `OCI_STATE_REGION`,
+`OCI_STATE_COMPARTMENT_OCID`, `OCI_STATE_ENDPOINT`, `AWS_ACCESS_KEY_ID` and
+`AWS_SECRET_ACCESS_KEY`. Blank lines, `#` comments, a trailing `# note`, an
+`export` prefix, spaces around the equals and CRLF line endings are all
+accepted; the value itself may not contain whitespace.
+
+Anything else — a `KEY := value` makefile assignment, a bare `$(shell ...)`,
+a target — is refused **by line number** rather than ignored, because under
+the previous `-include` such a line did something, and half-reading a file
+that used to work is worse than refusing it. A key repeated in the file is
+refused too: make would otherwise take the last one without saying so. A
+command-line `VAR=value` still wins over the file, and the file still wins
+over the environment.
+
+This matters beyond tidiness: `-include` *executes* the file as makefile
+text, at parse time, with make's privileges. A state file an operator edits
+by hand is the one channel into these targets with no other validation on it.
+
 **`tf-oci-init` and `tf-oci-plan` both require `OWNER_ALIAS`, and refuse
 without it.** The object key is derived from it —
 `<alias>-free-sre-simulator.tfstate` — and `init` is the one target that writes
