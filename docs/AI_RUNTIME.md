@@ -596,7 +596,7 @@ prevention, rate-limit enforcement, and token-metrics recording.
 | Vertex | `CLOUD_ML_REGION`, `ANTHROPIC_VERTEX_PROJECT_ID`, `GOOGLE_APPLICATION_CREDENTIALS` |
 | Azure OpenAI | `AI_AZURE_OPENAI_ENDPOINT`, `AI_AZURE_OPENAI_API_KEY`, `AI_AZURE_OPENAI_DEPLOYMENT`, `AI_AZURE_OPENAI_API_VERSION` |
 | Per-route deployments | `AI_AZURE_OPENAI_DEPLOYMENT_CHAT`, `_COMMAND`, `_SCENARIO`, `_PROBE` |
-| OpenRouter | `AI_OPENROUTER_API_KEY`, `AI_OPENROUTER_MODEL`, `AI_OPENROUTER_BASE_URL` (default `https://openrouter.ai/api/v1`), `AI_OPENROUTER_SITE_URL`, `AI_OPENROUTER_APP_TITLE` |
+| OpenRouter | `AI_OPENROUTER_API_KEY`, `AI_OPENROUTER_MODEL`, `AI_OPENROUTER_BASE_URL` (default `https://openrouter.ai/api/v1`), `AI_OPENROUTER_SITE_URL`, `AI_OPENROUTER_APP_TITLE`. **Process environment only** — the Helm chart has no OpenRouter secret key or configmap entry yet; see "The Helm chart cannot select this provider yet" above |
 | Per-route models | `AI_OPENROUTER_MODEL_CHAT`, `_COMMAND`, `_SCENARIO`, `_PROBE` |
 | Quota degradation | `AI_DEGRADE_ON_QUOTA_EXHAUSTED` (default `true`) |
 | Reasoning | `AI_REASONING_EFFORT` (`low` / `medium` / `high`) global default; per-route `AI_REASONING_EFFORT_<ROUTE>` (e.g. `_CHAT`, `_COMMAND`, `_SCENARIO`) overrides it. The `command` route defaults to `low`. |
