@@ -328,30 +328,51 @@ export async function getRateLimitKey(
     getIpFallbackIdentity(req, antiAbuseSecret);
 }
 
+/**
+ * A bucket remembers the window it was written under. The periodic sweep
+ * visits every key, and until the global AI budget arrived that was harmless
+ * because every key in this store was a per-identity window of the same
+ * duration -- one cutoff fitted all of them. The budget puts a 24-hour key
+ * and a 60-second key in the same map, so a cutoff borrowed from whichever
+ * request happened to trip the sweep would delete the other one's history.
+ */
+interface SlidingWindowBucket {
+  windowMs: number;
+  timestamps: number[];
+}
+
 export class InMemorySlidingWindowStore implements SlidingWindowStore {
   readonly distributed = false;
-  private readonly buckets = new Map<string, number[]>();
+  private readonly buckets = new Map<string, SlidingWindowBucket>();
   private operationsSinceSweep = 0;
 
-  private pruneExpiredBuckets(cutoff: number): void {
-    for (const [bucketKey, timestamps] of this.buckets.entries()) {
-      const activeTimestamps = timestamps.filter((timestamp) => timestamp > cutoff);
+  /**
+   * Each bucket is pruned against its own window, never the caller's. With a
+   * shared cutoff a minute-window request would evict every daily timestamp
+   * older than a minute, so the account-wide daily cap would silently reset
+   * under ordinary traffic and the limiter would allow an unbounded number of
+   * provider calls per day -- the exact failure the budget exists to prevent,
+   * reintroduced one layer down.
+   */
+  private pruneExpiredBuckets(nowMs: number): void {
+    for (const [bucketKey, bucket] of this.buckets.entries()) {
+      const activeTimestamps = bucket.timestamps
+        .filter((timestamp) => timestamp > nowMs - bucket.windowMs);
       if (activeTimestamps.length === 0) {
         this.buckets.delete(bucketKey);
         continue;
       }
-      this.buckets.set(bucketKey, activeTimestamps);
+      this.buckets.set(bucketKey, { windowMs: bucket.windowMs, timestamps: activeTimestamps });
     }
   }
 
   private readActiveBucket(key: string, cutoff: number): number[] {
-    const activeTimestamps = (this.buckets.get(key) ?? [])
+    const activeTimestamps = (this.buckets.get(key)?.timestamps ?? [])
       .filter((timestamp) => timestamp > cutoff);
     if (activeTimestamps.length === 0) {
       this.buckets.delete(key);
       return [];
     }
-    this.buckets.set(key, activeTimestamps);
     return activeTimestamps;
   }
 
@@ -364,7 +385,7 @@ export class InMemorySlidingWindowStore implements SlidingWindowStore {
     const cutoff = nowMs - windowMs;
     this.operationsSinceSweep += 1;
     if (this.operationsSinceSweep >= IN_MEMORY_SWEEP_INTERVAL) {
-      this.pruneExpiredBuckets(cutoff);
+      this.pruneExpiredBuckets(nowMs);
       this.operationsSinceSweep = 0;
     }
 
@@ -372,7 +393,7 @@ export class InMemorySlidingWindowStore implements SlidingWindowStore {
 
     if (existing.length >= limit) {
       const resetAtMs = (existing[0] ?? nowMs) + windowMs;
-      this.buckets.set(key, existing);
+      this.buckets.set(key, { windowMs, timestamps: existing });
       return {
         allowed: false,
         remaining: 0,
@@ -382,7 +403,7 @@ export class InMemorySlidingWindowStore implements SlidingWindowStore {
     }
 
     existing.push(nowMs);
-    this.buckets.set(key, existing);
+    this.buckets.set(key, { windowMs, timestamps: existing });
 
     return {
       allowed: true,
