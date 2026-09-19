@@ -193,3 +193,42 @@ run "the_allowance_ceilings_still_bind_without_the_opt_in" {
     var.instance_ocpus,
   ]
 }
+
+# ---------------------------------------------------------------------------
+# The ceilings are keyed off the shape, not off the opt-in.
+#
+# 4 OCPU / 24 GB is not only the Always Free allowance -- it is also A1.Flex's
+# own per-instance maximum. So `allow_billable_shape = true` with the shape
+# left at A1 is not an upgrade anyone can buy; it is a configuration OCI
+# rejects, and letting the opt-in wave it through would only move the refusal
+# from plan time to apply time, after the VCN, subnet, NSG and reserved IP
+# already exist. The pair above proves the ceilings lift for a real paid shape;
+# this pair proves the opt-in alone does not lift them.
+# ---------------------------------------------------------------------------
+run "the_opt_in_does_not_lift_the_ocpu_ceiling_on_an_a1_shape" {
+  command = plan
+
+  variables {
+    instance_shape       = "VM.Standard.A1.Flex"
+    allow_billable_shape = true
+    instance_ocpus       = 8
+  }
+
+  expect_failures = [
+    var.instance_ocpus,
+  ]
+}
+
+run "the_opt_in_does_not_lift_the_memory_ceiling_on_an_a1_shape" {
+  command = plan
+
+  variables {
+    instance_shape       = "VM.Standard.A1.Flex"
+    allow_billable_shape = true
+    instance_memory_gbs  = 64
+  }
+
+  expect_failures = [
+    var.instance_memory_gbs,
+  ]
+}

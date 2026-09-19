@@ -115,13 +115,48 @@ spec:
     # 3.7.13 are one openssl QUIC DoS on alpine 3.24.1; upstream is already on
     # 3.24.2, so upstream is the one pinned here.
     #
+    # Pinned by *digest*, not by tag alone. A tag is mutable: `v3.7.13` can be
+    # repointed at different bytes in the registry, and nothing in this
+    # repository would diff -- while the pod it selects is the root-owned,
+    # host-network process that terminates TLS for the whole box, and the
+    # trivy scan above describes the bytes that carried the tag on the day it
+    # was read. The digest is what makes the scanned bytes and the running
+    # bytes the same claim.
+    #
+    # `tag: <tag>@sha256:<digest>` rather than an `image.digest` key: the k3s
+    # chart's helper is `printf "%s:%s" .Values.image.repository
+    # (.Values.image.tag | default .Chart.AppVersion)` and its values schema
+    # sets `additionalProperties: false` on `image`, so a `digest` key is
+    # rejected outright. Verified by rendering
+    # traefik-34.2.1+up34.2.0 (the chart k3s v1.33.4+k3s1 ships) with this
+    # exact block: it emits
+    # docker.io/library/traefik:v3.7.13@sha256:1c32e7c3..., a reference whose
+    # digest is authoritative and whose tag is left in place only so a human
+    # reading `kubectl get pod -o wide` still sees the version.
+    #
+    # The digest is the multi-arch index digest, so it resolves on the aarch64
+    # A1.Flex and on an amd64 CI runner alike (the index lists linux/amd64 and
+    # linux/arm64 among others).
+    #
     # The cost of pinning: the image no longer tracks the chart's appVersion,
-    # so it has to be bumped by hand. It is deliberately in this file rather
-    # than a Terraform variable, because oci-shape-e2e installs this same file
-    # on real k3s and is therefore what proves a bumped tag still boots.
+    # so tag *and* digest have to be bumped together by hand. It is
+    # deliberately in this file rather than a Terraform variable, because
+    # oci-shape-e2e installs this same file on real k3s and is therefore what
+    # proves a bumped pin still boots.
+    #
+    # The value sits on its own line because `tag: <tag>@sha256:<64 hex>` is 90
+    # characters and `make lint-yaml` runs `yamllint --strict`, whose 80-column
+    # rule exempts a line that holds a single unbreakable word but not a
+    # `key: value` pair that happens to be long. Splitting the digest itself
+    # was the alternative and is worse: a YAML line-continuation inside the
+    # reference is a silent corruption risk for the one string whose whole
+    # purpose is to be exact. A plain scalar on the next line parses to the
+    # identical string -- which tests/traefik_config.tftest.hcl asserts by
+    # decoding it, rather than by reading this comment.
     image:
       repository: docker.io/library/traefik
-      tag: v3.7.13
+      tag:
+        v3.7.13@sha256:1c32e7c368204fd72812152ebdd2ac0425993df6fd982317deb02e48f2d5423c
 
     ports:
       web:

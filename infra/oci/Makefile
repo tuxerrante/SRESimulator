@@ -92,6 +92,26 @@ OCI_STATE_REGION     ?= eu-frankfurt-1
 # still shares a key on purpose, which is a decision rather than an omission.
 OCI_STATE_KEY        ?= $(if $(OWNER_ALIAS_RAW),$(OWNER_ALIAS_RAW)-free-sre-simulator.tfstate,)
 
+# `?=` does not fire on an *empty* command-line override, so
+# `make tf-oci-plan OWNER_ALIAS=alice OCI_STATE_KEY=` leaves the key empty
+# while the alias is set -- and every guard below that compares the key skips
+# itself on an empty one. That is a bypass, not a configuration: it walks the
+# state-owner check and reaches terraform with alice's variables against
+# whichever state `init` recorded. Refused at parse time, where a
+# `$(shell ...)` check would be the same hole under another name.
+#
+# Only refused when an alias is present. Empty on both is the no-backend path
+# (`tf-oci-init-local`), and there the per-target OWNER_ALIAS guard speaks
+# first with a clearer message.
+ifneq ($(OWNER_ALIAS_RAW),)
+ifeq ($(strip $(OCI_STATE_KEY)),)
+$(error OCI_STATE_KEY was set empty alongside OWNER_ALIAS='$(OWNER_ALIAS_RAW)'. \
+An empty key disables the state-owner check, so the run would reach terraform \
+against whatever state `tf-oci-init` recorded. Leave it unset to derive \
+'$(OWNER_ALIAS_RAW)-free-sre-simulator.tfstate', or set it to a real key)
+endif
+endif
+
 -include $(OCI_BACKEND_ENV_FILE)
 
 # `-include` only creates make variables, and make exports nothing it did not
@@ -102,6 +122,15 @@ OCI_STATE_KEY        ?= $(if $(OWNER_ALIAS_RAW),$(OWNER_ALIAS_RAW)-free-sre-simu
 # an ambient AWS profile still works.
 export AWS_ACCESS_KEY_ID
 export AWS_SECRET_ACCESS_KEY
+
+# backend.tf's skip_s3_checksum removes the SHA256 checksum Terraform asks for,
+# but not the AWS SDK's own default full-object CRC32 -- measured on Terraform
+# 1.16.3, PutObject still carries x-amz-checksum-crc32 with the flag set. This
+# is the SDK switch that removes it, and OCI's S3 shim is the reason to want it
+# gone. Overridable, because the day OCI starts honouring the header this
+# becomes an unnecessary weakening of an integrity check.
+AWS_REQUEST_CHECKSUM_CALCULATION ?= when_required
+export AWS_REQUEST_CHECKSUM_CALCULATION
 
 OCI_STATE_ENDPOINT ?= https://$(OCI_STATE_NAMESPACE).compat.objectstorage.$(OCI_STATE_REGION).oraclecloud.com
 

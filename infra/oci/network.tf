@@ -1,6 +1,40 @@
 data "http" "cloudflare_ipv4" {
   count = local.fetch_cloudflare_ipv4 ? 1 : 0
   url   = "https://www.cloudflare.com/ips-v4"
+
+  # The same two checks var.cloudflare_ipv4_ranges carries, applied to the
+  # fetched body -- because this is the path that actually runs. The override
+  # is validated and empty by default, so without these the only *unvalidated*
+  # source is also the default one, and whatever this URL returns becomes an
+  # NSG rule while restrict_ingress_to_cloudflare still reads as enabled.
+  #
+  # That is not a hypothetical shape: a captive portal, a proxy error page or
+  # a future IPv6 entry in this list all arrive here as plan-time input, and a
+  # 0.0.0.0/0 among them opens 80/443 to the world -- which is exactly the
+  # origin-IP bypass the restriction exists to prevent, and what makes
+  # cf-connecting-ip trustworthy. A postcondition fails the plan instead.
+  lifecycle {
+    postcondition {
+      condition     = self.status_code == 200
+      error_message = "https://www.cloudflare.com/ips-v4 answered ${self.status_code}, not 200. Refusing to derive the 80/443 allowlist from a non-success response; set cloudflare_ipv4_ranges explicitly to pin the list."
+    }
+
+    postcondition {
+      condition = alltrue([
+        for c in compact(split("\n", trimspace(self.response_body))) :
+        can(cidrnetmask(c))
+      ])
+      error_message = "https://www.cloudflare.com/ips-v4 returned an entry that is not an IPv4 CIDR block. This deployment assigns no IPv6 address and Cloudflare reaches an IPv4 origin over IPv4; set cloudflare_ipv4_ranges explicitly to pin the list."
+    }
+
+    postcondition {
+      condition = sum(concat([0], [
+        for c in compact(split("\n", trimspace(self.response_body))) :
+        pow(2, 32 - tonumber(split("/", c)[1])) if can(cidrnetmask(c))
+      ])) < pow(2, 32)
+      error_message = "https://www.cloudflare.com/ips-v4 returned ranges covering the entire IPv4 address space, which would leave 80/443 open to the world while restrict_ingress_to_cloudflare still reads as enabled. Set restrict_ingress_to_cloudflare = false if that is the intent."
+    }
+  }
 }
 
 resource "oci_core_vcn" "main" {

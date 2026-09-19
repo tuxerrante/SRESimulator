@@ -290,8 +290,44 @@ and it is the wider grant of the two.
 ## State backend
 
 `backend.tf` targets OCI Object Storage through its S3-compatible endpoint.
-`skip_s3_checksum = true` is load-bearing: Terraform >= 1.6 uses AWS SDK v2,
-which sends `x-amz-checksum-*` headers that OCI's S3 shim rejects.
+`skip_s3_checksum = true` is load-bearing: it drops the SHA256 checksum
+Terraform asks the AWS SDK to compute — `x-amz-checksum-sha256` plus
+`x-amz-sdk-checksum-algorithm` — which OCI's S3 shim rejects.
+
+It does not leave the request checksum-free. Measured against Terraform 1.16.3
+with a logging stub endpoint, `PutObject` still carries the SDK's own default
+full-object `x-amz-checksum-crc32` with the flag set. Removing that one is the
+SDK's business rather than the backend block's, so the `tf-oci-*` targets
+export `AWS_REQUEST_CHECKSUM_CALCULATION=when_required`, which was verified on
+the same stub to drop the header entirely. A bare `terraform init` run by hand
+should export it too.
+
+### State locking
+
+`use_lockfile = true` is on, which is why `versions.tf` floors at Terraform
+1.10. Terraform writes a `<key>.tflock` object with `If-None-Match: *` and
+deletes it on release — verified as the actual wire behaviour on 1.16.3 against
+the same stub endpoint (`PUT …tflock` with the precondition, `GET` on release,
+`DELETE`). Without it, two operators sharing one `OCI_STATE_KEY` can apply
+concurrently and the second write silently discards the first; bucket
+versioning recovers the object afterwards but does not prevent the race.
+
+**Confirm the precondition is honoured on the real bucket before relying on
+it.** The lock is only as good as OCI's handling of `If-None-Match`, and that
+cannot be tested without the tenancy. Run the same conditional create twice:
+
+```bash
+aws --endpoint-url "https://<namespace>.compat.objectstorage.<region>.oraclecloud.com" \
+  s3api put-object --bucket "<bucket>" --key locking-probe --if-none-match '*' --body /dev/null
+# repeat the identical command; it must fail with PreconditionFailed (412)
+aws --endpoint-url "https://<namespace>.compat.objectstorage.<region>.oraclecloud.com" \
+  s3api delete-object --bucket "<bucket>" --key locking-probe
+```
+
+If the second call succeeds instead of returning 412, the shim overwrites
+rather than refusing, two simultaneous applies would each believe they hold the
+lock, and the mitigation falls back to the alias-derived key plus not sharing
+one. Either way the ordinary single-operator case is unshared.
 
 The credentials are **Customer Secret Keys** (an access-key/secret pair
 generated once in the console), not the API signing key the provider uses.
@@ -363,7 +399,7 @@ therefore run on fork pull requests:
 | --- | --- |
 | `terraform fmt -check -recursive` from `infra/` | both roots, including this nested one |
 | `init -backend=false`, `validate`, `test` in `infra/` | the Azure root, which no workflow ran before |
-| `init -backend=false`, `validate`, `test` here | 98 test cases, all on `mock_provider` |
+| `init -backend=false`, `validate`, `test` here | 108 test cases, all on `mock_provider` |
 | render `local.cloud_init`, then `bash -n` + `shellcheck` | the bootstrap script the instance actually boots |
 
 The last step is worth explaining. It renders through `terraform console`

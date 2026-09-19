@@ -126,6 +126,106 @@ run "opting_out_of_cloudflare_restriction_opens_the_origin" {
   }
 }
 
+# --- the fetched allowlist, which is the default path and the unvalidated one -
+# Every other run in this file pins cloudflare_ipv4_ranges, so the data source
+# is never created and its postconditions never evaluate. That is the wrong
+# coverage: the *default* is an empty override, which fetches, and whatever
+# comes back becomes an NSG source while restrict_ingress_to_cloudflare still
+# reads as enabled. These four runs are the only place the fetched path is
+# exercised at all -- with override_data, so no test touches the network.
+
+run "a_fetched_cloudflare_list_becomes_the_allowlist" {
+  command = plan
+
+  variables {
+    cloudflare_ipv4_ranges = []
+  }
+
+  override_data {
+    target = data.http.cloudflare_ipv4[0]
+    values = {
+      status_code   = 200
+      response_body = "198.51.100.0/24\n203.0.113.0/24\n"
+    }
+  }
+
+  # The positive case first, so the three refusals below cannot pass because
+  # the fetched path is broken outright.
+  assert {
+    condition = toset([
+      for r in values(oci_core_network_security_group_security_rule.ingress_https) : r.source
+    ]) == toset(["198.51.100.0/24", "203.0.113.0/24"])
+    error_message = "A well-formed fetched list must reach the 443 rule; if it does not, the refusals below prove nothing."
+  }
+}
+
+run "a_non_200_answer_fails_the_plan_rather_than_the_firewall" {
+  command = plan
+
+  variables {
+    cloudflare_ipv4_ranges = []
+  }
+
+  # The body is deliberately a *well-formed* CIDR list that is not Cloudflare's.
+  # An HTML error page was the first draft and it did not discriminate: the
+  # CIDR postcondition refused it, so deleting the status check left this run
+  # green -- measured, not supposed. A parseable body is the only shape that
+  # asks the question this run exists to ask, and it is the realistic hazard
+  # too: an intercepting proxy answering non-200 with something that parses
+  # would otherwise become the firewall.
+  override_data {
+    target = data.http.cloudflare_ipv4[0]
+    values = {
+      status_code   = 403
+      response_body = "10.0.0.0/8\n"
+    }
+  }
+
+  expect_failures = [data.http.cloudflare_ipv4[0]]
+}
+
+run "a_non_cidr_entry_fails_the_plan" {
+  command = plan
+
+  variables {
+    cloudflare_ipv4_ranges = []
+  }
+
+  # 200 with a plausible body. An IPv6 entry is the realistic form: this
+  # deployment assigns no IPv6 address, so such a rule can never match, and a
+  # malformed one would reach source_type = "CIDR_BLOCK" unexamined.
+  override_data {
+    target = data.http.cloudflare_ipv4[0]
+    values = {
+      status_code   = 200
+      response_body = "198.51.100.0/24\n2400:cb00::/32\n"
+    }
+  }
+
+  expect_failures = [data.http.cloudflare_ipv4[0]]
+}
+
+run "a_fetched_list_covering_the_whole_internet_fails_the_plan" {
+  command = plan
+
+  variables {
+    cloudflare_ipv4_ranges = []
+  }
+
+  # Split-world coverage, the same shape the variable validation already
+  # refuses: two halves rather than a literal 0.0.0.0/0, so a string match
+  # would pass it straight through to a rule open to the world.
+  override_data {
+    target = data.http.cloudflare_ipv4[0]
+    values = {
+      status_code   = 200
+      response_body = "0.0.0.0/1\n128.0.0.0/1\n"
+    }
+  }
+
+  expect_failures = [data.http.cloudflare_ipv4[0]]
+}
+
 run "path_mtu_discovery_stays_open" {
   command = plan
 

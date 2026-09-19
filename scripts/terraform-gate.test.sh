@@ -435,6 +435,19 @@ if ! oci_make_run tf-oci-plan OWNER_ALIAS=alice \
   fail "an explicit OCI_STATE_KEY matching the recorded key was refused"
 fi
 
+# An *empty* OCI_STATE_KEY beside an alias is the bypass, and it is the one
+# form `?=` cannot catch: a command-line override fires even when it assigns
+# nothing, so the key ends up empty while the alias is set, and every guard
+# above that compares the key skips itself on an empty one. Asserted
+# behaviourally rather than by grepping for the `$(error ...)`, because the
+# question is whether the run reaches terraform, not whether a line exists.
+if oci_make_run tf-oci-plan OWNER_ALIAS=alice OCI_STATE_KEY=; then
+  fail "tf-oci-plan ran with OCI_STATE_KEY set empty alongside OWNER_ALIAS, which disables the state-owner check"
+fi
+if [ -s "$TERRAFORM_ARGV_FILE" ]; then
+  fail "an empty OCI_STATE_KEY reached terraform: $(cat "$TERRAFORM_ARGV_FILE")"
+fi
+
 # backend.tf must carry no default key. A static one is what any init that
 # does not override it would use -- including the manual path the README
 # documents -- so it would reinstate the shared object behind the makefile.
@@ -444,5 +457,29 @@ if awk '/backend "s3" \{/,/^  \}/' "$BACKEND_TF" |
     grep -Eq '^[[:space:]]*key[[:space:]]*='; then
   fail "backend.tf declares a default state key; init must require one instead"
 fi
+
+# --- 13. The state object is locked, and the checksum switch is exported ---
+# Neither is reachable from terraform test: a backend block is not evaluated
+# by `terraform test`, and an environment export is not terraform's business
+# at all. Both are load-bearing, so they are asserted here or nowhere.
+
+# Concurrent applies against one key are possible by design -- OCI_STATE_KEY
+# exists so a second machine can drive the same box -- and without a lock the
+# later write silently discards the earlier one.
+if ! awk '/backend "s3" \{/,/^  \}/' "$BACKEND_TF" |
+    grep -Eq '^[[:space:]]*use_lockfile[[:space:]]*=[[:space:]]*true'; then
+  fail "backend.tf must set use_lockfile = true; without it two operators sharing OCI_STATE_KEY can apply concurrently and the second write wins silently"
+fi
+
+# use_lockfile arrived in Terraform 1.10. A floor below that turns the line
+# above into an "Unsupported argument" at init time for anyone on an older
+# binary, which is a worse failure than the race it prevents.
+assert_contains 'required_version = ">= 1.10"' "$ROOT_DIR/infra/oci/versions.tf"
+
+# skip_s3_checksum removes the checksum terraform asks for, not the one the
+# AWS SDK adds by itself -- measured on 1.16.3, PutObject still carries
+# x-amz-checksum-crc32 with the flag set. This export is what removes that
+# one, and OCI's S3 shim is the reason to want it gone.
+assert_contains 'export AWS_REQUEST_CHECKSUM_CALCULATION' "$OCI_MAKEFILE"
 
 echo "terraform gate checks passed."
