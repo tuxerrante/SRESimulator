@@ -15,6 +15,13 @@ const mocks = vi.hoisted(() => ({
   resolveAngleBracketPlaceholders: vi.fn(),
   getSessionStore: vi.fn(),
   sessionGet: vi.fn(),
+  chargeAiBudget: vi.fn(),
+  markAiBudgetDegraded: vi.fn(),
+}));
+
+vi.mock("../lib/ai-budget", () => ({
+  chargeAiBudget: mocks.chargeAiBudget,
+  markAiBudgetDegraded: mocks.markAiBudgetDegraded,
 }));
 
 vi.mock("../lib/ai-config", () => ({
@@ -101,6 +108,7 @@ describe("commandRouter", () => {
     vi.clearAllMocks();
     mocks.getAiReadiness.mockReturnValue({ ready: true, mockMode: false });
     mocks.shouldDegradeOnQuotaExhausted.mockReturnValue(true);
+    mocks.chargeAiBudget.mockResolvedValue("ok");
     mocks.buildScenarioContext.mockReturnValue("scenario context");
     mocks.buildSimNow.mockReturnValue("sim now");
     mocks.buildCommandSystemPrompt.mockReturnValue("system prompt");
@@ -257,9 +265,26 @@ describe("commandRouter", () => {
     }
   });
 
-  async function postCommand(): Promise<Response> {
+  async function postCommand(
+    options: { budgetExhausted?: boolean } = {},
+  ): Promise<Response> {
     const app = express();
     app.use(express.json());
+    if (options.budgetExhausted) {
+      // A faithful stand-in for the real pair: chargeAiBudget records the
+      // cause it observed, markAiBudgetDegraded upgrades it to the outcome the
+      // route chose and refuses to overwrite anything else.
+      mocks.chargeAiBudget.mockImplementation(async (res: express.Response) => {
+        res.setHeader("x-sresim-ai-budget", "daily-exhausted");
+        return "exhausted";
+      });
+      mocks.markAiBudgetDegraded.mockImplementation((res: express.Response) => {
+        if (res.getHeader("x-sresim-ai-budget") !== "daily-exhausted") {
+          return;
+        }
+        res.setHeader("x-sresim-ai-budget", "degraded");
+      });
+    }
     app.use("/api/command", commandRouter);
     const server = await new Promise<Server>((resolve) => {
       const listeningServer = app.listen(0, "127.0.0.1", () => resolve(listeningServer));
@@ -324,6 +349,54 @@ describe("commandRouter", () => {
     await expect(response.json()).resolves.toEqual({
       error: "The shared account is out of credit.",
     });
+  });
+
+  it("answers a spent shared budget without asking the provider first", async () => {
+    const response = await postCommand({ budgetExhausted: true });
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      output: "fallback output\nError: quota_exhausted",
+      exitCode: 1,
+      mode: "degraded",
+      degradedReason: "quota_exhausted",
+    });
+    // The point of checking the budget in the route: the request that the
+    // shared account cannot afford never leaves the process.
+    expect(mocks.generateAiText).not.toHaveBeenCalled();
+  });
+
+  it("labels the simulated answer as degraded rather than as a refusal", async () => {
+    const response = await postCommand({ budgetExhausted: true });
+
+    // Read off the wire, not off the mock. `chargeAiBudget` can only report
+    // the cause it observed; whether the client got a refusal or a complete
+    // simulated answer is the route's decision, and this is the only thing
+    // that tells the two apart on a 200.
+    expect(response.headers.get("x-sresim-ai-budget")).toBe("degraded");
+    await response.json();
+  });
+
+  it("leaves the header on the cause when a spent budget is answered with 429", async () => {
+    mocks.shouldDegradeOnQuotaExhausted.mockReturnValue(false);
+
+    const response = await postCommand({ budgetExhausted: true });
+
+    expect(response.status).toBe(429);
+    expect(response.headers.get("x-sresim-ai-budget")).toBe("daily-exhausted");
+    await response.json();
+  });
+
+  it("keeps the 429 for a spent shared budget when degradation is switched off", async () => {
+    mocks.shouldDegradeOnQuotaExhausted.mockReturnValue(false);
+
+    const response = await postCommand({ budgetExhausted: true });
+
+    expect(response.status).toBe(429);
+    await expect(response.json()).resolves.toEqual({
+      error: "The shared AI request budget for today is spent.",
+    });
+    expect(mocks.generateAiText).not.toHaveBeenCalled();
   });
 
 });

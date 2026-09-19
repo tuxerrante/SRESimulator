@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import HomePage from "./page";
 import { APP_VERSION } from "@/lib/release";
@@ -148,5 +148,121 @@ describe("HomePage footer release link", () => {
     expect(
       await screen.findByText("GitHub sign-in is unavailable for this environment.")
     ).toBeTruthy();
+  });
+});
+
+describe("HomePage AI budget refresh", () => {
+  const fetchMock = vi.fn();
+
+  /** Matches AI_BUDGET_POLL_INTERVAL_MS in page.tsx. */
+  const POLL_INTERVAL_MS = 60_000;
+
+  function budgetReads(): number {
+    return fetchMock.mock.calls.filter((call) => call[0] === "/api/ai/budget").length;
+  }
+
+  async function flushMicrotasks(): Promise<void> {
+    await act(async () => {
+      await Promise.resolve();
+    });
+  }
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    useGameStore.getState().resetGame();
+    useGameStore.setState({ nickname: "operator" });
+    fetchMock.mockImplementation(async (url: string) => {
+      if (url === "/api/ai/budget") {
+        return new Response(
+          JSON.stringify({
+            enabled: true,
+            dailyLimit: 1000,
+            dailyRemaining: 1000,
+            minuteLimit: 20,
+            minuteRemaining: 20,
+            degraded: false,
+            resetAt: null,
+            upstream: null,
+          }),
+          { status: 200 },
+        );
+      }
+      return new Response(JSON.stringify({ viewer: null, authConfigured: false }), {
+        status: 200,
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+    fetchMock.mockReset();
+    useGameStore.setState({ nickname: null, viewer: null });
+    useGameStore.getState().resetGame();
+  });
+
+  it("keeps reading the shared budget after mount", async () => {
+    render(<HomePage />);
+    await flushMicrotasks();
+
+    expect(budgetReads()).toBe(1);
+
+    // The budget is spent by every other player too, so the value read at
+    // mount goes stale with nothing on this page happening -- including the
+    // "answers are simulated" banner, which must disappear on its own once
+    // the window rolls.
+    await act(async () => {
+      vi.advanceTimersByTime(POLL_INTERVAL_MS);
+    });
+    await flushMicrotasks();
+
+    expect(budgetReads()).toBe(2);
+  });
+
+  it("does not re-read on a tab flip inside the refresh floor", async () => {
+    render(<HomePage />);
+    await flushMicrotasks();
+    expect(budgetReads()).toBe(1);
+
+    // The endpoint sits behind the per-identity AI limiter. A tab flipped away
+    // and back repeatedly would spend the player's own allowance describing a
+    // budget that cannot have moved in the meantime.
+    await act(async () => {
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    await flushMicrotasks();
+
+    expect(budgetReads()).toBe(1);
+  });
+
+  it("catches a returning tab up once the floor has passed", async () => {
+    render(<HomePage />);
+    await flushMicrotasks();
+
+    await act(async () => {
+      vi.advanceTimersByTime(20_000);
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    await flushMicrotasks();
+
+    expect(budgetReads()).toBe(2);
+  });
+
+  it("stops polling once the page unmounts", async () => {
+    const { unmount } = render(<HomePage />);
+    await flushMicrotasks();
+    expect(budgetReads()).toBe(1);
+
+    unmount();
+
+    await act(async () => {
+      vi.advanceTimersByTime(POLL_INTERVAL_MS * 3);
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    await flushMicrotasks();
+
+    expect(budgetReads()).toBe(1);
   });
 });

@@ -11,6 +11,11 @@ import { createSignedClientIp } from "../../../shared/auth/client-ip";
 import { createViewerSessionToken } from "../../../shared/auth/session";
 import { getRateLimitKey, InMemorySlidingWindowStore } from "./rate-limit";
 
+const MINUTE_MS = 60_000;
+const DAY_MS = 86_400_000;
+/** Mirrors the module-private sweep interval in rate-limit.ts. */
+const IN_MEMORY_SWEEP_INTERVAL = 256;
+
 interface TestRequest {
   ip?: string;
   socket?: {
@@ -427,5 +432,50 @@ describe("InMemorySlidingWindowStore", () => {
     expect(storeBuckets.size).toBe(1);
     expect(storeBuckets.has("session:expired")).toBe(false);
     expect(storeBuckets.has("session:active")).toBe(true);
+  });
+
+  // Until the global AI budget arrived, every key in this store was a
+  // per-identity window of the same duration, so the sweep could reuse the
+  // current call's cutoff for all of them. The budget puts a 24-hour key and a
+  // 60-second key in one map, and a borrowed cutoff evicts the long window's
+  // history.
+  it("prunes each bucket against its own window, not the caller's", async () => {
+    const store = new InMemorySlidingWindowStore();
+    const storeBuckets = (store as unknown as { buckets: Map<string, unknown> }).buckets;
+    const storeState = store as unknown as { operationsSinceSweep: number };
+
+    await store.consume("global:ai:day:2026-09-19", 0, DAY_MS, 1000);
+    storeState.operationsSinceSweep = IN_MEMORY_SWEEP_INTERVAL - 1;
+
+    // A minute-window request two minutes later: the day is nowhere near over.
+    await store.consume("global:ai:minute", 2 * MINUTE_MS, MINUTE_MS, 20);
+
+    expect(storeBuckets.has("global:ai:day:2026-09-19")).toBe(true);
+  });
+
+  // The consequence, asserted through the decision rather than the map: a
+  // shared daily cap that resets under ordinary minute traffic is not a cap,
+  // and the provider account it protects is spent by the players who arrive
+  // after the sweep.
+  it("keeps the daily cap enforced across a day of minute-window traffic", async () => {
+    const store = new InMemorySlidingWindowStore();
+    const dayKey = "global:ai:day:2026-09-19";
+    let now = 0;
+
+    for (let request = 0; request < 3; request += 1) {
+      now += MINUTE_MS;
+      await store.consume("global:ai:minute", now, MINUTE_MS, 20);
+      await store.consume(dayKey, now, DAY_MS, 3);
+    }
+
+    // Enough minute-window traffic to trip several sweeps, still the same day.
+    for (let sweep = 0; sweep < 3 * IN_MEMORY_SWEEP_INTERVAL; sweep += 1) {
+      now += 1_000;
+      await store.consume("global:ai:minute", now, MINUTE_MS, 20);
+    }
+
+    const decision = await store.consume(dayKey, now, DAY_MS, 3);
+    expect(decision.allowed).toBe(false);
+    expect(decision.remaining).toBe(0);
   });
 });

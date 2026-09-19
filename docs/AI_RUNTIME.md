@@ -368,6 +368,37 @@ Returns per-route totals (requests, prompt/completion/reasoning tokens,
 errors) and recent request entries. Protected by `x-ai-probe-token` header
 in production.
 
+### `GET /api/ai/budget`
+
+Public, unauthenticated and secret-free: the home-page banner polls it to
+explain why answers may be simulated. Rate-limited with `aiRateLimit` because
+`/api/ai/*` is otherwise unlimited and every visitor reads this one.
+
+```json
+{
+  "enabled": true, "dailyLimit": 1000, "dailyRemaining": 940,
+  "minuteLimit": 20, "minuteRemaining": 19, "degraded": false,
+  "resetAt": "2026-09-19T00:00:00.000Z",
+  "upstream": { "dailyLimit": 1000, "dailyRemaining": 940 }
+}
+```
+
+Reporting the budget must not spend it, so the endpoint reads the last
+decision each window made rather than consuming a slot. A remembered decision
+expires with the window it was taken in, so the banner stops reporting a spent
+day once the day has rolled, without waiting for the next AI request to
+refresh it.
+
+`upstream` is the provider's own view, read from `GET /api/v1/key` and taken
+from the nested `free_model_daily_requests` counter (`{ used, limit,
+remaining }`). It is fetched only when OpenRouter is the configured provider,
+cached for `AI_OPENROUTER_QUOTA_TTL_MS`, bounded by a 5-second timeout, and
+coalesced so concurrent banner polls share one refresh rather than opening a
+request each the moment the cache expires. It is `null` whenever the lookup
+fails, and deliberately has **no fallback field**: `limit_remaining` is a
+fractional credit balance, and rendering it as "requests left today" would be
+a confident wrong number where silence is correct.
+
 ---
 
 ## Rate Limiting & Throttle Handling
@@ -465,6 +496,116 @@ Setting `AI_DEGRADE_ON_QUOTA_EXHAUSTED=false` restores the pre-OpenRouter
 behaviour on all three routes, down to the reason label: an exhausted budget
 is then an `AiThrottledError` like any other and each route answers it exactly
 as it did before.
+
+### Global AI budget
+
+The per-identity limiter above protects the service from one abusive caller.
+It cannot protect a **shared account balance**: OpenRouter's free tier is
+capped per account (20 requests/minute, and 50 or 1000 requests/day depending
+on lifetime credit), so fifteen well-behaved players are enough to spend a
+day's budget between them.
+
+`chargeAiBudget(res)` is called **inside** `/api/chat`, `/api/command`,
+`/api/scenario` and `/api/ai/probe?live=true`, at the point each route had
+already chosen as its provider boundary — not as middleware. Middleware is what it was, and it was wrong:
+Express runs it before the handler validates anything, so an expired session,
+a malformed payload or a request that goes on to return the readiness 503
+still burned a slot from the scarce shared day. The charge sits after the
+per-identity limiter (`aiRateLimit`, mounted on the same routes) for the same
+reason: a caller that limiter already refused must not spend the shared
+account.
+
+Two exemptions follow from where the call sits rather than from a predicate
+anyone has to remember to pass:
+
+- **`AI_MOCK_MODE=true`** — no provider is reached, so there is no balance to
+  protect. Every route returns above the call site in mock mode. This matters
+  most in the `free-e2e` gate, which drives four simulated players through
+  chat and command with mock AI.
+- **`SCENARIO_SOURCE=catalog`** — `/api/scenario` serves a curated scenario and
+  returns before the charge.
+- **Every probe that answers from configuration alone** — an invalid readiness,
+  a probe without `?live=true`, and an unauthorized production caller all
+  return above the call site, because none of them sends anything.
+
+`/api/ai/probe?live=true` is the one charged route that **refuses** a spent day
+instead of degrading (429, `code: "ai_budget_exhausted"`). It has no simulated
+answer worth giving: a mock "pong" asserts nothing about the provider, which is
+the single thing the endpoint exists to check, and a live call with the day
+spent comes back as the provider's own 429 anyway — the same answer, one slot
+poorer. It is easy to forget precisely because it is not a gameplay route:
+before this it called `generateAiText` directly and spent the shared account
+without moving `global:ai:*`, so the banner kept reporting an intact day while
+it drained.
+
+| Variable | Default | Meaning |
+| --------------------------------- | -------------------------------- | ----------------------------------------------------- |
+| `AI_GLOBAL_BUDGET_ENABLED` | `true` when `AI_PROVIDER=openrouter` | Master switch |
+| `AI_GLOBAL_MINUTE_MAX` | `20` | Requests allowed across all callers per minute |
+| `AI_GLOBAL_DAILY_MAX` | `1000` | Requests allowed across all callers per day. **Set `50` on an account below 10 lifetime credits** — that is OpenRouter's free-model allowance until the credit purchase, and the default matches the post-purchase tier. |
+| `AI_GLOBAL_DAILY_EXHAUSTED_MODE` | `degrade` | `degrade` answers with simulated output; `reject` answers 429 |
+| `AI_GLOBAL_BUDGET_FAIL_MODE` | `closed` | Behaviour when the window store cannot answer |
+
+Four properties are deliberate and each is covered by a test:
+
+- **The minute window is charged first, and a request it refuses never charges
+  the day.** A caller refused on the minute window never reached the provider,
+  so charging the day for it would leak budget that was never spent.
+- **The store failure mode is inverted relative to `aiRateLimit`.** The
+  per-identity limiter fails open, which is right for abuse protection and
+  backwards for spend: an unreadable counter must not authorise spending on a
+  shared account. Failing closed is affordable only because a spent budget is
+  playable — it degrades rather than erroring.
+- **The daily cap is a UTC calendar day, not a rolling 24 hours.** The counter
+  lives under a date-suffixed key (`global:ai:day:YYYY-MM-DD`) so it starts
+  empty at midnight UTC, which is when OpenRouter's own free-model allowance
+  resets. A sliding window is wrong in both directions against that: a burst
+  at 23:50 would keep the deployment degraded into a day the provider is
+  already serving, and a request at 00:10 would still carry spend the provider
+  has forgiven. The window handed to the store stays 24 hours — that is what
+  expires the key, so yesterday's counters do not accumulate — while
+  `Retry-After` and `resetAt` are computed from the calendar.
+- **A spent daily budget is answered inside the route, not by the provider.**
+  `chargeAiBudget` returns `exhausted` and each route answers the way it
+  already answers a spent provider quota, so the degraded answer and its
+  reason label are decided in exactly one place. The doomed round trip is
+  never made.
+
+Every response from the four charged routes carries `x-sresim-ai-budget`, so a
+streaming response can be read without parsing a body:
+
+| Header value | Meaning |
+| ------------------- | ------------------------------------------------------- |
+| `ok` | Charged, within budget |
+| `minute-exhausted` | Refused on the per-minute window (429, retry helps) |
+| `daily-exhausted` | Refused on the daily window (429). Reached under `reject` mode, and always on the live probe, which has no simulated answer to degrade to |
+| `degraded` | Daily budget spent and this response is simulated output |
+| `store-unavailable` | Window store unreadable: 503 under `reject` mode, or a simulated answer under `degrade` |
+| `fail-open` | Store unavailable and `AI_GLOBAL_BUDGET_FAIL_MODE=open` |
+
+`chargeAiBudget` writes the *cause* it observed and the route overwrites it
+with `degraded` once it has actually chosen simulated output, because the
+routes disagree: with `AI_DEGRADE_ON_QUOTA_EXHAUSTED=false`, chat and command
+answer a spent budget with a 429 while `/api/scenario` still returns a
+playable catalog session. A header set before the answer exists would be a
+guess on two routes out of three. `store-unavailable` is deliberately *not*
+overwritten: it is the only signal that the window store, rather than the
+account, is what degraded the deployment, and an operator reading logs during
+an incident needs the two to stay distinguishable.
+
+The 429 body keeps `error` as its first key so existing clients surface a
+sane message, and adds `code: "ai_budget_exhausted"`, `scope`,
+`retryAfterSeconds`, `resetAt` and `degraded`.
+
+A store outage under `reject` mode answers **503 `ai_budget_unavailable`**, not
+429. Nothing was observed and nothing was spent, so reporting an exhausted day
+would send the client away until tomorrow for what is usually a blip, and send
+the operator reading the response to the budget instead of to the store.
+
+**The counters are process-local unless Redis is configured.** With more than
+one replica each pod would allow the full budget, which is why the OCI values
+overlay pins the backend to one replica; `AI_RATE_LIMIT_REDIS_URL` is the
+documented escape hatch and the global keys work unchanged through it.
 
 ### AOAI capacity sizing
 
@@ -599,6 +740,7 @@ prevention, rate-limit enforcement, and token-metrics recording.
 | OpenRouter | `AI_OPENROUTER_API_KEY`, `AI_OPENROUTER_MODEL`, `AI_OPENROUTER_BASE_URL` (default `https://openrouter.ai/api/v1`), `AI_OPENROUTER_SITE_URL`, `AI_OPENROUTER_APP_TITLE`. **Process environment only** — the Helm chart has no OpenRouter secret key or configmap entry yet; see "The Helm chart cannot select this provider yet" above |
 | Per-route models | `AI_OPENROUTER_MODEL_CHAT`, `_COMMAND`, `_SCENARIO`, `_PROBE` |
 | Quota degradation | `AI_DEGRADE_ON_QUOTA_EXHAUSTED` (default `true`) |
+| Global AI budget | `AI_GLOBAL_BUDGET_ENABLED` (default on for OpenRouter), `AI_GLOBAL_DAILY_MAX` (default `1000`), `AI_GLOBAL_MINUTE_MAX` (default `20`), `AI_GLOBAL_DAILY_EXHAUSTED_MODE` (default `degrade`), `AI_GLOBAL_BUDGET_FAIL_MODE` (default `closed`), `AI_OPENROUTER_QUOTA_TTL_MS` (default `60000`) |
 | Reasoning | `AI_REASONING_EFFORT` (`low` / `medium` / `high`) global default; per-route `AI_REASONING_EFFORT_<ROUTE>` (e.g. `_CHAT`, `_COMMAND`, `_SCENARIO`) overrides it. The `command` route defaults to `low`. |
 | Token budgets | `AI_MAX_CHAT_TOKENS` (default `16384`), `AI_MAX_COMMAND_TOKENS` (default `8192`) |
 | Compaction tuning | `COMPACTION_TOKEN_BUDGET`, `COMPACTION_TAIL_MESSAGES` |

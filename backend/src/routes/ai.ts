@@ -2,6 +2,8 @@ import { Router, type Request, type Response } from "express";
 import { getAiReadiness } from "../lib/ai-config";
 import { generateAiText } from "../lib/ai-runtime";
 import { getTokenMetrics } from "../lib/token-logger";
+import { chargeAiBudget, getAiBudgetSnapshot } from "../lib/ai-budget";
+import { aiRateLimit } from "../lib/rate-limit";
 
 export const aiRouter = Router();
 
@@ -56,6 +58,39 @@ aiRouter.get("/probe", async (req: Request, res: Response) => {
     }
   }
 
+  // The live probe is the fourth way into a provider and the only one the
+  // budget did not cover: it calls generateAiText directly rather than through
+  // a gameplay route, so every probe spent a request against the shared
+  // account without moving `global:ai:*`. The banner would then keep telling
+  // players the day was intact while it drained, and the limiter would refuse
+  // them late -- which is the failure the account-wide cap exists to prevent.
+  //
+  // Charged here rather than at the top of the handler: the branches above
+  // answer from configuration alone (invalid readiness, mock mode, a
+  // non-live probe, an unauthorized production caller) and reach no provider,
+  // so charging them would spend the players' day on requests that never left
+  // the process. Same rule the gameplay routes follow via `willCallProvider`.
+  const budget = await chargeAiBudget(res);
+  if (budget === "answered") {
+    return;
+  }
+  if (budget === "exhausted") {
+    // Refuses instead of degrading. A probe has no simulated answer to fall
+    // back on -- "pong" from the mock generator would assert nothing about the
+    // provider, which is the single thing this endpoint exists to check -- and
+    // a live call with the day spent comes back as the provider's own 429
+    // anyway: the same answer, one slot poorer. `chargeAiBudget` has already
+    // set `x-sresim-ai-budget` to the cause, so an operator can tell a spent
+    // day from an unreachable window store.
+    res.status(429).json({
+      ok: false,
+      mode: "live",
+      reason: "The shared AI budget is spent; the live probe was not sent",
+      code: "ai_budget_exhausted",
+    });
+    return;
+  }
+
   try {
     const start = Date.now();
     const preview = await generateAiText({
@@ -99,4 +134,13 @@ aiRouter.get("/token-metrics", (_req: Request, res: Response) => {
     }
   }
   res.json(getTokenMetrics());
+});
+
+/**
+ * Public, unauthenticated and secret-free: the home page banner reads it to
+ * explain why answers may be simulated. Rate-limited because /api/ai/* is not,
+ * and this one is polled by every visitor.
+ */
+aiRouter.get("/budget", aiRateLimit, async (_req: Request, res: Response) => {
+  res.json(await getAiBudgetSnapshot());
 });

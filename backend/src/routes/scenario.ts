@@ -7,6 +7,7 @@ import {
   getSessionStore,
 } from "../lib/storage";
 import { getAiReadiness, shouldDegradeOnQuotaExhausted } from "../lib/ai-config";
+import { chargeAiBudget, markAiBudgetDegraded } from "../lib/ai-budget";
 import { generateMockScenario } from "../lib/mock-ai";
 import {
   generateAiText,
@@ -736,6 +737,48 @@ scenarioRouter.post("/", async (req: Request, res: Response) => {
     }
 
     reservedClaimKeys = await reserveAnonymousClaimKeys();
+
+    // Charged here rather than beside the generation call because everything
+    // between the two -- the knowledge-base read, the context extraction, the
+    // remaining-budget arithmetic -- is work done solely to prepare a request
+    // that will not be sent. On a slow filesystem that work can eat the
+    // deadline first, and the player is then told the scenario timed out when
+    // the truth is the shared budget is spent. The reservation stays ahead of
+    // it: the catalog fallback still returns a session.
+    //
+    // It is also past the `SCENARIO_SOURCE=catalog` return above, so a
+    // deployment serving curated scenarios charges nothing -- the predicate
+    // this used to need is now a property of where the call sits.
+    const budget = await chargeAiBudget(res);
+    if (budget === "answered") {
+      // The refusal is already written, so the outer catch -- the only thing
+      // that releases the reservation -- never runs. Without this an anonymous
+      // caller refused on the minute window, or by a fail-closed store, spends
+      // their one daily trial on a request that created no session and is then
+      // blocked from the retry the 429 just told them to make.
+      await releaseClaimKeysSafely(
+        reservedClaimKeys,
+        "ai-budget-refused",
+        cleanupReserveMs,
+      );
+      reservedClaimKeys = [];
+      return;
+    }
+    if (budget === "exhausted") {
+      // The answer below is a catalog scenario, not a model one, on both
+      // labels: the header stops describing the budget and starts describing
+      // the response.
+      markAiBudgetDegraded(res);
+      await respondWithCatalogFallback(
+        shouldDegradeOnQuotaExhausted() ? "quota_exhausted" : "throttled",
+        new AiQuotaExhaustedError(
+          "daily",
+          "The shared AI request budget for today is spent.",
+        ),
+      );
+      return;
+    }
+
     const knowledgeBase = await deadline.waitWithin(
       "knowledge-base-load",
       loadKnowledgeBase(platform),
