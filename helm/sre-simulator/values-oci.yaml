@@ -4,7 +4,11 @@
 # Usage:
 #   helm template sre-simulator ./helm/sre-simulator \
 #     --values ./helm/sre-simulator/values.yaml \
-#     --values ./helm/sre-simulator/values-oci.yaml
+#     --values ./helm/sre-simulator/values-oci.yaml \
+#     --set exposure.host=<the hostname you actually own>
+#
+# exposure.host below is a placeholder and the chart refuses to render it while
+# a cert resolver is set, so the override is required rather than advisory.
 #
 # This file is inert for AKS/ARO because it is only ever passed explicitly.
 #
@@ -16,6 +20,12 @@
 
 exposure:
   mode: ingress
+  # Placeholder, and deliberately a reserved documentation domain so it cannot
+  # be mistaken for a real one. templates/ingress.yaml fails the render if this
+  # is still a reserved name while ingress.traefik.certResolver is set: ACME
+  # would otherwise request a certificate for a host the deployment does not
+  # own, fail HTTP-01, and leave Traefik serving its self-signed default with a
+  # browser warning as the only clue.
   host: sre-simulator.example.com
   # Traefik terminates TLS with its own ACME cert resolver, so the certificate
   # never lands in a Kubernetes Secret and ingress.tls stays disabled. The

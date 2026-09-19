@@ -515,9 +515,13 @@ jobs:
       - name: Helm lint (OCI free-tier profile)
         run: |
           set -euo pipefail
+          # The profile ships a placeholder host and a live ACME resolver, and
+          # the chart refuses that pair on purpose, so lint has to supply the
+          # hostname the same way a real deploy does.
           helm lint ./helm/sre-simulator \
             --values ./helm/sre-simulator/values.yaml \
-            --values ./helm/sre-simulator/values-oci.yaml
+            --values ./helm/sre-simulator/values-oci.yaml \
+            --set exposure.host=sre-simulator.invalid-placeholder.dev
 
       - name: Helm lint (OCI free-tier profile + CI k3d overlay)
         run: |
@@ -543,10 +547,12 @@ jobs:
       - name: Helm template (OCI free-tier profile)
         run: |
           set -euo pipefail
+          oci_host=sre-simulator.invalid-placeholder.dev
           rendered="$(
             helm template sre-simulator ./helm/sre-simulator \
               --values ./helm/sre-simulator/values.yaml \
-              --values ./helm/sre-simulator/values-oci.yaml
+              --values ./helm/sre-simulator/values-oci.yaml \
+              --set "exposure.host=${oci_host}"
           )"
           # Traefik terminates TLS with its own ACME resolver, so the router
           # annotations are the whole TLS story for this profile: no
@@ -561,6 +567,44 @@ jobs:
               exit 1
             fi
           done
+
+          # The single-node replica pins. Checked HPA-first because the two
+          # are coupled: turning autoscaling on makes the Deployment omit
+          # `replicas` altogether, so a bare `replicas: 1` grep would report
+          # the pin as missing rather than saying why it went. Both checks
+          # stay -- the HPA one also catches a future template that adds an
+          # autoscaler without touching the existing conditional.
+          if grep -Fq -- "kind: HorizontalPodAutoscaler" <<<"${rendered}"; then
+            echo "::error::OCI profile must not render an HPA: one node, and" \
+              "the backend's in-memory AI budget store is per-process"
+            exit 1
+          fi
+          for component in backend frontend; do
+            component_rendered="$(
+              helm template sre-simulator ./helm/sre-simulator \
+                --values ./helm/sre-simulator/values.yaml \
+                --values ./helm/sre-simulator/values-oci.yaml \
+                --set "exposure.host=${oci_host}" \
+                --show-only "templates/${component}-deployment.yaml"
+            )"
+            # Anchored: an unanchored match also accepts `minReplicas: 1`.
+            if ! grep -Eq '^  replicas: 1$' <<<"${component_rendered}"; then
+              echo "::error::OCI profile must pin ${component} to replicas: 1"
+              exit 1
+            fi
+          done
+
+          # The guard that makes the placeholder host safe to ship. Without
+          # this, the profile could quietly go back to requesting an ACME
+          # certificate for a domain the deployment does not own.
+          if helm template sre-simulator ./helm/sre-simulator \
+            --values ./helm/sre-simulator/values.yaml \
+            --values ./helm/sre-simulator/values-oci.yaml >/dev/null 2>&1
+          then
+            echo "::error::OCI profile must refuse to render its placeholder" \
+              "host while a cert resolver is set"
+            exit 1
+          fi
 
       - name: Helm template (OCI free-tier profile + CI k3d overlay)
         run: |
@@ -724,16 +768,17 @@ jobs:
         uses: >-
           actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          # Left at the default, checkout writes the workflow GITHUB_TOKEN
-          # into .git/config. Not a build-context concern -- `.dockerignore`
-          # excludes `.git`, so it never reaches the image build. The exposure
-          # is host-side: this job runs the PR's own code directly on the
-          # runner, starting at `make install` (which executes the PR's
-          # dependency lifecycle scripts) and again at `make test-e2e-live`,
-          # and any of it can read the file off the workspace. The job is
-          # advertised as credential-free, nothing in it needs git
-          # credentials, and harden-runner is on `egress-policy: audit`,
-          # which records egress rather than blocking it.
+          # Keep this false. What it prevents: checkout's default is to
+          # write the workflow GITHUB_TOKEN into .git/config. That is not a
+          # build-context concern -- `.dockerignore` excludes `.git`, so it
+          # never reaches the image build. The exposure is host-side: this
+          # job runs the PR's own code directly on the runner, starting at
+          # `make install` (which executes the PR's dependency lifecycle
+          # scripts) and again at `make test-e2e-live`, and any of it could
+          # read the file off the workspace. The job is advertised as
+          # credential-free, nothing in it needs git credentials, and
+          # harden-runner is on `egress-policy: audit`, which records egress
+          # rather than blocking it.
           persist-credentials: false
 
       - name: Setup Bun toolchain
@@ -1226,9 +1271,12 @@ jobs:
           LIVE_E2E_ENABLED: ${{ vars.LIVE_E2E_ENABLED }}
           # Likewise unset by default. dependabot-e2e deploys to the same dead
           # AKS cluster, so its status can never reach success and polling for
-          # it would freeze every bot PR for 70 minutes. The whole path is
-          # deleted in a follow-up; the variable keeps it recoverable until
-          # then.
+          # it would freeze every bot PR for 70 minutes. The same variable
+          # gates dependabot-e2e.yml's own entry job, so unset means the run
+          # never starts rather than starting and being ignored here -- the
+          # two have to agree, or ci-gate would wait for a status nothing is
+          # going to publish. The whole path is deleted in a follow-up; the
+          # variable keeps it recoverable until then.
           DEPENDABOT_E2E_ENABLED: ${{ vars.DEPENDABOT_E2E_ENABLED }}
           EVENT_NAME: ${{ github.event_name }}
           # live-e2e also skips for fork PRs, because it releases cluster and

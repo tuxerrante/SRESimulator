@@ -19,7 +19,17 @@ concurrency:
 
 jobs:
   resolve:
+    # Gating this job gates the whole workflow: publish-images needs it,
+    # run-e2e needs publish-images, and finalize reads resolve's outputs, so a
+    # skip here never reaches the protected environment or
+    # secrets.DEPENDABOT_E2E_KUBECONFIG. The variable is unset by default
+    # because that kubeconfig points at the dead AKS cluster -- without this
+    # guard the run would still queue, still request environment approval and
+    # still fail, while ci-gate (which reads the same variable) ignored the
+    # result. The whole path is deleted in a follow-up; the variable keeps it
+    # recoverable until then.
     if: >-
+      vars.DEPENDABOT_E2E_ENABLED == 'true' &&
       github.event.workflow_run.event == 'pull_request'
     runs-on: ubuntu-latest
     permissions:
