@@ -860,3 +860,93 @@ run "ssh_public_key_accepts_a_real_ecdsa_key" {
     error_message = "A real ecdsa-sha2-nistp521 key from ssh-keygen must satisfy the wire-format check."
   }
 }
+
+# ---------------------------------------------------------------------------
+# The coverage guards measure the union of the listed blocks, not their sum.
+# A sum is sound in the direction that matters -- coverage never exceeds the
+# sum, so "sum < 2^32" still cannot let the whole internet through -- but it
+# over-refuses, and it over-refuses on two shapes an operator writes by hand.
+# These runs are the regression lock on that, and they pass only because the
+# containment filter is there: with a plain sum each one is rejected with an
+# error message claiming the list covers the entire internet.
+# ---------------------------------------------------------------------------
+
+run "a_repeated_ssh_range_is_counted_once" {
+  command = plan
+
+  variables {
+    # Two spellings of one block, which is what a copy-paste into a list
+    # produces. Summed, this is 2^31 + 2^31 = the whole address space.
+    ssh_allowed_cidrs = ["10.0.0.0/1", "10.0.0.0/1"]
+  }
+
+  assert {
+    condition     = length(oci_core_network_security_group_security_rule.ingress_ssh) == 1
+    error_message = "A duplicate entry must collapse, not read as twice the address space."
+  }
+}
+
+run "a_nested_range_does_not_inflate_the_measured_coverage" {
+  command = plan
+
+  variables {
+    # Union 3/4 of the space, sum exactly all of it: the /2 sits wholly
+    # inside the /1, so a plain sum counts that quarter twice and refuses.
+    #
+    # The realistic shape -- a /32 written out beside the /24 containing it --
+    # is deliberately *not* the fixture here. It is the case an operator hits,
+    # but it is only ~16.7M addresses, so a plain sum passes it too and the
+    # run would not discriminate. These numbers are chosen so that it does.
+    ssh_allowed_cidrs = ["0.0.0.0/1", "0.0.0.0/2", "128.0.0.0/2"]
+  }
+
+  assert {
+    condition     = length(oci_core_network_security_group_security_rule.ingress_ssh) == 3
+    error_message = "A CIDR contained in another entry must not be double-counted."
+  }
+}
+
+run "a_repeated_cloudflare_range_is_counted_once" {
+  command = plan
+
+  variables {
+    restrict_ingress_to_cloudflare = true
+    cloudflare_ipv4_ranges         = ["0.0.0.0/1", "0.0.0.0/1", "128.0.0.0/2"]
+  }
+
+  # Two rules, not three: the NSG for_each is over a set, so the duplicate
+  # collapses there as well. That is the point -- the duplicate was never
+  # going to produce a second rule, only a second term in the old sum.
+  assert {
+    condition     = length(oci_core_network_security_group_security_rule.ingress_http) == 2
+    error_message = "A duplicated Cloudflare range must not read as the whole internet."
+  }
+}
+
+run "the_union_guard_still_refuses_a_real_full_cover" {
+  command = plan
+
+  variables {
+    # Same three-entry shape as the run above, but these do tile the space.
+    # Without this the two runs above could be passed by deleting the guard.
+    cloudflare_ipv4_ranges = ["0.0.0.0/1", "128.0.0.0/2", "192.0.0.0/2"]
+  }
+
+  expect_failures = [
+    var.cloudflare_ipv4_ranges,
+  ]
+}
+
+run "the_union_guard_still_refuses_a_nested_full_cover" {
+  command = plan
+
+  variables {
+    # A contained entry alongside a genuine tiling: the containment filter
+    # must drop the /16 without dropping either half of the cover.
+    k8s_api_allowed_cidrs = ["0.0.0.0/1", "128.0.0.0/1", "10.1.0.0/16"]
+  }
+
+  expect_failures = [
+    var.k8s_api_allowed_cidrs,
+  ]
+}

@@ -32,12 +32,31 @@ locals {
     "",
   )
 
+  # install.sh as tagged for exactly this release, rather than whatever
+  # https://get.k3s.io serves at boot. The "+" in a k3s version is a real
+  # character in the git tag and has to survive the URL path, so it is
+  # percent-encoded here; raw.githubusercontent.com rejects the bare form.
+  k3s_install_url = format(
+    "https://raw.githubusercontent.com/k3s-io/k3s/%s/install.sh",
+    replace(var.k3s_version, "+", "%2B"),
+  )
+
+  # k3s's default cluster CIDR. A local and not a variable on purpose:
+  # cloud-init does not pass --cluster-cidr, so this is not something the
+  # operator can choose -- it is a constant of the installer that the host
+  # firewall rule has to agree with. vcn_cidr's overlap validation in
+  # variables.tf refuses to collide with the same range.
+  k3s_pod_cidr = "10.42.0.0/16"
+
   cloud_init = templatefile("${path.module}/cloud-init.yaml.tftpl", {
-    k3s_version       = var.k3s_version
-    operator_username = var.operator_username
-    ssh_public_key    = trimspace(var.ssh_public_key)
-    swap_size_mb      = var.swap_size_mb
-    traefik_config    = local.traefik_config_indented
+    k3s_version        = var.k3s_version
+    k3s_install_url    = local.k3s_install_url
+    k3s_install_sha256 = var.k3s_install_script_sha256
+    k3s_pod_cidr       = local.k3s_pod_cidr
+    operator_username  = var.operator_username
+    ssh_public_key     = trimspace(var.ssh_public_key)
+    swap_size_mb       = var.swap_size_mb
+    traefik_config     = local.traefik_config_indented
   })
 }
 

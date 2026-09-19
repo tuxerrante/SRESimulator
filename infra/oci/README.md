@@ -155,6 +155,41 @@ directly and is then held off only by Kubernetes authentication and the
 NetworkPolicy the chart ships. If that distinction matters for what you deploy
 here, take the two-layer option below rather than assuming the NSG covers it.
 
+#### The one port taken back at the host, and why only one
+
+Of the two administration ports the flush leaves exposed to the pod network,
+cloud-init closes 22 and deliberately leaves 6443 open. The difference was
+measured on a real cluster, not argued:
+
+| host rule | pod → in-cluster Kubernetes API |
+| --- | --- |
+| none (baseline) | `401` — reachable |
+| `-s 10.42.0.0/16 --dport 22 -j DROP` | `401` — unaffected |
+| `-s 10.42.0.0/16 --dport 6443 -j DROP` | **curl timeout, exit 28** |
+
+Nothing in the cluster needs to open a TCP connection to the node's `sshd`, so
+the first rule costs nothing and cloud-init inserts it.
+
+The third breaks the cluster because `kubernetes.default.svc` is a ClusterIP
+that DNATs to the node's own apiserver port, and kube-proxy deliberately does
+*not* masquerade pod-CIDR sources for it:
+
+```text
+-A KUBE-SERVICES -d 10.43.0.1/32 -p tcp --dport 443 -j KUBE-SVC-NPX46M4PTMTKRN6Y
+-A KUBE-SVC-NPX46M4PTMTKRN6Y ! -s 10.42.0.0/16 ... -j KUBE-MARK-MASQ
+-A KUBE-SEP-... -j DNAT --to-destination <node ip>:6443
+```
+
+The packet therefore arrives at `INPUT` carrying the pod's own source address
+and destination port 6443 — indistinguishable from a pod dialling the node
+directly. Dropping it takes out every in-cluster API client, which is most of
+the control plane. For a hostile workload the control that applies there is
+RBAC on its service account.
+
+The rule goes in at the head of `INPUT`, but k3s and kube-router insert their
+own jumps there on start and restart, so its position is best-effort. It is
+defence in depth, not the boundary.
+
 If you want two enforcement layers instead, replace the flush in
 `cloud-init.yaml.tftpl` with explicit accepts inserted *before* the REJECT:
 
@@ -165,6 +200,10 @@ iptables -I INPUT -p tcp --dport 80  -j ACCEPT
 iptables -I INPUT -p tcp --dport 443 -j ACCEPT
 netfilter-persistent save
 ```
+
+Keep the pod-CIDR accepts above ahead of any narrower drop you add: the
+measurement in the previous section applies to this layout too, and a rule that
+denies the pod range port 6443 breaks the cluster whichever chain it lands in.
 
 ## `traefik-config.yaml` is shared with CI
 
@@ -229,6 +268,28 @@ Two details that cloud-init used to handle and the script now handles itself:
 The firewall flush runs *after* the apt phase, because `netfilter-persistent`
 comes from `iptables-persistent`. That ordering is safe: the measured table
 above shows egress works with the OCI default chain in place.
+
+### The installer is pinned and checksum-verified
+
+cloud-init does **not** pipe `https://get.k3s.io` into a root shell. That
+endpoint serves whatever is on the k3s master branch at the moment of the
+request, so pinning `k3s_version` pinned the *binary* and said nothing about
+the ~36 KB of shell that selects and installs it — two different files, 38693
+vs 36501 bytes when measured.
+
+Instead the bootstrap script downloads the `install.sh` tagged for exactly
+`k3s_version` (the `+` percent-encoded, which `raw.githubusercontent.com`
+requires), checks it against `k3s_install_script_sha256`, and refuses to
+execute it on a mismatch — printing both digests.
+
+**Bumping k3s means bumping both variables in the same commit.** That friction
+is deliberate: forgetting fails the bootstrap loudly at boot rather than
+installing an unreviewed script. Recompute with:
+
+```sh
+curl -sfL "https://raw.githubusercontent.com/k3s-io/k3s/$(
+  printf %s "$K3S_VERSION" | sed 's/+/%2B/')/install.sh" | sha256sum
+```
 
 ## Why these k3s flags
 
@@ -399,7 +460,7 @@ therefore run on fork pull requests:
 | --- | --- |
 | `terraform fmt -check -recursive` from `infra/` | both roots, including this nested one |
 | `init -backend=false`, `validate`, `test` in `infra/` | the Azure root, which no workflow ran before |
-| `init -backend=false`, `validate`, `test` here | 108 test cases, all on `mock_provider` |
+| `init -backend=false`, `validate`, `test` here | 116 test cases, all on `mock_provider` |
 | render `local.cloud_init`, then `bash -n` + `shellcheck` | the bootstrap script the instance actually boots |
 
 The last step is worth explaining. It renders through `terraform console`
