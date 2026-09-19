@@ -114,6 +114,20 @@ assert_not_contains 'terraform destroy' "$JOB_FILE"
 # -backend=false is what keeps the unit runs off the real OCI state bucket.
 assert_contains 'terraform init -backend=false -input=false' "$JOB_FILE"
 
+# Same reason the oci-shape-e2e block is checked for this below, and the same
+# reason the shell-suite callers are in section 12: this job runs PR-controlled
+# code -- the PR's own *.tftest.hcl under `terraform test`, and the PR's
+# cloud-init.yaml.tftpl rendered through `terraform console` -- so a
+# GITHUB_TOKEN persisted into .git/config by the default checkout is readable
+# by it. The three assertions above reject the credentials a job asks for;
+# this one rejects the credential it gets by saying nothing.
+assert_contains 'actions/checkout@' "$JOB_FILE"
+grep -Fq 'persist-credentials: false' "$JOB_FILE" ||
+  fail "terraform-validate runs PR-authored terraform tests and renders the \
+PR's cloud-init with the default checkout, so its GITHUB_TOKEN sits in \
+.git/config where that code can read it; set persist-credentials: false on \
+its checkout"
+
 # --- 3. both roots are actually covered -----------------------------------
 # infra/tests/*.tftest.hcl was run by no workflow before this job existed.
 # Anchored: a substring match for 'working-directory: infra' is also satisfied
