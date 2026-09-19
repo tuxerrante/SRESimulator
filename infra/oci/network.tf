@@ -19,6 +19,18 @@ data "http" "cloudflare_ipv4" {
       error_message = "https://www.cloudflare.com/ips-v4 answered ${self.status_code}, not 200. Refusing to derive the 80/443 allowlist from a non-success response; set cloudflare_ipv4_ranges explicitly to pin the list."
     }
 
+    # `alltrue([])` is true and `sum(concat([0], []))` is 0, so both checks
+    # below pass a 200 whose body is empty or all whitespace -- compact()
+    # removes the one empty entry and leaves nothing to disagree with. The
+    # result is an empty local.cloudflare_ipv4, which builds *no* 80/443 NSG
+    # rules at all: a transient empty success takes the ingress down rather
+    # than failing the fetch that caused it. Cloudflare publishes 15 IPv4
+    # ranges; any count below one is the failure, not the list.
+    postcondition {
+      condition     = length(compact(split("\n", trimspace(self.response_body)))) > 0
+      error_message = "https://www.cloudflare.com/ips-v4 answered 200 with an empty body. Refusing to derive an empty 80/443 allowlist, which would build no ingress rules at all; set cloudflare_ipv4_ranges explicitly to pin the list."
+    }
+
     postcondition {
       condition = alltrue([
         for c in compact(split("\n", trimspace(self.response_body))) :

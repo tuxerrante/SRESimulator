@@ -236,6 +236,20 @@ run "the_traefik_image_is_pinned_away_from_the_chart_default" {
     condition     = yamldecode(yamldecode(local.traefik_config_rendered).spec.valuesContent).image.repository == "docker.io/library/traefik"
     error_message = "The image repository must stay docker.io/library/traefik. The rancher mirror still carries an openssl QUIC DoS at the same tag; bump the tag, do not swap the repository."
   }
+
+  # The Traefik image is not the only thing this manifest runs as uid 0 in the
+  # host network namespace. The volume-permissions initContainer executes on
+  # every rollout, before Traefik reads acme.json, and every assertion above
+  # is satisfied while it floats on a mutable `busybox:1.37`. Asserted
+  # structurally over all initContainers, so adding a second helper cannot
+  # reintroduce a floating tag beside a pinned one.
+  assert {
+    condition = alltrue([
+      for c in yamldecode(yamldecode(local.traefik_config_rendered).spec.valuesContent).deployment.initContainers :
+      can(regex("@sha256:[0-9a-f]{64}$", c.image))
+    ])
+    error_message = "Every initContainer image must be digest-pinned. These run as uid 0 in the host network namespace on every rollout, so a registry retag changes executed code with no diff here."
+  }
 }
 
 run "acme_email_is_substituted" {

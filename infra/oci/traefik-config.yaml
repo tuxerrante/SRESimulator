@@ -194,7 +194,21 @@ spec:
     deployment:
       initContainers:
         - name: volume-permissions
-          image: busybox:1.37
+          # Digest-pinned for the same reason the Traefik image below is: this
+          # container runs as uid 0 in the host network namespace on every
+          # rollout, and a bare `1.37` is a mutable tag -- a registry retag
+          # changes what executes here with no diff in this repository. The
+          # digest is the multi-arch index, so containerd still selects the
+          # aarch64 manifest on A1.Flex. Bump tag and digest together.
+          #
+          # The reference sits on its own line for the reason the Traefik one
+          # below does: yamllint --strict exempts a line holding a single
+          # unbreakable word, but not a `key: value` pair that happens to be
+          # long. A plain scalar on the next line parses to the identical
+          # string, which the initContainer assertion in
+          # tests/traefik_config.tftest.hcl checks by decoding it.
+          image:
+            busybox:1.37@sha256:9db7b59979c38555a39def84a31fb98b5296952f9e3afd4f6f11f05b07adfab0
           command:
             - sh
             - -c

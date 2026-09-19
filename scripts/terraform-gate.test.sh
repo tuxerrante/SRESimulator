@@ -428,11 +428,27 @@ if ! oci_make_run tf-oci-plan OWNER_ALIAS=jdoe; then
   fail "tf-oci-plan refused the alias that owns the initialized state"
 fi
 
-# And an explicit OCI_STATE_KEY is the documented way to share one object on
-# purpose, so it has to satisfy the guard on its own without an alias match.
-if ! oci_make_run tf-oci-plan OWNER_ALIAS=alice \
+# An explicit OCI_STATE_KEY used to be the documented way to share one object
+# on purpose, and this suite locked that in as a happy path. It was the
+# state-owner guard's own bypass: the key matched what init recorded, so the
+# comparison passed, while TF_VAR_FLAGS still carried owner_alias=alice -- so
+# terraform planned alice's names against jdoe's state, which is the exact
+# outcome the guard exists to prevent, reached through the guard. Sharing an
+# object is now done by sharing the alias, which is what the plan uses too.
+if oci_make_run tf-oci-plan OWNER_ALIAS=alice \
     OCI_STATE_KEY=jdoe-free-sre-simulator.tfstate; then
-  fail "an explicit OCI_STATE_KEY matching the recorded key was refused"
+  fail "tf-oci-plan ran with OCI_STATE_KEY naming another operator's state while owner_alias said alice"
+fi
+if [ -s "$TERRAFORM_ARGV_FILE" ]; then
+  fail "a diverging OCI_STATE_KEY reached terraform: $(cat "$TERRAFORM_ARGV_FILE")"
+fi
+
+# Set to exactly what the alias derives, it is redundant rather than unsafe,
+# and refusing it would break a caller that spells out what it means. The
+# state here belongs to jdoe, so the run must get through on jdoe's own key.
+if ! oci_make_run tf-oci-plan OWNER_ALIAS=jdoe \
+    OCI_STATE_KEY=jdoe-free-sre-simulator.tfstate; then
+  fail "an OCI_STATE_KEY agreeing with OWNER_ALIAS was refused"
 fi
 
 # An *empty* OCI_STATE_KEY beside an alias is the bypass, and it is the one
@@ -446,6 +462,32 @@ if oci_make_run tf-oci-plan OWNER_ALIAS=alice OCI_STATE_KEY=; then
 fi
 if [ -s "$TERRAFORM_ARGV_FILE" ]; then
   fail "an empty OCI_STATE_KEY reached terraform: $(cat "$TERRAFORM_ARGV_FILE")"
+fi
+
+# OCI_STATE_KEY is read at parse time, and a command-line assignment is a
+# recursive variable: the first reference expands it. `$(strip $(OCI_STATE_KEY))`
+# inside the old guard was that reference, so the payload ran while make was
+# still deciding whether to refuse the value -- the guard then reported the
+# expansion's *result* as the key. Measured by the side effect, because an
+# exit status cannot tell "refused" from "refused after running it".
+INJECT_WITNESS="$OCI_MAKE_DIR/parse-time-injection-witness"
+rm -f "$INJECT_WITNESS"
+# shellcheck disable=SC2016
+if oci_make_run tf-oci-plan OWNER_ALIAS=alice \
+    OCI_STATE_KEY='$(shell touch '"$INJECT_WITNESS"')'; then
+  fail "tf-oci-plan accepted an OCI_STATE_KEY containing a make function call"
+fi
+if [ -e "$INJECT_WITNESS" ]; then
+  fail "OCI_STATE_KEY was expanded by make before being validated: the \$(shell ...) payload ran"
+fi
+
+# And with no alias at all there is nothing to check the key against:
+# TF_VAR_FLAGS is empty, so terraform prompts for owner_alias and whatever is
+# typed becomes the plan's identity regardless of which key holds the state.
+if oci_make_run tf-oci-init OWNER_ALIAS= \
+    OCI_STATE_KEY=jdoe-free-sre-simulator.tfstate \
+    OCI_STATE_BUCKET=b OCI_STATE_NAMESPACE=n; then
+  fail "tf-oci-init accepted an explicit OCI_STATE_KEY with no OWNER_ALIAS to bind it to"
 fi
 
 # backend.tf must carry no default key. A static one is what any init that
@@ -463,9 +505,9 @@ fi
 # by `terraform test`, and an environment export is not terraform's business
 # at all. Both are load-bearing, so they are asserted here or nowhere.
 
-# Concurrent applies against one key are possible by design -- OCI_STATE_KEY
-# exists so a second machine can drive the same box -- and without a lock the
-# later write silently discards the earlier one.
+# Concurrent applies against one key are possible by design -- two machines
+# driving the same box share an OWNER_ALIAS and therefore one key -- and
+# without a lock the later write silently discards the earlier one.
 if ! awk '/backend "s3" \{/,/^  \}/' "$BACKEND_TF" |
     grep -Eq '^[[:space:]]*use_lockfile[[:space:]]*=[[:space:]]*true'; then
   fail "backend.tf must set use_lockfile = true; without it two operators sharing OCI_STATE_KEY can apply concurrently and the second write wins silently"
@@ -475,6 +517,24 @@ fi
 # above into an "Unsupported argument" at init time for anyone on an older
 # binary, which is a worse failure than the race it prevents.
 assert_contains 'required_version = ">= 1.10"' "$ROOT_DIR/infra/oci/versions.tf"
+
+# tf-oci-test does its own version preflight so the failure names this root
+# rather than arriving as terraform's generic version error. Two floors is two
+# things to forget: the preflight sat at 1.9 while versions.tf had moved to
+# 1.10, so a 1.9 binary passed the friendly check and failed the unfriendly
+# one. Derived from versions.tf rather than written twice, because a second
+# literal is what drifted in the first place.
+REQUIRED_MINOR="$(sed -n 's/.*required_version[[:space:]]*=[[:space:]]*">= 1\.\([0-9]*\)".*/\1/p' \
+  "$ROOT_DIR/infra/oci/versions.tf" | head -1)"
+if [ -z "$REQUIRED_MINOR" ]; then
+  fail "could not read the required_version minor out of infra/oci/versions.tf"
+fi
+if ! grep -q "MINOR\" -lt $REQUIRED_MINOR" "$OCI_MAKEFILE"; then
+  fail "tf-oci-test's version preflight does not enforce the 1.$REQUIRED_MINOR floor that versions.tf requires"
+fi
+
+# And the prerequisite an operator actually reads before installing anything.
+assert_contains "Terraform >= 1.$REQUIRED_MINOR" "$ROOT_DIR/infra/oci/README.md"
 
 # skip_s3_checksum removes the checksum terraform asks for, not the one the
 # AWS SDK adds by itself -- measured on 1.16.3, PutObject still carries
