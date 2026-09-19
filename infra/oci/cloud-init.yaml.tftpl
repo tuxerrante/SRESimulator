@@ -1,0 +1,307 @@
+#cloud-config
+# Rendered by infra/oci/compute.tf. Do not apply this file by hand.
+
+# There is deliberately no package_update / package_upgrade / packages: block
+# here. cloud-init runs its package-update-upgrade-install module BEFORE
+# runcmd, and at that point the instance has no route out: compute.tf launches
+# it with assign_public_ip = false and attaches the RESERVED public IP
+# immediately afterwards, and there is no NAT gateway. apt would therefore run
+# against a box with no egress, and a failure there is silent and total --
+# iptables-persistent and unattended-upgrades would be missing, runcmd's first
+# item would fail, and /opt/bootstrap-k3s.sh would never run at all.
+#
+# The apt work lives in the bootstrap script instead, after the connectivity
+# wait that already exists there. That costs cloud-init's own retry handling,
+# so the script does its own.
+
+users:
+  - default
+  - name: ${operator_username}
+    groups: [sudo]
+    shell: /bin/bash
+    sudo: "ALL=(ALL) NOPASSWD:ALL"
+    ssh_authorized_keys:
+      # jsonencode, not a bare interpolation. YAML is a superset of JSON, so
+      # this emits a double-quoted scalar that cannot terminate early no matter
+      # what the value contains. variables.tf already rejects newlines; this is
+      # the structural half of the same guard, and it is the half that keeps
+      # holding if that validation is ever loosened.
+      - ${jsonencode(ssh_public_key)}
+
+write_files:
+  # Written before k3s is installed so the k3s server picks it up on its very
+  # first start. The name must not be traefik.yaml: k3s owns that one and
+  # rewrites it on every restart.
+  - path: /var/lib/rancher/k3s/server/manifests/traefik-config.yaml
+    permissions: "0600"
+    owner: root:root
+    content: |
+      ${traefik_config}
+
+  - path: /opt/bootstrap-k3s.sh
+    permissions: "0700"
+    owner: root:root
+    content: |
+      #!/usr/bin/env bash
+      set -euo pipefail
+
+      log() { echo "[bootstrap] $*"; }
+
+      # -------------------------------------------------------------------
+      # Wait for connectivity. This has to come first: everything below it
+      # downloads something.
+      #
+      # The instance launches with no public IP; Terraform attaches the
+      # RESERVED one immediately afterwards. That is normally a few seconds,
+      # but "normally" is not a guarantee.
+      # -------------------------------------------------------------------
+      #
+      # The probe cannot use curl. curl is in the apt install list below --
+      # Canonical's minimal cloud image does not ship it -- so on that image a
+      # curl-based probe fails for the full five minutes and exits, and apt
+      # and k3s never run at all. The check for connectivity would be the
+      # thing that prevented the boot.
+      #
+      # bash's /dev/tcp needs nothing installed: the shell resolves the name
+      # and opens the socket itself, which is exactly the DNS and egress that
+      # have to work before apt can. `timeout` is coreutils, which is
+      # essential on every Ubuntu image.
+      log "waiting for outbound connectivity"
+      for attempt in $(seq 1 60); do
+        if timeout 5 bash -c 'exec 3<>/dev/tcp/raw.githubusercontent.com/443' 2>/dev/null; then
+          log "network is up after $${attempt} attempt(s)"
+          break
+        fi
+        if [ "$${attempt}" -eq 60 ]; then
+          log "no outbound connectivity after 5 minutes; check that the reserved public IP attached"
+          exit 1
+        fi
+        sleep 5
+      done
+
+      # -------------------------------------------------------------------
+      # Packages.
+      #
+      # This is cloud-init's packages: block, relocated behind the wait above
+      # -- see the comment at the top of this file for why it cannot stay
+      # where cloud-init would run it.
+      #
+      # DEBIAN_FRONTEND=noninteractive is load-bearing: iptables-persistent
+      # asks, through debconf, whether to save the current rules, and an
+      # unanswered prompt hangs the boot. cloud-init's own module sets this;
+      # runcmd does not.
+      #
+      # DPkg::Lock::Timeout absorbs the unattended-upgrades run that Ubuntu
+      # starts on first boot and that would otherwise lose the apt lock race.
+      # -------------------------------------------------------------------
+      export DEBIAN_FRONTEND=noninteractive
+      apt_opts=(-y -o Acquire::Retries=3 -o DPkg::Lock::Timeout=300)
+
+      log "updating the package index"
+      for attempt in $(seq 1 5); do
+        if apt-get "$${apt_opts[@]}" update; then
+          break
+        fi
+        if [ "$${attempt}" -eq 5 ]; then
+          log "apt-get update failed five times"
+          exit 1
+        fi
+        sleep 10
+      done
+
+      log "upgrading and installing packages"
+      apt-get "$${apt_opts[@]}" upgrade
+      apt-get "$${apt_opts[@]}" install \
+        curl \
+        ca-certificates \
+        iptables-persistent \
+        unattended-upgrades
+
+      # Was runcmd's first item, back when the package it needs was installed
+      # before runcmd ran.
+      systemctl enable --now unattended-upgrades
+
+      # -------------------------------------------------------------------
+      # Firewall
+      #
+      # OCI's Ubuntu images ship iptables-persistent with a default-DROP INPUT
+      # chain ending in REJECT icmp-host-prohibited. The NSG on the VNIC is
+      # this deployment's single source of truth for ingress, so the host
+      # chain is flushed rather than maintained in parallel.
+      #
+      # Measured effect of leaving it in place, using a genuine non-loopback
+      # source (a pod curling the node IP -- loopback and SSH-tunnelled
+      # traffic both hit "-i lo -j ACCEPT" and prove nothing):
+      #
+      #   INPUT flushed      -> node:80 returns 301
+      #   OCI default-REJECT -> node:80 returns 000, "Failed to connect after 0 ms"
+      #
+      # Pod-to-pod traffic and egress are unaffected either way. The hazard is
+      # specifically inbound traffic to the hostNetwork Traefik pod.
+      #
+      # What this costs, stated plainly: an NSG filters traffic crossing the
+      # VNIC, and pod-to-host traffic never crosses it. With INPUT flushed any
+      # workload on this cluster can reach every port the host listens on.
+      # The 301 above is itself the proof -- the NSG admits :80 only from
+      # Cloudflare, and that request came from a 10.42.0.0/16 pod. "6443 is
+      # closed" means closed to the internet, not closed to a compromised
+      # container.
+      #
+      # Of the two administration ports that leaves exposed, exactly one can
+      # be taken back at the host, and the difference was measured on a real
+      # cluster rather than reasoned about:
+      #
+      #   * 22 CAN. Nothing in the cluster has any reason to open a TCP
+      #     connection to the node's sshd, so the rule below costs nothing.
+      #     With "-s 10.42.0.0/16 --dport 22 -j DROP" inserted at the head of
+      #     INPUT, a pod's call to the in-cluster API still answered 401.
+      #
+      #   * 6443 CANNOT. kubernetes.default.svc is a ClusterIP that DNATs to
+      #     the node's own apiserver port, and kube-proxy deliberately does
+      #     NOT masquerade pod-CIDR sources for it:
+      #
+      #       -A KUBE-SERVICES -d 10.43.0.1/32 -p tcp --dport 443
+      #          -j KUBE-SVC-NPX46M4PTMTKRN6Y
+      #       -A KUBE-SVC-NPX46M4PTMTKRN6Y ! -s 10.42.0.0/16 ... -j KUBE-MARK-MASQ
+      #       -A KUBE-SEP-... -j DNAT --to-destination <node ip>:6443
+      #
+      #     so the packet reaches INPUT with the pod's own source address and
+      #     dport 6443 -- indistinguishable from a direct attempt. Adding the
+      #     same DROP for 6443 took that probe from 401 to a curl timeout
+      #     (exit 28): it breaks every in-cluster API client, which is most of
+      #     the control plane. The control that matters for a hostile workload
+      #     there is RBAC on its service account, not a host firewall.
+      #
+      # The rule is inserted at the head of INPUT, but k3s and kube-router
+      # also insert their own jumps there on start and on restart, so its
+      # position is best-effort and it is defence in depth, not the boundary.
+      #
+      # README.md documents the wider defence-in-depth alternative for
+      # operators who want two full enforcement layers.
+      # -------------------------------------------------------------------
+      log "flushing the host INPUT chain; the NSG is the firewall"
+      iptables -P INPUT ACCEPT
+      iptables -P FORWARD ACCEPT
+      iptables -F INPUT
+      iptables -F FORWARD
+      iptables -I INPUT 1 -s ${k3s_pod_cidr} -p tcp --dport 22 -j DROP
+      if command -v ip6tables >/dev/null 2>&1; then
+        ip6tables -P INPUT ACCEPT
+        ip6tables -P FORWARD ACCEPT
+        ip6tables -F INPUT
+        ip6tables -F FORWARD
+      fi
+
+      # No "|| true". This is the only step that carries the flush across a
+      # reboot, and iptables-persistent's saved ruleset is Ubuntu's
+      # default-DROP one until it succeeds. Ignoring a failure here produces
+      # a box that serves traffic until someone reboots it and then does not,
+      # with cloud-init having reported success -- the same silent-config
+      # class as every other bug found on this branch. Failing the bootstrap
+      # is the loud answer, and the file is re-read afterwards to prove the
+      # save actually landed rather than trusting the exit status.
+      #
+      # The two patterns are iptables-save's own output forms, measured rather
+      # than guessed -- and the first guess was wrong, which is why they are
+      # spelled out here. A policy is saved as ":INPUT ACCEPT [0:0]", never as
+      # the "-P INPUT ACCEPT" that sets it, and iptables adds "-m tcp" to the
+      # saved rule that the command line above does not carry. Grepping for
+      # either command verbatim fails against a correctly saved file.
+      log "persisting the flushed ruleset"
+      netfilter-persistent save
+      if ! grep -q "^:INPUT ACCEPT" /etc/iptables/rules.v4; then
+        log "netfilter-persistent reported success but /etc/iptables/rules.v4 still carries a non-ACCEPT INPUT policy"
+        exit 1
+      fi
+      if ! grep -q -- "-A INPUT -s ${k3s_pod_cidr}.*--dport 22 -j DROP" /etc/iptables/rules.v4; then
+        log "the pod-CIDR SSH drop is missing from /etc/iptables/rules.v4; it would not survive a reboot"
+        exit 1
+      fi
+
+      # -------------------------------------------------------------------
+      # Swap. OCI A1 images ship none, and an OOM kill part-way through a
+      # container build leaves a confusing mess behind.
+      # -------------------------------------------------------------------
+%{ if swap_size_mb > 0 ~}
+      if [ ! -f /swapfile ]; then
+        log "creating a ${swap_size_mb}MB swapfile"
+        fallocate -l "${swap_size_mb}M" /swapfile || \
+          dd if=/dev/zero of=/swapfile bs=1M count="${swap_size_mb}"
+        chmod 600 /swapfile
+        mkswap /swapfile
+        swapon /swapfile
+        grep -q '^/swapfile' /etc/fstab || echo '/swapfile none swap sw 0 0' >> /etc/fstab
+      fi
+%{ else ~}
+      log "swap disabled by swap_size_mb = 0"
+%{ endif ~}
+
+      # -------------------------------------------------------------------
+      # k3s
+      #
+      # --disable=servicelb is REQUIRED, not an optimisation: Traefik runs
+      #   with hostNetwork: true, and the svclb DaemonSet would contend for
+      #   ports 80 and 443.
+      # --disable=metrics-server because HPA is off on a single node.
+      # local-storage is deliberately KEPT: it provides the local-path
+      #   StorageClass that values-oci.yaml and Traefik's ACME volume need.
+      # --node-external-ip is deliberately NOT set: OCI's public IP is 1:1
+      #   NAT, the OS only ever sees the private address, and k3s documents
+      #   that setting it breaks externalTrafficPolicy: Local.
+      # -------------------------------------------------------------------
+      #
+      # The installer is NOT piped from https://get.k3s.io. That endpoint
+      # serves whatever is on the k3s master branch at the moment of the
+      # request, as root, on a box being built -- so "pinned k3s version"
+      # described the binary and said nothing about the 38KB of shell that
+      # chooses and installs it. Measured: get.k3s.io and the script tagged
+      # for this release are different files (38693 vs 36501 bytes).
+      #
+      # Two locks instead, both of which have to agree:
+      #   * the URL is the install.sh tagged for exactly ${k3s_version}, so
+      #     the script and the binary it installs come from one release;
+      #   * its sha256 is pinned in a variable, so a rewritten tag is caught.
+      #
+      # Bumping k3s therefore means bumping both k3s_version and
+      # k3s_install_script_sha256. That is deliberate friction: the failure
+      # if you forget is this script refusing to run, at boot, with the
+      # expected and actual digests printed.
+      if ! command -v k3s >/dev/null 2>&1; then
+        log "fetching the k3s ${k3s_version} installer"
+        curl -sfL -o /opt/k3s-install.sh "${k3s_install_url}"
+        if ! echo "${k3s_install_sha256}  /opt/k3s-install.sh" | sha256sum -c -; then
+          log "k3s installer digest does not match k3s_install_script_sha256; refusing to execute it"
+          log "expected ${k3s_install_sha256}, got $(sha256sum /opt/k3s-install.sh | cut -d' ' -f1)"
+          exit 1
+        fi
+
+        log "installing k3s ${k3s_version}"
+        INSTALL_K3S_VERSION="${k3s_version}" sh /opt/k3s-install.sh server \
+            --disable=metrics-server \
+            --disable=servicelb \
+            --write-kubeconfig-mode 600 \
+            --tls-san "$(hostname -I | awk '{print $1}')"
+      fi
+
+      log "waiting for the node object to exist"
+      for attempt in $(seq 1 60); do
+        if k3s kubectl get nodes >/dev/null 2>&1; then
+          break
+        fi
+        sleep 5
+      done
+      k3s kubectl wait --for=condition=Ready node --all --timeout=300s
+
+      # Give the operator a kubeconfig without needing sudo. Still only
+      # reachable over an SSH tunnel: 6443 is closed in the NSG.
+      install -d -m 0700 -o "${operator_username}" -g "${operator_username}" \
+        "/home/${operator_username}/.kube"
+      install -m 0600 -o "${operator_username}" -g "${operator_username}" \
+        /etc/rancher/k3s/k3s.yaml "/home/${operator_username}/.kube/config"
+
+      log "bootstrap complete"
+
+runcmd:
+  - [/opt/bootstrap-k3s.sh]
+
+final_message: "sre-simulator free-tier box ready after $UPTIME seconds"
