@@ -596,7 +596,7 @@ jobs:
         uses: >-
           hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e
         with:
-          # infra/oci/versions.tf floors at 1.9 (cross-variable validation);
+          # infra/oci/versions.tf floors at 1.10 (backend.tf's use_lockfile);
           # infra/ floors lower. Pin one version so a CI failure is never an
           # unannounced Terraform upgrade.
           terraform_version: "1.16.3"

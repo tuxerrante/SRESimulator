@@ -418,12 +418,17 @@ check `tf-oci-init OWNER_ALIAS=jdoe` followed by `tf-oci-plan
 OWNER_ALIAS=alice` would plan alice's resources against jdoe's state — and the
 apply of a plan computed that way reads as a destroy.
 
-Two escape hatches remain, both explicit:
+One escape hatch remains, and it is explicit: `make tf-oci-init-local`
+(`terraform init -backend=false`) for validation and `terraform test`, which
+need no state at all.
 
-- `make tf-oci-init-local` (`terraform init -backend=false`) for validation and
-  `terraform test`, which need no state at all;
-- setting `OCI_STATE_KEY` directly, for the rare case of sharing one state
-  object on purpose.
+`OCI_STATE_KEY` is **not** a second one, despite looking like it. It is accepted
+only as a restatement of the alias-derived key: a value that disagrees with
+`OWNER_ALIAS` is refused at parse time, and a value that agrees is exactly what
+the Makefile would have derived anyway. Sharing one state object on purpose is
+therefore done by sharing the `OWNER_ALIAS` it is derived from — which is the
+point, because the key and the resource names the plan carries then cannot say
+different things.
 
 Worth stating plainly, because it partly defeats the purpose: this makes the
 free path depend on the OCI tenancy for its own state. Back it up —
