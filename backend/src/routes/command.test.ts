@@ -15,6 +15,11 @@ const mocks = vi.hoisted(() => ({
   resolveAngleBracketPlaceholders: vi.fn(),
   getSessionStore: vi.fn(),
   sessionGet: vi.fn(),
+  chargeAiBudget: vi.fn(),
+}));
+
+vi.mock("../lib/ai-budget", () => ({
+  chargeAiBudget: mocks.chargeAiBudget,
 }));
 
 vi.mock("../lib/ai-config", () => ({
@@ -101,6 +106,7 @@ describe("commandRouter", () => {
     vi.clearAllMocks();
     mocks.getAiReadiness.mockReturnValue({ ready: true, mockMode: false });
     mocks.shouldDegradeOnQuotaExhausted.mockReturnValue(true);
+    mocks.chargeAiBudget.mockResolvedValue("ok");
     mocks.buildScenarioContext.mockReturnValue("scenario context");
     mocks.buildSimNow.mockReturnValue("sim now");
     mocks.buildCommandSystemPrompt.mockReturnValue("system prompt");
@@ -263,12 +269,9 @@ describe("commandRouter", () => {
     const app = express();
     app.use(express.json());
     if (options.budgetExhausted) {
-      // What aiGlobalBudgetLimit leaves behind for the route when the shared
-      // daily budget is spent and the mode is degrade.
-      app.use("/api/command", (_req, res, next) => {
-        res.locals.aiBudgetExhausted = true;
-        next();
-      });
+      // What chargeAiBudget answers the route when the shared daily budget is
+      // spent and the mode is degrade: nothing written, decision handed back.
+      mocks.chargeAiBudget.mockResolvedValue("exhausted");
     }
     app.use("/api/command", commandRouter);
     const server = await new Promise<Server>((resolve) => {

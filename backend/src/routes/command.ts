@@ -7,7 +7,7 @@ import {
   isCommandTypeAllowedForPlatform,
 } from "../lib/platform-profiles";
 import { generateAiText, AiQuotaExhaustedError, AiThrottledError } from "../lib/ai-runtime";
-import { isAiBudgetExhausted } from "../lib/ai-budget";
+import { chargeAiBudget } from "../lib/ai-budget";
 import {
   buildScenarioContext,
   buildSimNow,
@@ -198,10 +198,18 @@ commandRouter.post("/", async (req: Request, res: Response) => {
       return;
     }
 
-    // The shared daily budget is already spent, so the provider can only
-    // answer 429. Raising the same error the provider would raise keeps one
-    // degraded path instead of two.
-    if (isAiBudgetExhausted(res)) {
+    // Charged here, after mock mode and the readiness check have returned:
+    // middleware would have charged the shared day for requests that never
+    // reach a provider. A spent budget can only come back 429, so raising the
+    // error the provider would have raised keeps one degraded path, not two.
+    const budget = await chargeAiBudget(res);
+    if (budget === "answered") {
+      return;
+    }
+    if (budget === "exhausted") {
+      // The existing catch applies `AI_DEGRADE_ON_QUOTA_EXHAUSTED`, so this
+      // route answers a spent shared budget exactly as it answers a spent
+      // provider quota -- one degraded path, not two.
       throw new AiQuotaExhaustedError(
         "daily",
         "The shared AI request budget for today is spent.",

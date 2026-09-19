@@ -3,7 +3,7 @@ import { loadKnowledgeSections, queryKnowledgeSections } from "../lib/knowledge"
 import { getRuntimePlatformProfile } from "../lib/platform-profiles";
 import { buildSystemPrompt } from "../lib/prompts/system";
 import { getAiReadiness, shouldDegradeOnQuotaExhausted } from "../lib/ai-config";
-import { isAiBudgetExhausted } from "../lib/ai-budget";
+import { chargeAiBudget } from "../lib/ai-budget";
 import { generateMockChatResponse } from "../lib/mock-ai";
 import {
   streamAiText,
@@ -144,11 +144,19 @@ chatRouter.post("/", async (req: Request, res: Response) => {
       return;
     }
 
-    // Answered before any prompt is built: the shared budget is spent, so the
-    // provider can only answer 429, and a 429 here would read as an outage for
-    // the rest of the day. These are the same frames the mid-stream quota path
-    // emits, so the client cannot tell which side of the call ran out.
-    if (isAiBudgetExhausted(res) && !shouldDegradeOnQuotaExhausted()) {
+    // Charged here, after every branch above that answers without a
+    // provider: a malformed payload, an expired session, a scenario
+    // mismatch, mock mode and an unready runtime have all returned already,
+    // so none of them can spend a slot the provider never saw. Before any
+    // prompt is built, because a spent budget can only come back 429 and a
+    // 429 here would read as an outage for the rest of the day.
+    const budget = await chargeAiBudget(res);
+    if (budget === "answered") {
+      // Already refused with the structured budget body -- code, scope,
+      // resetAt -- which is strictly more than this route could say alone.
+      return;
+    }
+    if (budget === "exhausted" && !shouldDegradeOnQuotaExhausted()) {
       // Degradation switched off: answer the way a provider throttle is
       // answered, but without spending a request proving what is already known.
       res.status(429).json({
@@ -156,7 +164,9 @@ chatRouter.post("/", async (req: Request, res: Response) => {
       });
       return;
     }
-    if (isAiBudgetExhausted(res)) {
+    if (budget === "exhausted") {
+      // The same frames the mid-stream quota path emits, so the client cannot
+      // tell which side of the call ran out.
       console.warn("[chat] AI budget exhausted (daily); returning simulated response");
       res.setHeader("Content-Type", "text/event-stream");
       res.setHeader("Cache-Control", "no-cache");

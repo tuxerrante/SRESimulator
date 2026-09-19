@@ -1,5 +1,6 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { Request, RequestHandler, Response } from "express";
+import type { Response } from "express";
+import type { AiBudgetOutcome } from "./ai-budget";
 
 const TEST_ENV_KEYS = [
   "AI_PROVIDER",
@@ -9,6 +10,7 @@ const TEST_ENV_KEYS = [
   "AI_GLOBAL_MINUTE_MAX",
   "AI_GLOBAL_DAILY_EXHAUSTED_MODE",
   "AI_GLOBAL_BUDGET_FAIL_MODE",
+  "AI_DEGRADE_ON_QUOTA_EXHAUSTED",
   "AI_RATE_LIMIT_REDIS_URL",
   "AI_OPENROUTER_API_KEY",
   "AI_OPENROUTER_BASE_URL",
@@ -62,22 +64,21 @@ function createResponse(): FakeResponse {
   return response;
 }
 
-interface RunResult {
+interface ChargeResult {
   res: FakeResponse;
-  nextCalls: number;
+  outcome: AiBudgetOutcome;
 }
 
-async function run(handler: RequestHandler): Promise<RunResult> {
+/**
+ * The budget is charged by the route, not by middleware, so a case exercises
+ * it the way a route does: hand it a response and read the outcome back.
+ */
+async function charge(
+  chargeAiBudget: (res: Response) => Promise<AiBudgetOutcome>,
+): Promise<ChargeResult> {
   const res = createResponse();
-  let nextCalls = 0;
-  await (handler(
-    {} as Request,
-    res as unknown as Response,
-    () => {
-      nextCalls += 1;
-    },
-  ) as unknown as Promise<void>);
-  return { res, nextCalls };
+  const outcome = await chargeAiBudget(res as unknown as Response);
+  return { res, outcome };
 }
 
 /**
@@ -92,8 +93,8 @@ async function loadBudget(): Promise<typeof import("./ai-budget")> {
 
 /**
  * Same, with a store that records which windows were consumed. The snapshot
- * only reports the last decision the middleware *remembered*, so it cannot see
- * a window that was charged and then discarded -- only the store can.
+ * only reports the last decision the charge *remembered*, so it cannot see a
+ * window that was charged and then discarded -- only the store can.
  */
 async function loadBudgetWithRecordingStore(): Promise<{
   budget: typeof import("./ai-budget");
@@ -134,7 +135,7 @@ async function loadBudgetWithBrokenStore(): Promise<typeof import("./ai-budget")
   return import("./ai-budget");
 }
 
-describe("aiGlobalBudgetLimit", () => {
+describe("chargeAiBudget", () => {
   beforeEach(() => {
     restoreTestEnv();
     vi.doUnmock("./rate-limit");
@@ -157,49 +158,47 @@ describe("aiGlobalBudgetLimit", () => {
   it("stays out of the way for providers without a shared free-tier cap", async () => {
     process.env.AI_PROVIDER = "azure";
     process.env.AI_GLOBAL_MINUTE_MAX = "1";
-    const { aiGlobalBudgetLimit, isAiBudgetExhausted } = await loadBudget();
+    const { chargeAiBudget } = await loadBudget();
 
-    const first = await run(aiGlobalBudgetLimit);
-    const second = await run(aiGlobalBudgetLimit);
+    const first = await charge(chargeAiBudget);
+    const second = await charge(chargeAiBudget);
 
-    expect(first.nextCalls).toBe(1);
+    expect(first.outcome).toBe("ok");
     // The minute limit of 1 would have refused this one if the budget were on.
-    expect(second.nextCalls).toBe(1);
+    expect(second.outcome).toBe("ok");
     expect(second.res.statusCode).toBeNull();
     expect(second.res.headers).toEqual({});
-    expect(isAiBudgetExhausted(second.res as unknown as Response)).toBe(false);
   });
 
   it("can be switched on explicitly for another provider", async () => {
     process.env.AI_PROVIDER = "azure";
     process.env.AI_GLOBAL_BUDGET_ENABLED = "true";
-    const { aiGlobalBudgetLimit } = await loadBudget();
+    const { chargeAiBudget } = await loadBudget();
 
-    const { res, nextCalls } = await run(aiGlobalBudgetLimit);
+    const { res, outcome } = await charge(chargeAiBudget);
 
-    expect(nextCalls).toBe(1);
+    expect(outcome).toBe("ok");
     expect(res.headers["x-sresim-ai-budget"]).toBe("ok");
   });
 
-  it("labels an affordable request ok and passes it on", async () => {
-    const { aiGlobalBudgetLimit, isAiBudgetExhausted } = await loadBudget();
+  it("labels an affordable request ok and lets the route proceed", async () => {
+    const { chargeAiBudget } = await loadBudget();
 
-    const { res, nextCalls } = await run(aiGlobalBudgetLimit);
+    const { res, outcome } = await charge(chargeAiBudget);
 
-    expect(nextCalls).toBe(1);
+    expect(outcome).toBe("ok");
     expect(res.statusCode).toBeNull();
     expect(res.headers["x-sresim-ai-budget"]).toBe("ok");
-    expect(isAiBudgetExhausted(res as unknown as Response)).toBe(false);
   });
 
   it("refuses a minute overrun with a retryable 429", async () => {
     process.env.AI_GLOBAL_MINUTE_MAX = "1";
-    const { aiGlobalBudgetLimit } = await loadBudget();
+    const { chargeAiBudget } = await loadBudget();
 
-    await run(aiGlobalBudgetLimit);
-    const { res, nextCalls } = await run(aiGlobalBudgetLimit);
+    await charge(chargeAiBudget);
+    const { res, outcome } = await charge(chargeAiBudget);
 
-    expect(nextCalls).toBe(0);
+    expect(outcome).toBe("answered");
     expect(res.statusCode).toBe(429);
     expect(res.headers["x-sresim-ai-budget"]).toBe("minute-exhausted");
     expect(res.headers["retry-after"]).toBeDefined();
@@ -216,11 +215,11 @@ describe("aiGlobalBudgetLimit", () => {
     process.env.AI_GLOBAL_MINUTE_MAX = "1";
     process.env.AI_GLOBAL_DAILY_MAX = "5";
     const { budget, consumedKeys } = await loadBudgetWithRecordingStore();
-    const { aiGlobalBudgetLimit, getAiBudgetSnapshot } = budget;
+    const { chargeAiBudget, getAiBudgetSnapshot } = budget;
 
-    await run(aiGlobalBudgetLimit);
-    const refusedFirst = await run(aiGlobalBudgetLimit);
-    const refusedSecond = await run(aiGlobalBudgetLimit);
+    await charge(chargeAiBudget);
+    const refusedFirst = await charge(chargeAiBudget);
+    const refusedSecond = await charge(chargeAiBudget);
 
     expect(refusedFirst.res.statusCode).toBe(429);
     expect(refusedSecond.res.statusCode).toBe(429);
@@ -239,53 +238,75 @@ describe("aiGlobalBudgetLimit", () => {
     });
   });
 
-  it("degrades rather than rejecting when the daily budget is spent", async () => {
+  it("hands a spent day back to the route rather than answering for it", async () => {
     process.env.AI_GLOBAL_DAILY_MAX = "1";
-    const { aiGlobalBudgetLimit, isAiBudgetExhausted } = await loadBudget();
+    const { chargeAiBudget } = await loadBudget();
 
-    await run(aiGlobalBudgetLimit);
-    const { res, nextCalls } = await run(aiGlobalBudgetLimit);
+    await charge(chargeAiBudget);
+    const { res, outcome } = await charge(chargeAiBudget);
 
-    expect(nextCalls).toBe(1);
+    expect(outcome).toBe("exhausted");
     expect(res.statusCode).toBeNull();
-    expect(res.headers["x-sresim-ai-budget"]).toBe("degraded");
-    expect(isAiBudgetExhausted(res as unknown as Response)).toBe(true);
+    // The header states what was observed, not how the route will answer:
+    // chat and command turn AI_DEGRADE_ON_QUOTA_EXHAUSTED=false into a 429
+    // while scenario still returns a playable catalog session, so a header
+    // promising `degraded` would be wrong on two routes out of three -- and
+    // it is written before the answer exists.
+    expect(res.headers["x-sresim-ai-budget"]).toBe("daily-exhausted");
   });
 
   it("rejects the daily overrun instead when the mode says reject", async () => {
     process.env.AI_GLOBAL_DAILY_MAX = "1";
     process.env.AI_GLOBAL_DAILY_EXHAUSTED_MODE = "reject";
-    const { aiGlobalBudgetLimit, isAiBudgetExhausted } = await loadBudget();
+    const { chargeAiBudget } = await loadBudget();
 
-    await run(aiGlobalBudgetLimit);
-    const { res, nextCalls } = await run(aiGlobalBudgetLimit);
+    await charge(chargeAiBudget);
+    const { res, outcome } = await charge(chargeAiBudget);
 
-    expect(nextCalls).toBe(0);
+    expect(outcome).toBe("answered");
     expect(res.statusCode).toBe(429);
     expect(res.headers["x-sresim-ai-budget"]).toBe("daily-exhausted");
     expect(res.body).toMatchObject({ code: "ai_budget_exhausted", scope: "daily" });
-    expect(isAiBudgetExhausted(res as unknown as Response)).toBe(false);
+  });
+
+  it("does not let AI_DEGRADE_ON_QUOTA_EXHAUSTED decide this limiter's answer", async () => {
+    // The two switches are about different things and were briefly conflated.
+    // `AI_GLOBAL_DAILY_EXHAUSTED_MODE` is this limiter's: reject, or hand
+    // back. `AI_DEGRADE_ON_QUOTA_EXHAUSTED` is the routes', and scenario
+    // reads it as a relabel rather than a refusal -- so reading it here would
+    // have turned a playable catalog session into a 429.
+    process.env.AI_GLOBAL_DAILY_MAX = "1";
+    process.env.AI_DEGRADE_ON_QUOTA_EXHAUSTED = "false";
+    const { chargeAiBudget } = await loadBudget();
+
+    await charge(chargeAiBudget);
+    const { res, outcome } = await charge(chargeAiBudget);
+
+    expect(outcome).toBe("exhausted");
+    expect(res.statusCode).toBeNull();
   });
 
   it("fails closed when the budget store cannot answer", async () => {
-    const { aiGlobalBudgetLimit, isAiBudgetExhausted } = await loadBudgetWithBrokenStore();
+    const { chargeAiBudget } = await loadBudgetWithBrokenStore();
 
-    const { res, nextCalls } = await run(aiGlobalBudgetLimit);
+    const { res, outcome } = await charge(chargeAiBudget);
 
     // Closed, not open: an unreadable counter must never authorise spending on
     // a shared account. It is affordable only because the route degrades.
-    expect(nextCalls).toBe(1);
-    expect(res.headers["x-sresim-ai-budget"]).toBe("degraded");
-    expect(isAiBudgetExhausted(res as unknown as Response)).toBe(true);
+    expect(outcome).toBe("exhausted");
+    // Not `daily-exhausted`: nothing was observed here, let alone spent, and
+    // an operator reading headers during an incident needs the outage to be
+    // distinguishable from a real cap.
+    expect(res.headers["x-sresim-ai-budget"]).toBe("store-unavailable");
   });
 
   it("says the store is unreadable, not that the day is spent, when it refuses", async () => {
     process.env.AI_GLOBAL_DAILY_EXHAUSTED_MODE = "reject";
-    const { aiGlobalBudgetLimit } = await loadBudgetWithBrokenStore();
+    const { chargeAiBudget } = await loadBudgetWithBrokenStore();
 
-    const { res, nextCalls } = await run(aiGlobalBudgetLimit);
+    const { res, outcome } = await charge(chargeAiBudget);
 
-    expect(nextCalls).toBe(0);
+    expect(outcome).toBe("answered");
     // 503, not 429: nothing was observed and nothing was spent. Calling this
     // a daily exhaustion would tell the client to come back tomorrow for what
     // is usually a blip, and would send the operator reading the response
@@ -303,44 +324,26 @@ describe("aiGlobalBudgetLimit", () => {
     process.env.AI_GLOBAL_MINUTE_MAX = "1";
     const { budget, consumedKeys } = await loadBudgetWithRecordingStore();
 
-    const first = await run(budget.aiGlobalBudgetLimit);
-    const second = await run(budget.aiGlobalBudgetLimit);
+    const first = await charge(budget.chargeAiBudget);
+    const second = await charge(budget.chargeAiBudget);
 
     // The minute limit of 1 would have refused the second request if the
     // budget were charged. The free-e2e gate drives four players through this
     // path with AI_MOCK_MODE=true.
-    expect(first.nextCalls).toBe(1);
-    expect(second.nextCalls).toBe(1);
+    expect(first.outcome).toBe("ok");
+    expect(second.outcome).toBe("ok");
     expect(second.res.headers).toEqual({});
     expect(consumedKeys).toEqual([]);
   });
 
-  it("charges nothing on a route that answers without calling a provider", async () => {
-    process.env.AI_GLOBAL_MINUTE_MAX = "1";
-    const { budget, consumedKeys } = await loadBudgetWithRecordingStore();
-    let callsProvider = false;
-    const limit = budget.createAiGlobalBudgetLimit(() => callsProvider);
-
-    const exempt = await run(limit);
-    callsProvider = true;
-    const billable = await run(limit);
-
-    expect(exempt.nextCalls).toBe(1);
-    expect(exempt.res.headers).toEqual({});
-    expect(billable.res.headers["x-sresim-ai-budget"]).toBe("ok");
-    // The predicate is read per request, not captured at mount time.
-    expect(consumedKeys).toEqual(["global:ai:minute", "global:ai:day"]);
-  });
-
   it("fails open only when explicitly configured to", async () => {
     process.env.AI_GLOBAL_BUDGET_FAIL_MODE = "open";
-    const { aiGlobalBudgetLimit, isAiBudgetExhausted } = await loadBudgetWithBrokenStore();
+    const { chargeAiBudget } = await loadBudgetWithBrokenStore();
 
-    const { res, nextCalls } = await run(aiGlobalBudgetLimit);
+    const { res, outcome } = await charge(chargeAiBudget);
 
-    expect(nextCalls).toBe(1);
+    expect(outcome).toBe("ok");
     expect(res.headers["x-sresim-ai-budget"]).toBe("fail-open");
-    expect(isAiBudgetExhausted(res as unknown as Response)).toBe(false);
   });
 });
 
@@ -367,15 +370,15 @@ describe("getAiBudgetSnapshot", () => {
   it("reports the budget without spending any of it", async () => {
     process.env.AI_GLOBAL_DAILY_MAX = "1";
     process.env.AI_GLOBAL_MINUTE_MAX = "1";
-    const { aiGlobalBudgetLimit, getAiBudgetSnapshot } = await loadBudget();
+    const { chargeAiBudget, getAiBudgetSnapshot } = await loadBudget();
 
     await getAiBudgetSnapshot();
     await getAiBudgetSnapshot();
-    const { res, nextCalls } = await run(aiGlobalBudgetLimit);
+    const { res, outcome } = await charge(chargeAiBudget);
 
     // The banner polls this endpoint; if describing the budget consumed it, a
     // visitor watching the page would exhaust the day on their own.
-    expect(nextCalls).toBe(1);
+    expect(outcome).toBe("ok");
     expect(res.headers["x-sresim-ai-budget"]).toBe("ok");
   });
 
@@ -398,9 +401,9 @@ describe("getAiBudgetSnapshot", () => {
 
   it("reports degraded once the daily budget is spent", async () => {
     process.env.AI_GLOBAL_DAILY_MAX = "1";
-    const { aiGlobalBudgetLimit, getAiBudgetSnapshot } = await loadBudget();
+    const { chargeAiBudget, getAiBudgetSnapshot } = await loadBudget();
 
-    await run(aiGlobalBudgetLimit);
+    await charge(chargeAiBudget);
     const snapshot = await getAiBudgetSnapshot();
 
     expect(snapshot.dailyRemaining).toBe(0);
@@ -462,11 +465,11 @@ describe("getAiBudgetSnapshot", () => {
 
   it("stops calling the day spent once the window it was spent in has rolled", async () => {
     process.env.AI_GLOBAL_DAILY_MAX = "1";
-    const { aiGlobalBudgetLimit, getAiBudgetSnapshot } = await loadBudget();
+    const { chargeAiBudget, getAiBudgetSnapshot } = await loadBudget();
     vi.useFakeTimers();
     try {
       vi.setSystemTime(new Date("2026-09-18T12:00:00.000Z"));
-      await run(aiGlobalBudgetLimit);
+      await charge(chargeAiBudget);
       const spent = await getAiBudgetSnapshot();
       expect(spent.degraded).toBe(true);
 
