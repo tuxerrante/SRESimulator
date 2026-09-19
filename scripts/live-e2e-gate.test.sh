@@ -172,8 +172,51 @@ done
 # visits exactly the two the job names -- but a one-hop scan would be a
 # guarantee that quietly stops holding the first time someone factors a step
 # out into a nested action, which is precisely when nobody re-reads this file.
+# Folded first, then grepped. GitHub accepts `uses:` as a block scalar with
+# the reference on the following, more-indented lines, and that is the house
+# style here for long SHA-pinned refs -- ci.yml alone writes `uses: >-` 39
+# times, and setup-bun-toolchain/action.yml three. Today every local `./`
+# reference happens to be short enough to sit on one line, so a single-line
+# grep reads them all; the first nested local action written in the
+# surrounding style would be skipped silently, and a skipped action is exactly
+# the one this walk exists to read.
+#
+# Joined with a space, which is what YAML folding does, so a reference that
+# really was wrapped comes back as two fields and still cannot masquerade as
+# a `./` path.
+fold_block_scalars() {
+  awk '
+    function flush() {
+      if (pending) { print prefix "uses: " buf; pending = 0; buf = "" }
+    }
+    {
+      indent = match($0, /[^ ]/) - 1
+      if (indent < 0) { indent = 0 }
+    }
+    pending && /^[[:space:]]*$/ { next }
+    pending && indent > key_indent {
+      value = $0
+      sub(/^[[:space:]]+/, "", value)
+      sub(/[[:space:]]+$/, "", value)
+      buf = (buf == "" ? value : buf " " value)
+      next
+    }
+    pending { flush() }
+    /^[[:space:]]*-?[[:space:]]*uses:[[:space:]]*[>|][-+0-9]*[[:space:]]*$/ {
+      key_indent = index($0, "uses:") - 1
+      prefix = substr($0, 1, key_indent)
+      pending = 1
+      buf = ""
+      next
+    }
+    { print }
+    END { flush() }
+  '
+}
+
 collect_local_uses() {
-  grep -Eo 'uses: \./[^[:space:]]+' | sed 's|^uses: \./||' | sort -u
+  fold_block_scalars |
+    grep -Eo 'uses: \./[^[:space:]]+' | sed 's|^uses: \./||' | sort -u
 }
 
 free_e2e_actions="$( collect_local_uses <<<"$free_e2e_block" )"
