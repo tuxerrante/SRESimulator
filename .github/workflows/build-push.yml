@@ -338,17 +338,43 @@ jobs:
           # the count and would otherwise be caught only once live.
           #
           # A by-digest push has no platform in its descriptor, so the source
-          # is the image config: `.Image` is populated for a single-platform
-          # reference and carries OS/Architecture.
+          # is the image config, read as `{{json .Image}}`.
+          #
+          # JSON, rather than `.Image.OS` and `.Image.Architecture` through a
+          # scalar template, because that form is not safe on every shape this
+          # step can be handed. buildx enables provenance attestations by
+          # default on a registry push, so the pushed digest is normally an
+          # OCI *index* carrying the image manifest plus an `unknown/unknown`
+          # attestation manifest rather than a bare image manifest. imagetools
+          # drops the attestation, so with one real platform `.Image` is still
+          # a single image object and the scalar form does work -- verified
+          # against a local registry both with and without
+          # `--provenance=mode=min`.
+          #
+          # It stops working the moment a digest carries two real platforms:
+          # `.Image` is then a map keyed by platform, and the scalar template
+          # prints `<no value>/<no value>` *and exits 0*. The JSON form tells
+          # those two shapes apart instead of yielding a string that means
+          # nothing, and the count assertion below names the cause rather than
+          # reporting both architectures as absent.
           source_args=()
           platforms=()
           for digest in "${digests[@]}"; do
             ref="${IMAGE_REF}@sha256:${digest}"
             source_args+=("${ref}")
-            platforms+=("$(
-              docker buildx imagetools inspect \
-                --format '{{.Image.OS}}/{{.Image.Architecture}}' "${ref}"
-            )")
+            mapfile -t leg < <(
+              docker buildx imagetools inspect --format '{{json .Image}}' \
+                "${ref}" \
+                | jq -r 'if has("os") then "\(.os)/\(.architecture)"
+                         else keys[] end'
+            )
+            if [[ "${#leg[@]}" -ne 1 ]]; then
+              echo "::error::${ref} advertises ${#leg[@]} platforms" \
+                "(${leg[*]-none}). Each matrix leg must push exactly one," \
+                "because the merge below names one digest per architecture."
+              exit 1
+            fi
+            platforms+=("${leg[0]}")
           done
           echo "Digest platforms: ${platforms[*]}"
 
