@@ -242,6 +242,47 @@ in a different way, so each is locked by an assertion in
    `templates/deployment.yaml` reads `.Values.updateStrategy`; the other
    spelling is accepted and ignored.
 
+## The cloud-config is gzipped
+
+`compute.tf` sets `user_data = base64gzip(local.cloud_init)`, not
+`base64encode`. OCI caps `metadata` plus `extendedMetadata` at 32,000 bytes and
+enforces it at launch; the rendered cloud-config is 27,136 bytes — mostly the
+12,632-byte Traefik manifest embedded in it — which plain base64 inflates to
+36,184. Gzipped it is 13,356, and 13,452 with the SSH key beside it.
+
+That refusal would have arrived *after* `terraform apply` had created the VCN,
+the subnet, the NSG and the reserved IP, quoting a byte count rather than the
+file that grew, so a `precondition` on the instance moves it to plan time. The
+check is on the sum, because `ssh_authorized_keys` shares the same budget.
+
+Two things make the compression safe rather than clever:
+
+- cloud-init decompresses user data **before** it decides what the payload is.
+  Verified against the cloud-init that ships in the Ubuntu 24.04 image this box
+  boots, not against its documentation: `DataSourceOracle` base64-decodes the
+  metadata value and hands the raw bytes to `convert_string`, which runs
+  `util.decomp_gzip(bdata, decode=False)` ahead of the MIME/cloud-config test.
+  This exact payload round-tripped back to the same 27,136 bytes beginning
+  `#cloud-config`.
+- `base64gzip` writes a zero mtime into the gzip header, so the value is stable
+  across runs. An unstable one would show a `user_data` diff on every plan and
+  force a replacement of the instance.
+
+The cost is that the Console no longer shows a readable initialization script.
+Read the plaintext locally instead:
+
+```sh
+cd infra/oci
+echo 'local.cloud_init' | terraform console -var-file=terraform.tfvars
+```
+
+`console` evaluates against a backend, so it needs a real `tf-oci-init`;
+`tf-oci-init-local` uses `-backend=false` and console then stops with
+"Backend initialization required". If you only want to read the script, use the
+same `backend_override.tf` selecting the local backend that the CI render step
+drops in — `.gitignore` covers `infra/oci/*_override.tf`, so it cannot be
+committed by accident.
+
 ## Why apt runs from the bootstrap script
 
 There is no `package_update` / `package_upgrade` / `packages:` block in
@@ -466,7 +507,7 @@ therefore run on fork pull requests:
 | --- | --- |
 | `terraform fmt -check -recursive` from `infra/` | both roots, including this nested one |
 | `init -backend=false`, `validate`, `test` in `infra/` | the Azure root, which no workflow ran before |
-| `init -backend=false`, `validate`, `test` here | 117 test cases, all on `mock_provider` |
+| `init -backend=false`, `validate`, `test` here | 118 test cases, all on `mock_provider` |
 | render `local.cloud_init`, then `bash -n` + `shellcheck` | the bootstrap script the instance actually boots |
 
 The last step is worth explaining. It renders through `terraform console`

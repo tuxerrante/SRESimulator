@@ -542,4 +542,110 @@ assert_contains "Terraform >= 1.$REQUIRED_MINOR" "$ROOT_DIR/infra/oci/README.md"
 # one, and OCI's S3 shim is the reason to want it gone.
 assert_contains 'export AWS_REQUEST_CHECKSUM_CALCULATION' "$OCI_MAKEFILE"
 
+# --- 14. every backend value that reaches a shell is vetted at parse time --
+# OWNER_ALIAS was guarded in an earlier round and the four state settings
+# beside it were not, though they arrive on the same two channels and land in
+# the same recipes: `oci os bucket create --name "..."` and terraform's
+# -backend-config arguments. Both attacks below were reproduced against
+# recipes copied verbatim from the makefile before the guard existed.
+#
+# Executed rather than grepped, for the reason section 8 gives: a string
+# assertion had already approved an exploitable makefile. The canary is the
+# half that matters -- an exit code alone cannot tell "refused" from "ran the
+# payload and then failed for some unrelated reason".
+OCI_CANARY="$OCI_MAKE_DIR/pwned"
+cat > "$TERRAFORM_STUB_DIR/oci" <<'STUB'
+#!/usr/bin/env bash
+exit 0
+STUB
+chmod +x "$TERRAFORM_STUB_DIR/oci"
+
+oci_make_raw() {
+  PATH="$TERRAFORM_STUB_DIR:$PATH" make -C "$OCI_MAKE_DIR" "$@" >/dev/null 2>&1
+}
+
+backend_value_is_refused() {
+  local label=$1
+  shift
+  rm -f "$OCI_CANARY"
+  if oci_make_raw OCI_BACKEND_ENV_FILE=/dev/null "$@"; then
+    fail "infra/oci/Makefile accepted $label"
+  fi
+  if [ -e "$OCI_CANARY" ]; then
+    fail "$label executed its payload"
+  fi
+}
+
+# A command-line assignment is a *recursive* variable, so the first reference
+# expands it -- reading the value to check it is already running it. This is
+# what $(value ...) throughout the guard is for, and the canary is what proves
+# it: the endpoint default references the namespace, so an unguarded makefile
+# runs this while composing a URL.
+backend_value_is_refused "a \$(shell ...) OCI_STATE_NAMESPACE" \
+  "OCI_STATE_NAMESPACE=\$(shell touch $OCI_CANARY)" help
+backend_value_is_refused "a \$(shell ...) OCI_STATE_BUCKET" \
+  "OCI_STATE_BUCKET=\$(shell touch $OCI_CANARY)" help
+backend_value_is_refused "a \$(shell ...) OCI_STATE_REGION" \
+  "OCI_STATE_REGION=\$(shell touch $OCI_CANARY)" help
+backend_value_is_refused "a \$(shell ...) OCI_STATE_COMPARTMENT_OCID" \
+  "OCI_STATE_COMPARTMENT_OCID=\$(shell touch $OCI_CANARY)" help
+backend_value_is_refused "a \$(shell ...) OCI_STATE_ENDPOINT" \
+  "OCI_STATE_ENDPOINT=\$(shell touch $OCI_CANARY)" help
+
+# `-include $(OCI_BACKEND_ENV_FILE)` expands the variable to find the file, so
+# this one has to be checked before the include and not beside the others.
+rm -f "$OCI_CANARY"
+if oci_make_raw "OCI_BACKEND_ENV_FILE=\$(shell touch $OCI_CANARY)" help; then
+  fail "infra/oci/Makefile accepted a \$(shell ...) OCI_BACKEND_ENV_FILE"
+fi
+if [ -e "$OCI_CANARY" ]; then
+  fail "a \$(shell ...) OCI_BACKEND_ENV_FILE ran while make expanded the -include"
+fi
+
+# The second attack, and the one -n cannot see: the value closes the double
+# quote the recipe wrote and the rest runs as its own command. Run for real
+# against tf-oci-bootstrap, where the bucket name is interpolated into
+# `oci os bucket create --name "..."`, with `oci` stubbed out.
+backend_value_is_refused "a quote-closing OCI_STATE_BUCKET" \
+  "OCI_STATE_BUCKET=x\"; touch $OCI_CANARY; echo \"" \
+  OCI_STATE_COMPARTMENT_OCID=ocid1.compartment.oc1..aaaa tf-oci-bootstrap
+
+# .oci-backend.env is the channel with no other validation on it -- an
+# operator-edited file make reads directly -- so the guard has to sit after
+# the include as well as before it.
+OCI_ENV_FIXTURE="$OCI_MAKE_DIR/backend.env"
+printf 'OCI_STATE_BUCKET=x"; touch %s; echo "\n' "$OCI_CANARY" > "$OCI_ENV_FIXTURE"
+rm -f "$OCI_CANARY"
+if oci_make_raw "OCI_BACKEND_ENV_FILE=$OCI_ENV_FIXTURE" \
+  OCI_STATE_COMPARTMENT_OCID=ocid1.compartment.oc1..aaaa tf-oci-bootstrap; then
+  fail "infra/oci/Makefile accepted a quote-closing OCI_STATE_BUCKET from the env file"
+fi
+if [ -e "$OCI_CANARY" ]; then
+  fail "a quote-closing OCI_STATE_BUCKET from the env file executed its payload"
+fi
+
+# The happy paths. These are not decoration: the endpoint guard had to split
+# the variable in two -- the operator's value is vetted on its own and the
+# default is composed afterwards -- so both the composed default and an
+# explicit override have to be proven to still reach terraform unchanged.
+: > "$TERRAFORM_ARGV_FILE"
+if ! oci_make_raw OCI_BACKEND_ENV_FILE=/dev/null OWNER_ALIAS=jdoe \
+  OCI_STATE_BUCKET=sre-state OCI_STATE_NAMESPACE=abc123 tf-oci-init; then
+  fail "infra/oci/Makefile rejected well-formed backend settings"
+fi
+if ! grep -Fq 'endpoints={s3="https://abc123.compat.objectstorage.eu-frankfurt-1.oraclecloud.com"}' \
+  "$TERRAFORM_ARGV_FILE"; then
+  fail "the default endpoint no longer composes from the namespace and region: $(cat "$TERRAFORM_ARGV_FILE")"
+fi
+
+: > "$TERRAFORM_ARGV_FILE"
+if ! oci_make_raw OCI_BACKEND_ENV_FILE=/dev/null OWNER_ALIAS=jdoe \
+  OCI_STATE_BUCKET=sre-state OCI_STATE_NAMESPACE=abc123 \
+  OCI_STATE_ENDPOINT=https://s3.example.com/path tf-oci-init; then
+  fail "infra/oci/Makefile rejected a well-formed OCI_STATE_ENDPOINT override"
+fi
+if ! grep -Fq 'endpoints={s3="https://s3.example.com/path"}' "$TERRAFORM_ARGV_FILE"; then
+  fail "an explicit OCI_STATE_ENDPOINT no longer reaches terraform: $(cat "$TERRAFORM_ARGV_FILE")"
+fi
+
 echo "terraform gate checks passed."

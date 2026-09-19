@@ -81,9 +81,71 @@ CONFIRM_DESTROY_RAW := $(value CONFIRM_DESTROY)
 export CONFIRM_APPLY_RAW
 export CONFIRM_DESTROY_RAW
 
+# The same allowlist the two guards above apply by hand, factored out because
+# OWNER_ALIAS and OCI_STATE_KEY are not the only values that reach a shell.
+# Every backend setting below is interpolated into a recipe -- into
+# `oci os bucket create --name "..."`, into terraform's -backend-config
+# arguments, into the endpoint URL -- and none of them was vetted, though the
+# two channels they arrive on are exactly the two the guards above exist for.
+# Both attacks were reproduced against recipes copied from this file:
+#
+#   OCI_STATE_NAMESPACE='$$(shell touch /tmp/pwned)'  runs while
+#   OCI_STATE_ENDPOINT expands -- a command-line assignment is a recursive
+#   variable, so the reference *is* the execution;
+#
+#   OCI_STATE_BUCKET='x"; touch /tmp/pwned; echo "'  closes the double quote
+#   the recipe wrote and runs the rest as its own command.
+#
+# .oci-backend.env is the channel that makes this worth fixing rather than
+# noting: it is an operator-edited file make reads with no validation at all,
+# and the comment on OCI_STATE_KEY below already says so about one value while
+# the four beside it went unchecked.
+#
+# $(value ...) throughout, never the variable itself: reading a recursive
+# variable expands it, so any check that reads before it rejects has already
+# run whatever it was trying to refuse.
+OCI_SAFE_ALNUM := a b c d e f g h i j k l m n o p q r s t u v w x y z \
+                  A B C D E F G H I J K L M N O P Q R S T U V W X Y Z \
+                  0 1 2 3 4 5 6 7 8 9
+OCI_SAFE_NAME := $(OCI_SAFE_ALNUM) - . _
+OCI_SAFE_PATH := $(OCI_SAFE_NAME) /
+OCI_SAFE_URL  := $(OCI_SAFE_PATH) :
+
+# $(1) variable name, $(2) permitted characters, $(3) human description,
+# $(4) the name to print if it differs from $(1) -- the endpoint is checked
+# through a holding variable the operator never typed, and an error naming
+# that one would send them looking for a setting that does not exist.
+# `$$` and `#` go first for the reason the OWNER_ALIAS guard spells out: the
+# fold is built with $(eval), which re-parses its argument as makefile text.
+define assert_shell_safe
+ifneq ($$(findstring $$$$,$$(value $(1))),)
+$$(error $(if $(4),$(4),$(1)) must be $(3); it contains a '$$$$')
+endif
+ifneq ($$(findstring \#,$$(value $(1))),)
+$$(error $(if $(4),$(4),$(1)) must be $(3); it contains a hash character)
+endif
+ifneq ($$(strip $$(value $(1))),)
+ifneq ($$(words $$(value $(1))),1)
+$$(error $(if $(4),$(4),$(1)) must be a single whitespace-free value (got: '$$(value $(1))'))
+endif
+endif
+$(1)_RESIDUE := $$(value $(1))
+$$(foreach c,$(2),$$(eval $(1)_RESIDUE := $$$$(subst $$(c),,$$($(1)_RESIDUE))))
+ifneq ($$($(1)_RESIDUE),)
+$$(error $(if $(4),$(4),$(1)) must be $(3); rejected: $$($(1)_RESIDUE))
+endif
+endef
+
 # S3-compatible backend against OCI Object Storage. Populate .oci-backend.env
 # from the console; it is gitignored and holds a Customer Secret Key pair.
 OCI_BACKEND_ENV_FILE ?= .oci-backend.env
+
+# Vetted before the `-include` below rather than beside the others, because
+# `-include $(OCI_BACKEND_ENV_FILE)` expands the variable to find the file:
+# a `$(shell ...)` in the path runs there, before any guard placed after the
+# include could speak.
+$(eval $(call assert_shell_safe,OCI_BACKEND_ENV_FILE,$(OCI_SAFE_PATH),a path of alphanumerics plus -._/))
+
 OCI_STATE_BUCKET     ?=
 OCI_STATE_NAMESPACE  ?=
 OCI_STATE_REGION     ?= eu-frankfurt-1
@@ -177,6 +239,19 @@ endif
 
 -include $(OCI_BACKEND_ENV_FILE)
 
+# After the include, so the file's values are vetted too -- that is the whole
+# point, since the file is the channel with no other check on it. Parse time
+# still, so nothing has reached a shell yet: recipes expand when they run.
+#
+# AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY are deliberately *not* in this
+# list. They are exported into terraform's environment rather than
+# interpolated into a command line, so no quoting of theirs is ever parsed by
+# a shell, and a secret has no business being constrained to an alphabet.
+$(eval $(call assert_shell_safe,OCI_STATE_BUCKET,$(OCI_SAFE_NAME),alphanumeric plus -._))
+$(eval $(call assert_shell_safe,OCI_STATE_NAMESPACE,$(OCI_SAFE_NAME),alphanumeric plus -._))
+$(eval $(call assert_shell_safe,OCI_STATE_REGION,$(OCI_SAFE_NAME),alphanumeric plus -._))
+$(eval $(call assert_shell_safe,OCI_STATE_COMPARTMENT_OCID,$(OCI_SAFE_NAME),an OCID: alphanumeric plus -._))
+
 # Assigned after the include, and from the alias rather than from any of the
 # channels above: .oci-backend.env is an operator-edited file that make reads
 # without any of the parse-time validation the command line just went
@@ -202,7 +277,21 @@ export AWS_SECRET_ACCESS_KEY
 AWS_REQUEST_CHECKSUM_CALCULATION ?= when_required
 export AWS_REQUEST_CHECKSUM_CALCULATION
 
-OCI_STATE_ENDPOINT ?= https://$(OCI_STATE_NAMESPACE).compat.objectstorage.$(OCI_STATE_REGION).oraclecloud.com
+# The endpoint is the one value that cannot be checked where it is written:
+# its default *is* a `$(...)` reference, so the `$$` rejection every other
+# guarded value gets would refuse this file's own text. Split instead --
+# whatever the operator supplied is vetted on its own, and the default is
+# composed afterwards, simply-expanded, out of a namespace and a region that
+# have already passed. `origin` rather than emptiness, because
+# `OCI_STATE_ENDPOINT=` is set-and-empty, which is not unset.
+ifeq ($(origin OCI_STATE_ENDPOINT),undefined)
+OCI_STATE_ENDPOINT_GIVEN :=
+else
+OCI_STATE_ENDPOINT_GIVEN := $(value OCI_STATE_ENDPOINT)
+endif
+$(eval $(call assert_shell_safe,OCI_STATE_ENDPOINT_GIVEN,$(OCI_SAFE_URL),a URL of alphanumerics plus -._/:,OCI_STATE_ENDPOINT))
+
+OCI_STATE_ENDPOINT := $(if $(OCI_STATE_ENDPOINT_GIVEN),$(OCI_STATE_ENDPOINT_GIVEN),https://$(OCI_STATE_NAMESPACE).compat.objectstorage.$(OCI_STATE_REGION).oraclecloud.com)
 
 # A non-empty OWNER_ALIAS is not the same claim as the *right* OWNER_ALIAS.
 # `init` is the only target that records the state object key -- terraform
