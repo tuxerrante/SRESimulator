@@ -287,6 +287,44 @@ run "acme_email_is_substituted" {
 # cloud-init
 # ---------------------------------------------------------------------------
 
+run "the_instance_metadata_fits_inside_the_launch_api_limit" {
+  command = plan
+
+  # OCI caps metadata + extendedMetadata at 32,000 bytes and enforces it at
+  # launch -- after apply has already built the VCN, the subnet, the NSG and
+  # the reserved IP. Plain base64 of this cloud-config is 36,184 bytes, so the
+  # launch would have been refused every time. Nothing else here can catch it:
+  # every run is mock_provider-backed, so no test weighs what the real API
+  # would have measured.
+  assert {
+    condition     = local.metadata_bytes <= 32000
+    error_message = "Instance metadata is ${local.metadata_bytes} bytes; OCI refuses a launch over 32,000."
+  }
+
+  # The size on its own would pass again if someone dropped the compression
+  # and shrank the manifest instead, and that would be fine -- but it would
+  # also pass if base64gzip were replaced by base64encode on a smaller file
+  # and then the file grew back. The gzip header is what makes the property
+  # structural: "H4sI" is the base64 of 1f 8b 08 00, the gzip magic plus the
+  # deflate method and empty flags.
+  #
+  # Depended on by nothing less than the box booting: cloud-init's
+  # DataSourceOracle base64-decodes this value and convert_string runs
+  # decomp_gzip on the bytes before deciding whether it is cloud-config.
+  assert {
+    condition     = startswith(local.user_data, "H4sI")
+    error_message = "user_data must be gzipped before base64 encoding, or it does not fit."
+  }
+
+  # The instance is what ships, and an intermediate local proves nothing about
+  # it -- the same lesson as the gate that asserted a Deployment's template
+  # while the pod ran another image.
+  assert {
+    condition     = oci_core_instance.k3s.metadata.user_data == local.user_data
+    error_message = "The instance must launch with the compressed payload, not with some other rendering."
+  }
+}
+
 run "cloud_init_disables_servicelb_and_keeps_local_storage" {
   command = plan
 

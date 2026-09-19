@@ -58,6 +58,36 @@ locals {
     swap_size_mb       = var.swap_size_mb
     traefik_config     = local.traefik_config_indented
   })
+
+  # gzip, not plain base64, because plain base64 does not fit. OCI caps the
+  # combined metadata and extendedMetadata objects at 32,000 bytes (stated on
+  # the Console's initialization-script field), and the rendered cloud-config
+  # is 27,136 bytes -- mostly the 12,632-byte Traefik manifest embedded in it
+  # -- which base64 inflates to 36,184. Measured with `terraform console`, not
+  # estimated. The instance would have been refused at launch, and no test
+  # here could have caught it: every one of them is mock_provider-backed, so
+  # nothing weighs the metadata the API would have rejected.
+  #
+  # Safe because cloud-init decompresses user data before it decides what it
+  # is. Verified against the cloud-init that ships in the Ubuntu 24.04 image
+  # this box boots, not against the documentation: DataSourceOracle base64
+  # decodes the metadata value into raw bytes, hands it to `convert_string`,
+  # and `convert_string` runs `util.decomp_gzip(bdata, decode=False)` before
+  # the MIME/cloud-config test. This exact payload was decompressed by that
+  # function back to the same 27,136 bytes, beginning `#cloud-config`.
+  #
+  # `base64gzip` writes a zero mtime into the gzip header, so the value is
+  # stable across runs -- checked, because an unstable one would show a
+  # user_data diff on every plan and force a replace of the instance.
+  #
+  # The cost is that the Console no longer shows a readable script. `terraform
+  # console -var-file=... 'local.cloud_init'` prints the plaintext, and the
+  # README says so.
+  user_data = base64gzip(local.cloud_init)
+
+  # ssh_authorized_keys shares the same 32,000-byte budget, so the check is on
+  # the sum rather than on user_data alone.
+  metadata_bytes = length(local.user_data) + length(trimspace(var.ssh_public_key))
 }
 
 resource "oci_core_instance" "k3s" {
@@ -93,13 +123,38 @@ resource "oci_core_instance" "k3s" {
 
   metadata = {
     ssh_authorized_keys = trimspace(var.ssh_public_key)
-    user_data           = base64encode(local.cloud_init)
+    user_data           = local.user_data
   }
 
   lifecycle {
     # A newer Ubuntu image published upstream must not silently destroy and
     # recreate the box on an unrelated apply.
     ignore_changes = [source_details[0].source_id]
+
+    # The limit is the API's, and it is only enforced at launch -- which is
+    # after `terraform apply` has already created the VCN, the subnet, the
+    # NSG and the reserved IP, leaving a half-built stack and an error that
+    # names a byte count rather than the file that grew. A precondition moves
+    # that refusal to plan time, where it costs nothing and can say what to
+    # do about it.
+    #
+    # A limit rather than an equality: the manifest, the bootstrap script and
+    # the operator's SSH key all grow, and the whole point is that the next
+    # person to add 6 KB of cloud-config finds out at plan.
+    precondition {
+      condition     = local.metadata_bytes <= 32000
+      error_message = <<-EOT
+        Instance metadata is ${local.metadata_bytes} bytes, over OCI's 32,000-byte
+        cap on metadata + extendedMetadata. The launch would be refused by the
+        API after the rest of the stack had already been created.
+
+        user_data is the gzipped, base64-encoded cloud-config from
+        cloud-init.yaml.tftpl, which embeds traefik-config.yaml. Shrink one of
+        those two files, or fetch the Traefik manifest at boot instead of
+        embedding it -- noting that embedding is what keeps CI and the box
+        provably on the same file.
+      EOT
+    }
   }
 }
 
