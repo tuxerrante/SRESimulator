@@ -1,6 +1,6 @@
 {
-  "policyName": "stable-frontend-lint-stack-exception",
-  "approvedOn": "2026-09-17",
+  "policyName": "backend-clean-no-exceptions",
+  "approvedOn": "2026-09-19",
   "reviewBy": "upstream-compatible package movement",
   "expectedCounts": {
     "high": 0,

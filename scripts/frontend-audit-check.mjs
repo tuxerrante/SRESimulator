@@ -23,7 +23,7 @@ function requireArgValue(argv, index, flag) {
 function parseArgs(argv) {
   const options = {
     root: process.cwd(),
-    frontendDir: "frontend",
+    workspaceDir: "frontend",
     auditLevel: "high",
   };
 
@@ -34,8 +34,15 @@ function parseArgs(argv) {
       index += 1;
       continue;
     }
-    if (arg === "--frontend-dir") {
-      options.frontendDir = requireArgValue(argv, index, arg);
+    // --frontend-dir is the original spelling and is kept working on purpose.
+    // This script audits one Bun workspace, whichever one it is pointed at;
+    // the name only ever described the single caller that existed. Keeping the
+    // alias means .pre-commit-config.yaml, the Makefile and the nine existing
+    // cases in frontend-audit-check.test.sh all keep passing unedited, which
+    // is what makes this rename provably behaviour-preserving rather than a
+    // rewrite that has to be re-reviewed.
+    if (arg === "--workspace-dir" || arg === "--frontend-dir") {
+      options.workspaceDir = requireArgValue(argv, index, arg);
       index += 1;
       continue;
     }
@@ -56,8 +63,8 @@ function parseArgs(argv) {
   return options;
 }
 
-function loadPolicy(root, frontendDir) {
-  const policyPath = path.join(root, frontendDir, "audit-policy-exceptions.json");
+function loadPolicy(root, workspaceDir) {
+  const policyPath = path.join(root, workspaceDir, "audit-policy-exceptions.json");
   return JSON.parse(readFileSync(policyPath, "utf8"));
 }
 
@@ -88,15 +95,15 @@ function findMatchingException(vulnerability, policy) {
   });
 }
 
-function runAudit(frontendPath) {
+function runAudit(workspacePath) {
   const result =
     process.platform === "win32"
       ? spawnSync("cmd.exe", ["/d", "/s", "/c", "bun audit --json"], {
-          cwd: frontendPath,
+          cwd: workspacePath,
           encoding: "utf8",
         })
       : spawnSync("bun", ["audit", "--json"], {
-          cwd: frontendPath,
+          cwd: workspacePath,
           encoding: "utf8",
         });
 
@@ -217,8 +224,8 @@ function summarizeVulnerabilities(vulnerabilities, policy, minimumSeverity) {
   return { considered, excepted, blocking };
 }
 
-function printSummary(policy, minimumSeverity, counts, summary) {
-  console.log(`Frontend audit policy: ${policy.policyName}`);
+function printSummary(workspaceDir, policy, minimumSeverity, counts, summary) {
+  console.log(`${workspaceDir} audit policy: ${policy.policyName}`);
   console.log(`Approved on: ${policy.approvedOn}`);
   console.log(`Review by: ${policy.reviewBy}`);
   console.log(`Gate threshold: ${minimumSeverity}`);
@@ -241,7 +248,7 @@ function printSummary(policy, minimumSeverity, counts, summary) {
   }
 
   if (summary.blocking.length > 0) {
-    console.error("Blocking frontend audit findings:");
+    console.error(`Blocking ${workspaceDir} audit findings:`);
     for (const entry of summary.blocking) {
       console.error(`- ${entry.name} [${entry.severity}]`);
       if (entry.via) {
@@ -258,10 +265,10 @@ function printSummary(policy, minimumSeverity, counts, summary) {
 }
 
 function main() {
-  const { root, frontendDir, auditLevel } = parseArgs(process.argv.slice(2));
-  const frontendPath = path.join(root, frontendDir);
-  const policy = loadPolicy(root, frontendDir);
-  const report = runAudit(frontendPath);
+  const { root, workspaceDir, auditLevel } = parseArgs(process.argv.slice(2));
+  const workspacePath = path.join(root, workspaceDir);
+  const policy = loadPolicy(root, workspaceDir);
+  const report = runAudit(workspacePath);
   const normalized = normalizeBunAuditReport(report);
   const summary = summarizeVulnerabilities(
     normalized.vulnerabilities,
@@ -269,7 +276,7 @@ function main() {
     auditLevel
   );
 
-  printSummary(policy, auditLevel, normalized.counts, summary);
+  printSummary(workspaceDir, policy, auditLevel, normalized.counts, summary);
 
   if (summary.blocking.length > 0) {
     process.exit(1);
@@ -280,7 +287,7 @@ function main() {
   if (typeof expectedCount === "number" && Number.isFinite(expectedCount)) {
     if (actualCount > expectedCount) {
       console.error(
-        `Expected at most ${expectedCount} ${auditLevel} vulnerabilities in the approved frontend exception set, found ${actualCount}.`
+        `Expected at most ${expectedCount} ${auditLevel} vulnerabilities in the approved ${workspaceDir} exception set, found ${actualCount}.`
       );
       process.exit(1);
     }
@@ -291,7 +298,9 @@ function main() {
     }
   }
 
-  console.log("Frontend audit passed with only approved exception packages remaining.");
+  console.log(
+    `${workspaceDir} audit passed with only approved exception packages remaining.`
+  );
 }
 
 try {
