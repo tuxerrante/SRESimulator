@@ -70,6 +70,40 @@ variable "instance_shape" {
   description = "Compute shape. VM.Standard.A1.Flex is the aarch64 Always Free shape."
   type        = string
   default     = "VM.Standard.A1.Flex"
+
+  # VM.Standard.A1.Flex is the only Ampere A1 shape, and A1 is the only family
+  # inside the Always Free allowance. Every other shape on the list bills by the
+  # hour from the moment it launches.
+  #
+  # This is an allowlist rather than an output warning because of how the
+  # mistake actually happens: a typo -- "VM.Standard.A2.Flex", "VM.Standard.E4.
+  # Flex" -- is accepted by the API, provisions successfully, and produces a
+  # working box that looks exactly like the intended one. Nothing in the apply
+  # output distinguishes a free instance from a billable one, and the first
+  # signal is a bill weeks later. An output cannot stop that; it is read after
+  # the resource exists, which is already too late.
+  #
+  # A deliberate paid upgrade is still available, but has to say so.
+  validation {
+    condition = (
+      var.allow_billable_shape ||
+      contains(["VM.Standard.A1.Flex"], var.instance_shape)
+    )
+    error_message = "instance_shape must be VM.Standard.A1.Flex, the only Always Free shape. Any other shape bills hourly from launch and is indistinguishable from the free one in the apply output, so a typo here is silent. Set allow_billable_shape = true to provision a paid shape deliberately."
+  }
+}
+
+variable "allow_billable_shape" {
+  description = <<-EOT
+    Explicit opt-in required before instance_shape may name a shape outside the
+    Always Free A1 family.
+
+    Setting this also lifts the instance_ocpus and instance_memory_gbs ceilings,
+    which exist to keep the instance inside the same Always Free allowance and
+    are meaningless once the shape is billable.
+  EOT
+  type        = bool
+  default     = false
 }
 
 variable "instance_ocpus" {
@@ -77,9 +111,15 @@ variable "instance_ocpus" {
   type        = number
   default     = 2
 
+  # The ceiling is the Always Free allowance, so it is lifted by the same
+  # opt-in that lifts the shape allowlist -- a deliberate paid shape that could
+  # not be sized past 4 OCPUs would be a pointless upgrade. The floor stays.
   validation {
-    condition     = var.instance_ocpus >= 1 && var.instance_ocpus <= 4
-    error_message = "instance_ocpus must be between 1 and 4 to stay inside the Always Free A1 allowance."
+    condition = (
+      var.instance_ocpus >= 1 &&
+      (var.allow_billable_shape || var.instance_ocpus <= 4)
+    )
+    error_message = "instance_ocpus must be between 1 and 4 to stay inside the Always Free A1 allowance. Set allow_billable_shape = true to size a paid shape past it."
   }
 }
 
@@ -88,9 +128,13 @@ variable "instance_memory_gbs" {
   type        = number
   default     = 12
 
+  # Lifted by allow_billable_shape for the same reason as instance_ocpus.
   validation {
-    condition     = var.instance_memory_gbs >= 6 && var.instance_memory_gbs <= 24
-    error_message = "instance_memory_gbs must be between 6 and 24 to stay inside the Always Free A1 allowance."
+    condition = (
+      var.instance_memory_gbs >= 6 &&
+      (var.allow_billable_shape || var.instance_memory_gbs <= 24)
+    )
+    error_message = "instance_memory_gbs must be between 6 and 24 to stay inside the Always Free A1 allowance. Set allow_billable_shape = true to size a paid shape past it."
   }
 }
 
@@ -254,6 +298,16 @@ variable "k8s_api_allowed_cidrs" {
     `ssh -L 6443:127.0.0.1:6443 <operator>@<ip>`, which `make tf-oci-kubeconfig`
     sets up for you. Exposing 6443 to the internet is the highest-severity
     mistake available in this design.
+
+    Scope of the guarantee: empty means closed *to the internet*, not closed
+    absolutely. An NSG filters traffic crossing the VNIC, and pod-to-host
+    traffic never crosses it, so with the host INPUT chain flushed -- which
+    cloud-init does deliberately, see cloud-init.yaml.tftpl -- a workload on
+    this cluster can reach 6443 on the node. That is not a gap this variable
+    can close, and closing it at the host would buy nothing: the API is
+    reachable in-cluster by design through the kubernetes.default.svc ClusterIP,
+    so a compromised pod never needs the host port. The control that matters
+    for a hostile workload is RBAC on its service account, not a firewall.
   EOT
   type        = list(string)
   default     = []
@@ -351,9 +405,27 @@ variable "ssh_public_key" {
   # and because 22 is closed by default and there is no console password, the
   # result is a box nobody can log into. Rebuilding it is the only recovery,
   # which is a steep price for a truncated copy-paste.
+  #
+  # Counting base64 characters is not enough to prevent that, which is why this
+  # matches the wire format instead. An OpenSSH blob is a length-prefixed type
+  # string followed by the key fields, so its opening bytes -- and therefore a
+  # fixed run of leading base64 characters -- are fully determined by the key
+  # type and cannot vary between keys. Matching that run ties the blob to the
+  # type label in front of it and rejects anything that is merely spelled in the
+  # base64 alphabet. The lengths are the encodings of the real key sizes:
+  # ed25519 is invariant at 68 characters, the three NIST curves at 140/184/232,
+  # and RSA floors at 204 (a 1024-bit modulus).
+  #
+  # Terraform cannot base64-decode this to check it properly: the decoded bytes
+  # are binary and base64decode() insists on valid UTF-8, so it fails on roughly
+  # every real key. Prefix matching is what is actually available here.
+  #
+  # Verified against keys from ssh-keygen for all six type/size combinations,
+  # and against the reported bypass -- a 32-character ed25519 blob -- plus a
+  # blob whose header names a different type than its label.
   validation {
-    condition     = can(regex("^(ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp(256|384|521)) [A-Za-z0-9+/]{32,}={0,3}([[:space:]].*)?$", var.ssh_public_key))
-    error_message = "ssh_public_key must carry base64 key material after the key type, e.g. \"ssh-ed25519 AAAAC3Nza... user@host\". A bare key type installs an authorized-keys line that can never authenticate."
+    condition     = can(regex("^(ssh-ed25519 AAAAC3NzaC1lZDI1NTE5[A-Za-z0-9+/]{48}|ssh-rsa AAAAB3NzaC1y[A-Za-z0-9+/]{192,}={0,2}|ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAy[A-Za-z0-9+/]{110,}={0,2}|ecdsa-sha2-nistp384 AAAAE2VjZHNhLXNoYTItbmlzdHAz[A-Za-z0-9+/]{154,}={0,2}|ecdsa-sha2-nistp521 AAAAE2VjZHNhLXNoYTItbmlzdHA1[A-Za-z0-9+/]{202,}={0,2})([[:space:]].*)?$", var.ssh_public_key))
+    error_message = "ssh_public_key must carry a well-formed OpenSSH blob matching its key type, e.g. \"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5... user@host\". Base64 characters alone are not enough: a truncated or mistyped blob installs an authorized-keys line that can never authenticate, on a box whose only other way in is a rebuild."
   }
 
   # The regex above is unanchored at the end, and compute.tf's trimspace only

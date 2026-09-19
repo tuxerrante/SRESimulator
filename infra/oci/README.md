@@ -343,7 +343,7 @@ therefore run on fork pull requests:
 | --- | --- |
 | `terraform fmt -check -recursive` from `infra/` | both roots, including this nested one |
 | `init -backend=false`, `validate`, `test` in `infra/` | the Azure root, which no workflow ran before |
-| `init -backend=false`, `validate`, `test` here | 91 test cases, all on `mock_provider` |
+| `init -backend=false`, `validate`, `test` here | 98 test cases, all on `mock_provider` |
 | render `local.cloud_init`, then `bash -n` + `shellcheck` | the bootstrap script the instance actually boots |
 
 The last step is worth explaining. It renders through `terraform console`

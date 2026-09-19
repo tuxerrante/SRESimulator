@@ -70,7 +70,11 @@ TERRAFORM_JOB="$(job_block terraform-validate)"
 [ -n "$TERRAFORM_JOB" ] || fail "terraform-validate job not found in $WORKFLOW"
 
 JOB_FILE="$(mktemp)"
-trap 'rm -f "$JOB_FILE"' EXIT
+# Both temp files are declared here so the one trap names both. A trailing
+# `rm` after the last assertion would only run on a passing run, and the run
+# that leaks is the failing one -- which is exactly when someone is iterating.
+K8S_API_FILE="$(mktemp)"
+trap 'rm -f "$JOB_FILE" "$K8S_API_FILE"' EXIT
 printf '%s\n' "$TERRAFORM_JOB" > "$JOB_FILE"
 
 # --- 1. ci-gate must count the result -------------------------------------
@@ -249,5 +253,45 @@ documented_runs="$(
 if [ "$actual_runs" != "$documented_runs" ]; then
   fail "$OCI_README documents $documented_runs test cases; $OCI_TESTS_DIR has $actual_runs"
 fi
+
+# --- 10. the 6443 promise carries its own scope ---------------------------
+# k8s_api_allowed_cidrs defaults to empty and its description tells the reader
+# the Kubernetes API is closed. That is true of the NSG and false of the node:
+# an NSG filters traffic crossing the VNIC, pod-to-host traffic never crosses
+# one, and cloud-init deliberately flushes the host INPUT chain -- so any
+# workload on this cluster can reach 6443 on the node address with the variable
+# at its default.
+#
+# The caveat is not decoration. Unqualified, that description is the sentence
+# an operator would rely on when deciding a hostile pod is contained, and the
+# answer would be wrong. Terraform has no way to check prose, so this is where
+# it is held, next to the other strings in section 8 that nothing else reads.
+#
+# Scoped to the variable's own block: the same words elsewhere in the file
+# would not be the promise being qualified.
+OCI_VARIABLES="$ROOT_DIR/infra/oci/variables.tf"
+
+K8S_API_BLOCK="$(
+  awk '
+    /^variable "k8s_api_allowed_cidrs" \{/ { inblock = 1 }
+    inblock { print }
+    inblock && /^\}/ { exit }
+  ' "$OCI_VARIABLES"
+)"
+[ -n "$K8S_API_BLOCK" ] ||
+  fail "variable \"k8s_api_allowed_cidrs\" not found in $OCI_VARIABLES"
+
+printf '%s\n' "$K8S_API_BLOCK" > "$K8S_API_FILE"
+
+# The distinction itself, and the two facts that make it true -- the host chain
+# that cloud-init flushes, and the in-cluster path that makes closing it
+# pointless. Losing either one turns the caveat back into a vague hedge.
+#
+# Matched on one line of the heredoc rather than the whole sentence: the
+# description is hard-wrapped, so "not closed absolutely" never appears as
+# contiguous bytes and an assertion on it would fail against correct text.
+assert_contains 'empty means closed *to the internet*' "$K8S_API_FILE"
+assert_contains 'cloud-init.yaml.tftpl' "$K8S_API_FILE"
+assert_contains 'kubernetes.default.svc' "$K8S_API_FILE"
 
 echo "terraform gate checks passed."
