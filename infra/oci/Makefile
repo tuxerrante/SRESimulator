@@ -140,10 +140,9 @@ endef
 # from the console; it is gitignored and holds a Customer Secret Key pair.
 OCI_BACKEND_ENV_FILE ?= .oci-backend.env
 
-# Vetted before the `-include` below rather than beside the others, because
-# `-include $(OCI_BACKEND_ENV_FILE)` expands the variable to find the file:
-# a `$(shell ...)` in the path runs there, before any guard placed after the
-# include could speak.
+# Vetted before the read below rather than beside the others, because the
+# expansion that names the file happens there: a `$(shell ...)` in the path
+# would run at that point, before any guard placed after it could speak.
 $(eval $(call assert_shell_safe,OCI_BACKEND_ENV_FILE,$(OCI_SAFE_PATH),a path of alphanumerics plus -._/))
 
 OCI_STATE_BUCKET     ?=
@@ -237,9 +236,88 @@ in the plan cannot name different operators; set OWNER_ALIAS instead)
 endif
 endif
 
--include $(OCI_BACKEND_ENV_FILE)
+# Read as data. `-include` would *execute* it.
+#
+# .oci-backend.env is makefile syntax to `-include`, so a line reading
+# `OCI_STATE_BUCKET := $(shell curl ... | sh)` runs while make is reading the
+# include -- before any guard below can speak, and `$(value ...)` afterwards
+# then vets the harmless leftover rather than the text that ran. Reproduced
+# against the previous version of this file: a single `:=` line created a
+# canary during `make -n tf-oci-plan`, with every guard below still reporting
+# the value as clean. Vetting the values of an included file is vetting the
+# wrong thing; the file has to stop being makefile text.
+#
+# sed reads it as lines instead. The contents are an argument to a program,
+# never anything make or a shell parses, so `#` still starts a comment, a
+# commented-out line stays commented out, and a `$` is just a character. The
+# path is the one part of this that make does expand, which is why it is
+# vetted above.
+#
+# The narrowing is deliberate: the include could define *any* make variable,
+# and now only the keys bound below are read. Those are the ones the file is
+# documented to carry.
+# One regex, two readers: the extractor below and the refusal beside it have
+# to agree on what an assignment looks like, and a second copy would be the
+# one that goes stale. \2 is the key and \3 the value; \1 is the optional
+# `export`, which an operator who reached for shell habits may well have
+# written, and \4 a trailing comment, which `-include` also allowed.
+#
+# The value is whitespace-free by construction, so `KEY=two words` fails to
+# match and is refused below rather than quietly bound to `two`. A value with
+# a space in it cannot survive the rest of this file anyway -- every guarded
+# value is checked for being a single word -- and being told so by line number
+# beats finding a truncated bucket name in a terraform command.
+OCI_DOTENV_LINE := ^[[:blank:]]*(export[[:blank:]]+)?([A-Za-z_][A-Za-z0-9_]*)[[:blank:]]*=[[:blank:]]*([^[:blank:]\#]*)([[:blank:]]+\#.*)?[[:blank:]]*$$
 
-# After the include, so the file's values are vetted too -- that is the whole
+ifneq ($(wildcard $(OCI_BACKEND_ENV_FILE)),)
+OCI_BACKEND_ENV_TEXT := $(shell tr -d '\r' < $(OCI_BACKEND_ENV_FILE) | \
+  sed -n -E -e 's/$(OCI_DOTENV_LINE)/\2=\3/p')
+# Anything that is neither blank, a comment, nor an assignment is refused by
+# line number rather than dropped. Under `-include` such a line did something
+# -- a target, a conditional, an `include` of its own -- so ignoring it now
+# would turn a file that used to work into one that half works. Numbers only:
+# echoing the line back would be putting the file's text into make's own.
+OCI_BACKEND_ENV_BAD := $(shell tr -d '\r' < $(OCI_BACKEND_ENV_FILE) | \
+  grep -n -E -v -e '^[[:blank:]]*(\#|$$)' -e '$(OCI_DOTENV_LINE)' | \
+  cut -d: -f1 | tr '\n' ' ')
+ifneq ($(strip $(OCI_BACKEND_ENV_BAD)),)
+$(error $(OCI_BACKEND_ENV_FILE) is read as KEY=VALUE lines, not as a makefile; \
+line(s) $(strip $(OCI_BACKEND_ENV_BAD)) are neither blank, a comment, nor an \
+assignment. `KEY := value` is a makefile assignment, not a dotenv one)
+endif
+endif
+
+dotenv_value = $(patsubst $(1)=%,%,$(filter $(1)=%,$(OCI_BACKEND_ENV_TEXT)))
+
+# $(1) is a key name and never a value: the generated line *calls* for the
+# value rather than carrying it, so nothing out of the file is ever pasted
+# into makefile text for $(eval) to re-parse.
+#
+# The command line still wins, and the file still beats the environment --
+# the precedence `-include` had. A repeated key is refused rather than
+# resolved: make would take the last one without saying so, and an operator
+# who left an old bucket above a new one would be pointed at the wrong state.
+define dotenv_bind
+ifneq ($$(word 2,$$(filter $(1)=%,$$(OCI_BACKEND_ENV_TEXT))),)
+$$(error $(1) is set more than once in $$(OCI_BACKEND_ENV_FILE); remove the \
+duplicate rather than relying on which one wins)
+endif
+ifeq ($$(filter command line override,$$(origin $(1))),)
+ifneq ($$(call dotenv_value,$(1)),)
+$(1) := $$(call dotenv_value,$(1))
+endif
+endif
+endef
+
+$(eval $(call dotenv_bind,OCI_STATE_BUCKET))
+$(eval $(call dotenv_bind,OCI_STATE_NAMESPACE))
+$(eval $(call dotenv_bind,OCI_STATE_REGION))
+$(eval $(call dotenv_bind,OCI_STATE_COMPARTMENT_OCID))
+$(eval $(call dotenv_bind,OCI_STATE_ENDPOINT))
+$(eval $(call dotenv_bind,AWS_ACCESS_KEY_ID))
+$(eval $(call dotenv_bind,AWS_SECRET_ACCESS_KEY))
+
+# After the bind, so the file's values are vetted too -- that is the whole
 # point, since the file is the channel with no other check on it. Parse time
 # still, so nothing has reached a shell yet: recipes expand when they run.
 #
@@ -259,8 +337,8 @@ $(eval $(call assert_shell_safe,OCI_STATE_COMPARTMENT_OCID,$(OCI_SAFE_NAME),an O
 # tf-oci-init unvetted. The allowlist makes this value safe to interpolate.
 OCI_STATE_KEY := $(OCI_STATE_KEY_DERIVED)
 
-# `-include` only creates make variables, and make exports nothing it did not
-# inherit. Terraform's S3 backend reads its credentials from the *environment*,
+# Binding a value only creates a make variable, and make exports nothing it
+# did not inherit. Terraform's S3 backend reads its credentials from the *environment*,
 # so without these two lines .oci-backend.env is read and then ignored, and
 # tf-oci-init fails with a credentials error that points nowhere near the file
 # that was supposed to supply them. Exporting an unset variable is a no-op, so
