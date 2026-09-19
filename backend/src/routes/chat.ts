@@ -2,9 +2,14 @@ import { Router, type Request, type Response } from "express";
 import { loadKnowledgeSections, queryKnowledgeSections } from "../lib/knowledge";
 import { getRuntimePlatformProfile } from "../lib/platform-profiles";
 import { buildSystemPrompt } from "../lib/prompts/system";
-import { getAiReadiness } from "../lib/ai-config";
+import { getAiReadiness, shouldDegradeOnQuotaExhausted } from "../lib/ai-config";
 import { generateMockChatResponse } from "../lib/mock-ai";
-import { streamAiText, AiThrottledError, AiReasoningRetryEvent } from "../lib/ai-runtime";
+import {
+  streamAiText,
+  AiQuotaExhaustedError,
+  AiThrottledError,
+  AiReasoningRetryEvent,
+} from "../lib/ai-runtime";
 import { compactHistory, estimateTokens } from "../lib/context-compactor";
 import { captureBackendRouteError } from "../lib/telemetry/capture";
 import { parsePositiveIntEnv } from "../lib/env";
@@ -199,12 +204,14 @@ chatRouter.post("/", async (req: Request, res: Response) => {
     // CLI reminder in the system prompt; a slipped `oc` block is still labelled
     // "not valid for AKS" and made non-runnable by the frontend, and the
     // `/command` route rejects a mismatched CLI with HTTP 409.
+    let streamedText = false;
     try {
       for await (const chunk of stream) {
         if (chunk instanceof AiReasoningRetryEvent) {
           res.write(`data: ${JSON.stringify({ reasoning: true })}\n\n`);
           continue;
         }
+        streamedText = true;
         const data = JSON.stringify({ text: chunk });
         res.write(`data: ${data}\n\n`);
       }
@@ -213,6 +220,28 @@ chatRouter.post("/", async (req: Request, res: Response) => {
     } catch (error) {
       captureBackendRouteError(req, error, "Chat stream failed");
       if (res.writableEnded || res.destroyed) {
+        return;
+      }
+      // The 200 and the SSE headers are already on the wire by this point, so a
+      // 429 is no longer available: a spent budget has to be answered in
+      // frames. Nothing is substituted if the model already said something —
+      // the player keeps the partial answer and only learns why it stopped.
+      if (
+        error instanceof AiQuotaExhaustedError &&
+        shouldDegradeOnQuotaExhausted()
+      ) {
+        console.warn(
+          `[chat] AI budget exhausted (${error.scope}); returning simulated response`,
+        );
+        if (!streamedText) {
+          const mockText = generateMockChatResponse(currentPhase, session.platform);
+          res.write(`data: ${JSON.stringify({ text: mockText })}\n\n`);
+        }
+        res.write(
+          `data: ${JSON.stringify({ degraded: true, degradedReason: "quota_exhausted" })}\n\n`,
+        );
+        res.write("data: [DONE]\n\n");
+        res.end();
         return;
       }
       const errorMessage = isTimedOutChatError(error, streamController.signal, timedOut)
@@ -230,6 +259,8 @@ chatRouter.post("/", async (req: Request, res: Response) => {
       return;
     }
     if (error instanceof AiThrottledError) {
+      // Reachable only before the stream is handed its first chunk; once
+      // streaming starts the quota path above answers in frames instead.
       res.status(429).json({ error: error.message });
       return;
     }
