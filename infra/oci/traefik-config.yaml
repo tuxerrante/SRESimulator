@@ -1,0 +1,238 @@
+# Traefik configuration for the single-node OCI k3s box.
+#
+# THIS FILE IS SHARED. It is consumed by exactly two callers, and they must
+# stay byte-identical apart from one documented substitution:
+#
+#   1. infra/oci/cloud-init.yaml.tftpl embeds it via file() and writes it to
+#      /var/lib/rancher/k3s/server/manifests/traefik-config.yaml on the box.
+#   2. The oci-shape-e2e job in .github/workflows/ci.yml copies it into the
+#      same path on a real k3s installed on a GitHub-hosted arm64 runner.
+#
+# The substitution is ACME_EMAIL_PLACEHOLDER -> a real address. Terraform uses
+# var.acme_email; CI uses a dummy, because it cannot complete an ACME order.
+#
+# Do not fork this file. A private copy in CI would green-light a configuration
+# the box never runs, which is the entire failure mode this file exists to
+# prevent.
+#
+# The filename must NOT be traefik.yaml: k3s owns that name in the manifests
+# directory and rewrites it on every server restart.
+---
+apiVersion: helm.cattle.io/v1
+kind: HelmChartConfig
+metadata:
+  name: traefik
+  namespace: kube-system
+spec:
+  valuesContent: |-
+    # Bind the host network namespace directly. This is the decision that
+    # preserves the client IP: the TCP remote address *is* the client
+    # address, so Traefik's X-Real-Ip / X-Forwarded-For rewrite carries a
+    # true value. Every alternative (ServiceLB, externalTrafficPolicy:
+    # Local, hostPort) either NATs or loses it. Requires --disable=servicelb
+    # on the k3s server, or the svclb DaemonSet fights for ports 80/443.
+    hostNetwork: true
+    service:
+      enabled: false
+
+    # REQUIRED on a single node with hostNetwork.
+    #
+    # The chart defaults to RollingUpdate/maxSurge=1/maxUnavailable=0. With
+    # hostNetwork on one node the surge pod can never schedule:
+    #
+    #   0/1 nodes are available: 1 node(s) didn't have free ports for the
+    #   requested pod ports
+    #
+    # The old pod keeps serving the OLD config while helm reports "deployed
+    # successfully" and `kubectl get deploy` shows the NEW args, so every
+    # Traefik change after the first silently no-ops. Verified on k3s
+    # v1.33.4+k3s1.
+    #
+    # The key is `updateStrategy`, NOT `deployment.strategy`:
+    # templates/deployment.yaml reads .Values.updateStrategy, and the chart
+    # reports success either way.
+    updateStrategy:
+      type: Recreate
+
+    # Bug 5, found by oci-shape-e2e: the container crash-loops with
+    #
+    #   error while building entryPoint web: error preparing server:
+    #   error opening listener: listen tcp :80: bind: permission denied
+    #
+    # The chart's podSecurityContext defaults to runAsUser/runAsGroup 65532
+    # and runAsNonRoot: true (values.yaml:912-915). Adding NET_BIND_SERVICE
+    # puts the capability in the container's *permitted* set, but on execve a
+    # non-root process gets an empty *effective* set unless the binary carries
+    # file capabilities -- and the Traefik image does not set them. So the
+    # capability is granted and unusable, which is why this reads as correct.
+    #
+    # Docker hides it: since 20.10 it sets net.ipv4.ip_unprivileged_port_start
+    # = 0 inside containers, so `docker run --user 65532` binds :80 happily.
+    # Kubernetes sets no such sysctl. Only a real cluster shows this.
+    #
+    # Normally the chart never binds a privileged port: its default is
+    # ports.web.port 8000 with exposedPort 80, and the Service does the
+    # mapping. With service.enabled: false and hostNetwork: true there is no
+    # Service, so Traefik has to bind :80 for real.
+    #
+    # The alternative fix is net.ipv4.ip_unprivileged_port_start=0 as a node
+    # sysctl. Rejected: it lets *every* unprivileged process on the box bind
+    # low ports, it lives outside this file and so would have to be duplicated
+    # in CI, and it is a wider grant than giving one container uid 0 with all
+    # capabilities dropped but this one.
+    podSecurityContext:
+      runAsUser: 0
+      runAsGroup: 0
+      runAsNonRoot: false
+
+    securityContext:
+      # Restated rather than left to Helm's map merge, so the posture is
+      # legible in one place: root, but with nothing except the ability to
+      # bind a low port, no escalation, and an immutable root filesystem.
+      allowPrivilegeEscalation: false
+      readOnlyRootFilesystem: true
+      capabilities:
+        drop:
+          - ALL
+        add:
+          - NET_BIND_SERVICE
+
+    # Pinned because the chart's default is not acceptable for an
+    # internet-facing ingress that, per the block above, runs as uid 0.
+    #
+    # k3s v1.33.4+k3s1's own manifests/traefik.yaml sets
+    # image.repository: rancher/mirrored-library-traefik, image.tag: "3.3.6".
+    # Scanned 2026-09-18 with trivy (linux/arm64, vuln scanner):
+    #
+    #   rancher/mirrored-library-traefik:3.3.6   4 CRITICAL, 68 HIGH
+    #   rancher/mirrored-library-traefik:3.7.13  0 CRITICAL,  2 HIGH
+    #   library/traefik:v3.7.13                  0 CRITICAL,  0 HIGH
+    #
+    # 3.3.6's criticals are CVE-2026-31789 (OpenSSL X.509 heap overflow),
+    # CVE-2026-33186 (grpc-go authz bypass) and CVE-2025-68121 (Go crypto/tls
+    # cert validation on session resumption) -- all fixed upstream, all in the
+    # TLS path this pod terminates. The two the rancher mirror still carries at
+    # 3.7.13 are one openssl QUIC DoS on alpine 3.24.1; upstream is already on
+    # 3.24.2, so upstream is the one pinned here.
+    #
+    # Pinned by *digest*, not by tag alone. A tag is mutable: `v3.7.13` can be
+    # repointed at different bytes in the registry, and nothing in this
+    # repository would diff -- while the pod it selects is the root-owned,
+    # host-network process that terminates TLS for the whole box, and the
+    # trivy scan above describes the bytes that carried the tag on the day it
+    # was read. The digest is what makes the scanned bytes and the running
+    # bytes the same claim.
+    #
+    # `tag: <tag>@sha256:<digest>` rather than an `image.digest` key: the k3s
+    # chart's helper is `printf "%s:%s" .Values.image.repository
+    # (.Values.image.tag | default .Chart.AppVersion)` and its values schema
+    # sets `additionalProperties: false` on `image`, so a `digest` key is
+    # rejected outright. Verified by rendering
+    # traefik-34.2.1+up34.2.0 (the chart k3s v1.33.4+k3s1 ships) with this
+    # exact block: it emits
+    # docker.io/library/traefik:v3.7.13@sha256:1c32e7c3..., a reference whose
+    # digest is authoritative and whose tag is left in place only so a human
+    # reading `kubectl get pod -o wide` still sees the version.
+    #
+    # The digest is the multi-arch index digest, so it resolves on the aarch64
+    # A1.Flex and on an amd64 CI runner alike (the index lists linux/amd64 and
+    # linux/arm64 among others).
+    #
+    # The cost of pinning: the image no longer tracks the chart's appVersion,
+    # so tag *and* digest have to be bumped together by hand. It is
+    # deliberately in this file rather than a Terraform variable, because
+    # oci-shape-e2e installs this same file on real k3s and is therefore what
+    # proves a bumped pin still boots.
+    #
+    # The value sits on its own line because `tag: <tag>@sha256:<64 hex>` is 90
+    # characters and `make lint-yaml` runs `yamllint --strict`, whose 80-column
+    # rule exempts a line that holds a single unbreakable word but not a
+    # `key: value` pair that happens to be long. Splitting the digest itself
+    # was the alternative and is worse: a YAML line-continuation inside the
+    # reference is a silent corruption risk for the one string whose whole
+    # purpose is to be exact. A plain scalar on the next line parses to the
+    # identical string -- which tests/traefik_config.tftest.hcl asserts by
+    # decoding it, rather than by reading this comment.
+    image:
+      repository: docker.io/library/traefik
+      tag:
+        v3.7.13@sha256:1c32e7c368204fd72812152ebdd2ac0425993df6fd982317deb02e48f2d5423c
+
+    ports:
+      web:
+        port: 80
+        exposedPort: 80
+        # v34 syntax. `redirectTo` was REMOVED in Traefik chart v34 and is a
+        # hard install failure, not a warning:
+        #
+        #   ERROR: redirectTo syntax has been removed in v34 of this Chart.
+        #
+        # On a fresh box cloud-init writes this manifest before k3s first
+        # starts, so that failure leaves Traefik at chart defaults
+        # (service.enabled: true, hostNetwork: false) with servicelb already
+        # disabled -- i.e. no ingress at all. k3s v1.33.4 ships chart v34.2.1.
+        redirections:
+          entryPoint:
+            to: websecure
+            scheme: https
+            permanent: true
+      websecure:
+        port: 443
+        exposedPort: 443
+        tls:
+          enabled: true
+
+    # ACME storage. The chart's own NOTES warn that enabling persistence can
+    # lose the 0600 permissions on acme.json across restarts; the
+    # initContainer below restores them before Traefik reads the file.
+    persistence:
+      enabled: true
+      storageClass: local-path
+      path: /data
+      size: 128Mi
+
+    deployment:
+      initContainers:
+        - name: volume-permissions
+          # Digest-pinned for the same reason the Traefik image below is: this
+          # container runs as uid 0 in the host network namespace on every
+          # rollout, and a bare `1.37` is a mutable tag -- a registry retag
+          # changes what executes here with no diff in this repository. The
+          # digest is the multi-arch index, so containerd still selects the
+          # aarch64 manifest on A1.Flex. Bump tag and digest together.
+          #
+          # The reference sits on its own line for the reason the Traefik one
+          # below does: yamllint --strict exempts a line holding a single
+          # unbreakable word, but not a `key: value` pair that happens to be
+          # long. A plain scalar on the next line parses to the identical
+          # string, which the initContainer assertion in
+          # tests/traefik_config.tftest.hcl checks by decoding it.
+          image:
+            busybox:1.37@sha256:9db7b59979c38555a39def84a31fb98b5296952f9e3afd4f6f11f05b07adfab0
+          command:
+            - sh
+            - -c
+            - "touch /data/acme.json && chmod -v 600 /data/acme.json"
+          # No securityContext override: the init container inherits the pod's
+          # uid 0 so that acme.json ends up owned by the user Traefik runs as.
+          volumeMounts:
+            - name: data
+              mountPath: /data
+
+    # `certResolvers` was removed in chart v33.0.0 and, like `redirectTo`,
+    # is a hard install failure rather than a warning:
+    #
+    #   execution error at (traefik/templates/requirements.yaml:9:6):
+    #   ERROR: certResolvers setting has been removed. See v33.0.0 Changelog.
+    #
+    # Since cloud-init writes this manifest before k3s first starts, that
+    # failure would leave the box with no ingress at all. The replacement is
+    # `certificatesResolvers`, which maps straight onto Traefik's static
+    # configuration and therefore carries an extra `acme:` level.
+    certificatesResolvers:
+      letsencrypt:
+        acme:
+          email: ACME_EMAIL_PLACEHOLDER
+          httpChallenge:
+            entryPoint: web
+          storage: /data/acme.json
