@@ -26,7 +26,8 @@ storage per tenancy). The variable validations refuse to exceed it.
 
 1. `oci setup config` — the provider authenticates from `~/.oci/config`, so no
    private key ever lands in a tfvars file or in Terraform state.
-2. Terraform >= 1.9 (cross-variable validation).
+2. Terraform >= 1.10 (`use_lockfile` on the S3 backend; `versions.tf` pins the
+   same floor, and the cross-variable validation below needs 1.9 of it).
 3. An SSH keypair.
 4. Optional but recommended: **upgrade the tenancy to Pay-As-You-Go.** Always
    Free resources stay $0, but the idle-reclamation policy (see below) applies
@@ -460,7 +461,7 @@ therefore run on fork pull requests:
 | --- | --- |
 | `terraform fmt -check -recursive` from `infra/` | both roots, including this nested one |
 | `init -backend=false`, `validate`, `test` in `infra/` | the Azure root, which no workflow ran before |
-| `init -backend=false`, `validate`, `test` here | 116 test cases, all on `mock_provider` |
+| `init -backend=false`, `validate`, `test` here | 117 test cases, all on `mock_provider` |
 | render `local.cloud_init`, then `bash -n` + `shellcheck` | the bootstrap script the instance actually boots |
 
 The last step is worth explaining. It renders through `terraform console`

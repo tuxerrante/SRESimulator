@@ -226,6 +226,29 @@ run "a_fetched_list_covering_the_whole_internet_fails_the_plan" {
   expect_failures = [data.http.cloudflare_ipv4[0]]
 }
 
+run "an_empty_200_fails_the_plan_rather_than_removing_the_ingress_rules" {
+  command = plan
+
+  variables {
+    cloudflare_ipv4_ranges = []
+  }
+
+  # Whitespace, not an empty string, because that is the shape that walked
+  # past every other check: compact() drops the one empty entry, leaving
+  # alltrue([]) true and sum(concat([0], [])) zero. The failure mode is not a
+  # wrong rule but *no* 80/443 rule at all -- a transient empty success taking
+  # the ingress down, which reads as an outage rather than as a bad fetch.
+  override_data {
+    target = data.http.cloudflare_ipv4[0]
+    values = {
+      status_code   = 200
+      response_body = "\n  \n"
+    }
+  }
+
+  expect_failures = [data.http.cloudflare_ipv4[0]]
+}
+
 run "path_mtu_discovery_stays_open" {
   command = plan
 

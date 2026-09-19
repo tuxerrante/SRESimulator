@@ -34,6 +34,9 @@ OWNER_ALIAS_ALLOWED := a b c d e f g h i j k l m n o p q r s t u v w x y z \
 # inspected. Reproduced in a scratch makefile -- the file appeared and
 # TF_VAR_FLAGS came out empty, because $(shell ...) expands to nothing, so the
 # guard reported success on a value it had already executed.
+OCI_STATE_KEY_ALLOWED := a b c d e f g h i j k l m n o p q r s t u v w x y z \
+  0 1 2 3 4 5 6 7 8 9 - . _ /
+
 OWNER_ALIAS_RAW := $(value OWNER_ALIAS)
 
 ifneq ($(OWNER_ALIAS_RAW),)
@@ -88,31 +91,98 @@ OCI_STATE_REGION     ?= eu-frankfurt-1
 # sre-simulator-free.tfstate, so two operators who both forgot OWNER_ALIAS
 # landed on one state object and the second apply proposed destroying the
 # first one's box -- a hazard the README documented instead of removing.
-# Empty here means tf-oci-init refuses below. Setting OCI_STATE_KEY explicitly
-# still shares a key on purpose, which is a decision rather than an omission.
-OCI_STATE_KEY        ?= $(if $(OWNER_ALIAS_RAW),$(OWNER_ALIAS_RAW)-free-sre-simulator.tfstate,)
-
-# `?=` does not fire on an *empty* command-line override, so
-# `make tf-oci-plan OWNER_ALIAS=alice OCI_STATE_KEY=` leaves the key empty
-# while the alias is set -- and every guard below that compares the key skips
-# itself on an empty one. That is a bypass, not a configuration: it walks the
-# state-owner check and reaches terraform with alice's variables against
-# whichever state `init` recorded. Refused at parse time, where a
-# `$(shell ...)` check would be the same hole under another name.
 #
-# Only refused when an alias is present. Empty on both is the no-backend path
+# The alias is the only thing allowed to name the state object. An override
+# that *disagrees* with it was the same hazard wearing the guard's uniform:
+# `tf-oci-init OWNER_ALIAS=jdoe` then
+# `tf-oci-plan OWNER_ALIAS=alice OCI_STATE_KEY=jdoe-free-sre-simulator.tfstate`
+# satisfied the state-owner check below while TF_VAR_FLAGS still carried
+# owner_alias=alice, so terraform planned alice's names against jdoe's state
+# and applying that plan reads as a destroy. Sharing a key on purpose is
+# still available -- by sharing the alias, which is the identity the plan uses
+# too, so the two halves cannot drift apart again.
+OCI_STATE_KEY_DERIVED := $(if $(OWNER_ALIAS_RAW),$(OWNER_ALIAS_RAW)-free-sre-simulator.tfstate,)
+
+# `$(value ...)` for the same reason OWNER_ALIAS gets it, one variable over:
+# a command-line assignment is a *recursive* variable, so the first reference
+# expands it. `$(strip $(OCI_STATE_KEY))` inside the old parse-time `ifeq`
+# was that first reference, and
+# `make tf-oci-plan OWNER_ALIAS=alice OCI_STATE_KEY='$$(shell touch /tmp/pwned)'`
+# ran the command while make was still deciding whether to refuse the value.
+# Reproduced in a scratch makefile: the file appeared and the guard reported
+# the key as `injected`. $(value ...) captures the text unexpanded; the checks
+# below read that text and nothing ever expands it.
+#
+# `origin` rather than emptiness, because `OCI_STATE_KEY=` on the command line
+# is *set* and empty, which is not the same as unset: it used to leave the key
+# empty while the alias was set, and every comparison that skips an empty key
+# then walked the state-owner check.
+ifeq ($(origin OCI_STATE_KEY),undefined)
+OCI_STATE_KEY_GIVEN :=
+OCI_STATE_KEY_IS_SET :=
+else
+OCI_STATE_KEY_GIVEN := $(value OCI_STATE_KEY)
+OCI_STATE_KEY_IS_SET := yes
+endif
+
+ifneq ($(OCI_STATE_KEY_IS_SET),)
+# `$$` and `#` are rejected before the allowlist fold, not by it: the fold is
+# built with $(eval), which re-parses its argument as makefile text, so a
+# surviving `$$` would be expanded after all and a `#` would comment out the
+# rest of the generated line -- leaving an empty residue and an approved
+# value. Same ordering as the OWNER_ALIAS guard above, for the same reason.
+ifneq ($(findstring $$,$(OCI_STATE_KEY_GIVEN)),)
+$(error OCI_STATE_KEY must be a literal object key; contains '$$')
+endif
+ifneq ($(findstring \#,$(OCI_STATE_KEY_GIVEN)),)
+$(error OCI_STATE_KEY must be a literal object key; contains a hash character)
+endif
+ifneq ($(words $(OCI_STATE_KEY_GIVEN)),1)
+$(error OCI_STATE_KEY must be a single whitespace-free object key (got: '$(OCI_STATE_KEY_GIVEN)'))
+endif
+OCI_STATE_KEY_RESIDUE := $(OCI_STATE_KEY_GIVEN)
+$(foreach c,$(OCI_STATE_KEY_ALLOWED),\
+  $(eval OCI_STATE_KEY_RESIDUE := $$(subst $(c),,$(OCI_STATE_KEY_RESIDUE))))
+ifneq ($(OCI_STATE_KEY_RESIDUE),)
+$(error OCI_STATE_KEY must be lowercase alphanumeric plus -._/; rejected: $(OCI_STATE_KEY_RESIDUE))
+endif
+endif
+
+# Only refused when an alias is present. Unset on both is the no-backend path
 # (`tf-oci-init-local`), and there the per-target OWNER_ALIAS guard speaks
 # first with a clearer message.
 ifneq ($(OWNER_ALIAS_RAW),)
-ifeq ($(strip $(OCI_STATE_KEY)),)
-$(error OCI_STATE_KEY was set empty alongside OWNER_ALIAS='$(OWNER_ALIAS_RAW)'. \
-An empty key disables the state-owner check, so the run would reach terraform \
-against whatever state `tf-oci-init` recorded. Leave it unset to derive \
-'$(OWNER_ALIAS_RAW)-free-sre-simulator.tfstate', or set it to a real key)
+ifneq ($(OCI_STATE_KEY_IS_SET),)
+ifneq ($(OCI_STATE_KEY_GIVEN),$(OCI_STATE_KEY_DERIVED))
+$(error OCI_STATE_KEY='$(OCI_STATE_KEY_GIVEN)' disagrees with \
+OWNER_ALIAS='$(OWNER_ALIAS_RAW)', which derives \
+'$(OCI_STATE_KEY_DERIVED)'. terraform would be handed owner_alias=$(OWNER_ALIAS_RAW) \
+against the other key's state, and applying that plan reads as a destroy of \
+whatever it describes. Leave OCI_STATE_KEY unset, or change OWNER_ALIAS to \
+the alias that owns the key)
+endif
+endif
+endif
+
+# An explicit key with no alias names a state object nothing else in this run
+# can be checked against: TF_VAR_FLAGS is empty, so terraform prompts for
+# owner_alias and the answer need not be the one that key belongs to.
+ifeq ($(OWNER_ALIAS_RAW),)
+ifneq ($(OCI_STATE_KEY_IS_SET),)
+$(error OCI_STATE_KEY='$(OCI_STATE_KEY_GIVEN)' was set without OWNER_ALIAS. \
+The key is derived from the alias so that the state object and the variables \
+in the plan cannot name different operators; set OWNER_ALIAS instead)
 endif
 endif
 
 -include $(OCI_BACKEND_ENV_FILE)
+
+# Assigned after the include, and from the alias rather than from any of the
+# channels above: .oci-backend.env is an operator-edited file that make reads
+# without any of the parse-time validation the command line just went
+# through, so a key set there would otherwise reach the shell interpolation in
+# tf-oci-init unvetted. The allowlist makes this value safe to interpolate.
+OCI_STATE_KEY := $(OCI_STATE_KEY_DERIVED)
 
 # `-include` only creates make variables, and make exports nothing it did not
 # inherit. Terraform's S3 backend reads its credentials from the *environment*,
@@ -243,7 +313,7 @@ tf-oci-validate: ## Validate the OCI Terraform configuration
 tf-oci-fmt: ## Format the OCI Terraform files
 	terraform fmt -recursive
 
-tf-oci-test: ## Run Terraform native tests (requires TF >= 1.9, no credentials needed)
+tf-oci-test: ## Run Terraform native tests (requires TF >= 1.10, no credentials needed)
 	@TF_VER=$$(terraform version -json 2>/dev/null | sed -n 's/.*"terraform_version":[[:space:]]*"\([^"]*\)".*/\1/p'); \
 	MAJOR=$$(echo "$$TF_VER" | cut -d. -f1); \
 	MINOR=$$(echo "$$TF_VER" | cut -d. -f2); \
@@ -251,8 +321,11 @@ tf-oci-test: ## Run Terraform native tests (requires TF >= 1.9, no credentials n
 		echo "Unable to detect terraform version from 'terraform version -json'."; \
 		exit 1; \
 	fi; \
-	if [ "$$MAJOR" -lt 1 ] || { [ "$$MAJOR" -eq 1 ] && [ "$$MINOR" -lt 9 ]; }; then \
-		echo "This root needs Terraform >= 1.9.0 for cross-variable validation (found $$TF_VER)"; \
+	if [ "$$MAJOR" -lt 1 ] || { [ "$$MAJOR" -eq 1 ] && [ "$$MINOR" -lt 10 ]; }; then \
+		echo "This root needs Terraform >= 1.10.0 (found $$TF_VER)."; \
+		echo "versions.tf says the same: mock_provider needs 1.7, the"; \
+		echo "cross-variable validation guarding ssh_allowed_cidrs needs 1.9,"; \
+		echo "and backend.tf's use_lockfile needs 1.10."; \
 		exit 1; \
 	fi
 	terraform test
