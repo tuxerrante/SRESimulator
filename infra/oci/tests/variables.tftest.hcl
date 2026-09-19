@@ -750,9 +750,10 @@ run "ssh_public_key_rejects_a_blob_too_short_to_hold_a_key" {
 
   variables {
     # Correct type header, correct alphabet, comfortably past the 32-character
-    # floor this replaced -- and an ed25519 blob is invariably exactly 68. authorized_keys silently ignores it, leaving a box
-    # with no way in, because 22 is closed by default and there is no console
-    # password.
+    # floor this replaced -- and an ed25519 blob is invariably exactly 68
+    # characters, so this one is truncated. authorized_keys silently ignores a
+    # truncated line, leaving a box with no way in: 22 is closed by default and
+    # there is no console password.
     ssh_public_key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFRAbcdefghijklmnopqrstuv test@example.com"
   }
 
@@ -788,4 +789,74 @@ run "ssh_public_key_rejects_a_curve_header_for_the_wrong_curve" {
   expect_failures = [
     var.ssh_public_key,
   ]
+}
+
+# ---------------------------------------------------------------------------
+# The determined run has to cover the *whole* type header.
+#
+# Recognising the opening of one is not the same check. An earlier version
+# stopped at 12 characters for RSA and 28 for the NIST curves, which left the
+# tail of the type string inside the free repetition that follows -- so the two
+# runs below passed while decoding to a type string sshd cannot parse, on a box
+# whose only other way in is a rebuild. The run lengths are now derived from
+# the wire format (see variables.tf) rather than from what a valid key happens
+# to start with.
+# ---------------------------------------------------------------------------
+run "ssh_public_key_rejects_a_truncated_rsa_type_header" {
+  command = plan
+
+  variables {
+    # "AAAAB3NzaC1y" decodes to a 4-byte length of 7 followed by "ssh-r", and
+    # the two bytes that should finish "ssh-rsa" come out of the filler as
+    # NULs. Long enough to clear the length floor, and not a key.
+    ssh_public_key = "ssh-rsa AAAAB3NzaC1yAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA test@example.com"
+  }
+
+  expect_failures = [
+    var.ssh_public_key,
+  ]
+}
+
+run "ssh_public_key_rejects_a_truncated_ecdsa_type_header" {
+  command = plan
+
+  variables {
+    # Same shape one type over: the curve name that follows the type string is
+    # never checked if the run stops inside the type string.
+    ssh_public_key = "ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA= test@example.com"
+  }
+
+  expect_failures = [
+    var.ssh_public_key,
+  ]
+}
+
+# The negatives above are only worth what the positives are. Both keys are
+# throwaway `ssh-keygen` output, kept verbatim so that tightening the runs
+# again cannot quietly start rejecting real keys -- which would be the worse
+# failure of the two, since it blocks a legitimate bring-up.
+run "ssh_public_key_accepts_a_real_rsa_key" {
+  command = plan
+
+  variables {
+    ssh_public_key = "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQCtvZA7tiyTH3cAMmapgwQUiITup1/WTT1Ry+b0pTVUG+gpM3ksaa4Yam7Zbhji7mkasqqEwkN1tmXzhQmLmPmLU4FxVG5Nl8a9GXDGIV2y2R0pYN4QByTxhnbPwMHBUxuIm2NbGJRRgf3wTLWLerixeedob+SI0hMKMPdL3jVOsoTfgGPXa4yVDvogfuMe5V0TwwYG7qEk24WIblAsO9LwskEPWcIJESBjidt68MzmF7qISvvn1ke00VU2tKTc80IitSwUrHo/eCKHq+Jgo7ay69M+Rw4JWlIyPYGx4Kf1SMkCWg8j9DBNN60V9dSpQMwHGKxBa3EEj4mIa+axLEiJ test@example.com"
+  }
+
+  assert {
+    condition     = can(regex("^ssh-rsa ", var.ssh_public_key))
+    error_message = "A real ssh-rsa key from ssh-keygen must satisfy the wire-format check."
+  }
+}
+
+run "ssh_public_key_accepts_a_real_ecdsa_key" {
+  command = plan
+
+  variables {
+    ssh_public_key = "ecdsa-sha2-nistp521 AAAAE2VjZHNhLXNoYTItbmlzdHA1MjEAAAAIbmlzdHA1MjEAAACFBAGE6oTUvPLYeQnFecK9mj9YDN6FNld4N8INKOu6C/NKmW4izp/ODwslHHEDrBNxUMFhGxJYgzjnH2IrcxpH7apbpwH8wZg02ZyF06XQNOOj677LGR+w0//vVvybYWOGCeTHvTO6Jx9IHSp3kFPD4xCL/sDr/KE5uL9qDCMBh3n6dsmMvA== test@example.com"
+  }
+
+  assert {
+    condition     = can(regex("^ecdsa-sha2-nistp521 ", var.ssh_public_key))
+    error_message = "A real ecdsa-sha2-nistp521 key from ssh-keygen must satisfy the wire-format check."
+  }
 }

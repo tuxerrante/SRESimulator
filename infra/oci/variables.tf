@@ -101,6 +101,11 @@ variable "allow_billable_shape" {
     Setting this also lifts the instance_ocpus and instance_memory_gbs ceilings,
     which exist to keep the instance inside the same Always Free allowance and
     are meaningless once the shape is billable.
+
+    It does not lift them while instance_shape is still an A1 shape. A1.Flex
+    tops out at 4 OCPU / 24 GB per instance whoever is paying, so the opt-in
+    cannot buy a bigger A1 -- it can only move the refusal from plan time to
+    apply time.
   EOT
   type        = bool
   default     = false
@@ -111,15 +116,23 @@ variable "instance_ocpus" {
   type        = number
   default     = 2
 
-  # The ceiling is the Always Free allowance, so it is lifted by the same
-  # opt-in that lifts the shape allowlist -- a deliberate paid shape that could
-  # not be sized past 4 OCPUs would be a pointless upgrade. The floor stays.
+  # The ceiling is the Always Free allowance, so a deliberate paid shape lifts
+  # it -- an upgrade that could not be sized past 4 OCPUs would be pointless.
+  # The floor stays.
+  #
+  # The ceiling is keyed off the *shape*, not off the opt-in, and the
+  # difference is the whole point. 4 OCPU is also A1.Flex's own per-instance
+  # maximum, so `allow_billable_shape = true` with the shape left at
+  # VM.Standard.A1.Flex and instance_ocpus = 8 is not an upgrade -- it is a
+  # configuration OCI rejects. Letting the opt-in wave it through would move
+  # that refusal from plan time to apply time, which is the one direction worth
+  # avoiding: by then the VCN, subnet, NSG and reserved IP already exist.
   validation {
     condition = (
       var.instance_ocpus >= 1 &&
-      (var.allow_billable_shape || var.instance_ocpus <= 4)
+      (var.instance_ocpus <= 4 || !startswith(var.instance_shape, "VM.Standard.A1."))
     )
-    error_message = "instance_ocpus must be between 1 and 4 to stay inside the Always Free A1 allowance. Set allow_billable_shape = true to size a paid shape past it."
+    error_message = "instance_ocpus must be between 1 and 4. That is both the Always Free allowance and A1.Flex's own per-instance maximum, so allow_billable_shape does not lift it while instance_shape is an A1 shape -- name a larger non-A1 shape instead."
   }
 }
 
@@ -128,13 +141,15 @@ variable "instance_memory_gbs" {
   type        = number
   default     = 12
 
-  # Lifted by allow_billable_shape for the same reason as instance_ocpus.
+  # Keyed off the shape for the same reason as instance_ocpus: 24 GB is the
+  # Always Free allowance *and* A1.Flex's per-instance maximum (6 GB per OCPU,
+  # 4 OCPUs), so the paid opt-in cannot buy more of it on an A1 shape.
   validation {
     condition = (
       var.instance_memory_gbs >= 6 &&
-      (var.allow_billable_shape || var.instance_memory_gbs <= 24)
+      (var.instance_memory_gbs <= 24 || !startswith(var.instance_shape, "VM.Standard.A1."))
     )
-    error_message = "instance_memory_gbs must be between 6 and 24 to stay inside the Always Free A1 allowance. Set allow_billable_shape = true to size a paid shape past it."
+    error_message = "instance_memory_gbs must be between 6 and 24. That is both the Always Free allowance and A1.Flex's own per-instance maximum, so allow_billable_shape does not lift it while instance_shape is an A1 shape -- name a larger non-A1 shape instead."
   }
 }
 
@@ -416,15 +431,37 @@ variable "ssh_public_key" {
   # ed25519 is invariant at 68 characters, the three NIST curves at 140/184/232,
   # and RSA floors at 204 (a 1024-bit modulus).
   #
+  # Each run below covers the *whole* type header, not a recognisable opening
+  # of it. An earlier version stopped at 12-28 characters, which left the tail
+  # of the type string inside the free repetition that follows -- so
+  # "ssh-rsa AAAAB3NzaC1y" plus 192 filler characters passed while decoding to
+  # a type string of "ssh-r\0\0", which sshd cannot parse. The runs are derived
+  # from the format rather than eyeballed, by encoding the determined prefix of
+  # each blob and keeping only whole base64 groups plus any character whose six
+  # bits are themselves determined:
+  #
+  #   ssh-ed25519  4+11 type, then the 4-byte length 0x20 of the 32-byte key
+  #                -> 19 determined bytes -> 25 characters
+  #   ssh-rsa      4+7 type, then the first byte of the exponent's length,
+  #                which is zero for any exponent below 2^24
+  #                -> 12 determined bytes -> 16 characters. Stopping here
+  #                rather than at "AAAADAQAB" keeps a key with an exponent
+  #                other than 65537 valid; RFC 4253 permits one.
+  #   ecdsa-*      4+19 type, 4+8 curve name, then the 4-byte length and the
+  #                0x04 uncompressed-point marker of Q
+  #                -> 40 determined bytes -> 53 characters
+  #
   # Terraform cannot base64-decode this to check it properly: the decoded bytes
   # are binary and base64decode() insists on valid UTF-8, so it fails on roughly
   # every real key. Prefix matching is what is actually available here.
   #
-  # Verified against keys from ssh-keygen for all six type/size combinations,
-  # and against the reported bypass -- a 32-character ed25519 blob -- plus a
-  # blob whose header names a different type than its label.
+  # Verified against 30 freshly generated ssh-keygen keys covering all six
+  # type/size combinations, with and without a trailing comment, and against
+  # the reported bypasses -- a 32-character ed25519 blob, the truncated
+  # "ssh-rsa AAAAB3NzaC1y" header, a truncated ecdsa header, and a blob whose
+  # header names a different curve than its label.
   validation {
-    condition     = can(regex("^(ssh-ed25519 AAAAC3NzaC1lZDI1NTE5[A-Za-z0-9+/]{48}|ssh-rsa AAAAB3NzaC1y[A-Za-z0-9+/]{192,}={0,2}|ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAy[A-Za-z0-9+/]{110,}={0,2}|ecdsa-sha2-nistp384 AAAAE2VjZHNhLXNoYTItbmlzdHAz[A-Za-z0-9+/]{154,}={0,2}|ecdsa-sha2-nistp521 AAAAE2VjZHNhLXNoYTItbmlzdHA1[A-Za-z0-9+/]{202,}={0,2})([[:space:]].*)?$", var.ssh_public_key))
+    condition     = can(regex("^(ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI[A-Za-z0-9+/]{43}|ssh-rsa AAAAB3NzaC1yc2EA[A-Za-z0-9+/]{188,}={0,2}|ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBB[A-Za-z0-9+/]{86}=|ecdsa-sha2-nistp384 AAAAE2VjZHNhLXNoYTItbmlzdHAzODQAAAAIbmlzdHAzODQAAABhB[A-Za-z0-9+/]{129}==|ecdsa-sha2-nistp521 AAAAE2VjZHNhLXNoYTItbmlzdHA1MjEAAAAIbmlzdHA1MjEAAACFB[A-Za-z0-9+/]{177}==)([[:space:]].*)?$", var.ssh_public_key))
     error_message = "ssh_public_key must carry a well-formed OpenSSH blob matching its key type, e.g. \"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5... user@host\". Base64 characters alone are not enough: a truncated or mistyped blob installs an authorized-keys line that can never authenticate, on a box whose only other way in is a rebuild."
   }
 

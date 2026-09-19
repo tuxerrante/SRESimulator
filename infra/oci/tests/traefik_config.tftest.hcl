@@ -204,10 +204,27 @@ run "the_traefik_image_is_pinned_away_from_the_chart_default" {
   }
 
   # A floating tag would make the box and the CI gate run different binaries,
-  # which is the same class of mistake as forking this file.
+  # which is the same class of mistake as forking this file. A full x.y.z tag
+  # is necessary and not sufficient: a tag is a mutable pointer, so
+  # `docker.io/library/traefik:v3.7.13` can be re-pushed at any time and this
+  # pod is a root-owned host-network TLS terminator. The reference therefore
+  # carries the digest as well, in the `x.y.z@sha256:<64 hex>` form, which the
+  # k3s-packaged chart accepts because its `traefik.image-name` helper is a
+  # plain `printf "%s:%s" repository tag` -- verified by rendering
+  # traefik-34.2.1+up34.2.0 with this exact value. The digest cannot live under
+  # an `image.digest` key instead: the chart's values.schema.json sets
+  # `additionalProperties: false` on `image`.
+  #
+  # Two assertions rather than one so the failure names which half regressed:
+  # dropping the digest and floating the tag are different mistakes.
   assert {
-    condition     = can(regex("^v?[0-9]+\\.[0-9]+\\.[0-9]+$", yamldecode(yamldecode(local.traefik_config_rendered).spec.valuesContent).image.tag))
-    error_message = "The image tag must be a full x.y.z version, not a floating major or minor."
+    condition     = can(regex("^v?[0-9]+\\.[0-9]+\\.[0-9]+(@|$)", yamldecode(yamldecode(local.traefik_config_rendered).spec.valuesContent).image.tag))
+    error_message = "The image tag must start with a full x.y.z version, not a floating major or minor."
+  }
+
+  assert {
+    condition     = can(regex("^v?[0-9]+\\.[0-9]+\\.[0-9]+@sha256:[0-9a-f]{64}$", yamldecode(yamldecode(local.traefik_config_rendered).spec.valuesContent).image.tag))
+    error_message = "The image tag must also pin the digest as x.y.z@sha256:<64 hex>. A bare tag is mutable, and this pod runs as uid 0 on the host network terminating TLS."
   }
 
   # Every assertion above reads the tag, so reverting to
