@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { JsonPlayerStore } from "./json-player-store";
@@ -26,6 +27,18 @@ describe("JsonPlayerStore", () => {
       process.env.JSON_PLAYER_STORE_LOCK_TIMEOUT_MS = originalLockTimeoutMs;
     }
     await rm(dataDir, { recursive: true, force: true });
+  });
+
+  // The read path no longer seeds players.json, so the missing-file branch of
+  // readPlayers is the one every fresh deployment takes on its first lookup.
+  // Against the unfixed store this passed for the wrong reason -- the reader
+  // created the file and then parsed its own seed -- which is why the
+  // assertion is that nothing was written, not just that the lookup answered.
+  it("looks a player up before the backing file exists", async () => {
+    const store = new JsonPlayerStore();
+
+    await expect(store.getByGithubUserId("never-written")).resolves.toBeNull();
+    expect(existsSync(join(dataDir, "players.json"))).toBe(false);
   });
 
   it("supports concurrent upserts across store instances that share one data directory", async () => {

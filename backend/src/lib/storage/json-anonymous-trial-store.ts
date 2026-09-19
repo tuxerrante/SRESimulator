@@ -1,8 +1,9 @@
-import { readFile, writeFile, mkdir, rename } from "fs/promises";
+import { writeFile, mkdir, rename } from "fs/promises";
 import { existsSync } from "fs";
 import path from "path";
 import type { AnonymousTrialClaim, IAnonymousTrialStore } from "./types";
 import { acquireJsonProcessLock } from "./json-process-lock";
+import { readJsonFileOrEmpty } from "./json-file-read";
 
 const DEFAULT_LOCK_WAIT_TIMEOUT_MS = 5000;
 let sharedWriteLock: Promise<void> = Promise.resolve();
@@ -46,23 +47,24 @@ export class JsonAnonymousTrialStore implements IAnonymousTrialStore {
     return next;
   }
 
-  private async ensureFile(): Promise<void> {
+  // Only the directory is created eagerly. Seeding the file with "[]" here was
+  // racy: two callers could both see it missing, both write, and a third could
+  // read the file after creation but before the bytes landed, yielding
+  // "Unexpected end of JSON input". The file is instead created by the atomic
+  // tmp-file rename below, and a missing file simply reads as empty.
+  private async ensureDir(): Promise<void> {
     if (!existsSync(this.dataDir)) {
       await mkdir(this.dataDir, { recursive: true });
-    }
-    if (!existsSync(this.filePath)) {
-      await writeFile(this.filePath, "[]", "utf-8");
     }
   }
 
   private async readClaims(): Promise<AnonymousTrialClaim[]> {
-    await this.ensureFile();
-    const data = await readFile(this.filePath, "utf-8");
-    return JSON.parse(data) as AnonymousTrialClaim[];
+    const data = await readJsonFileOrEmpty(this.filePath);
+    return data === null ? [] : (JSON.parse(data) as AnonymousTrialClaim[]);
   }
 
   private async writeClaims(claims: AnonymousTrialClaim[]): Promise<void> {
-    await this.ensureFile();
+    await this.ensureDir();
     const tmpFile = `${this.filePath}.${crypto.randomUUID()}.tmp`;
     await writeFile(tmpFile, JSON.stringify(claims, null, 2), "utf-8");
     await rename(tmpFile, this.filePath);

@@ -1,12 +1,41 @@
 {{- $publicHost := include "sre-simulator.publicHost" . -}}
 {{- if eq (include "sre-simulator.exposureMode" .) "ingress" }}
+{{- $annotations := deepCopy (.Values.ingress.annotations | default dict) -}}
+{{- /*
+  Traefik terminates TLS itself with an ACME cert resolver, so the certificate
+  never becomes a Kubernetes Secret and ingress.tls stays off. Deriving the
+  router annotations from a scalar keeps them overridable: a values file cannot
+  delete a key from an inherited annotations map (Helm coalesces maps, and both
+  {} and an explicit null leave the parent key in place), so the empty default
+  is what lets the CI profile turn ACME off. It also keeps every non-Traefik
+  profile's render byte-identical.
+*/ -}}
+{{- with .Values.ingress.traefik }}
+{{- if .certResolver }}
+{{- /*
+  A cert resolver issues for whatever hostname the router matches, so pairing
+  one with a reserved documentation domain asks Let's Encrypt for a name the
+  deployment cannot own. That fails quietly in the worst way: HTTP-01 never
+  validates, Traefik keeps serving its default self-signed certificate, and the
+  only symptom is a browser warning plus a consumed failed-validation rate
+  limit. values-oci.yaml ships such a placeholder on purpose, so the host has
+  to be overridden at deploy time and this is what enforces it.
+*/ -}}
+{{- if regexMatch "(^|\\.)(example\\.(com|net|org)|example|test|invalid|localhost)$" $publicHost }}
+{{- fail (printf "ingress.traefik.certResolver is %q but exposure.host is %q, a reserved documentation/test domain that ACME can never issue for. Set exposure.host to the real hostname at deploy time, or clear ingress.traefik.certResolver for template-only and CI renders (see values-ci-k3d.yaml)." .certResolver $publicHost) }}
+{{- end }}
+{{- $_ := set $annotations "traefik.ingress.kubernetes.io/router.entrypoints" (.entryPoint | default "websecure") -}}
+{{- $_ := set $annotations "traefik.ingress.kubernetes.io/router.tls" "true" -}}
+{{- $_ := set $annotations "traefik.ingress.kubernetes.io/router.tls.certresolver" .certResolver -}}
+{{- end }}
+{{- end }}
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: {{ include "sre-simulator.fullname" . }}
   labels:
     {{- include "sre-simulator.labels" . | nindent 4 }}
-  {{- with .Values.ingress.annotations }}
+  {{- with $annotations }}
   annotations:
     {{- toYaml . | nindent 4 }}
   {{- end }}

@@ -64,28 +64,64 @@ The game enforces the "Scientific Method of Investigation" as defined in the ARO
   defined in `docs/DEVELOPMENT_WORKFLOW.md`. Follow it unless the change is a
   single-file doc edit or an emergency rollback.
 
-### Mandatory live browser gate
+### Mandatory browser gate
 
-- Every pull request must pass a merge-blocking browser E2E gate before merge.
-- Dependabot PRs use the separate `dependabot-e2e` status: a trusted
-  default-branch workflow publishes SHA-bound images built by an unprivileged
-  PR workflow, deploys the trusted chart with mock AI/JSON storage into a
-  dedicated namespace claimed from a pre-provisioned pool, and uses a
-  namespace-only Kubernetes identity that cannot create namespaces. It requires
-  no Azure login, production secret, or manual environment approval. Provision
-  or resize the pool with `make dependabot-e2e-pool`; see
-  `docs/OPERATIONS.md`.
-- Human-authored pull requests must pass the protected `live-e2e` GitHub
-  check.
-- The check deploys the PR head to an isolated temporary namespace and runs
-  `make test-e2e-live` with isolated AKS, ARO Classic, and ARO HCP users in
-  parallel. Each user must receive a distinct scenario.
-- Do not call a PR merge-ready when this check is skipped, pending, or failed.
-- The `live-e2e` GitHub Environment requires explicit approval before cluster
-  and AI credentials are released to PR code. Review workflow, deploy, Helm,
-  Dockerfile, and E2E-script changes carefully before approving the job.
-- Fork PRs must be moved to a trusted same-repository branch before this
-  privileged mandatory check can run.
+- Every pull request must pass the merge-blocking `free-e2e` browser gate,
+  unless the `changes` job classifies the diff as inert (`run_e2e=false` — a
+  docs or repo-meta change touching none of the allowlisted paths), in which
+  case `ci-gate` records the skip explicitly rather than treating a missing
+  browser run as a pass.
+- `free-e2e` runs on a GitHub-hosted runner with **no cloud credentials, no
+  repository secret and no GitHub Environment**: it builds both images, creates
+  a single-node k3d cluster, deploys the real chart with `values.yaml` +
+  `values-oci.yaml` + `values-ci-k3d.yaml` and mock AI / JSON storage, then runs
+  `make test-e2e-live` through the bundled Traefik ingress on
+  `http://sre-simulator.localhost`.
+- The host must stay a `*.localhost` name. Only loopback and `*.localhost` are
+  browser **secure contexts**, and outside one Chromium hides
+  `crypto.randomUUID` and `crypto.subtle`, which `hooks/useChat.ts` and
+  `lib/auth/fingerprint.ts` call unguarded. The symptom is brutal to diagnose:
+  the suite times out with no 5xx, no failed request and no console error.
+- Because it is credential-free it also gates fork PRs and Dependabot PRs, and
+  no manual environment approval is ever needed. Keep it that way:
+  `scripts/live-e2e-gate.test.sh` fails if the job block — or any local
+  composite action it `uses:` — grows a `secrets.` or `azure/login`
+  reference, or if the block grows an `environment:` key.
+- k3d, not kind, because it is the same k3s distribution as the OCI box. That
+  makes the gate a regression test for the **chart-side** half of
+  `values-oci.yaml`: the Ingress object, `className: traefik`, the Traefik
+  annotation derivation, `local-path` and the replica pins. It is **not** a
+  test of the OCI Traefik deployment shape — k3d keeps ServiceLB and the stock
+  Traefik `Service`, whereas the box runs `--disable=servicelb` with
+  `hostNetwork: true` and `service.enabled: false`. That combination, and the
+  client-IP integrity that depends on it, stays unverified until a real VM
+  exists.
+- `values-oci.yaml` is the chart-side shape only, **not yet a deployable
+  profile**: with `database.enabled: false` the backend renders no
+  `STORAGE_BACKEND` and `initStorage()` refuses the JSON default in a pod
+  unless the test-only `ALLOW_DEPLOYED_JSON_STORAGE_FOR_TESTS` + `AI_MOCK_MODE`
+  pair is set, which is what `free-e2e` does and a real deploy must not.
+  Storage and AI are flipped once the Postgres adapter and the OpenRouter
+  provider land; `helm-validate` keeps the file's notice and its render in
+  step until then.
+- Do not call a PR merge-ready when the gate is pending or failed, or when it
+  was skipped for any reason other than the inert-diff classification above.
+  Read `ci-gate`, not `free-e2e`: it is the only required check, and it is what
+  tells a deliberate skip apart from a browser run that never happened.
+- The Azure-backed `live-e2e` job still exists but is **opt-in**: it runs only
+  when the repository variable `LIVE_E2E_ENABLED` is `true`, and `ci-gate`
+  counts its result only under the same condition. Unset, it is skipped and
+  irrelevant to merges. When enabled it deploys the PR head to an isolated
+  temporary namespace, runs isolated AKS, ARO Classic and ARO HCP users in
+  parallel on distinct scenarios, requires explicit approval of the protected
+  `live-e2e` GitHub Environment before cluster and AI credentials are released
+  to PR code, and cannot run on fork PRs.
+- The `dependabot-e2e` status (trusted `workflow_run` deploy into a pooled
+  namespace; see `docs/OPERATIONS.md` and `make dependabot-e2e-pool`) is
+  **opt-in** on the same pattern, via `DEPENDABOT_E2E_ENABLED`. It needs a live
+  AKS cluster, so while that cluster is gone `ci-gate` must not wait on it —
+  unset, bot PRs are gated by `free-e2e` alone. The path is scheduled for
+  removal now that `free-e2e` covers bot PRs too.
 
 ## 4. Public-Only Safety Boundary
 
