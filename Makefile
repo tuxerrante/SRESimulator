@@ -19,6 +19,13 @@ E2E_FALLBACK_ENV_FILE ?= $(BACKEND_DIR)/.env
 E2E_ENV_FILE ?= $(if $(wildcard $(E2E_PRIMARY_ENV_FILE)),$(E2E_PRIMARY_ENV_FILE),$(if $(wildcard $(E2E_FALLBACK_ENV_FILE)),$(E2E_FALLBACK_ENV_FILE),$(E2E_PRIMARY_ENV_FILE)))
 -include $(E2E_ENV_FILE)
 SECURITY_FAIL_LEVEL ?= high
+# `bun audit` is held one notch tighter than grype. The five advisories this
+# separate knob exists for were all `moderate`, so auditing the backend at
+# `high` would have reported clean on the exact findings it was added to catch.
+# grype stays at SECURITY_FAIL_LEVEL: it scans the same trees plus the OS layer
+# and reports findings with no upstream fix, where `--only-fixed` is the filter
+# doing the work rather than the severity. Set this to `high` to relax it.
+BUN_AUDIT_FAIL_LEVEL ?= moderate
 GRYPE_VERSION ?= v0.110.0
 GRYPE_IMAGE ?= anchore/grype:$(GRYPE_VERSION)@sha256:af65fbc0c664691067788fe95ff88760b435543e45595eb2ca6f102fc476fbe1
 GITLEAKS_VERSION ?= v8.30.0
@@ -253,8 +260,15 @@ validate: lint typecheck typecheck-backend ## Run all linters + type checking
 # ──────────────────────────────────────────────
 security: audit lockfile-lint gitleaks grype ## Run all security checks
 
+# Both workspaces. The backend has its own bun.lock and its own dependency tree
+# -- express, vitest, the storage drivers -- and none of it was audited, because
+# this target named one directory and the directory it named was the frontend.
+# Written above the target rather than inside the recipe: make echoes recipe
+# lines, comments included, so an in-recipe note prints four lines of prose on
+# every run.
 audit: ## Check Bun-managed dependencies for known vulnerabilities
-	node scripts/frontend-audit-check.mjs --root . --frontend-dir $(FRONTEND_DIR) --audit-level $(SECURITY_FAIL_LEVEL)
+	node scripts/frontend-audit-check.mjs --root . --workspace-dir $(FRONTEND_DIR) --audit-level $(BUN_AUDIT_FAIL_LEVEL)
+	node scripts/frontend-audit-check.mjs --root . --workspace-dir $(BACKEND_DIR) --audit-level $(BUN_AUDIT_FAIL_LEVEL)
 
 lockfile-lint: ## Validate lockfile integrity (registry & HTTPS)
 	node scripts/bun-lockfile-check.mjs frontend/bun.lock backend/bun.lock
