@@ -894,15 +894,39 @@ jobs:
           # longer tracks the chart appVersion and has to be bumped by hand.
           # A hardcoded copy would turn every bump into a two-file edit and
           # would eventually be the stale one.
-          pinned_repo="$(
-            sed -n 's/^ *repository: *//p' "${SHARED_CONFIG}" | head -1
-          )"
-          pinned_tag="$(sed -n 's/^ *tag: *//p' "${SHARED_CONFIG}" | head -1)"
+          # The value may sit beside its key or on the next line -- the tag
+          # carries a digest and the pair is 90 characters, which
+          # `yamllint --strict` refuses, so the shared file puts it on its
+          # own line. A `sed 's/^ *tag: *//p'` reads empty there, and an
+          # empty expectation is the one failure mode this whole block exists
+          # to rule out. `$1 == key` skips the commented copies: awk sees `#`
+          # as the first field on those lines.
+          read_pin() {
+            awk -v key="$1:" '
+              $1 == key {
+                if (NF > 1) { print $2; exit }
+                getline
+                gsub(/^[ \t]+|[ \t]+$/, "", $0)
+                print
+                exit
+              }
+            ' "${SHARED_CONFIG}"
+          }
+          pinned_repo="$(read_pin repository)"
+          pinned_tag="$(read_pin tag)"
+          pinned_digest="${pinned_tag##*@}"
           if [[ -z "${pinned_repo}" || -z "${pinned_tag}" ]]; then
             echo "::error::Could not read image.repository/image.tag out of" \
               "${SHARED_CONFIG}. The pin is what keeps an internet-facing" \
               "ingress off a 4-critical-CVE base image; a gate that cannot" \
               "find it must fail, not skip."
+            failed=1
+          fi
+          if [[ "${pinned_digest}" == "${pinned_tag}" ]]; then
+            echo "::error::${SHARED_CONFIG} pins '${pinned_tag}', which" \
+              "carries no digest. A tag is mutable, so the scanned bytes and" \
+              "the running bytes stop being the same claim -- and the check" \
+              "below reads a digest, so it would compare against nothing."
             failed=1
           fi
           # Read the *running* container, not the Deployment template. The
@@ -913,21 +937,40 @@ jobs:
           # rollout paused and the pin applied to the template, the template
           # read v3.7.13 while the pod ran v3.3.6 and every other assertion in
           # this job still passed. That is bug 6 again, one level down.
-          running_image="$(
+          #
+          # `imageID`, not `image`. Once the reference carries a digest the
+          # two stop agreeing, and only one of them still states the claim
+          # the pin exists to make. Measured on k3s/containerd with a pod
+          # pinned to exactly this reference:
+          #
+          #   spec    docker.io/library/traefik:v3.7.13@sha256:1c32e7c3...
+          #   image   sha256:be6691ff...          <- the local config digest
+          #   imageID docker.io/library/traefik@sha256:1c32e7c3...
+          #
+          # So `image` is not even a reference here, and comparing it against
+          # repo:tag would fail on a perfectly correct deployment; `imageID`
+          # carries the manifest digest, which is the byte-level identity the
+          # trivy scan in the shared file describes. The tag is deliberately
+          # not part of this comparison -- it is a human-readable label on a
+          # reference whose authority is the digest.
+          running_image_id="$(
             kubectl -n kube-system get pods \
               -l app.kubernetes.io/name=traefik \
-              -o jsonpath='{.items[0].status.containerStatuses[0].image}'
+              -o jsonpath='{.items[0].status.containerStatuses[0].imageID}'
           )"
-          if [[ -z "${running_image}" ]]; then
+          if [[ -z "${running_image_id}" ]]; then
             echo "::error::No Traefik container status to read. The pod is" \
               "not running, so nothing here proves which image it would use."
             failed=1
           fi
-          echo "pinned=${pinned_repo}:${pinned_tag} running=${running_image}"
-          if [[ "${running_image}" != "${pinned_repo}:${pinned_tag}" ]]; then
-            echo "::error::Traefik is running '${running_image}' but" \
-              "${SHARED_CONFIG} pins '${pinned_repo}:${pinned_tag}'. The" \
-              "image override did not take effect."
+          echo "pinned=${pinned_repo}@${pinned_digest}" \
+            "running=${running_image_id}"
+          if [[ "${running_image_id}" != "${pinned_repo}@${pinned_digest}" ]]
+          then
+            echo "::error::Traefik is running '${running_image_id}' but" \
+              "${SHARED_CONFIG} pins" \
+              "'${pinned_repo}@${pinned_digest}'. The image override did" \
+              "not take effect."
             failed=1
           fi
 
