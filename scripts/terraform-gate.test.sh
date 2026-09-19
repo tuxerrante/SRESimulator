@@ -747,6 +747,48 @@ dotenv_is_refused "a duplicate key" help
 printf 'OCI_STATE_BUCKET=two words\n' > "$OCI_DOTENV_FIXTURE"
 dotenv_is_refused "a value containing a space" help
 
+# The same shapes against the two AWS_* keys, because those are the ones with
+# nothing behind the reader. Every OCI_STATE_* value is vetted a second time
+# by the parse-time alphabet guard, so a bucket that slipped past the reader
+# would still be caught there and a canary aimed at one cannot tell which net
+# held. AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY are deliberately exempt
+# from that guard -- they are exported into terraform's environment rather
+# than interpolated into a command line, and a secret has no business being
+# constrained to an alphabet -- so for them the reader is the only net, and it
+# has to be asserted on its own.
+printf 'AWS_ACCESS_KEY_ID=$(shell touch %s)\n' "$OCI_CANARY" \
+  > "$OCI_DOTENV_FIXTURE"
+dotenv_is_refused "a make function in AWS_ACCESS_KEY_ID" help
+
+printf 'AWS_SECRET_ACCESS_KEY=$(shell touch %s)\n' "$OCI_CANARY" \
+  > "$OCI_DOTENV_FIXTURE"
+dotenv_is_refused "a make function in AWS_SECRET_ACCESS_KEY" help
+
+# The positive half, and the one that asserts the mechanism instead of a
+# consequence. Both values below *are* valid make syntax and contain no blank,
+# so the line regex accepts them -- and they still arrive as literal
+# characters. That is the first barrier, not the refusal: `$(eval)` expands
+# the generated binding once, and the value never appears in that text. The
+# generated line reads `KEY := $(call dotenv_value,KEY)`, which *calls* for
+# the value, and a function's result is not rescanned for further expansion.
+#
+# Without this, the suite would prove only that payloads with a space in them
+# are refused, and every make function call needs one after its name -- so
+# relaxing the value capture to allow blanks would look like a formatting
+# change and would be an execution hole.
+printf 'AWS_ACCESS_KEY_ID=$(CURDIR)\nAWS_SECRET_ACCESS_KEY=$(OCI_STATE_BUCKET)\n' \
+  > "$OCI_DOTENV_FIXTURE"
+if ! dotenv_make tf-oci-init OWNER_ALIAS=jdoe \
+  OCI_STATE_BUCKET=sre-state OCI_STATE_NAMESPACE=abc123; then
+  fail "infra/oci/Makefile refused an AWS credential that merely looks like make syntax"
+fi
+if ! grep -Fqx 'AWS_ACCESS_KEY_ID=$(CURDIR)' "$TERRAFORM_ENV_FILE"; then
+  fail "AWS_ACCESS_KEY_ID was expanded rather than bound literally: $(cat "$TERRAFORM_ENV_FILE")"
+fi
+if ! grep -Fqx 'AWS_SECRET_ACCESS_KEY=$(OCI_STATE_BUCKET)' "$TERRAFORM_ENV_FILE"; then
+  fail "AWS_SECRET_ACCESS_KEY was expanded rather than bound literally: $(cat "$TERRAFORM_ENV_FILE")"
+fi
+
 # The happy path, which is what keeps the reader from being discovered by
 # breaking a bring-up: a comment, a commented-out previous value that must
 # not come back, `export` (shell habits), spaces around the equals, a
