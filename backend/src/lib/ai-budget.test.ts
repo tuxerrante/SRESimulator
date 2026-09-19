@@ -407,6 +407,87 @@ describe("chargeAiBudget", () => {
   });
 });
 
+describe("chargeAiProviderRetry", () => {
+  beforeEach(() => {
+    restoreTestEnv();
+    vi.doUnmock("./rate-limit");
+    process.env.AI_PROVIDER = "openrouter";
+    delete process.env.AI_MOCK_MODE;
+  });
+
+  afterEach(() => {
+    restoreTestEnv();
+  });
+
+  afterAll(() => {
+    restoreTestEnv();
+  });
+
+  it("charges a second provider request the route never paid for", async () => {
+    const { budget, consumedKeys } = await loadBudgetWithRecordingStore();
+
+    await charge(budget.chargeAiBudget);
+    await budget.chargeAiProviderRetry();
+
+    const dayKey = `global:ai:day:${new Date().toISOString().slice(0, 10)}`;
+    expect(consumedKeys).toEqual([
+      "global:ai:minute",
+      dayKey,
+      "global:ai:minute",
+      dayKey,
+    ]);
+  });
+
+  it("charges the day even when the minute window is already spent", async () => {
+    // The opposite of chargeAiBudget's ordering rule, on purpose: that rule
+    // holds because a caller refused on the minute window never reached the
+    // provider. This request is already going out, so skipping the day would
+    // under-count a spend that really happens.
+    process.env.AI_GLOBAL_MINUTE_MAX = "1";
+    const { budget, consumedKeys } = await loadBudgetWithRecordingStore();
+
+    await charge(budget.chargeAiBudget);
+    await budget.chargeAiProviderRetry();
+
+    const dayKey = `global:ai:day:${new Date().toISOString().slice(0, 10)}`;
+    expect(consumedKeys.filter((key) => key === dayKey)).toHaveLength(2);
+  });
+
+  it("charges nothing when the limiter is off", async () => {
+    process.env.AI_PROVIDER = "azure";
+    const { budget, consumedKeys } = await loadBudgetWithRecordingStore();
+
+    await budget.chargeAiProviderRetry();
+
+    expect(consumedKeys).toEqual([]);
+  });
+
+  it("swallows a store outage rather than losing an answer already paid for", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { chargeAiProviderRetry } = await loadBudgetWithBrokenStore();
+
+    await expect(chargeAiProviderRetry()).resolves.toBeUndefined();
+
+    expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  it("makes the overspend visible to the next caller", async () => {
+    // The point of charging a retry is not bookkeeping for its own sake: it
+    // is that the request after it gets refused on time.
+    process.env.AI_GLOBAL_DAILY_MAX = "2";
+    const { chargeAiBudget, chargeAiProviderRetry } = await loadBudget();
+
+    const first = await charge(chargeAiBudget);
+    await chargeAiProviderRetry();
+    const third = await charge(chargeAiBudget);
+
+    expect(first.outcome).toBe("ok");
+    expect(third.outcome).toBe("exhausted");
+    expect(third.res.headers["x-sresim-ai-budget"]).toBe("daily-exhausted");
+  });
+});
+
 describe("markAiBudgetDegraded", () => {
   beforeEach(() => {
     restoreTestEnv();
