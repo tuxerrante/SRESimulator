@@ -78,8 +78,9 @@ K8S_API_FILE="$(mktemp)"
 # stub; both the stub directory and its log belong to the same trap.
 TERRAFORM_STUB_DIR="$(mktemp -d)"
 TERRAFORM_ARGV_FILE="$(mktemp)"
+OCI_MAKE_DIR=""
 trap 'rm -f "$JOB_FILE" "$K8S_API_FILE" "$TERRAFORM_ARGV_FILE"; \
-      rm -rf "$TERRAFORM_STUB_DIR"' EXIT
+      rm -rf "$TERRAFORM_STUB_DIR" ${OCI_MAKE_DIR:+"$OCI_MAKE_DIR"}' EXIT
 printf '%s\n' "$TERRAFORM_JOB" > "$JOB_FILE"
 
 # --- 1. ci-gate must count the result -------------------------------------
@@ -317,12 +318,18 @@ printf '%s\n' "\$*" >> "$TERRAFORM_ARGV_FILE"
 STUB
 chmod +x "$TERRAFORM_STUB_DIR/terraform"
 
-# OCI_BACKEND_ENV_FILE is redirected because a developer running this on their
-# own machine may have a real .oci-backend.env sitting beside the makefile,
-# and the bucket it names must not decide whether this section passes.
+# The makefile is copied out and run from a scratch directory, not in place.
+# A developer running this on their own machine may have a real
+# .oci-backend.env beside it -- and, since the guard added below reads
+# .terraform/terraform.tfstate, a real initialized backend too. Neither may
+# decide whether this section passes, and section 12 has to plant that file.
+# The copy is taken fresh from the file under test on every run.
+OCI_MAKE_DIR="$(mktemp -d)"
+cp "$ROOT_DIR/infra/oci/Makefile" "$OCI_MAKE_DIR/Makefile"
+
 oci_make_run() {
   : > "$TERRAFORM_ARGV_FILE"
-  PATH="$TERRAFORM_STUB_DIR:$PATH" make -C "$ROOT_DIR/infra/oci" \
+  PATH="$TERRAFORM_STUB_DIR:$PATH" make -C "$OCI_MAKE_DIR" \
     OCI_BACKEND_ENV_FILE=/dev/null "$@" >/dev/null 2>&1
 }
 
@@ -363,6 +370,79 @@ fi
 # what makes the two refusals above a redirection rather than a dead end.
 if ! oci_make_run tf-oci-init-local; then
   fail "tf-oci-init-local requires an OWNER_ALIAS, but it is the no-state path"
+fi
+
+# --- 12. the alias must match the backend init actually recorded ----------
+# A non-empty OWNER_ALIAS is a weaker claim than the right one. `init` records
+# the state object key in .terraform/terraform.tfstate and every later target
+# reads that recording back rather than the flag on the command line, so
+# `tf-oci-init OWNER_ALIAS=jdoe` followed by `tf-oci-plan OWNER_ALIAS=alice`
+# would plan alice's resources against jdoe's state -- and applying a plan
+# computed that way reads as a destroy.
+#
+# The fixture below is the shape terraform 1.16.3 really writes: captured from
+# an actual `terraform init` of the s3 backend (against a stub endpoint), then
+# trimmed to the keys this guard reads. Inventing the shape would have tested
+# the reader against my own guess -- and the file is where the two halves of
+# this check meet.
+mkdir -p "$OCI_MAKE_DIR/.terraform"
+cat > "$OCI_MAKE_DIR/.terraform/terraform.tfstate" <<'RECORDED'
+{
+  "version": 3,
+  "terraform_version": "1.16.3",
+  "backend": {
+    "type": "s3",
+    "config": {
+      "bucket": "tfstate-bucket",
+      "key": "jdoe-free-sre-simulator.tfstate",
+      "kms_key_id": null,
+      "region": "eu-frankfurt-1",
+      "sse_customer_key": null,
+      "use_path_style": true,
+      "workspace_key_prefix": null
+    },
+    "hash": 2892063586
+  }
+}
+RECORDED
+
+# tf-oci-apply refuses a missing tfplan too, and that refusal would carry this
+# assertion on its own: with the state-key guard deleted the target still
+# exits non-zero and still never reaches terraform, so the control passed
+# against the unfixed makefile -- measured, not supposed. A plan file makes
+# the guard the only thing left standing in front of `terraform apply`.
+: > "$OCI_MAKE_DIR/tfplan"
+
+for target in tf-oci-plan tf-oci-apply tf-oci-destroy; do
+  if oci_make_run "$target" OWNER_ALIAS=alice CONFIRM_APPLY=alice \
+      CONFIRM_DESTROY=alice-free; then
+    fail "$target ran with an alias that does not own the initialized state"
+  fi
+  if [ -s "$TERRAFORM_ARGV_FILE" ]; then
+    fail "$target reached terraform against another operator's state: $(cat "$TERRAFORM_ARGV_FILE")"
+  fi
+done
+
+# The owning alias must still get through, or the guard is just a wall.
+if ! oci_make_run tf-oci-plan OWNER_ALIAS=jdoe; then
+  fail "tf-oci-plan refused the alias that owns the initialized state"
+fi
+
+# And an explicit OCI_STATE_KEY is the documented way to share one object on
+# purpose, so it has to satisfy the guard on its own without an alias match.
+if ! oci_make_run tf-oci-plan OWNER_ALIAS=alice \
+    OCI_STATE_KEY=jdoe-free-sre-simulator.tfstate; then
+  fail "an explicit OCI_STATE_KEY matching the recorded key was refused"
+fi
+
+# backend.tf must carry no default key. A static one is what any init that
+# does not override it would use -- including the manual path the README
+# documents -- so it would reinstate the shared object behind the makefile.
+# Read block-scoped: `key` appears in kms_key_id and friends elsewhere.
+BACKEND_TF="$ROOT_DIR/infra/oci/backend.tf"
+if awk '/backend "s3" \{/,/^  \}/' "$BACKEND_TF" |
+    grep -Eq '^[[:space:]]*key[[:space:]]*='; then
+  fail "backend.tf declares a default state key; init must require one instead"
 fi
 
 echo "terraform gate checks passed."

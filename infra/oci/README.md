@@ -297,7 +297,11 @@ The credentials are **Customer Secret Keys** (an access-key/secret pair
 generated once in the console), not the API signing key the provider uses.
 Terraform reads them from the environment as `AWS_ACCESS_KEY_ID` and
 `AWS_SECRET_ACCESS_KEY`; the Makefile exports both out of `.oci-backend.env`,
-but a bare `terraform init` run by hand has to export them itself.
+but a bare `terraform init` run by hand has to export them itself — and has to
+pass `-backend-config=key=<alias>-free-sre-simulator.tfstate` as well.
+`backend.tf` carries **no default key**, so a manual init that omits it stops
+with `The attribute "key" is required by the backend` rather than quietly
+picking a shared object. Prefer `make tf-oci-init`, which derives the key.
 
 **`tf-oci-init` and `tf-oci-plan` both require `OWNER_ALIAS`, and refuse
 without it.** The object key is derived from it —
@@ -308,6 +312,13 @@ deliberately **no shared default key**: an earlier revision fell back to
 on the same state object and the second `apply` proposed destroying the first
 one's box. Documenting that hazard was not enough, because the omission is
 silent at the moment it matters.
+
+`tf-oci-plan`, `tf-oci-apply` and `tf-oci-destroy` additionally refuse when
+the alias on the command line disagrees with the key `init` recorded in
+`.terraform/`. Terraform reads the recorded key, not the flag, so without that
+check `tf-oci-init OWNER_ALIAS=jdoe` followed by `tf-oci-plan
+OWNER_ALIAS=alice` would plan alice's resources against jdoe's state — and the
+apply of a plan computed that way reads as a destroy.
 
 Two escape hatches remain, both explicit:
 

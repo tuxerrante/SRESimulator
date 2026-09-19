@@ -105,6 +105,44 @@ export AWS_SECRET_ACCESS_KEY
 
 OCI_STATE_ENDPOINT ?= https://$(OCI_STATE_NAMESPACE).compat.objectstorage.$(OCI_STATE_REGION).oraclecloud.com
 
+# A non-empty OWNER_ALIAS is not the same claim as the *right* OWNER_ALIAS.
+# `init` is the only target that records the state object key -- terraform
+# writes the merged backend config, key included, to
+# .terraform/terraform.tfstate -- and every later target reads that recording
+# back rather than anything on the command line. So
+# `tf-oci-init OWNER_ALIAS=jdoe` followed by `tf-oci-plan OWNER_ALIAS=alice`
+# plans alice's resources against jdoe's state, and tf-oci-apply then applies
+# that plan, which for a state describing jdoe's box reads as a destroy.
+#
+# Silent when nothing is recorded: `tf-oci-init-local` runs
+# `terraform init -backend=false`, which writes no .terraform/terraform.tfstate
+# at all (verified), and that path is the documented way to validate with no
+# state. Silent too when OCI_STATE_KEY is empty, so the OWNER_ALIAS guard in
+# each recipe keeps its own clearer message.
+#
+# The reader splits on commas and braces before matching, so it works whether
+# terraform writes that file pretty-printed (it does today, 1.16.3) or
+# compact. Anchoring on a whole `"key"` token is what keeps sse_customer_key,
+# kms_key_id and workspace_key_prefix out of the match. A key containing a
+# comma would be read truncated and refuse -- fail closed, which is the right
+# direction for a guard nobody wants to be clever.
+define assert_state_key_matches
+	@recorded=$$(tr ',{}' '\n\n\n' < .terraform/terraform.tfstate 2>/dev/null \
+		| sed -n 's/^[[:space:]]*"key"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
+		| head -1); \
+	if [ -n "$(OCI_STATE_KEY)" ] && [ -n "$$recorded" ] && \
+	   [ "$$recorded" != "$(OCI_STATE_KEY)" ]; then \
+		echo "REFUSED: this working copy is initialized against another state key."; \
+		echo "  .terraform/ is bound to: $$recorded"; \
+		echo "  OWNER_ALIAS expects:     $(OCI_STATE_KEY)"; \
+		echo "Terraform reads the recorded key, not the alias on this command"; \
+		echo "line, so the run would touch the other operator's state."; \
+		echo "Re-run: make tf-oci-init OWNER_ALIAS=$(OWNER_ALIAS_RAW) \\"; \
+		echo "          OCI_STATE_BUCKET=... OCI_STATE_NAMESPACE=..."; \
+		exit 1; \
+	fi
+endef
+
 help: ## Show this help
 	@grep -hE '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
 		awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-24s\033[0m %s\n", $$1, $$2}'
@@ -201,6 +239,7 @@ tf-oci-plan: ## Generate and show an execution plan
 		echo "Example: make tf-oci-plan OWNER_ALIAS=aaffinit"; \
 		exit 1; \
 	fi
+	$(assert_state_key_matches)
 	terraform plan $(TF_VAR_FLAGS) -out=tfplan
 
 tf-oci-apply: ## Apply the saved plan (run tf-oci-plan first)
@@ -209,6 +248,7 @@ tf-oci-apply: ## Apply the saved plan (run tf-oci-plan first)
 		echo "Example: make tf-oci-apply OWNER_ALIAS=aaffinit CONFIRM_APPLY=aaffinit"; \
 		exit 1; \
 	fi
+	$(assert_state_key_matches)
 	@if [ ! -f tfplan ]; then \
 		echo "tfplan not found. Run 'make tf-oci-plan OWNER_ALIAS=$(OWNER_ALIAS_RAW)' first."; \
 		exit 1; \
@@ -228,6 +268,7 @@ tf-oci-destroy: ## Destroy the free-tier box and its network
 		echo "Example: make tf-oci-destroy OWNER_ALIAS=aaffinit CONFIRM_DESTROY=aaffinit-free"; \
 		exit 1; \
 	fi
+	$(assert_state_key_matches)
 	@# TF_CLI_ARGS and TF_CLI_ARGS_destroy are appended by Terraform itself, so
 	@# they reach `terraform destroy` without passing through TF_VAR_FLAGS. A
 	@# guard that reads only TF_VAR_FLAGS therefore inspects the one channel
