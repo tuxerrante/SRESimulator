@@ -42,7 +42,7 @@ mock_provider "http" {}
 variables {
   owner_alias            = "jdoe"
   compartment_ocid       = "ocid1.compartment.oc1..aaaaaaaacompartment"
-  ssh_public_key         = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExampleKeyMaterialForTests test@example.com"
+  ssh_public_key         = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExampleKeyMaterialForTestsAAAAAAAAAAAAAAAAA test@example.com"
   acme_email             = "ops@example.com"
   cloudflare_ipv4_ranges = ["198.51.100.0/24", "203.0.113.0/24"]
 }

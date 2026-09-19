@@ -719,6 +719,17 @@ jobs:
         # v6.0.2
         uses: >-
           actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          # Keep this false. What it prevents: checkout's default is to write
+          # the workflow GITHUB_TOKEN into .git/config, and the steps below run
+          # PR-controlled Terraform on the runner -- `terraform init` resolves
+          # module sources this configuration names, and `terraform test`
+          # evaluates its expressions. Neither needs git credentials, and this
+          # job's whole contract is that it validates both roots with no cloud
+          # credentials and is therefore safe on fork PRs. A token sitting in
+          # the workspace is exactly the thing that contract is claiming is
+          # absent.
+          persist-credentials: false
 
       - name: Setup Terraform
         # v4.0.1

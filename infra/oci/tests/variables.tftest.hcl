@@ -42,7 +42,7 @@ mock_provider "http" {}
 variables {
   owner_alias            = "jdoe"
   compartment_ocid       = "ocid1.compartment.oc1..aaaaaaaacompartment"
-  ssh_public_key         = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExampleKeyMaterialForTests test@example.com"
+  ssh_public_key         = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExampleKeyMaterialForTestsAAAAAAAAAAAAAAAAA test@example.com"
   acme_email             = "ops@example.com"
   cloudflare_ipv4_ranges = ["198.51.100.0/24", "203.0.113.0/24"]
 }
@@ -379,7 +379,7 @@ run "ssh_public_key_must_be_a_single_line" {
     # sequence item, so the second line lands as a top-level cloud-config
     # directive. Rendering the real template with a value like this injected a
     # new top-level key alongside runcmd, users and write_files.
-    ssh_public_key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExampleKeyMaterialForTests test@example.com\nruncmd:\n  - [touch, /tmp/injected]"
+    ssh_public_key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExampleKeyMaterialForTestsAAAAAAAAAAAAAAAAA test@example.com\nruncmd:\n  - [touch, /tmp/injected]"
   }
 
   expect_failures = [
@@ -731,5 +731,61 @@ run "availability_domain_index_beyond_the_regions_domain_count" {
 
   expect_failures = [
     data.oci_identity_availability_domains.ads,
+  ]
+}
+
+# ---------------------------------------------------------------------------
+# ssh_public_key is matched against the OpenSSH wire format, not the base64
+# alphabet.
+#
+# An OpenSSH blob opens with a length-prefixed copy of its own type string, so
+# a fixed run of leading base64 characters is determined by the key type and
+# cannot vary between keys. Checking that run is what ties the blob to the
+# label in front of it. Counting characters from the base64 alphabet, which is
+# what this replaced, could not: every string below is spelled correctly and
+# none of them is a key.
+# ---------------------------------------------------------------------------
+run "ssh_public_key_rejects_a_blob_too_short_to_hold_a_key" {
+  command = plan
+
+  variables {
+    # Correct type header, correct alphabet, comfortably past the 32-character
+    # floor this replaced -- and an ed25519 blob is invariably exactly 68. authorized_keys silently ignores it, leaving a box
+    # with no way in, because 22 is closed by default and there is no console
+    # password.
+    ssh_public_key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFRAbcdefghijklmnopqrstuv test@example.com"
+  }
+
+  expect_failures = [
+    var.ssh_public_key,
+  ]
+}
+
+run "ssh_public_key_rejects_a_blob_that_contradicts_its_own_type" {
+  command = plan
+
+  variables {
+    # Labelled ed25519, but the embedded wire-format header says ssh-rsa. sshd
+    # reads the header and ignores the label, so this is not the key the
+    # operator thinks they installed. Length alone can never catch this.
+    ssh_public_key = "ssh-ed25519 AAAAB3NzaC1yc2EAAAADAQABAAABgQDZAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA test@example.com"
+  }
+
+  expect_failures = [
+    var.ssh_public_key,
+  ]
+}
+
+run "ssh_public_key_rejects_a_curve_header_for_the_wrong_curve" {
+  command = plan
+
+  variables {
+    # nistp384 label over the nistp256 header. Same class as the run above, on
+    # the type where the two differ by a single base64 character.
+    ssh_public_key = "ecdsa-sha2-nistp384 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA= test@example.com"
+  }
+
+  expect_failures = [
+    var.ssh_public_key,
   ]
 }
