@@ -84,7 +84,13 @@ OCI_BACKEND_ENV_FILE ?= .oci-backend.env
 OCI_STATE_BUCKET     ?=
 OCI_STATE_NAMESPACE  ?=
 OCI_STATE_REGION     ?= eu-frankfurt-1
-OCI_STATE_KEY        ?= $(if $(OWNER_ALIAS_RAW),$(OWNER_ALIAS_RAW)-free-sre-simulator.tfstate,sre-simulator-free.tfstate)
+# No shared fallback on an empty alias. The key used to fall back to
+# sre-simulator-free.tfstate, so two operators who both forgot OWNER_ALIAS
+# landed on one state object and the second apply proposed destroying the
+# first one's box -- a hazard the README documented instead of removing.
+# Empty here means tf-oci-init refuses below. Setting OCI_STATE_KEY explicitly
+# still shares a key on purpose, which is a decision rather than an omission.
+OCI_STATE_KEY        ?= $(if $(OWNER_ALIAS_RAW),$(OWNER_ALIAS_RAW)-free-sre-simulator.tfstate,)
 
 -include $(OCI_BACKEND_ENV_FILE)
 
@@ -143,6 +149,18 @@ tf-oci-init: ## Initialize Terraform against the OCI Object Storage backend
 		echo "  make tf-oci-init-local"; \
 		exit 1; \
 	fi
+	@if [ -z "$(OCI_STATE_KEY)" ]; then \
+		echo "OWNER_ALIAS is required for tf-oci-init."; \
+		echo "It selects the state object key, and init is the target that"; \
+		echo "records that key in .terraform/ -- so an init without it would"; \
+		echo "bind this working copy to a key nobody chose, which a later"; \
+		echo "plan/apply cannot correct."; \
+		echo "Example: make tf-oci-init OWNER_ALIAS=aaffinit"; \
+		echo ""; \
+		echo "To skip remote state entirely (validation/testing only):"; \
+		echo "  make tf-oci-init-local"; \
+		exit 1; \
+	fi
 	terraform init \
 		-backend-config="bucket=$(OCI_STATE_BUCKET)" \
 		-backend-config="key=$(OCI_STATE_KEY)" \
@@ -173,6 +191,16 @@ tf-oci-test: ## Run Terraform native tests (requires TF >= 1.9, no credentials n
 	terraform test
 
 tf-oci-plan: ## Generate and show an execution plan
+	@if [ -z "$(OWNER_ALIAS_RAW)" ]; then \
+		echo "OWNER_ALIAS is required for tf-oci-plan."; \
+		echo "Without it TF_VAR_FLAGS is empty and terraform prompts for"; \
+		echo "owner_alias, so tfplan is written for whatever is typed at the"; \
+		echo "prompt -- which need not be the alias whose state key init"; \
+		echo "recorded. tf-oci-apply then applies that plan against this"; \
+		echo "backend regardless."; \
+		echo "Example: make tf-oci-plan OWNER_ALIAS=aaffinit"; \
+		exit 1; \
+	fi
 	terraform plan $(TF_VAR_FLAGS) -out=tfplan
 
 tf-oci-apply: ## Apply the saved plan (run tf-oci-plan first)
