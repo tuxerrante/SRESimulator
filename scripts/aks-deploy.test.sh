@@ -2251,12 +2251,15 @@ run_multi_arch_release_check() {
   # imagetools create, so a pair of same-platform digests -- which satisfies
   # the count check -- never reaches a tag. Verification only after publishing
   # leaves a broken ${RELEASE_TAG} live until someone notices.
-  assert_contains "{{.Image.OS}}/{{.Image.Architecture}}" "$workflow"
+  # Anchored on the flag, not the bare template: the comment above the loop
+  # names the template too, so a bare match would be satisfied by prose after
+  # the code it describes had been rewritten.
+  assert_contains "--format '{{json .Image}}'" "$workflow"
   python3 - "$workflow" <<'PY_INNER'
 import sys
 
 text = open(sys.argv[1]).read()
-probe = text.index("{{.Image.OS}}/{{.Image.Architecture}}")
+probe = text.index("--format '{{json .Image}}'")
 publish = text.index("docker buildx imagetools create \"${tag_args[@]}\"")
 if probe > publish:
     print("the per-digest platform probe must run before imagetools create, "
@@ -2264,6 +2267,24 @@ if probe > publish:
           file=sys.stderr)
     sys.exit(1)
 PY_INNER
+
+  # The per-digest read must stay JSON-shaped. A by-digest push normally
+  # lands an OCI index -- buildx attaches a provenance attestation by default
+  # -- and imagetools drops the attestation, so a single-platform leg still
+  # answers the scalar `.Image.OS` template correctly and reverting looks
+  # harmless. It is not: on a digest carrying two real platforms `.Image` is a
+  # map, the scalar template prints "<no value>/<no value>" *and exits 0*, and
+  # the set difference below then reports both architectures missing while
+  # naming neither cause. Verified against a local registry: single-platform
+  # index -> linux/amd64, two-platform index -> <no value>/<no value>, exit 0.
+  if grep -q '{{.Image.OS}}' "$workflow"; then
+    fail "the per-digest platform read must use {{json .Image}}; the scalar template yields '<no value>' with exit 0 on a multi-platform digest"
+  fi
+
+  # Each leg pushes exactly one architecture, and the merge names one digest
+  # per architecture. A leg that pushed both would satisfy the count check and
+  # the set difference, so the refusal has to be explicit.
+  assert_contains 'Each matrix leg must push exactly one,' "$workflow"
 
   # `outputs:` is a comma-separated list, and a YAML folded scalar (`>-`)
   # joins its lines with a SPACE. Written that way the value carries a
