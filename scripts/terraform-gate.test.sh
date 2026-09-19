@@ -89,9 +89,12 @@ TERRAFORM_ARGV_FILE="$(mktemp)"
 # Section 15 asserts the two backend credentials reach terraform's
 # *environment* rather than a command line, so the stub records that too.
 TERRAFORM_ENV_FILE="$(mktemp)"
+# Section 12 reads the jobs that run this very script, so it needs their
+# blocks on disk too; declared here so the one trap names them.
+SHELL_CALLER_FILE="$(mktemp)"
 OCI_MAKE_DIR=""
 trap 'rm -f "$JOB_FILE" "$K8S_API_FILE" "$SHAPE_FILE" "$TERRAFORM_ARGV_FILE" \
-      "$TERRAFORM_ENV_FILE"; \
+      "$TERRAFORM_ENV_FILE" "$SHELL_CALLER_FILE"; \
       rm -rf "$TERRAFORM_STUB_DIR" ${OCI_MAKE_DIR:+"$OCI_MAKE_DIR"}' EXIT
 printf '%s\n' "$TERRAFORM_JOB" > "$JOB_FILE"
 printf '%s\n' "$SHAPE_JOB" > "$SHAPE_FILE"
@@ -1090,6 +1093,27 @@ assert_not_contains 'terraform apply' "$SHAPE_FILE"
 # for the same reason.
 assert_contains 'persist-credentials: false' "$SHAPE_FILE"
 
+# The k3s install block is lifted out of the *rendered* bootstrap script and
+# run here, so what this job proves is only ever what the extraction caught.
+# The first anchor was the literal `curl -sfL https://get.k3s.io`; when
+# cloud-init.yaml.tftpl moved to a tagged, checksum-verified installer that
+# string stopped existing, the extraction silently went empty, and the single
+# `--disable=servicelb` check then failed with a message naming neither the
+# anchor nor the line that had moved. Two things are asserted as a result.
+#
+# First, that the extraction is anchored on the block the shell delimits
+# rather than on a substring of one command inside it, so an edit *within*
+# the block cannot empty it.
+assert_contains "sed -n '/^if ! command -v k3s /,/^fi\$/p'" "$SHAPE_FILE"
+
+# Second, that the digest verification is among the lines required to be
+# present in what actually executes. That pin is what stops a rewritten tag
+# running as root at boot, and it had no test at all: the old check tested
+# one flag, so an extraction that had lost the sha256 check would have passed
+# and this job would have called the shape proven without ever running it.
+assert_contains "'sha256sum -c -'" "$SHAPE_FILE"
+assert_contains "'curl -sfL -o /opt/k3s-install.sh'" "$SHAPE_FILE"
+
 # The runner must be the free arm64 image. The box is aarch64, and the point
 # of the job is to run the shape on the architecture that ships.
 assert_contains 'runs-on: ubuntu-24.04-arm' "$SHAPE_FILE"
@@ -1131,5 +1155,36 @@ fi
 # step down before the branch that reports it, so the one failure this job
 # exists to catch is the one it cannot report.
 assert_contains "| tr -d '[:space:]' || true" "$SHAPE_FILE"
+# --- 12. the jobs that run this script must not hold a token ---------------
+#
+# `make test-integration` depends on `make test-shell`, which runs every
+# scripts/*.test.sh in the PR's own tree -- this file among them. That is
+# PR-authored shell with network access, and a checkout left at its default
+# leaves the job's GITHUB_TOKEN in .git/config where any of those scripts can
+# read it. The `env -i` each invocation carries is not the control: it clears
+# the environment, and the token is on disk.
+#
+# Asserted here rather than anywhere else because this suite is one of the
+# scripts that inclusion admits, so the precondition for running it belongs
+# with it. Block-scoped: the file already carries the flag on two other jobs,
+# so a file-wide grep would pass while both of these jobs kept the token.
+for shell_caller in integration-test integration-test-mssql; do
+  job_block "$shell_caller" > "$SHELL_CALLER_FILE"
+  [ -s "$SHELL_CALLER_FILE" ] ||
+    fail "$shell_caller job not found in $WORKFLOW"
+
+  # Only jobs that really do run the shell suite; if one stops calling it,
+  # this assertion should go with it rather than linger as a rule nobody can
+  # explain.
+  if ! grep -Eq 'make (test-integration|test-shell|quality-gate)\b' \
+      "$SHELL_CALLER_FILE"; then
+    fail "$shell_caller no longer runs the shell suite; drop it from this list"
+  fi
+  assert_contains 'actions/checkout@' "$SHELL_CALLER_FILE"
+  grep -Fq 'persist-credentials: false' "$SHELL_CALLER_FILE" ||
+    fail "$shell_caller runs PR-authored shell from make test-shell with the \
+default checkout, so its GITHUB_TOKEN sits in .git/config where that shell \
+can read it; set persist-credentials: false on its checkout"
+done
 
 echo "terraform gate checks passed."

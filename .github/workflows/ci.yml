@@ -332,6 +332,18 @@ jobs:
         # v6.0.2
         uses: >-
           actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          # `make test-integration` depends on `make test-shell`, which runs
+          # every scripts/*.test.sh in the PR's own tree -- PR-authored shell,
+          # with network access, as the runner's own user. Left at the
+          # default, checkout leaves this job's GITHUB_TOKEN in .git/config,
+          # so one of those scripts could read and send it. The `env -i` on
+          # each invocation is no defence: it clears the environment, and the
+          # token is on disk.
+          #
+          # Nothing in this job talks to git after the checkout, so removing
+          # the credential costs it nothing.
+          persist-credentials: false
 
       - name: Setup Bun toolchain
         uses: ./.github/actions/setup-bun-toolchain
@@ -381,6 +393,18 @@ jobs:
         # v6.0.2
         uses: >-
           actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          # `make test-integration` depends on `make test-shell`, which runs
+          # every scripts/*.test.sh in the PR's own tree -- PR-authored shell,
+          # with network access, as the runner's own user. Left at the
+          # default, checkout leaves this job's GITHUB_TOKEN in .git/config,
+          # so one of those scripts could read and send it. The `env -i` on
+          # each invocation is no defence: it clears the environment, and the
+          # token is on disk.
+          #
+          # Nothing in this job talks to git after the checkout, so removing
+          # the credential costs it nothing.
+          persist-credentials: false
 
       - name: Setup Bun toolchain
         uses: ./.github/actions/setup-bun-toolchain
@@ -925,13 +949,56 @@ jobs:
           rm -f backend_override.tf
           popd >/dev/null
 
+          # Extracted on the script's own structure -- the whole
+          # `if ! command -v k3s ... fi` block, plus the log() helper it
+          # calls -- rather than on a substring of one command. The previous
+          # anchor was the literal `curl -sfL https://get.k3s.io`, and when
+          # the template moved to a tagged, checksum-verified installer that
+          # string stopped existing: the extraction went empty and this step
+          # failed with a message about servicelb, which named neither the
+          # anchor nor the line that had moved. A block that begins and ends
+          # on lines the shell itself delimits survives an edit inside it.
           install_cmd="$(
-            sed -n '/curl -sfL https:\/\/get\.k3s\.io/,/--tls-san/p' \
+            sed -n '/^log() {/p' "${RUNNER_TEMP}/bootstrap-k3s.sh"
+            sed -n '/^if ! command -v k3s /,/^fi$/p' \
               "${RUNNER_TEMP}/bootstrap-k3s.sh"
           )"
-          if ! grep -q -- '--disable=servicelb' <<<"${install_cmd}"; then
-            echo "::error::Could not extract the k3s install command from" \
-              "the rendered bootstrap script."
+
+          # Every assertion below names a line that must be *executed here*,
+          # not merely present in the template. The old check tested one flag,
+          # so an extraction that had lost the digest verification -- the
+          # control that stops a rewritten tag executing as root at boot --
+          # would have passed it and this job would have reported the shape
+          # proven while never running the pin.
+          missing=()
+          for needle in \
+            'curl -sfL -o /opt/k3s-install.sh' \
+            'sha256sum -c -' \
+            'refusing to execute it' \
+            'sh /opt/k3s-install.sh server' \
+            '--disable=metrics-server' \
+            '--disable=servicelb' \
+            '--write-kubeconfig-mode 600' \
+            '--tls-san'
+          do
+            grep -qF -- "${needle}" <<<"${install_cmd}" \
+              || missing+=("${needle}")
+          done
+          if [ "${#missing[@]}" -gt 0 ]; then
+            echo "::error::The k3s install block extracted from the rendered" \
+              "bootstrap script is missing: ${missing[*]}." \
+              "cloud-init.yaml.tftpl has been restructured; re-anchor the" \
+              "sed above on the block that now installs k3s."
+            exit 1
+          fi
+
+          # A fragment that does not parse would otherwise fail part-way
+          # through `sudo bash -c`, after the download and before the flags,
+          # which reads as a k3s problem rather than an extraction one.
+          if ! bash -n <<<"${install_cmd}"; then
+            echo "::error::The extracted k3s install block is not valid" \
+              "shell;" \
+              "the sed range no longer lines up with the script's structure."
             exit 1
           fi
           echo "Running the install command cloud-init runs:"
