@@ -467,3 +467,101 @@ run "the_ssh_key_cannot_escape_its_yaml_scalar" {
     error_message = "The rendered cloud-config has an unexpected set of top-level keys. Either a directive was added deliberately and this list needs updating, or an interpolated value broke out of its scalar."
   }
 }
+
+# ---------------------------------------------------------------------------
+# Supply chain and host firewall.
+#
+# All three properties below were measured on a real Ubuntu 24.04 box with a
+# real iptables-persistent before they were written, and each of the string
+# forms asserted here is one a first guess got wrong. They are locked because
+# every one of them fails silently: a stale pin installs a different
+# installer, an unverified download is a root shell from the internet, and a
+# save that did not persist only shows up on the next reboot.
+# ---------------------------------------------------------------------------
+
+run "the_k3s_installer_is_pinned_and_verified_not_piped_from_the_internet" {
+  command = plan
+
+  # https://get.k3s.io serves the master-branch script, so pinning
+  # INSTALL_K3S_VERSION pinned the binary and left the ~36KB of shell that
+  # installs it floating. Measured: the two are different files.
+  #
+  # Non-comment lines only: the script explains at length why it does not use
+  # that endpoint, and a bare strcontains cannot tell the prohibition from the
+  # thing prohibited.
+  assert {
+    condition     = !can(regex("(?m)^[^#\n]*get\\.k3s\\.io", local.cloud_init))
+    error_message = "cloud-init must not fetch anything from get.k3s.io. That endpoint serves the master-branch installer, as root, and no version pin constrains it."
+  }
+
+  # The "+" has to survive as %2B; raw.githubusercontent.com 404s on the bare
+  # form, which would fail the download rather than install the wrong thing --
+  # loud, but still a broken bootstrap.
+  assert {
+    condition     = strcontains(local.cloud_init, "https://raw.githubusercontent.com/k3s-io/k3s/v1.33.4%2Bk3s1/install.sh")
+    error_message = "The installer URL must be the install.sh tagged for exactly k3s_version, with the + percent-encoded, so the script and the binary come from one release."
+  }
+
+  assert {
+    condition     = strcontains(local.cloud_init, "sha256sum -c -")
+    error_message = "The downloaded installer must be checksum-verified before it is executed."
+  }
+
+  # Ordering, not presence. A verification that runs after the script has
+  # already executed is decoration.
+  assert {
+    condition     = can(regex("(?s)sha256sum -c -.*sh /opt/k3s-install.sh server", local.cloud_init))
+    error_message = "The digest check must run before the installer is executed, not after."
+  }
+}
+
+run "the_pod_cidr_cannot_reach_the_nodes_sshd" {
+  command = plan
+
+  # 22 can be taken back at the host and 6443 cannot: kube-proxy deliberately
+  # does not masquerade pod-CIDR sources for kubernetes.default.svc, so a DROP
+  # on 6443 breaks every in-cluster API client. Measured on a real cluster --
+  # baseline 401, with the 22 rule 401, with the 6443 rule a curl timeout.
+  assert {
+    condition     = strcontains(local.cloud_init, "iptables -I INPUT 1 -s 10.42.0.0/16 -p tcp --dport 22 -j DROP")
+    error_message = "The host must drop new pod-CIDR connections to sshd. The NSG cannot: pod-to-host traffic never crosses the VNIC."
+  }
+
+  assert {
+    condition     = !can(regex("iptables -I INPUT[^\\n]*--dport 6443[^\\n]*DROP", local.cloud_init))
+    error_message = "Do not add the same DROP for 6443. kubernetes.default.svc DNATs to the node with the pod's own source address, so this breaks every in-cluster API client."
+  }
+
+  # The rule is inserted after the flush, or the flush removes it.
+  assert {
+    condition     = can(regex("(?s)iptables -F INPUT.*iptables -I INPUT 1 -s 10.42.0.0/16", local.cloud_init))
+    error_message = "The pod-CIDR drop must be inserted after the INPUT flush, not before it."
+  }
+}
+
+run "the_flushed_ruleset_is_persisted_and_the_save_is_verified" {
+  command = plan
+
+  # No "|| true". iptables-persistent's saved ruleset is Ubuntu's default-DROP
+  # one until the save succeeds, so ignoring a failure yields a box that
+  # serves traffic until someone reboots it, with cloud-init reporting success.
+  assert {
+    condition     = !can(regex("netfilter-persistent save[^\\n]*\\|\\| true", local.cloud_init))
+    error_message = "netfilter-persistent save must not be allowed to fail silently; it is the only step that carries the flush across a reboot."
+  }
+
+  # The saved forms, measured with iptables-save rather than assumed. A policy
+  # is written ":INPUT ACCEPT [0:0]", never the "-P INPUT ACCEPT" that sets
+  # it, and iptables inserts "-m tcp" into the saved rule. Grepping for either
+  # command verbatim fails against a correctly saved file -- which would have
+  # bricked every boot.
+  assert {
+    condition     = strcontains(local.cloud_init, "grep -q \"^:INPUT ACCEPT\" /etc/iptables/rules.v4")
+    error_message = "The save must be verified by re-reading rules.v4, and against iptables-save's own output form (':INPUT ACCEPT'), not the command that sets the policy."
+  }
+
+  assert {
+    condition     = strcontains(local.cloud_init, "-A INPUT -s 10.42.0.0/16.*--dport 22 -j DROP")
+    error_message = "The persisted pod-CIDR drop must be verified too; a save that lost it is only discovered on the next reboot."
+  }
+}

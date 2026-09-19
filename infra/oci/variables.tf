@@ -280,18 +280,63 @@ variable "ssh_allowed_cidrs" {
   #
   # Entries that are not valid CIDRs are filtered out of both sums rather than
   # crashing the expression; the validation above is what reports them.
+  #
+  # It measures the *union*, not the sum of the parts, and the difference is
+  # not a refinement: a plain sum over-refuses. ["0.0.0.0/1", "0.0.0.0/1"]
+  # sums to the whole address space while covering half of it, and a /32
+  # written out beside the /24 that already contains it -- an ordinary way to
+  # spell "this host, and the office" -- is double-counted. Either would have
+  # been refused with an error message saying the list covers the entire
+  # internet, which is a confident wrong answer about a safe configuration.
+  #
+  # Measuring the union is exact here rather than approximate, because CIDR
+  # blocks are laminar: any two are either disjoint or one wholly contains the
+  # other, with no partial overlap possible. So the union is simply the sum of
+  # the blocks that no other block contains, which is what the !anytrue filter
+  # selects. distinct() over the *masked* form (cidrhost normalises
+  # 10.0.0.5/24 to 10.0.0.0) is what makes "contains" strict on the prefix
+  # length: without it two spellings of one block each contain the other and
+  # both drop out of the sum, which would under-count -- the one direction
+  # that matters.
   validation {
     condition = (
       var.allow_ssh_from_anywhere ||
       (
         sum(concat([0], [
-          for c in var.ssh_allowed_cidrs :
-          pow(2, 32 - tonumber(split("/", c)[1])) if can(cidrnetmask(c))
+          for c in distinct([
+            for x in var.ssh_allowed_cidrs :
+            "${cidrhost(x, 0)}/${split("/", x)[1]}"
+            if can(cidrnetmask(x))
+          ]) :
+          pow(2, 32 - tonumber(split("/", c)[1]))
+          if !anytrue([
+            for d in distinct([
+              for x in var.ssh_allowed_cidrs :
+              "${cidrhost(x, 0)}/${split("/", x)[1]}"
+              if can(cidrnetmask(x))
+            ]) :
+            tonumber(split("/", d)[1]) < tonumber(split("/", c)[1]) &&
+            cidrhost("${split("/", c)[0]}/${split("/", d)[1]}", 0) ==
+            split("/", d)[0]
+          ])
         ])) < pow(2, 32) &&
         sum(concat([0], [
-          for c in var.ssh_allowed_cidrs :
+          for c in distinct([
+            for x in var.ssh_allowed_cidrs :
+            "${cidrhost(x, 0)}/${split("/", x)[1]}"
+            if !can(cidrnetmask(x)) && can(cidrhost(x, 0))
+          ]) :
           pow(2, 128 - tonumber(split("/", c)[1]))
-          if !can(cidrnetmask(c)) && can(cidrhost(c, 0))
+          if !anytrue([
+            for d in distinct([
+              for x in var.ssh_allowed_cidrs :
+              "${cidrhost(x, 0)}/${split("/", x)[1]}"
+              if !can(cidrnetmask(x)) && can(cidrhost(x, 0))
+            ]) :
+            tonumber(split("/", d)[1]) < tonumber(split("/", c)[1]) &&
+            cidrhost("${split("/", c)[0]}/${split("/", d)[1]}", 0) ==
+            split("/", d)[0]
+          ])
         ])) < pow(2, 128)
       )
     )
@@ -345,17 +390,45 @@ variable "k8s_api_allowed_cidrs" {
   # for a promise the description makes outright: this list has no escape hatch,
   # so a guard that only recognised the canonical spelling would have let
   # ["0.0.0.0/1", "128.0.0.0/1"] expose the API to the entire internet while
-  # still reading as "can never be opened to the world".
+  # still reading as "can never be opened to the world". See ssh_allowed_cidrs
+  # for why this measures the union of the blocks rather than their sum.
   validation {
     condition = (
       sum(concat([0], [
-        for c in var.k8s_api_allowed_cidrs :
-        pow(2, 32 - tonumber(split("/", c)[1])) if can(cidrnetmask(c))
+        for c in distinct([
+          for x in var.k8s_api_allowed_cidrs :
+          "${cidrhost(x, 0)}/${split("/", x)[1]}"
+          if can(cidrnetmask(x))
+        ]) :
+        pow(2, 32 - tonumber(split("/", c)[1]))
+        if !anytrue([
+          for d in distinct([
+            for x in var.k8s_api_allowed_cidrs :
+            "${cidrhost(x, 0)}/${split("/", x)[1]}"
+            if can(cidrnetmask(x))
+          ]) :
+          tonumber(split("/", d)[1]) < tonumber(split("/", c)[1]) &&
+          cidrhost("${split("/", c)[0]}/${split("/", d)[1]}", 0) ==
+          split("/", d)[0]
+        ])
       ])) < pow(2, 32) &&
       sum(concat([0], [
-        for c in var.k8s_api_allowed_cidrs :
+        for c in distinct([
+          for x in var.k8s_api_allowed_cidrs :
+          "${cidrhost(x, 0)}/${split("/", x)[1]}"
+          if !can(cidrnetmask(x)) && can(cidrhost(x, 0))
+        ]) :
         pow(2, 128 - tonumber(split("/", c)[1]))
-        if !can(cidrnetmask(c)) && can(cidrhost(c, 0))
+        if !anytrue([
+          for d in distinct([
+            for x in var.k8s_api_allowed_cidrs :
+            "${cidrhost(x, 0)}/${split("/", x)[1]}"
+            if !can(cidrnetmask(x)) && can(cidrhost(x, 0))
+          ]) :
+          tonumber(split("/", d)[1]) < tonumber(split("/", c)[1]) &&
+          cidrhost("${split("/", c)[0]}/${split("/", d)[1]}", 0) ==
+          split("/", d)[0]
+        ])
       ])) < pow(2, 128)
     )
     error_message = "Refusing to expose the Kubernetes API to the entire address space, however it is spelled -- 0.0.0.0/0, ::/0, or a split such as 0.0.0.0/1 plus 128.0.0.0/1. Use an SSH tunnel instead."
@@ -385,6 +458,10 @@ variable "cloudflare_ipv4_ranges" {
   # internet to 80/443, and with it the origin-IP bypass that restriction
   # exists to prevent -- which is also what makes cf-connecting-ip trustworthy.
   # restrict_ingress_to_cloudflare = false is the honest way to open the origin.
+  #
+  # Union, not sum -- see ssh_allowed_cidrs. It matters more here than there:
+  # Cloudflare publishes ~15 ranges and an operator pasting a hand-maintained
+  # copy is exactly the case where a duplicate or a nested entry creeps in.
   validation {
     condition     = alltrue([for c in var.cloudflare_ipv4_ranges : can(cidrnetmask(c))])
     error_message = "Every entry in cloudflare_ipv4_ranges must be an IPv4 CIDR block. Cloudflare reaches an IPv4 origin over IPv4, and this deployment assigns no IPv6 address."
@@ -392,8 +469,22 @@ variable "cloudflare_ipv4_ranges" {
 
   validation {
     condition = sum(concat([0], [
-      for c in var.cloudflare_ipv4_ranges :
-      pow(2, 32 - tonumber(split("/", c)[1])) if can(cidrnetmask(c))
+      for c in distinct([
+        for x in var.cloudflare_ipv4_ranges :
+        "${cidrhost(x, 0)}/${split("/", x)[1]}"
+        if can(cidrnetmask(x))
+      ]) :
+      pow(2, 32 - tonumber(split("/", c)[1]))
+      if !anytrue([
+        for d in distinct([
+          for x in var.cloudflare_ipv4_ranges :
+          "${cidrhost(x, 0)}/${split("/", x)[1]}"
+          if can(cidrnetmask(x))
+        ]) :
+        tonumber(split("/", d)[1]) < tonumber(split("/", c)[1]) &&
+        cidrhost("${split("/", c)[0]}/${split("/", d)[1]}", 0) ==
+        split("/", d)[0]
+      ])
     ])) < pow(2, 32)
     error_message = "cloudflare_ipv4_ranges covers the entire IPv4 address space, which leaves 80/443 open to the world while restrict_ingress_to_cloudflare still reads as enabled. Set restrict_ingress_to_cloudflare = false instead."
   }
@@ -514,6 +605,31 @@ variable "k3s_version" {
   validation {
     condition     = can(regex("^v1\\.[0-9]+\\.[0-9]+\\+k3s[0-9]+$", var.k3s_version))
     error_message = "k3s_version must look like v1.33.4+k3s1."
+  }
+}
+
+variable "k3s_install_script_sha256" {
+  description = "sha256 of the k3s install.sh tagged for k3s_version. cloud-init refuses to execute the script unless it matches."
+  type        = string
+  default     = "9ca7930c31179d83bc13de20078fd8ad3e1ee00875b31f39a7e524ca4ef7d9de"
+
+  # Measured, not copied from a changelog:
+  #   curl -sfL https://raw.githubusercontent.com/k3s-io/k3s/v1.33.4%2Bk3s1/install.sh \
+  #     | shasum -a 256
+  # 36501 bytes for v1.33.4+k3s1.
+  #
+  # This pairs with k3s_version and has to be bumped in the same commit. The
+  # failure if it is not is loud and early -- the bootstrap script refuses to
+  # run the installer and prints both digests -- which is the whole point of
+  # pinning it rather than piping https://get.k3s.io into a root shell.
+  #
+  # Lowercase hex is required rather than merely conventional: cloud-init
+  # feeds this straight into `sha256sum -c`, which compares the digest column
+  # as a string and reports a mismatch for an uppercase copy of the right
+  # value.
+  validation {
+    condition     = can(regex("^[0-9a-f]{64}$", var.k3s_install_script_sha256))
+    error_message = "k3s_install_script_sha256 must be 64 lowercase hex characters."
   }
 }
 

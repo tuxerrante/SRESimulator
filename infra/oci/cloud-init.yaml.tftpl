@@ -68,7 +68,7 @@ write_files:
       # essential on every Ubuntu image.
       log "waiting for outbound connectivity"
       for attempt in $(seq 1 60); do
-        if timeout 5 bash -c 'exec 3<>/dev/tcp/get.k3s.io/443' 2>/dev/null; then
+        if timeout 5 bash -c 'exec 3<>/dev/tcp/raw.githubusercontent.com/443' 2>/dev/null; then
           log "network is up after $${attempt} attempt(s)"
           break
         fi
@@ -141,27 +141,82 @@ write_files:
       #
       # What this costs, stated plainly: an NSG filters traffic crossing the
       # VNIC, and pod-to-host traffic never crosses it. With INPUT flushed any
-      # workload on this cluster can reach every port the host listens on,
-      # including 22 and the API on 6443. The 301 above is itself the proof --
-      # the NSG admits :80 only from Cloudflare, and that request came from a
-      # 10.42.0.0/16 pod. "6443 is closed" means closed to the internet, not
-      # closed to a compromised container.
+      # workload on this cluster can reach every port the host listens on.
+      # The 301 above is itself the proof -- the NSG admits :80 only from
+      # Cloudflare, and that request came from a 10.42.0.0/16 pod. "6443 is
+      # closed" means closed to the internet, not closed to a compromised
+      # container.
       #
-      # README.md documents the defence-in-depth alternative for operators who
-      # want two enforcement layers.
+      # Of the two administration ports that leaves exposed, exactly one can
+      # be taken back at the host, and the difference was measured on a real
+      # cluster rather than reasoned about:
+      #
+      #   * 22 CAN. Nothing in the cluster has any reason to open a TCP
+      #     connection to the node's sshd, so the rule below costs nothing.
+      #     With "-s 10.42.0.0/16 --dport 22 -j DROP" inserted at the head of
+      #     INPUT, a pod's call to the in-cluster API still answered 401.
+      #
+      #   * 6443 CANNOT. kubernetes.default.svc is a ClusterIP that DNATs to
+      #     the node's own apiserver port, and kube-proxy deliberately does
+      #     NOT masquerade pod-CIDR sources for it:
+      #
+      #       -A KUBE-SERVICES -d 10.43.0.1/32 -p tcp --dport 443
+      #          -j KUBE-SVC-NPX46M4PTMTKRN6Y
+      #       -A KUBE-SVC-NPX46M4PTMTKRN6Y ! -s 10.42.0.0/16 ... -j KUBE-MARK-MASQ
+      #       -A KUBE-SEP-... -j DNAT --to-destination <node ip>:6443
+      #
+      #     so the packet reaches INPUT with the pod's own source address and
+      #     dport 6443 -- indistinguishable from a direct attempt. Adding the
+      #     same DROP for 6443 took that probe from 401 to a curl timeout
+      #     (exit 28): it breaks every in-cluster API client, which is most of
+      #     the control plane. The control that matters for a hostile workload
+      #     there is RBAC on its service account, not a host firewall.
+      #
+      # The rule is inserted at the head of INPUT, but k3s and kube-router
+      # also insert their own jumps there on start and on restart, so its
+      # position is best-effort and it is defence in depth, not the boundary.
+      #
+      # README.md documents the wider defence-in-depth alternative for
+      # operators who want two full enforcement layers.
       # -------------------------------------------------------------------
       log "flushing the host INPUT chain; the NSG is the firewall"
       iptables -P INPUT ACCEPT
       iptables -P FORWARD ACCEPT
       iptables -F INPUT
       iptables -F FORWARD
+      iptables -I INPUT 1 -s ${k3s_pod_cidr} -p tcp --dport 22 -j DROP
       if command -v ip6tables >/dev/null 2>&1; then
         ip6tables -P INPUT ACCEPT
         ip6tables -P FORWARD ACCEPT
         ip6tables -F INPUT
         ip6tables -F FORWARD
       fi
-      netfilter-persistent save || true
+
+      # No "|| true". This is the only step that carries the flush across a
+      # reboot, and iptables-persistent's saved ruleset is Ubuntu's
+      # default-DROP one until it succeeds. Ignoring a failure here produces
+      # a box that serves traffic until someone reboots it and then does not,
+      # with cloud-init having reported success -- the same silent-config
+      # class as every other bug found on this branch. Failing the bootstrap
+      # is the loud answer, and the file is re-read afterwards to prove the
+      # save actually landed rather than trusting the exit status.
+      #
+      # The two patterns are iptables-save's own output forms, measured rather
+      # than guessed -- and the first guess was wrong, which is why they are
+      # spelled out here. A policy is saved as ":INPUT ACCEPT [0:0]", never as
+      # the "-P INPUT ACCEPT" that sets it, and iptables adds "-m tcp" to the
+      # saved rule that the command line above does not carry. Grepping for
+      # either command verbatim fails against a correctly saved file.
+      log "persisting the flushed ruleset"
+      netfilter-persistent save
+      if ! grep -q "^:INPUT ACCEPT" /etc/iptables/rules.v4; then
+        log "netfilter-persistent reported success but /etc/iptables/rules.v4 still carries a non-ACCEPT INPUT policy"
+        exit 1
+      fi
+      if ! grep -q -- "-A INPUT -s ${k3s_pod_cidr}.*--dport 22 -j DROP" /etc/iptables/rules.v4; then
+        log "the pod-CIDR SSH drop is missing from /etc/iptables/rules.v4; it would not survive a reboot"
+        exit 1
+      fi
 
       # -------------------------------------------------------------------
       # Swap. OCI A1 images ship none, and an OOM kill part-way through a
@@ -194,10 +249,34 @@ write_files:
       #   NAT, the OS only ever sees the private address, and k3s documents
       #   that setting it breaks externalTrafficPolicy: Local.
       # -------------------------------------------------------------------
+      #
+      # The installer is NOT piped from https://get.k3s.io. That endpoint
+      # serves whatever is on the k3s master branch at the moment of the
+      # request, as root, on a box being built -- so "pinned k3s version"
+      # described the binary and said nothing about the 38KB of shell that
+      # chooses and installs it. Measured: get.k3s.io and the script tagged
+      # for this release are different files (38693 vs 36501 bytes).
+      #
+      # Two locks instead, both of which have to agree:
+      #   * the URL is the install.sh tagged for exactly ${k3s_version}, so
+      #     the script and the binary it installs come from one release;
+      #   * its sha256 is pinned in a variable, so a rewritten tag is caught.
+      #
+      # Bumping k3s therefore means bumping both k3s_version and
+      # k3s_install_script_sha256. That is deliberate friction: the failure
+      # if you forget is this script refusing to run, at boot, with the
+      # expected and actual digests printed.
       if ! command -v k3s >/dev/null 2>&1; then
+        log "fetching the k3s ${k3s_version} installer"
+        curl -sfL -o /opt/k3s-install.sh "${k3s_install_url}"
+        if ! echo "${k3s_install_sha256}  /opt/k3s-install.sh" | sha256sum -c -; then
+          log "k3s installer digest does not match k3s_install_script_sha256; refusing to execute it"
+          log "expected ${k3s_install_sha256}, got $(sha256sum /opt/k3s-install.sh | cut -d' ' -f1)"
+          exit 1
+        fi
+
         log "installing k3s ${k3s_version}"
-        curl -sfL https://get.k3s.io | \
-          INSTALL_K3S_VERSION="${k3s_version}" sh -s - server \
+        INSTALL_K3S_VERSION="${k3s_version}" sh /opt/k3s-install.sh server \
             --disable=metrics-server \
             --disable=servicelb \
             --write-kubeconfig-mode 600 \
