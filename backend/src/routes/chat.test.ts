@@ -17,10 +17,12 @@ const mocks = vi.hoisted(() => ({
   getSessionStore: vi.fn(),
   sessionGet: vi.fn(),
   chargeAiBudget: vi.fn(),
+  markAiBudgetDegraded: vi.fn(),
 }));
 
 vi.mock("../lib/ai-budget", () => ({
   chargeAiBudget: mocks.chargeAiBudget,
+  markAiBudgetDegraded: mocks.markAiBudgetDegraded,
 }));
 
 vi.mock("../lib/knowledge", () => ({
@@ -149,9 +151,19 @@ async function withChatServer(
   const app = express();
   app.use(express.json());
   if (options.budgetExhausted) {
-    // What chargeAiBudget answers the route when the shared daily budget is
-    // spent and the mode is degrade: nothing written, decision handed back.
-    mocks.chargeAiBudget.mockResolvedValue("exhausted");
+    // A faithful stand-in for the real pair: chargeAiBudget records the cause
+    // it observed, markAiBudgetDegraded upgrades it to the outcome the route
+    // chose and refuses to overwrite anything else.
+    mocks.chargeAiBudget.mockImplementation(async (res: express.Response) => {
+      res.setHeader("x-sresim-ai-budget", "daily-exhausted");
+      return "exhausted";
+    });
+    mocks.markAiBudgetDegraded.mockImplementation((res: express.Response) => {
+      if (res.getHeader("x-sresim-ai-budget") !== "daily-exhausted") {
+        return;
+      }
+      res.setHeader("x-sresim-ai-budget", "degraded");
+    });
   }
   app.use("/api/chat", chatRouter);
 
@@ -636,6 +648,25 @@ describe("chatRouter", () => {
     expect(mocks.streamAiText).not.toHaveBeenCalled();
   });
 
+  it("tells a streaming client its answer is simulated, not that it was refused", async () => {
+    mocks.generateMockChatResponse.mockReturnValue("simulated mentor reply");
+
+    await withChatServer(async (url) => {
+      const response = await fetch(url, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(defaultChatBody()),
+      });
+
+      // Read off the wire rather than off the mock: the header has to be set
+      // before flushHeaders, and an SSE client gets exactly one look at it.
+      // `daily-exhausted` here would tell the client the budget turned it
+      // away, when it is about to receive a complete simulated answer.
+      expect(response.headers.get("x-sresim-ai-budget")).toBe("degraded");
+      await response.text();
+    }, { budgetExhausted: true });
+  });
+
   it("answers a spent shared budget with 429 when degradation is switched off", async () => {
     mocks.shouldDegradeOnQuotaExhausted.mockReturnValue(false);
 
@@ -652,6 +683,9 @@ describe("chatRouter", () => {
       await expect(response.json()).resolves.toEqual({
         error: "The shared AI request budget for today is spent.",
       });
+
+      // Nothing was simulated on this path, so the header stays on the cause.
+      expect(response.headers.get("x-sresim-ai-budget")).toBe("daily-exhausted");
     }, { budgetExhausted: true });
 
     expect(mocks.streamAiText).not.toHaveBeenCalled();

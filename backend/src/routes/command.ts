@@ -7,7 +7,7 @@ import {
   isCommandTypeAllowedForPlatform,
 } from "../lib/platform-profiles";
 import { generateAiText, AiQuotaExhaustedError, AiThrottledError } from "../lib/ai-runtime";
-import { chargeAiBudget } from "../lib/ai-budget";
+import { chargeAiBudget, markAiBudgetDegraded } from "../lib/ai-budget";
 import {
   buildScenarioContext,
   buildSimNow,
@@ -306,6 +306,10 @@ commandRouter.post("/", async (req: Request, res: Response) => {
       console.warn(
         `[command] AI budget exhausted (${error.scope}); returning simulated output`,
       );
+      // Inert when the provider raised the quota error rather than the shared
+      // budget: the header is `ok` on that path and only `daily-exhausted` is
+      // overwritten.
+      markAiBudgetDegraded(res);
       res.json(buildFallbackFromRequest("quota_exhausted"));
       return;
     }

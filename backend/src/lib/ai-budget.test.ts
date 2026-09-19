@@ -39,6 +39,7 @@ interface FakeResponse {
   statusCode: number | null;
   body: Record<string, unknown> | null;
   setHeader: (name: string, value: string | number) => void;
+  getHeader: (name: string) => string | undefined;
   status: (code: number) => FakeResponse;
   json: (payload: Record<string, unknown>) => FakeResponse;
 }
@@ -51,6 +52,9 @@ function createResponse(): FakeResponse {
     body: null,
     setHeader(name, value) {
       response.headers[name.toLowerCase()] = String(value);
+    },
+    getHeader(name) {
+      return response.headers[name.toLowerCase()];
     },
     status(code) {
       response.statusCode = code;
@@ -99,14 +103,17 @@ async function loadBudget(): Promise<typeof import("./ai-budget")> {
 async function loadBudgetWithRecordingStore(): Promise<{
   budget: typeof import("./ai-budget");
   consumedKeys: string[];
+  consumedWindowsMs: number[];
 }> {
   vi.resetModules();
   const consumedKeys: string[] = [];
+  const consumedWindowsMs: number[] = [];
   const counts = new Map<string, number>();
   vi.doMock("./rate-limit", () => ({
     consumeSharedWindow: vi.fn(
       async (key: string, windowMs: number, limit: number, nowMs: number) => {
         consumedKeys.push(key);
+        consumedWindowsMs.push(windowMs);
         const used = (counts.get(key) ?? 0) + 1;
         counts.set(key, used);
         return {
@@ -121,7 +128,7 @@ async function loadBudgetWithRecordingStore(): Promise<{
       },
     ),
   }));
-  return { budget: await import("./ai-budget"), consumedKeys };
+  return { budget: await import("./ai-budget"), consumedKeys, consumedWindowsMs };
 }
 
 /** Same, with the shared window store replaced by one that cannot answer. */
@@ -228,7 +235,7 @@ describe("chargeAiBudget", () => {
     // is a claim about the store, not about what the snapshot reports.
     expect(consumedKeys).toEqual([
       "global:ai:minute",
-      "global:ai:day",
+      `global:ai:day:${new Date().toISOString().slice(0, 10)}`,
       "global:ai:minute",
       "global:ai:minute",
     ]);
@@ -250,9 +257,62 @@ describe("chargeAiBudget", () => {
     // The header states what was observed, not how the route will answer:
     // chat and command turn AI_DEGRADE_ON_QUOTA_EXHAUSTED=false into a 429
     // while scenario still returns a playable catalog session, so a header
-    // promising `degraded` would be wrong on two routes out of three -- and
-    // it is written before the answer exists.
+    // promising `degraded` here would be wrong on two routes out of three --
+    // and it is written before the answer exists. The route that does answer
+    // with simulated output calls `markAiBudgetDegraded` (below).
     expect(res.headers["x-sresim-ai-budget"]).toBe("daily-exhausted");
+  });
+
+  it("counts the day by UTC calendar date, not by a rolling 24 hours", async () => {
+    process.env.AI_GLOBAL_DAILY_MAX = "1";
+    const { budget, consumedKeys, consumedWindowsMs } =
+      await loadBudgetWithRecordingStore();
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date("2026-09-18T23:59:00.000Z"));
+      const lastNight = await charge(budget.chargeAiBudget);
+
+      // Ten minutes later, one minute into the next UTC day. OpenRouter has
+      // already reset the account's free-model allowance; a 24-hour sliding
+      // window would still be refusing until 23:59 tomorrow.
+      vi.setSystemTime(new Date("2026-09-19T00:01:00.000Z"));
+      const thisMorning = await charge(budget.chargeAiBudget);
+
+      expect(lastNight.outcome).toBe("ok");
+      expect(thisMorning.outcome).toBe("ok");
+      expect(consumedKeys).toEqual([
+        "global:ai:minute",
+        "global:ai:day:2026-09-18",
+        "global:ai:minute",
+        "global:ai:day:2026-09-19",
+      ]);
+      // The window handed to the store stays 24 hours even though the key
+      // rolls at midnight: it is the key's TTL, and shortening it to "time
+      // since midnight" would expire the counter after a quiet minute early
+      // in the day and silently reset the spend.
+      expect(consumedWindowsMs).toEqual([60_000, 86_400_000, 60_000, 86_400_000]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("points a spent day at the next UTC midnight, not at the oldest request", async () => {
+    process.env.AI_GLOBAL_DAILY_MAX = "1";
+    process.env.AI_GLOBAL_DAILY_EXHAUSTED_MODE = "reject";
+    const { chargeAiBudget } = await loadBudget();
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date("2026-09-18T18:00:00.000Z"));
+      await charge(chargeAiBudget);
+      const { res } = await charge(chargeAiBudget);
+
+      // The store's own answer would be the oldest entry plus 24 hours, which
+      // is the sliding window this key deliberately is not.
+      expect(res.body?.resetAt).toBe("2026-09-19T00:00:00.000Z");
+      expect(res.headers["retry-after"]).toBe(String(6 * 60 * 60));
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("rejects the daily overrun instead when the mode says reject", async () => {
@@ -344,6 +404,59 @@ describe("chargeAiBudget", () => {
 
     expect(outcome).toBe("ok");
     expect(res.headers["x-sresim-ai-budget"]).toBe("fail-open");
+  });
+});
+
+describe("markAiBudgetDegraded", () => {
+  beforeEach(() => {
+    restoreTestEnv();
+    vi.doUnmock("./rate-limit");
+    process.env.AI_PROVIDER = "openrouter";
+    delete process.env.AI_MOCK_MODE;
+  });
+
+  afterEach(() => {
+    restoreTestEnv();
+  });
+
+  it("lets the route say the answer it sent is simulated", async () => {
+    process.env.AI_GLOBAL_DAILY_MAX = "1";
+    const { chargeAiBudget, markAiBudgetDegraded } = await loadBudget();
+
+    await charge(chargeAiBudget);
+    const { res, outcome } = await charge(chargeAiBudget);
+    markAiBudgetDegraded(res as unknown as Response);
+
+    // `degraded` is a claim about the response body, so only the route that
+    // wrote one may make it -- and the documented header contract has to name
+    // a value the code actually emits.
+    expect(outcome).toBe("exhausted");
+    expect(res.headers["x-sresim-ai-budget"]).toBe("degraded");
+  });
+
+  it("keeps a store outage distinguishable from a spent account", async () => {
+    const { chargeAiBudget, markAiBudgetDegraded } = await loadBudgetWithBrokenStore();
+
+    const { res, outcome } = await charge(chargeAiBudget);
+    markAiBudgetDegraded(res as unknown as Response);
+
+    // The answer is equally simulated either way, but this header is the only
+    // signal that the window store, not the account, is what degraded the
+    // deployment -- which is what an operator reads during an incident.
+    expect(outcome).toBe("exhausted");
+    expect(res.headers["x-sresim-ai-budget"]).toBe("store-unavailable");
+  });
+
+  it("says nothing about a response the budget never intervened in", async () => {
+    const { chargeAiBudget, markAiBudgetDegraded } = await loadBudget();
+
+    const { res, outcome } = await charge(chargeAiBudget);
+    markAiBudgetDegraded(res as unknown as Response);
+
+    // The command route calls this from a catch that also handles a provider
+    // -side quota exhaustion, where the shared budget was affordable.
+    expect(outcome).toBe("ok");
+    expect(res.headers["x-sresim-ai-budget"]).toBe("ok");
   });
 });
 

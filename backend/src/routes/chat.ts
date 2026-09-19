@@ -3,7 +3,7 @@ import { loadKnowledgeSections, queryKnowledgeSections } from "../lib/knowledge"
 import { getRuntimePlatformProfile } from "../lib/platform-profiles";
 import { buildSystemPrompt } from "../lib/prompts/system";
 import { getAiReadiness, shouldDegradeOnQuotaExhausted } from "../lib/ai-config";
-import { chargeAiBudget } from "../lib/ai-budget";
+import { chargeAiBudget, markAiBudgetDegraded } from "../lib/ai-budget";
 import { generateMockChatResponse } from "../lib/mock-ai";
 import {
   streamAiText,
@@ -168,6 +168,10 @@ chatRouter.post("/", async (req: Request, res: Response) => {
       // The same frames the mid-stream quota path emits, so the client cannot
       // tell which side of the call ran out.
       console.warn("[chat] AI budget exhausted (daily); returning simulated response");
+      // Before flushHeaders: an SSE client reads these once, and this is the
+      // only place it can learn the stream below is simulated without waiting
+      // for the marker frame.
+      markAiBudgetDegraded(res);
       res.setHeader("Content-Type", "text/event-stream");
       res.setHeader("Cache-Control", "no-cache");
       res.setHeader("Connection", "keep-alive");

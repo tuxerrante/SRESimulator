@@ -74,6 +74,37 @@ describe("AiBudgetBanner", () => {
     expect(screen.getByRole("status").textContent).toContain("3 of 50 requests left today");
   });
 
+  it("falls back to the local pair when only one upstream number arrived", () => {
+    render(
+      <AiBudgetBanner
+        snapshot={makeSnapshot({
+          dailyRemaining: 120,
+          upstream: { dailyLimit: null, dailyRemaining: 3 },
+        })}
+      />,
+    );
+
+    // The two upstream numbers only mean something together. Pairing the
+    // provider's remaining with the locally configured limit renders a
+    // sentence that is confidently wrong -- "3 of 1000 requests left" against
+    // an account whose real cap is 50 -- so an incomplete reading falls back
+    // to the pair that is at least internally consistent.
+    expect(screen.getByRole("status").textContent).toContain("120 of 1000 requests left today");
+  });
+
+  it("falls back to the local pair when only the upstream limit arrived", () => {
+    render(
+      <AiBudgetBanner
+        snapshot={makeSnapshot({
+          dailyRemaining: 120,
+          upstream: { dailyLimit: 50, dailyRemaining: null },
+        })}
+      />,
+    );
+
+    expect(screen.getByRole("status").textContent).toContain("120 of 1000 requests left today");
+  });
+
   it("omits the reset time rather than printing an invalid date", () => {
     render(
       <AiBudgetBanner snapshot={makeSnapshot({ dailyRemaining: 0, degraded: true, resetAt: "not-a-date" })} />,
