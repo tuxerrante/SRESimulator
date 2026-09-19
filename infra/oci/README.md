@@ -299,13 +299,22 @@ Terraform reads them from the environment as `AWS_ACCESS_KEY_ID` and
 `AWS_SECRET_ACCESS_KEY`; the Makefile exports both out of `.oci-backend.env`,
 but a bare `terraform init` run by hand has to export them itself.
 
-**Pass `OWNER_ALIAS` to `tf-oci-init`, not only to `plan` and `apply`.** The
-object key is derived from it — `<alias>-free-sre-simulator.tfstate`, falling
-back to a shared `sre-simulator-free.tfstate` when it is unset — and `init` is
-the one target that writes the key into `.terraform/`. Omitting it there and
-supplying it everywhere else does not fail: every later target reads the key
-`init` already recorded, so two operators who each skipped it land on the same
-state file and the second `apply` proposes destroying the first one's box.
+**`tf-oci-init` and `tf-oci-plan` both require `OWNER_ALIAS`, and refuse
+without it.** The object key is derived from it —
+`<alias>-free-sre-simulator.tfstate` — and `init` is the one target that writes
+that key into `.terraform/`, which every later target then reads back. There is
+deliberately **no shared default key**: an earlier revision fell back to
+`sre-simulator-free.tfstate`, so two operators who each omitted the alias landed
+on the same state object and the second `apply` proposed destroying the first
+one's box. Documenting that hazard was not enough, because the omission is
+silent at the moment it matters.
+
+Two escape hatches remain, both explicit:
+
+- `make tf-oci-init-local` (`terraform init -backend=false`) for validation and
+  `terraform test`, which need no state at all;
+- setting `OCI_STATE_KEY` directly, for the rare case of sharing one state
+  object on purpose.
 
 Worth stating plainly, because it partly defeats the purpose: this makes the
 free path depend on the OCI tenancy for its own state. Back it up —

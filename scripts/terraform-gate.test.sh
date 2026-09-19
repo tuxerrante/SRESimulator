@@ -74,7 +74,12 @@ JOB_FILE="$(mktemp)"
 # `rm` after the last assertion would only run on a passing run, and the run
 # that leaks is the failing one -- which is exactly when someone is iterating.
 K8S_API_FILE="$(mktemp)"
-trap 'rm -f "$JOB_FILE" "$K8S_API_FILE"' EXIT
+# Section 11 runs the make targets for real against a recording `terraform`
+# stub; both the stub directory and its log belong to the same trap.
+TERRAFORM_STUB_DIR="$(mktemp -d)"
+TERRAFORM_ARGV_FILE="$(mktemp)"
+trap 'rm -f "$JOB_FILE" "$K8S_API_FILE" "$TERRAFORM_ARGV_FILE"; \
+      rm -rf "$TERRAFORM_STUB_DIR"' EXIT
 printf '%s\n' "$TERRAFORM_JOB" > "$JOB_FILE"
 
 # --- 1. ci-gate must count the result -------------------------------------
@@ -293,5 +298,71 @@ printf '%s\n' "$K8S_API_BLOCK" > "$K8S_API_FILE"
 assert_contains 'empty means closed *to the internet*' "$K8S_API_FILE"
 assert_contains 'cloud-init.yaml.tftpl' "$K8S_API_FILE"
 assert_contains 'kubernetes.default.svc' "$K8S_API_FILE"
+
+# --- 11. the state-key guards fail closed ---------------------------------
+# The object key is derived from OWNER_ALIAS and recorded by `init` into
+# .terraform/, where every later target reads it back. An earlier revision
+# fell back to a shared sre-simulator-free.tfstate when the alias was unset,
+# so two operators who each omitted it landed on one state object and the
+# second apply proposed destroying the first one's box.
+#
+# Executed, not grepped, for two reasons. `make -n` cannot see these guards at
+# all -- they live inside the recipe, which -n prints rather than runs -- and
+# the property worth locking is not the exit code but that terraform is never
+# *reached* with a key nobody chose. A recording stub on PATH answers that
+# directly and keeps the section free of a real terraform.
+cat > "$TERRAFORM_STUB_DIR/terraform" <<STUB
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "$TERRAFORM_ARGV_FILE"
+STUB
+chmod +x "$TERRAFORM_STUB_DIR/terraform"
+
+# OCI_BACKEND_ENV_FILE is redirected because a developer running this on their
+# own machine may have a real .oci-backend.env sitting beside the makefile,
+# and the bucket it names must not decide whether this section passes.
+oci_make_run() {
+  : > "$TERRAFORM_ARGV_FILE"
+  PATH="$TERRAFORM_STUB_DIR:$PATH" make -C "$ROOT_DIR/infra/oci" \
+    OCI_BACKEND_ENV_FILE=/dev/null "$@" >/dev/null 2>&1
+}
+
+if oci_make_run tf-oci-init OCI_STATE_BUCKET=b OCI_STATE_NAMESPACE=n; then
+  fail "tf-oci-init succeeded with no OWNER_ALIAS"
+fi
+if [ -s "$TERRAFORM_ARGV_FILE" ]; then
+  fail "tf-oci-init reached terraform with no OWNER_ALIAS: $(cat "$TERRAFORM_ARGV_FILE")"
+fi
+
+if oci_make_run tf-oci-plan; then
+  fail "tf-oci-plan succeeded with no OWNER_ALIAS"
+fi
+if [ -s "$TERRAFORM_ARGV_FILE" ]; then
+  fail "tf-oci-plan reached terraform with no OWNER_ALIAS: $(cat "$TERRAFORM_ARGV_FILE")"
+fi
+
+# The happy paths, which are what keep the guards from being discovered by
+# breaking a bring-up. Each also asserts terraform was reached -- without that
+# the two refusals above could pass for any unrelated make failure.
+if ! oci_make_run tf-oci-init OWNER_ALIAS=jdoe \
+  OCI_STATE_BUCKET=b OCI_STATE_NAMESPACE=n; then
+  fail "tf-oci-init refused a well-formed OWNER_ALIAS"
+fi
+if ! grep -Fq 'key=jdoe-free-sre-simulator.tfstate' "$TERRAFORM_ARGV_FILE"; then
+  fail "tf-oci-init passed [$(cat "$TERRAFORM_ARGV_FILE")]; the key must carry the alias"
+fi
+
+if ! oci_make_run tf-oci-plan OWNER_ALIAS=jdoe; then
+  fail "tf-oci-plan refused a well-formed OWNER_ALIAS"
+fi
+if ! grep -Fq -- '-out=tfplan' "$TERRAFORM_ARGV_FILE"; then
+  fail "tf-oci-plan did not reach terraform with a well-formed OWNER_ALIAS"
+fi
+
+# tf-oci-init-local is the documented way to validate and run `terraform test`
+# with no state at all, so it must stay reachable without an alias -- that is
+# what makes the two refusals above a redirection rather than a dead end.
+if ! oci_make_run tf-oci-init-local; then
+  fail "tf-oci-init-local requires an OWNER_ALIAS, but it is the no-state path"
+fi
 
 echo "terraform gate checks passed."
