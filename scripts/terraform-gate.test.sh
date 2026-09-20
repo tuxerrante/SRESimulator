@@ -89,7 +89,7 @@ TERRAFORM_ARGV_FILE="$(mktemp)"
 # Section 15 asserts the two backend credentials reach terraform's
 # *environment* rather than a command line, so the stub records that too.
 TERRAFORM_ENV_FILE="$(mktemp)"
-# Section 12 reads the jobs that run this very script, so it needs their
+# Section 19 reads the jobs that run this very script, so it needs their
 # blocks on disk too; declared here so the one trap names them.
 SHELL_CALLER_FILE="$(mktemp)"
 OCI_MAKE_DIR=""
@@ -118,7 +118,7 @@ assert_not_contains 'terraform destroy' "$JOB_FILE"
 assert_contains 'terraform init -backend=false -input=false' "$JOB_FILE"
 
 # Same reason the oci-shape-e2e block is checked for this below, and the same
-# reason the shell-suite callers are in section 12: this job runs PR-controlled
+# reason the shell-suite callers are in section 19: this job runs PR-controlled
 # code -- the PR's own *.tftest.hcl under `terraform test`, and the PR's
 # cloud-init.yaml.tftpl rendered through `terraform console` -- so a
 # GITHUB_TOKEN persisted into .git/config by the default checkout is readable
@@ -1177,7 +1177,7 @@ fi
 # step down before the branch that reports it, so the one failure this job
 # exists to catch is the one it cannot report.
 assert_contains "| tr -d '[:space:]' || true" "$SHAPE_FILE"
-# --- 12. the jobs that run this script must not hold a token ---------------
+# --- 19. the jobs that run this script must not hold a token ---------------
 #
 # `make test-integration` depends on `make test-shell`, which runs every
 # scripts/*.test.sh in the PR's own tree -- this file among them. That is
