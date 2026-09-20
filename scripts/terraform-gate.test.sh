@@ -1153,7 +1153,15 @@ assert_contains 'updateStrategy' "$SHAPE_FILE"
 # template instead reports desired state: with the rollout paused and the pin
 # applied to the template, a k3d reproduction showed the template reading
 # v3.7.13 while the pod ran v3.3.6 and every other assertion here still passed.
-assert_contains 'status.containerStatuses[0].image' "$SHAPE_FILE"
+#
+# The whole jsonpath, and `imageID` rather than `image`. What this asserted
+# before -- `status.containerStatuses[0].image` -- is a *prefix* of the imageID
+# path, so it was satisfied by a job reading either field, and those two fields
+# are exactly the distinction the step's own comment exists to make: on
+# k3s/containerd `image` is the local config digest while `imageID` carries the
+# manifest digest the pin names. A lock that cannot tell them apart does not
+# lock the choice the step made.
+assert_contains '{.items[0].status.containerStatuses[0].imageID}' "$SHAPE_FILE"
 assert_not_contains 'spec.template.spec.containers[0].image' "$SHAPE_FILE"
 
 # The route poll must go over https. Entrypoint-level redirections answer every
