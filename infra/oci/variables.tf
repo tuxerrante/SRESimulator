@@ -519,8 +519,31 @@ variable "ssh_public_key" {
   # type and cannot vary between keys. Matching that run ties the blob to the
   # type label in front of it and rejects anything that is merely spelled in the
   # base64 alphabet. The lengths are the encodings of the real key sizes:
-  # ed25519 is invariant at 68 characters, the three NIST curves at 140/184/232,
-  # and RSA floors at 204 (a 1024-bit modulus).
+  # ed25519 is invariant at 68 characters and the three NIST curves at
+  # 140/184/232.
+  #
+  # RSA is the awkward one and was the weakest arm here: a *floor* of 204
+  # characters accepted the type header followed by arbitrary filler, and --
+  # worse, because truncated copy-paste is the threat this check exists for --
+  # accepted a 4096-bit key truncated anywhere past character 204. RSA is
+  # enumerated exactly instead. Unlike the other types the determined prefix
+  # has to reach through the exponent to the modulus length, which is what
+  # pins the size; the four arms are the encodings of 1024/2048/3072/4096-bit
+  # moduli, including their padding:
+  #
+  #   1024  ...AAAAgQ + 172 chars + "=="   = 204
+  #   2048  ...AAABAQ + 342 chars          = 372
+  #   3072  ...AAABgQ + 513 chars + "="    = 544
+  #   4096  ...AAACAQ + 684 chars + "=="   = 716
+  #
+  # Two costs, both deliberate and both named in the error message. It pins the
+  # public exponent to 65537 ("AAAADAQAB"), which every ssh-keygen RSA key uses
+  # and RFC 4253 does not require; and `ssh-keygen -b` accepts sizes that are
+  # not one of the four (-b 2056 and -b 3000 both produce real keys, verified),
+  # which are now refused. Both refusals are loud and recoverable at plan time.
+  # The alternative is not "accept everything real" -- a regex cannot check the
+  # modulus-length field against the blob's own length, so without the
+  # enumeration there is no way to tell a short key from a truncated long one.
   #
   # Each run below covers the *whole* type header, not a recognisable opening
   # of it. An earlier version stopped at 12-28 characters, which left the tail
@@ -533,11 +556,9 @@ variable "ssh_public_key" {
   #
   #   ssh-ed25519  4+11 type, then the 4-byte length 0x20 of the 32-byte key
   #                -> 19 determined bytes -> 25 characters
-  #   ssh-rsa      4+7 type, then the first byte of the exponent's length,
-  #                which is zero for any exponent below 2^24
-  #                -> 12 determined bytes -> 16 characters. Stopping here
-  #                rather than at "AAAADAQAB" keeps a key with an exponent
-  #                other than 65537 valid; RFC 4253 permits one.
+  #   ssh-rsa      4+7 type, 4+3 exponent, the 4-byte modulus length and the
+  #                leading zero byte that keeps the modulus unsigned
+  #                -> 23 determined bytes -> 30 characters
   #   ecdsa-*      4+19 type, 4+8 curve name, then the 4-byte length and the
   #                0x04 uncompressed-point marker of Q
   #                -> 40 determined bytes -> 53 characters
@@ -546,14 +567,16 @@ variable "ssh_public_key" {
   # are binary and base64decode() insists on valid UTF-8, so it fails on roughly
   # every real key. Prefix matching is what is actually available here.
   #
-  # Verified against 30 freshly generated ssh-keygen keys covering all six
-  # type/size combinations, with and without a trailing comment, and against
-  # the reported bypasses -- a 32-character ed25519 blob, the truncated
-  # "ssh-rsa AAAAB3NzaC1y" header, a truncated ecdsa header, and a blob whose
-  # header names a different curve than its label.
+  # Verified against freshly generated ssh-keygen keys covering all six
+  # type/size combinations -- 20 RSA keys across the four sizes alone -- with
+  # and without a trailing comment, and against the reported bypasses: a
+  # 32-character ed25519 blob, the truncated "ssh-rsa AAAAB3NzaC1y" header, a
+  # truncated ecdsa header, a blob whose header names a different curve than
+  # its label, and the RSA filler blobs (header plus 188 and plus 300 "A"s,
+  # and a 2048-bit length one character short and one character long).
   validation {
-    condition     = can(regex("^(ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI[A-Za-z0-9+/]{43}|ssh-rsa AAAAB3NzaC1yc2EA[A-Za-z0-9+/]{188,}={0,2}|ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBB[A-Za-z0-9+/]{86}=|ecdsa-sha2-nistp384 AAAAE2VjZHNhLXNoYTItbmlzdHAzODQAAAAIbmlzdHAzODQAAABhB[A-Za-z0-9+/]{129}==|ecdsa-sha2-nistp521 AAAAE2VjZHNhLXNoYTItbmlzdHA1MjEAAAAIbmlzdHA1MjEAAACFB[A-Za-z0-9+/]{177}==)([[:space:]].*)?$", var.ssh_public_key))
-    error_message = "ssh_public_key must carry a well-formed OpenSSH blob matching its key type, e.g. \"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5... user@host\". Base64 characters alone are not enough: a truncated or mistyped blob installs an authorized-keys line that can never authenticate, on a box whose only other way in is a rebuild."
+    condition     = can(regex("^(ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI[A-Za-z0-9+/]{43}|ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAAAgQ[A-Za-z0-9+/]{172}==|ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQ[A-Za-z0-9+/]{342}|ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQ[A-Za-z0-9+/]{513}=|ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAACAQ[A-Za-z0-9+/]{684}==|ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBB[A-Za-z0-9+/]{86}=|ecdsa-sha2-nistp384 AAAAE2VjZHNhLXNoYTItbmlzdHAzODQAAAAIbmlzdHAzODQAAABhB[A-Za-z0-9+/]{129}==|ecdsa-sha2-nistp521 AAAAE2VjZHNhLXNoYTItbmlzdHA1MjEAAAAIbmlzdHA1MjEAAACFB[A-Za-z0-9+/]{177}==)([[:space:]].*)?$", var.ssh_public_key))
+    error_message = "ssh_public_key must carry a well-formed OpenSSH blob matching its key type, e.g. \"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5... user@host\". Base64 characters alone are not enough: a truncated or mistyped blob installs an authorized-keys line that can never authenticate, on a box whose only other way in is a rebuild. RSA keys must be 1024, 2048, 3072 or 4096 bits with the standard 65537 exponent; generate an ed25519 key instead if yours is not."
   }
 
   # The regex above is unanchored at the end, and compute.tf's trimspace only

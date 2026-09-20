@@ -711,6 +711,72 @@ run "ssh_public_key_rejects_a_curve_that_does_not_exist" {
   ]
 }
 
+# `ssh_public_key_accepts_a_real_rsa_key` below already witnesses a 2048-bit
+# key, and that stayed true through every version of this check. What it could
+# not witness is the arm's weakness: RSA matched a *floor* of base64 characters
+# after the type header, so filler passed, and a 4096-bit key truncated
+# anywhere past 204 characters passed -- which is the failure this validation
+# exists to catch, since truncated copy-paste is how the variable realistically
+# goes wrong. A positive run cannot fail on either.
+#
+# RSA is enumerated per modulus size now, so each arm needs its own witness;
+# 2048 has one, and these add the other three. The blobs are real `ssh-keygen
+# -t rsa` output, unedited -- shortening them for the page would test a
+# different string than the one an operator pastes.
+run "ssh_public_key_accepts_a_real_rsa_4096_key" {
+  command = plan
+
+  variables {
+    ssh_public_key = "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAACAQDmII6qxdUvJ8PkoQQybzUwYDu22Jpc/k93f1o24GV3QopaLsQ5kxhq+xjRqAKhMP9wvrdZ8GzIVEGLlJKHR2JCepf1wqnUlDdt17vm0VhK7S/JR9rfc2PtD98/EBZOpkUe/55xyO6L7fjYW2nhErm4keGUi5ky/+5c+zQBHDxGPOJ7bnBzVIo3RsyPhwi8bFr0IxQXo27MmoZ6DQyYTtEk0u42sweYM/ZJvm6DnBnx5+vkZc8/Ya2BXxpxvGmlPRQvlaOjk4LbZFF+eAH6P5UUH/PqUpilJ5ADfC4kHm7AKSb2rRev/56KqKblSwd8dZ6rv+pBAlGFCQuaFHPogwJPzl6i6HVnxEWJGGsglddUGi2wXyCKtd99fLyy0fmSB35UTr0bS3OocIYgQ2yIfKC/+X/Kmv5Kjs34hGJ/g9a5Bdq17toIC/pE9TEzp1j2py+wLYuPvtVcaLc55ewv6G0PsEwxOyRKN19YuiuYKRXmIOObH/LtqHt0YoO4zGP/ieEOIirG/cyVU4MMmHOfESq35pk5tOB7119o+ScssTu3Pc1sQmCRC9Wihp9A9dXPuvJcg5oBTQU2pVVlsZhbMdNHVf7qjixL2+Qr+acrWi49TwP/YQfUIjt80Oo+/EH1b0GJB0vzD++t5v3w3sg8jQ/TuHDaaUIC3MwRmAmEj7orbw== test@example.com"
+  }
+}
+
+run "ssh_public_key_accepts_a_real_rsa_1024_key" {
+  command = plan
+
+  variables {
+    ssh_public_key = "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAAAgQC9uj1IuTZa3mKczwG5eraPSDnS8PmLvtHRmYYZGZeVbskWMkYVZ9sQwD2xM4gBmtU25z5FSkWPJ/bew3xXQiDiztyFoIVW04z8cjWAKkyq7mktGnDDnHXIgP5pYZZI5F5CY2b9bhbnPE3cy+3D/A5b5yetrin8p8hCVmE9uIaBYw== test@example.com"
+  }
+}
+
+run "ssh_public_key_accepts_a_real_rsa_3072_key" {
+  command = plan
+
+  variables {
+    ssh_public_key = "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQC7H6AyxOnESJec4Ul0j+B1uo/4ySgIkMMIhGFMYdWZhKNDLs85jnBXvi/7yZzfL6U6IpSi9Gk+TIJVlyz/aK7tdiEPBbyBD19A95g/WrFEoUcRemCpDelJpL/aM5E9N12v4CdPoQyHHxsCULAbyEY9GOL546/GH0LlKlmBW3hM/jlW/cMcs452WshN3M1+SE2JbLoZeVwYtJYpjza8QgqFcj3v9a2wrkEwWWNSGmf8EEf6NMpxGDvyapCNjxz8DIGw3cLdxv/4DuOnha7BqVsGF3ZTO1vJCCtjkcAwf3VyUsbEAUjFcx4XQ5PP9ykEZ3NO5nVvm2r46VDyCNlWXZXArSa/lZKWZYUY3RQYAimDrD54wkN1G4QOBGJNGs/bHVeD1LubQo/4bno4m0r6qcGCbEjRGH0cPFw5EIIX6OzYjrdsVFa7X+UnMwUEwsYGbEgSCtWRpmJ0N24mxiJ3QR+36N0a/uclESYiwnI8RCZrwwQFLc1wwfPvBnKTP6qNnFE= test@example.com"
+  }
+}
+
+# The reported bypass: a valid RSA type header followed by nothing but filler.
+# It is the right length and spelled in the base64 alphabet, and it decodes to
+# a modulus of zero -- an authorized-keys line sshd installs and can never
+# authenticate, on a box whose only other way in is a rebuild.
+run "ssh_public_key_rejects_rsa_filler_that_is_merely_long_enough" {
+  command = plan
+
+  variables {
+    ssh_public_key = "ssh-rsa AAAAB3NzaC1yc2EAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA test@example.com"
+  }
+
+  expect_failures = [
+    var.ssh_public_key,
+  ]
+}
+
+# A 4096-bit key cut short. It clears the old 204-character floor by a wide
+# margin and is the realistic way this variable goes wrong.
+run "ssh_public_key_rejects_a_truncated_rsa_4096_key" {
+  command = plan
+
+  variables {
+    ssh_public_key = "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAACAQDmII6qxdUvJ8PkoQQybzUwYDu22Jpc/k93f1o24GV3QopaLsQ5kxhq+xjRqAKhMP9wvrdZ8GzIVEGLlJKHR2JCepf1wqnUlDdt17vm0VhK7S/JR9rfc2PtD98/EBZOpkUe/55xyO6L7fjYW2nhErm4keGUi5ky/+5c+zQBHDxGPOJ7bnBzVIo3RsyPhwi8bFr0IxQXo27MmoZ6DQyYTtEk0u42sweYM/ZJvm6DnBnx5+vkZc8/Ya2BXxpxvGmlPRQvlaOjk4LbZFF+ test@example.com"
+  }
+
+  expect_failures = [
+    var.ssh_public_key,
+  ]
+}
+
 run "availability_domain_index_beyond_the_regions_domain_count" {
   command = plan
 
