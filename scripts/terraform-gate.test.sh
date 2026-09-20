@@ -850,6 +850,29 @@ if ! grep -Fq 'bucket=new-bucket' "$TERRAFORM_ARGV_FILE"; then
   fail ".oci-backend.env no longer beats the environment: $(cat "$TERRAFORM_ARGV_FILE")"
 fi
 
+# The same precedence, exercised with the value an operator reaches for when
+# they want the ambient one *gone*. `KEY=` is set-and-empty, which is not
+# unset -- the distinction OCI_STATE_ENDPOINT already makes in this makefile
+# -- so binding it has to be keyed on the key's presence in the file rather
+# than on the value being non-empty. Keyed on emptiness, blanking the line
+# left the ambient bucket standing and tf-oci-init went on to initialize
+# against the very bucket the edit was meant to take away. The right answer
+# is not to refuse the empty line but to bind it: the target then says which
+# required value is missing, by name.
+{
+  printf 'OCI_STATE_BUCKET=\n'
+  printf 'OCI_STATE_NAMESPACE=abc123\n'
+} > "$OCI_DOTENV_FIXTURE"
+
+export OCI_STATE_BUCKET=environment-bucket
+if dotenv_make tf-oci-init OWNER_ALIAS=jdoe; then
+  fail "an emptied OCI_STATE_BUCKET line in .oci-backend.env did not clear the ambient value"
+fi
+unset OCI_STATE_BUCKET
+if grep -Fq 'environment-bucket' "$TERRAFORM_ARGV_FILE"; then
+  fail "tf-oci-init reached terraform with a bucket .oci-backend.env had cleared: $(cat "$TERRAFORM_ARGV_FILE")"
+fi
+
 # And with no file at all, an ambient AWS profile still works: make exports
 # nothing it did not inherit, so `export AWS_ACCESS_KEY_ID` on an unset
 # variable is a no-op rather than an empty override.

@@ -303,7 +303,14 @@ $$(error $(1) is set more than once in $$(OCI_BACKEND_ENV_FILE); remove the \
 duplicate rather than relying on which one wins)
 endif
 ifeq ($$(filter command line override,$$(origin $(1))),)
-ifneq ($$(call dotenv_value,$(1)),)
+# Presence in the file, not a non-empty value -- `KEY=` is set-and-empty,
+# which is not unset, the same distinction OCI_STATE_ENDPOINT already makes
+# below. Keying this on emptiness meant an operator who blanked a line to
+# clear an ambient value got the ambient value anyway: the file is documented
+# to beat the environment, and silently not doing so points tf-oci-init at a
+# bucket the file was edited to take away. Binding the empty value instead
+# hands the decision to the target, which refuses a missing bucket by name.
+ifneq ($$(filter $(1)=%,$$(OCI_BACKEND_ENV_TEXT)),)
 $(1) := $$(call dotenv_value,$(1))
 endif
 endif
