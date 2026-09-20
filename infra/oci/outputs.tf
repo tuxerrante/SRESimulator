@@ -70,8 +70,37 @@ output "post_apply_checklist" {
 
      4. Verify the client IP survives before enabling
         backend.auth.requireAnonymousClientIp. A wrong answer fails closed and
-        takes anonymous Easy mode down:
-          kubectl -n kube-system logs deploy/traefik | tail
+        takes anonymous Easy mode down.
+
+        Not from Traefik's own log: the chart leaves the access log disabled
+        and traefik-config.yaml does not turn it on, so
+        `logs deploy/traefik` prints startup lines and says nothing about any
+        request. Ask a backend that echoes the headers it was handed:
+          kubectl create namespace ip-probe
+          kubectl -n ip-probe create deployment whoami \
+            --image=traefik/whoami:v1.10.2
+          kubectl -n ip-probe expose deployment whoami --port=80
+          kubectl -n ip-probe create ingress whoami --class=traefik \
+            --rule="probe.invalid/*=whoami:80"
+          kubectl -n ip-probe rollout status deploy/whoami --timeout=180s
+          node_ip=$(kubectl get nodes -o wide --no-headers | awk '{print $6}')
+          kubectl -n ip-probe run client --restart=Never \
+            --image=curlimages/curl:8.13.0 \
+            -- curl -sk -H "Host: probe.invalid" "https://$node_ip/"
+          kubectl -n ip-probe logs -f client
+          kubectl -n ip-probe get pod client -o jsonpath='{.status.podIP}{"\n"}'
+          kubectl delete namespace ip-probe
+        X-Real-Ip in the echoed headers must equal the client pod's address.
+        A Ready backend is not yet a programmed route -- Traefik reconciles
+        Ingresses asynchronously, so a first 404 means retry, not failure.
+
+        The request has to come from a genuine non-loopback source. Curling
+        from the box proves nothing: loopback takes the "-i lo -j ACCEPT" path
+        and reports an address no external caller can produce. Your own
+        machine cannot reach the origin directly either, since 80/443 admit
+        only Cloudflare's ranges by default -- which leaves a pod as the
+        closest thing to an external client available before DNS exists.
+
         Also note that the frontend proxy reads x-envoy-external-address, which
         Traefik never sets. Until TRUSTED_CLIENT_IP_HEADER ships, leave
         requireAnonymousClientIp at its default of false.
