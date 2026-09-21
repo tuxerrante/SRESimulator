@@ -704,10 +704,20 @@ the name form returns `NotFound`. Add
 namespace.
 
 A timeout there with a healthy backend points at the NetworkPolicy rather than
-at the application:
+at the application. Its name is derived the same way the pod name is, so it is
+`sre-simulator-backend` only at the default release name -- and unlike the test
+pod it cannot be found by label either. The chart gives the policy only
+`sre-simulator.labels` (`helm.sh/chart`, `app.kubernetes.io/managed-by`,
+`app.kubernetes.io/version`), where `backend-deployment.yaml` and
+`backend-service.yaml` also add `sre-simulator.backend.selectorLabels`; the
+`app.kubernetes.io/instance` entries in the rendered policy are all inside
+`spec`, which `kubectl -l` does not read. That divergence looks unintentional
+and is worth closing in the chart, but until it is, list the namespace and take
+the name from there:
 
 ```bash
-kubectl -n <namespace> describe networkpolicy <release>-backend
+kubectl -n <namespace> get networkpolicy
+kubectl -n <namespace> describe networkpolicy <name>
 ```
 
 ## Live platform-session verification
