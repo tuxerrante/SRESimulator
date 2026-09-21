@@ -56,6 +56,12 @@ frontend:
   # X-Real-Ip and never sets the Envoy header, so the default matches nothing
   # there; behind Cloudflare the correct value is cf-connecting-ip.
   #
+  # Never x-forwarded-for or forwarded. Both are list-valued and every proxy
+  # in the chain appends to them, and the reader requires the whole value to
+  # parse as a single IP -- so behind any appending proxy the knob does not
+  # forge anything, it silently returns nothing and every anonymous request
+  # 400s once requireAnonymousClientIp is on.
+  #
   # An empty value renders no env var at all, so every existing deployment's
   # manifest is byte-identical to before this key existed.
   trustedClientIpHeader: ""

@@ -493,9 +493,13 @@ Database free tier (100K vCore-seconds/month, 32 GB storage, $0/month).
   bundled Traefik overwrites `X-Real-Ip` and never sets the Envoy header, so
   the default matches nothing there; behind Cloudflare the correct value is
   `cf-connecting-ip`, with Traefik's entrypoint `forwardedHeaders.trustedIPs`
-  restricted to Cloudflare's published ranges. A wrong value is silent at
-  deploy time and fails closed at runtime: `getTrustedClientIp` returns null
-  and, with `backend.auth.requireAnonymousClientIp` enabled, every anonymous
+  restricted to Cloudflare's published ranges. Never `x-forwarded-for` or
+  `forwarded`: both are list-valued and every proxy in the chain appends to
+  them, while the reader requires the whole value to parse as a single IP, so
+  behind any appending proxy the knob forges nothing and instead returns null.
+  A wrong value is silent at deploy time and fails closed at runtime:
+  `getTrustedClientIp` returns null and, with
+  `backend.auth.requireAnonymousClientIp` enabled, every anonymous
   `/api/chat`, `/api/command` and `/api/scenario` answers 400.
 - **Leaderboard**: Stored in `leaderboard_entries` table. Uses `MERGE`
   to atomically keep the best score per (GitHub user id, platform, difficulty,
