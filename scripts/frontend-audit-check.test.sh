@@ -207,6 +207,64 @@ run_critical_gate_skips_high_count_check() {
   assert_not_contains "Expected 1 high vulnerabilities" "$TMP_DIR/critical.out"
 }
 
+run_ceiling_covers_severities_above_the_threshold_check() {
+  local repo_dir="$TMP_DIR/repo-ceiling-above"
+  write_fixture_repo "$repo_dir"
+
+  # The ceiling is the only check that sees *excepted* findings: `blocking`
+  # has already waved them through. Reading a single `expectedCounts` key
+  # therefore ties enforcement to wherever the threshold happens to sit, and
+  # this change moves the threshold from `high` down to `moderate` -- so the
+  # `high: 0` ceiling in both real policies is exactly what would have gone
+  # quiet. Reproduced before fixing: this fixture exited 1 at `--audit-level
+  # high` and 0 at `--audit-level moderate`, same input, same policy.
+  cat >"$repo_dir/frontend/audit-policy-exceptions.json" <<'JSON'
+{
+  "policyName": "ceiling-above-threshold",
+  "approvedOn": "2026-09-21",
+  "reviewBy": "tests",
+  "expectedCounts": {
+    "high": 0,
+    "moderate": 0
+  },
+  "exceptions": [
+    {
+      "name": "allowed-package",
+      "severity": "high",
+      "range": "<=1.2.3",
+      "via": ["brace-expansion"],
+      "reason": "Approved test exception."
+    }
+  ]
+}
+JSON
+
+  write_audit_json "$TMP_DIR/ceiling-above-audit.json" '{
+  "allowed-package": [
+    {
+      "id": 1009,
+      "title": "brace-expansion",
+      "severity": "high",
+      "vulnerable_versions": "<=1.2.3"
+    }
+  ]
+}'
+
+  if env \
+    PATH="$repo_dir/bin:$PATH" \
+    FAKE_BUN_AUDIT_JSON="$TMP_DIR/ceiling-above-audit.json" \
+    FAKE_BUN_EXIT_CODE=1 \
+    node "$ROOT_DIR/scripts/frontend-audit-check.mjs" \
+      --root "$repo_dir" \
+      --workspace-dir frontend \
+      --audit-level moderate >"$TMP_DIR/ceiling-above.out" 2>&1; then
+    cat "$TMP_DIR/ceiling-above.out" >&2 || true
+    fail "a moderate-threshold run must still enforce the high exception ceiling"
+  fi
+
+  assert_contains "Expected at most 0 high vulnerabilities" "$TMP_DIR/ceiling-above.out"
+}
+
 run_npm_shape_fails_closed_check() {
   local repo_dir="$TMP_DIR/repo-npm-shape"
   write_fixture_repo "$repo_dir"
@@ -395,6 +453,7 @@ main() {
   run_expected_count_ceiling_check
   run_lower_count_pass_check
   run_critical_gate_skips_high_count_check
+  run_ceiling_covers_severities_above_the_threshold_check
   run_npm_shape_fails_closed_check
   run_real_bun_golden_fixture_check
   run_real_frontend_bun_audit_check

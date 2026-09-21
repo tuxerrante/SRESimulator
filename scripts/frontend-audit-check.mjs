@@ -282,20 +282,42 @@ function main() {
     process.exit(1);
   }
 
-  const expectedCount = policy.expectedCounts?.[auditLevel];
-  const actualCount = normalized.counts[auditLevel];
-  if (typeof expectedCount === "number" && Number.isFinite(expectedCount)) {
+  // Every severity the gate covers, not just the threshold one. The ceiling is
+  // the only check that sees *excepted* findings -- `blocking` has already let
+  // them through -- so reading a single key means the ceilings above the
+  // threshold stop being enforced the moment the threshold moves. Lowering
+  // `--audit-level` from `high` to `moderate` made `expectedCounts.high: 0`
+  // dead: an excepted high advisory that failed the old gate passed the new
+  // one. A widening that silently drops a check is the exact failure this PR
+  // exists to fix, so it cannot ship inside it.
+  const gatedSeverities = Object.keys(severityRank).filter(
+    (severity) => severityRank[severity] >= severityRank[auditLevel]
+  );
+  let ceilingExceeded = false;
+  for (const severity of gatedSeverities) {
+    const expectedCount = policy.expectedCounts?.[severity];
+    if (typeof expectedCount !== "number" || !Number.isFinite(expectedCount)) {
+      continue;
+    }
+    const actualCount = normalized.counts[severity] ?? 0;
     if (actualCount > expectedCount) {
+      // Reported for every severity before exiting: exiting on the first one
+      // hides the rest, and the reader then fixes one and re-runs to find
+      // another.
       console.error(
-        `Expected at most ${expectedCount} ${auditLevel} vulnerabilities in the approved ${workspaceDir} exception set, found ${actualCount}.`
+        `Expected at most ${expectedCount} ${severity} vulnerabilities in the approved ${workspaceDir} exception set, found ${actualCount}.`
       );
-      process.exit(1);
+      ceilingExceeded = true;
+      continue;
     }
     if (actualCount < expectedCount) {
       console.log(
-        `Observed ${actualCount} ${auditLevel} vulnerabilities, below the approved exception ceiling of ${expectedCount}.`
+        `Observed ${actualCount} ${severity} vulnerabilities, below the approved exception ceiling of ${expectedCount}.`
       );
     }
+  }
+  if (ceilingExceeded) {
+    process.exit(1);
   }
 
   console.log(
