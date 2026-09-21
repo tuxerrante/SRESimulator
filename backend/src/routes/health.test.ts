@@ -1,4 +1,4 @@
-import { describe, expect, it, beforeEach, afterEach } from "vitest";
+import { describe, expect, it, beforeEach, afterEach, vi } from "vitest";
 import express from "express";
 import { healthRouter } from "./health";
 
@@ -49,7 +49,12 @@ async function httpGet(
   });
 }
 
-const ENV_KEYS = ["AI_MOCK_MODE", "CLOUD_ML_REGION", "ANTHROPIC_VERTEX_PROJECT_ID"] as const;
+const ENV_KEYS = [
+  "AI_MOCK_MODE",
+  "CLOUD_ML_REGION",
+  "ANTHROPIC_VERTEX_PROJECT_ID",
+  "READYZ_DB_CHECK_INTERVAL_MS",
+] as const;
 
 describe("health routes", () => {
   const originalEnv: Record<string, string | undefined> = {};
@@ -94,9 +99,49 @@ describe("health routes", () => {
     process.env.AI_MOCK_MODE = "true";
 
     const app = createApp();
+
     const res = await httpGet(app, "/readyz");
 
     expect(res.status).toBe(200);
     expect(res.body.status).toBe("ready");
+  });
+  it("GET /readyz stays AI-only by default and never touches the database", async () => {
+    process.env.AI_MOCK_MODE = "true";
+    delete process.env.READYZ_DB_CHECK_INTERVAL_MS;
+
+    const ping = vi.fn();
+    vi.resetModules();
+    vi.doMock("../lib/storage/index", () => ({ pingDatabase: ping }));
+    const { healthRouter: router } = await import("./health");
+
+    const app = express();
+    app.use("/", router);
+    const res = await httpGet(app, "/readyz");
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ status: "ready" });
+    expect(ping).not.toHaveBeenCalled();
+    vi.doUnmock("../lib/storage/index");
+  });
+
+  it("GET /readyz reports 503 on storage when the enabled DB check fails", async () => {
+    process.env.AI_MOCK_MODE = "true";
+    process.env.READYZ_DB_CHECK_INTERVAL_MS = "30000";
+
+    vi.resetModules();
+    vi.doMock("../lib/storage/index", () => ({
+      pingDatabase: vi.fn().mockRejectedValue(new Error("pool is draining")),
+    }));
+    const { healthRouter: router } = await import("./health");
+
+    const app = express();
+    app.use("/", router);
+    const res = await httpGet(app, "/readyz");
+
+    expect(res.status).toBe(503);
+    expect(res.body.status).toBe("not-ready");
+    expect(res.body.component).toBe("storage");
+    expect(res.body.reasons).toEqual(["pool is draining"]);
+    vi.doUnmock("../lib/storage/index");
   });
 });
