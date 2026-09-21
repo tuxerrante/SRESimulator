@@ -31,6 +31,7 @@ RUN addgroup --system --gid 1001 nodejs && \
 COPY --from=prod-deps /app/backend/node_modules ./node_modules
 COPY --from=build /app/backend/dist ./dist
 COPY backend/src/lib/storage/migrations/ ./dist/backend/src/lib/storage/migrations/
+COPY backend/src/lib/storage/migrations-pg/ ./dist/backend/src/lib/storage/migrations-pg/
 COPY knowledge_base/ ../knowledge_base/
 COPY scenarios/ ../scenarios/
 

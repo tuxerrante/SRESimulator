@@ -63,6 +63,8 @@ if "COPY --from=deps /app/backend/node_modules ./node_modules" in run_stage:
     raise SystemExit("backend runtime stage should not copy dev dependencies from deps")
 if "COPY backend/src/lib/storage/migrations/ ./dist/backend/src/lib/storage/migrations/" not in run_stage:
     raise SystemExit("backend runtime stage must keep storage migrations assets")
+if "COPY backend/src/lib/storage/migrations-pg/ ./dist/backend/src/lib/storage/migrations-pg/" not in run_stage:
+    raise SystemExit("backend runtime stage must keep the postgres migrations assets")
 if "COPY knowledge_base/ ../knowledge_base/" not in run_stage:
     raise SystemExit("backend runtime stage must keep knowledge_base assets")
 if "COPY scenarios/ ../scenarios/" not in run_stage:
