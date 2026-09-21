@@ -421,9 +421,13 @@ Returns per-route token usage totals and recent request entries. See [AI_RUNTIME
 
 ## Persistence & Storage Backends
 
-The backend supports two storage modes, selected via the `STORAGE_BACKEND`
-environment variable (`json` or `mssql`). `json` is the local/test fallback;
-Azure SQL (`mssql`) is the intended deployed and production storage path.
+The backend supports three storage modes, selected via the `STORAGE_BACKEND`
+environment variable (`json`, `mssql` or `postgres`). `json` is the
+local/test fallback; Azure SQL (`mssql`) is the Azure deployed path, and
+Postgres (`postgres`) is the free-tier path against Neon. Only one is active
+per process — `initStorage()` loads the driver for the selected backend with a
+dynamic `import()`, so `pg` is never loaded in JSON or MSSQL mode and vice
+versa.
 
 ### JSON mode (default for local/test)
 
@@ -568,6 +572,90 @@ route behavior (`GET /api/scores`) with `STORAGE_BACKEND=mssql`.
 readiness checks use Node.js (`net` module for TCP, `mssql` package for
 SQL queries). The container healthcheck uses Python 3 (bundled in the
 image).
+
+### Postgres mode (Neon free tier)
+
+The free-tier deployment path. Selected with `STORAGE_BACKEND=postgres` and a
+`postgres://` `DATABASE_URL`; Helm sets both when `database.enabled=true` and
+`database.driver=postgres`. The tables, the store interfaces and the route
+behaviour are the same as Azure SQL mode — what differs is the dialect and the
+constraints the hosting imposes.
+
+```bash
+STORAGE_BACKEND=postgres
+DATABASE_URL="postgres://<user>:<pwd>@<project>-pooler.<region>.aws.neon.tech/sresimulator?sslmode=require"
+```
+
+Use the **pooled** (`-pooler`) hostname. That endpoint is PgBouncer in
+transaction mode, which shapes three decisions that are easy to undo by
+accident:
+
+- **`statement_timeout` travels in the connection string**
+  (`?options=-c statement_timeout=...`), not a runtime `SET`. Transaction
+  pooling does not preserve session state, so a `SET` would apply to whichever
+  backend served that one statement. `STATEMENT_TIMEOUT_MS` (default `15000`)
+  controls it.
+- **Migrations take `pg_advisory_xact_lock`**, the transaction-scoped lock.
+  A session-scoped `pg_advisory_lock` would be released onto a connection
+  PgBouncer has already handed to another client. See the note at the top of
+  `backend/src/lib/storage/migrate-pg.ts`.
+- **Nothing in the pg stores uses `SET`, `LISTEN/NOTIFY`, cross-transaction
+  temp tables or session-scoped advisory locks.** MSSQL's
+  `getGameplayAnalytics` builds a `#latest_sessions` temp table across five
+  resultsets; the Postgres port is one CTE chain returning a single
+  `json_build_object` row, which is both pooling-safe and one round trip
+  instead of five.
+
+Neon's free plan autosuspends compute after five minutes of idleness and the
+setting cannot be disabled, so `pool.on("error")` is mandatory: an unhandled
+`error` on an idle `pg` client terminates the Node process. The pool retries
+once on `ECONNRESET`/`EPIPE`/`ETIMEDOUT` and on SQLSTATE `57P01`/`57P02`, with
+a 10-second connect timeout sized for a cold start.
+
+For the same reason **`/readyz` does not touch the database by default**. A
+`SELECT 1` on a probe that fires every ten seconds keeps the compute awake
+around the clock and spends the whole monthly CU allowance on liveness.
+`READYZ_DB_CHECK_INTERVAL_MS` (default `0`, off) enables it, and the value is a
+_minimum spacing_ rather than a poll interval — inside the window the last
+verdict is replayed with no traffic, so the probe's own frequency stops
+deciding how often the database is touched.
+
+Migrations live in `backend/src/lib/storage/migrations-pg/` and start from a
+consolidated `001_init.sql` rather than a translation of the eight T-SQL files.
+Those encode the history of an existing Azure SQL database — indexes created
+three times, columns re-typed after being added — and a new Neon database has
+none of it. Equivalence is held by the shared contract suite rather than by
+line-by-line SQL, which is the stronger guarantee of the two.
+
+### Local Postgres testing
+
+```bash
+# Contract suite against a real engine
+STORAGE_BACKEND=postgres POSTGRES_DATABASE_URL=postgres://... make test-integration
+
+# Backend startup + DB-backed route (GET /api/scores)
+POSTGRES_DATABASE_URL=postgres://... make smoke-backend-postgres
+```
+
+CI runs the same tests in the `integration-test-postgres` job against a
+`postgres:17-alpine` service container, and `free-e2e` adds a deployed pass:
+after the JSON-storage browser suite it starts Postgres in the k3d cluster,
+redeploys the release with `database.driver=postgres` and
+`backend.allowDeployedJsonStorageForTests=false`, and asserts against the
+cluster rather than the workflow's own report — the backend's log must carry
+`[storage] backend=postgres ready`, `_migrations` must contain `001_init.sql`
+(a row only the backend's own pool writes), and every table in the baseline
+must exist.
+
+**Two gaps, stated rather than implied.** Stock `postgres:17-alpine` has no
+PgBouncer, so the transaction-mode restrictions above are _not_ exercised
+anywhere in CI; compliance is by construction and by the note in
+`migrate-pg.ts`. And the `free-e2e` Postgres phase is additive — the browser
+suite still runs against JSON storage, so the deployed Postgres coverage is
+boot, migration and read, not gameplay. Switching the repo's only required
+browser gate wholesale onto Postgres would put that blast radius on every PR's
+merge gate; the real Neon pooled endpoint is the place to close both gaps, and
+that is manual.
 
 ### Tier 3: Real Azure SQL free tier (manual E2E)
 
