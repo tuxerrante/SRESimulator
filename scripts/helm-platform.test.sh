@@ -21,7 +21,9 @@ gw_ingress_host_bypass_err="$(mktemp)"
 gw_whitespace_host_err="$(mktemp)"
 test_pod_render="$(mktemp)"
 gw_xff_render="$(mktemp)"
-trap 'rm -f "${route_render}" "${auth_render}" "${auth_guard_render}" "${auth_disabled_render}" "${lb_render}" "${lb_no_db_render}" "${ingress_render}" "${gw_render}" "${hostless_render}" "${legacy_kv_render}" "${gw_bad_scheme_err}" "${gw_missing_host_err}" "${gw_route_host_bypass_err}" "${gw_ingress_host_bypass_err}" "${gw_whitespace_host_err}" "${test_pod_render}" "${gw_xff_render}"' EXIT
+trusted_ip_blank_render="$(mktemp)"
+trusted_ip_padded_render="$(mktemp)"
+trap 'rm -f "${route_render}" "${auth_render}" "${auth_guard_render}" "${auth_disabled_render}" "${lb_render}" "${lb_no_db_render}" "${ingress_render}" "${gw_render}" "${hostless_render}" "${legacy_kv_render}" "${gw_bad_scheme_err}" "${gw_missing_host_err}" "${gw_route_host_bypass_err}" "${gw_ingress_host_bypass_err}" "${gw_whitespace_host_err}" "${test_pod_render}" "${gw_xff_render}" "${trusted_ip_blank_render}" "${trusted_ip_padded_render}"' EXIT
 
 fail() {
   echo "FAIL: $*" >&2
@@ -457,5 +459,28 @@ fi
 if [ "$(( wait_deadline + 60 ))" -ge "$(( helm_test_timeout_minutes * 60 ))" ]; then
   fail "The wait deadline (${wait_deadline}s) leaves under 60s of the ${helm_test_timeout_minutes}m helm test timeout for image pull and the assertions."
 fi
+
+# frontend.trustedClientIpHeader follows the chart's `| default "" | trim`
+# idiom. Without the trim, Go templates treat " " as a truthy string: the env
+# var renders with a whitespace value, the frontend trims it back to empty and
+# silently falls back to the Envoy default, so an operator's typo reads as a
+# working override. Whitespace must render nothing at all, and a padded value
+# must reach the container already trimmed.
+helm template sre-simulator "${CHART_DIR}" \
+  --set exposure.mode=route \
+  --set exposure.host=route.example.com \
+  --set-string frontend.trustedClientIpHeader="   " >"${trusted_ip_blank_render}"
+
+if grep -Fq 'TRUSTED_CLIENT_IP_HEADER' "${trusted_ip_blank_render}"; then
+  fail "A whitespace-only frontend.trustedClientIpHeader must render no env var."
+fi
+
+helm template sre-simulator "${CHART_DIR}" \
+  --set exposure.mode=route \
+  --set exposure.host=route.example.com \
+  --set-string frontend.trustedClientIpHeader="  x-real-ip  " >"${trusted_ip_padded_render}"
+
+grep -Fq 'value: "x-real-ip"' "${trusted_ip_padded_render}" || \
+  fail "frontend.trustedClientIpHeader must reach the container trimmed."
 
 echo "Helm platform rendering checks passed."

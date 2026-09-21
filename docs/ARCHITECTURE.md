@@ -465,18 +465,42 @@ Database free tier (100K vCore-seconds/month, 32 GB storage, $0/month).
   profiles require a trusted edge-supplied client IP and fail closed when it is
   unavailable.
 
-  The only trustworthy source for that address is Envoy's connection source
-  address, republished as `x-envoy-external-address`. The AKS edge terminates
-  on a Layer-4 Azure Load Balancer that never sets `X-Forwarded-For`, so that
-  header is fully caller-controlled: trusting it would let anyone forge a
-  client IP and mint unlimited anonymous trials. Consequently the chart does
-  **not** render an Envoy `ClientTrafficPolicy` with `xForwardedFor` trust by
-  default (`gateway.clientIpDetection.trustXForwardedFor=false`); enable it
-  only when a Layer-7 proxy that overwrites the header fronts the Gateway.
-  The frontend proxy likewise accepts only `x-envoy-external-address` and
-  strips every inbound forwarding header before proxying. The Envoy service is
-  deployed with `externalTrafficPolicy: Local` so kube-proxy does not SNAT the
-  source address onto a node IP and collapse all visitors onto one identity.
+  On the AKS path the only trustworthy source for that address is Envoy's
+  connection source address, republished as `x-envoy-external-address`. That
+  edge terminates on a Layer-4 Azure Load Balancer that never sets
+  `X-Forwarded-For`, so that header is fully caller-controlled: trusting it
+  would let anyone forge a client IP and mint unlimited anonymous trials.
+  Consequently the chart does **not** render an Envoy `ClientTrafficPolicy`
+  with `xForwardedFor` trust by default
+  (`gateway.clientIpDetection.trustXForwardedFor=false`); enable it only when
+  a Layer-7 proxy that overwrites the header fronts the Gateway. The Envoy
+  service is deployed with `externalTrafficPolicy: Local` so kube-proxy does
+  not SNAT the source address onto a node IP and collapse all visitors onto
+  one identity.
+
+  Which header carries that address is a property of the edge, not of this
+  app, so the frontend proxy reads **one** configurable header --
+  `TRUSTED_CLIENT_IP_HEADER`, set from `frontend.trustedClientIpHeader` and
+  defaulting to `x-envoy-external-address`. Never a fallback chain: falling
+  back to a second header when the first is absent would hand back exactly
+  the forgery guarantee the single-header rule buys. The proxy strips every
+  inbound forwarding header, including the configured one, before proxying,
+  so the backend receives the address only as the HMAC-signed
+  `x-sresim-client-ip`.
+
+  The same precondition governs any non-default value: set it only where a
+  Layer-7 proxy **overwrites** that header for untrusted peers. On k3s the
+  bundled Traefik overwrites `X-Real-Ip` and never sets the Envoy header, so
+  the default matches nothing there; behind Cloudflare the correct value is
+  `cf-connecting-ip`, with Traefik's entrypoint `forwardedHeaders.trustedIPs`
+  restricted to Cloudflare's published ranges. Never `x-forwarded-for` or
+  `forwarded`: both are list-valued and every proxy in the chain appends to
+  them, while the reader requires the whole value to parse as a single IP, so
+  behind any appending proxy the knob forges nothing and instead returns null.
+  A wrong value is silent at deploy time and fails closed at runtime:
+  `getTrustedClientIp` returns null and, with
+  `backend.auth.requireAnonymousClientIp` enabled, every anonymous
+  `/api/chat`, `/api/command` and `/api/scenario` answers 400.
 - **Leaderboard**: Stored in `leaderboard_entries` table. Uses `MERGE`
   to atomically keep the best score per (GitHub user id, platform, difficulty,
   traffic source). The stored callsign/nickname corresponds to the best
