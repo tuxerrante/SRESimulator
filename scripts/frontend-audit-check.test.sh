@@ -90,7 +90,7 @@ run_allowed_exception_check() {
     fail "allowed exception should pass"
   fi
 
-  assert_contains "Frontend audit passed with only approved exception packages remaining." "$TMP_DIR/allowed.out"
+  assert_contains "frontend audit passed with only approved exception packages remaining." "$TMP_DIR/allowed.out"
   assert_contains "Approved exception packages:" "$TMP_DIR/allowed.out"
 }
 
@@ -207,6 +207,64 @@ run_critical_gate_skips_high_count_check() {
   assert_not_contains "Expected 1 high vulnerabilities" "$TMP_DIR/critical.out"
 }
 
+run_ceiling_covers_severities_above_the_threshold_check() {
+  local repo_dir="$TMP_DIR/repo-ceiling-above"
+  write_fixture_repo "$repo_dir"
+
+  # The ceiling is the only check that sees *excepted* findings: `blocking`
+  # has already waved them through. Reading a single `expectedCounts` key
+  # therefore ties enforcement to wherever the threshold happens to sit, and
+  # this change moves the threshold from `high` down to `moderate` -- so the
+  # `high: 0` ceiling in both real policies is exactly what would have gone
+  # quiet. Reproduced before fixing: this fixture exited 1 at `--audit-level
+  # high` and 0 at `--audit-level moderate`, same input, same policy.
+  cat >"$repo_dir/frontend/audit-policy-exceptions.json" <<'JSON'
+{
+  "policyName": "ceiling-above-threshold",
+  "approvedOn": "2026-09-21",
+  "reviewBy": "tests",
+  "expectedCounts": {
+    "high": 0,
+    "moderate": 0
+  },
+  "exceptions": [
+    {
+      "name": "allowed-package",
+      "severity": "high",
+      "range": "<=1.2.3",
+      "via": ["brace-expansion"],
+      "reason": "Approved test exception."
+    }
+  ]
+}
+JSON
+
+  write_audit_json "$TMP_DIR/ceiling-above-audit.json" '{
+  "allowed-package": [
+    {
+      "id": 1009,
+      "title": "brace-expansion",
+      "severity": "high",
+      "vulnerable_versions": "<=1.2.3"
+    }
+  ]
+}'
+
+  if env \
+    PATH="$repo_dir/bin:$PATH" \
+    FAKE_BUN_AUDIT_JSON="$TMP_DIR/ceiling-above-audit.json" \
+    FAKE_BUN_EXIT_CODE=1 \
+    node "$ROOT_DIR/scripts/frontend-audit-check.mjs" \
+      --root "$repo_dir" \
+      --workspace-dir frontend \
+      --audit-level moderate >"$TMP_DIR/ceiling-above.out" 2>&1; then
+    cat "$TMP_DIR/ceiling-above.out" >&2 || true
+    fail "a moderate-threshold run must still enforce the high exception ceiling"
+  fi
+
+  assert_contains "Expected at most 0 high vulnerabilities" "$TMP_DIR/ceiling-above.out"
+}
+
 run_npm_shape_fails_closed_check() {
   local repo_dir="$TMP_DIR/repo-npm-shape"
   write_fixture_repo "$repo_dir"
@@ -304,15 +362,104 @@ run_missing_arg_check() {
   assert_contains "Missing value for --root" "$TMP_DIR/missing-root.out"
 }
 
+# The script is pointed at one workspace at a time, and until now the only
+# workspace anyone pointed it at was the frontend. These two cases lock the
+# half of that which is not obvious from reading the script: that the messages
+# name the directory actually audited, and that the original flag spelling
+# still works so nothing that calls it has to be found and edited.
+run_workspace_dir_names_the_audited_workspace_check() {
+  local repo_dir="$TMP_DIR/repo-workspace"
+  write_fixture_repo "$repo_dir"
+
+  # Same fixture, re-homed under backend/. If the reporting were still
+  # hardcoded to "frontend" this would pass while saying the wrong thing --
+  # which is precisely how the real backend advisories went unreported.
+  mkdir -p "$repo_dir/backend"
+  cp "$repo_dir/frontend/audit-policy-exceptions.json" \
+    "$repo_dir/backend/audit-policy-exceptions.json"
+
+    # `{}` is bun's clean result: the report is a map of package name to
+  # advisories, so an empty object is zero findings. An npm-shaped
+  # `{"vulnerabilities": []}` is rejected by design -- see
+  # run_npm_shape_fails_closed_check.
+  write_audit_json "$TMP_DIR/workspace-audit.json" '{}'
+
+  if ! env \
+    PATH="$repo_dir/bin:$PATH" \
+    FAKE_BUN_AUDIT_JSON="$TMP_DIR/workspace-audit.json" \
+    FAKE_BUN_EXIT_CODE=0 \
+    node "$ROOT_DIR/scripts/frontend-audit-check.mjs" \
+      --root "$repo_dir" \
+      --workspace-dir backend \
+      --audit-level moderate >"$TMP_DIR/workspace.out" 2>&1; then
+    cat "$TMP_DIR/workspace.out" >&2 || true
+    fail "--workspace-dir backend should pass on a clean fixture"
+  fi
+
+  assert_contains "backend audit policy: test-policy" "$TMP_DIR/workspace.out"
+  assert_contains "backend audit passed" "$TMP_DIR/workspace.out"
+  assert_not_contains "Frontend audit" "$TMP_DIR/workspace.out"
+}
+
+run_frontend_dir_alias_still_works_check() {
+  local repo_dir="$TMP_DIR/repo-alias"
+  write_fixture_repo "$repo_dir"
+    # `{}` is bun's clean result: the report is a map of package name to
+  # advisories, so an empty object is zero findings. An npm-shaped
+  # `{"vulnerabilities": []}` is rejected by design -- see
+  # run_npm_shape_fails_closed_check.
+  write_audit_json "$TMP_DIR/alias-audit.json" '{}'
+
+  if ! env \
+    PATH="$repo_dir/bin:$PATH" \
+    FAKE_BUN_AUDIT_JSON="$TMP_DIR/alias-audit.json" \
+    FAKE_BUN_EXIT_CODE=0 \
+    node "$ROOT_DIR/scripts/frontend-audit-check.mjs" \
+      --root "$repo_dir" \
+      --frontend-dir frontend \
+      --audit-level high >"$TMP_DIR/alias.out" 2>&1; then
+    cat "$TMP_DIR/alias.out" >&2 || true
+    fail "--frontend-dir must keep working as an alias for --workspace-dir"
+  fi
+
+  assert_contains "frontend audit passed" "$TMP_DIR/alias.out"
+}
+
+# The real backend tree, alongside the frontend one the suite already checks.
+# The five advisories this workspace carried were all `moderate`, so a `high`
+# threshold here would report clean on the exact findings that motivated
+# auditing it at all -- hence the level, not just the directory.
+run_real_backend_bun_audit_check() {
+  if ! command -v bun >/dev/null 2>&1; then
+    echo "bun not found; skipping real backend bun audit check."
+    return 0
+  fi
+
+  if ! node "$ROOT_DIR/scripts/frontend-audit-check.mjs" \
+    --root "$ROOT_DIR" \
+    --workspace-dir backend \
+    --audit-level moderate >"$TMP_DIR/real-backend.out" 2>&1; then
+    cat "$TMP_DIR/real-backend.out" >&2 || true
+    fail "real backend bun audit should pass"
+  fi
+
+  assert_contains "Raw bun audit counts:" "$TMP_DIR/real-backend.out"
+  assert_contains "backend audit passed" "$TMP_DIR/real-backend.out"
+}
+
 main() {
   run_allowed_exception_check
   run_blocking_signature_mismatch_check
   run_expected_count_ceiling_check
   run_lower_count_pass_check
   run_critical_gate_skips_high_count_check
+  run_ceiling_covers_severities_above_the_threshold_check
   run_npm_shape_fails_closed_check
   run_real_bun_golden_fixture_check
   run_real_frontend_bun_audit_check
+  run_workspace_dir_names_the_audited_workspace_check
+  run_frontend_dir_alias_still_works_check
+  run_real_backend_bun_audit_check
   run_missing_arg_check
   echo "frontend audit check tests passed."
 }
