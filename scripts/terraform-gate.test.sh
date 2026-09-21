@@ -958,6 +958,31 @@ guard_must_refuse 'the residue channel on a generic assert_shell_safe call' 'OCI
   tf-oci-init OWNER_ALIAS=jdoe OCI_STATE_BUCKET='b!d' OCI_STATE_NAMESPACE=n \
   OCI_STATE_BUCKET_RESIDUE=
 
+# TF_VAR_FLAGS is the same channel one step further along, and it needs a
+# different assertion: `override` makes a command-line assignment *silently
+# ignored* rather than refused, so there is no error message to match. What
+# has to be shown is that the derived flags still reach terraform and the
+# supplied ones do not. This is the one arm where the payload would otherwise
+# never meet a guard at all -- the alias allowlist vets OWNER_ALIAS, passes,
+# and the command line then hands the recipe its flags directly, unquoted.
+tf_var_flags_render() {
+  PATH="$TERRAFORM_STUB_DIR:$PATH" make -n -C "$OCI_MAKE_DIR" \
+    OCI_BACKEND_ENV_FILE=/dev/null tf-oci-plan OWNER_ALIAS=jdoe \
+    TF_VAR_FLAGS='-var owner_alias=alice; echo GATE_INJECTION_MARKER' 2>&1 |
+    grep 'terraform plan'
+}
+
+tf_var_flags_line="$(tf_var_flags_render)"
+
+case "$tf_var_flags_line" in
+  *GATE_INJECTION_MARKER*)
+    fail "TF_VAR_FLAGS from the command line reached the recipe: [$tf_var_flags_line]" ;;
+esac
+case "$tf_var_flags_line" in
+  *"owner_alias='jdoe'"*) : ;;
+  *) fail "TF_VAR_FLAGS no longer derives from the validated alias: [$tf_var_flags_line]" ;;
+esac
+
 # The counterpart the refusals above are worthless without: a well-formed
 # invocation must still render. Otherwise every arm could be passing because
 # the target is broken outright.

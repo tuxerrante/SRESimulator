@@ -68,7 +68,19 @@ endif
 #
 # Single-quoted as a second barrier, so a future edit that loosens the guard
 # above does not immediately hand an unquoted value to the shell.
-TF_VAR_FLAGS := $(if $(OWNER_ALIAS_RAW),-var owner_alias='$(OWNER_ALIAS_RAW)',)
+#
+# `override` for the same reason the residues and alphabets above carry it,
+# and this is the last variable in the chain that was still missing it: the
+# recipes expand this value *unquoted* into a shell command line, so without
+# it the alias allowlist vets OWNER_ALIAS and the command line then supplies
+# the flags directly --
+#
+#   make tf-oci-plan OWNER_ALIAS=jdoe TF_VAR_FLAGS='-var owner_alias=alice; ...'
+#
+# which both plans a different owner than the one validated and runs whatever
+# follows the semicolon. Nothing documents this as an operator knob; it is
+# derived from OWNER_ALIAS_RAW and has no other legitimate source.
+override TF_VAR_FLAGS := $(if $(OWNER_ALIAS_RAW),-var owner_alias='$(OWNER_ALIAS_RAW)',)
 
 # The confirmation tokens get no allowlist -- they are free-form by design --
 # so they must never be interpolated into recipe text. `CONFIRM_APPLY='x";
