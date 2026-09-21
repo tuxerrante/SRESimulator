@@ -185,6 +185,12 @@ ingress:
   path: /
   pathType: Prefix
   annotations: {}
+  # Traefik-specific routing, used by the k3s/OCI profile. An empty
+  # certResolver emits no Traefik annotations at all, so nginx and every other
+  # ingress profile render exactly as before.
+  traefik:
+    certResolver: ""
+    entryPoint: websecure
   tls:
     enabled: false
     secretName: ""

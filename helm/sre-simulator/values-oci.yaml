@@ -1,0 +1,85 @@
+---
+# OCI Always Free profile: single-node k3s with the bundled Traefik ingress.
+#
+# Usage:
+#   helm template sre-simulator ./helm/sre-simulator \
+#     --values ./helm/sre-simulator/values.yaml \
+#     --values ./helm/sre-simulator/values-oci.yaml \
+#     --set exposure.host=<the hostname you actually own>
+#
+# exposure.host below is a placeholder and the chart refuses to render it while
+# a cert resolver is set, so the override is required rather than advisory.
+#
+# This file is inert for AKS/ARO because it is only ever passed explicitly.
+#
+# NOT A COMPLETE DEPLOY PROFILE YET -- it is the chart-side shape of the OCI
+# box (ingress, Traefik ACME annotations, replica pins, storage class), and
+# free-e2e deploys it for real to regression-test that shape. What it does not
+# carry is a storage backend a real deployment can use, so `helm upgrade` with
+# this profile alone leaves the backend crashlooping: database.enabled stays
+# false, backend-deployment.yaml therefore renders no STORAGE_BACKEND, the
+# backend defaults to json, and initStorage() refuses json whenever
+# KUBERNETES_SERVICE_HOST is set unless ALLOW_DEPLOYED_JSON_STORAGE_FOR_TESTS
+# and AI_MOCK_MODE are both true. That pair is the free-e2e path and is
+# test-only on purpose, so it is not set here.
+#
+# AI is at chart defaults for a quieter reason: the backend falls back to
+# "vertex" for an unknown AI_PROVIDER without complaining, so naming
+# "openrouter" before the provider exists would misconfigure silently rather
+# than fail.
+#
+# Both are flipped in the last step of the OCI rollout, once the Postgres
+# adapter and the OpenRouter provider are in the tree. Until then the
+# helm-validate job holds this notice and the rendered backend in step, in
+# both directions -- see "Helm template (OCI free-tier profile)" in
+# .github/workflows/ci.yml.
+
+exposure:
+  mode: ingress
+  # Placeholder, and deliberately a reserved documentation domain so it cannot
+  # be mistaken for a real one. templates/ingress.yaml fails the render if this
+  # is still a reserved name while ingress.traefik.certResolver is set: ACME
+  # would otherwise request a certificate for a host the deployment does not
+  # own, fail HTTP-01, and leave Traefik serving its self-signed default with a
+  # browser warning as the only clue.
+  host: sre-simulator.example.com
+  # Traefik terminates TLS with its own ACME cert resolver, so the certificate
+  # never lands in a Kubernetes Secret and ingress.tls stays disabled. The
+  # scheme therefore has to be stated explicitly instead of being derived from
+  # ingress.tls.enabled.
+  scheme: https
+
+route:
+  enabled: false
+
+ingress:
+  enabled: true
+  className: traefik
+  path: /
+  pathType: Prefix
+  annotations: {}
+  traefik:
+    # Matches the HTTP-01 resolver defined in the k3s HelmChartConfig for
+    # Traefik. The chart turns this into the router.tls / router.certresolver
+    # annotations.
+    certResolver: letsencrypt
+    entryPoint: websecure
+  tls:
+    enabled: false
+    secretName: ""
+
+frontend:
+  # One node, no cloud load balancer: a second frontend replica buys no
+  # availability and doubles the memory footprint on a 12 GB box.
+  replicas: 1
+
+backend:
+  # Must stay 1. The AI budget limiter defaults to the in-memory rate-limit
+  # store, which is per-process: N replicas would each allow the full daily
+  # OpenRouter quota. Set backend.rateLimit.redisUrl before raising this.
+  replicas: 1
+
+storage:
+  # Provided by the k3s bundled local-path provisioner, which is why
+  # local-storage is deliberately NOT disabled at k3s install time.
+  storageClass: local-path

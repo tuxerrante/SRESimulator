@@ -1,0 +1,32 @@
+---
+# CI overlay for the free-e2e gate, layered on top of values-oci.yaml.
+#
+# Usage:
+#   helm upgrade --install sre-simulator ./helm/sre-simulator \
+#     --values ./helm/sre-simulator/values.yaml \
+#     --values ./helm/sre-simulator/values-oci.yaml \
+#     --values ./helm/sre-simulator/values-ci-k3d.yaml
+#
+# k3d runs the same k3s distribution as the OCI box (bundled Traefik,
+# local-path, kube-router NetworkPolicy), so the gate doubles as the
+# regression test for values-oci.yaml. The only things CI cannot have are a
+# public DNS name and a real ACME certificate.
+
+exposure:
+  # k3d publishes the Traefik loadbalancer on host :80, and Chromium maps
+  # *.localhost to loopback internally, so this needs no /etc/hosts edit and
+  # no port-forward.
+  #
+  # It must be *.localhost rather than an ordinary loopback alias such as
+  # *.localtest.me: only loopback and *.localhost are browser secure contexts,
+  # and without one Chromium hides crypto.randomUUID and crypto.subtle, which
+  # the chat and anonymous-trial paths call unguarded.
+  host: sre-simulator.localhost
+  scheme: http
+
+ingress:
+  traefik:
+    # Turn off ACME: Let's Encrypt cannot reach a k3d cluster, and an
+    # unsatisfiable HTTP-01 challenge would leave the router without a
+    # certificate and fail every request.
+    certResolver: ""

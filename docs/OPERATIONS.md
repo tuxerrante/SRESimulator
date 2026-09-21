@@ -368,14 +368,79 @@ For provider options, environment variables, and runtime behavior, use:
 
 ## Mandatory pull-request browser gate
 
-Every PR must pass the `live-e2e` CI job. The job is serialized, requires
-approval through the protected `live-e2e` GitHub Environment, creates an
-isolated `sre-pr-<number>-<timestamp>` namespace, publishes non-semver PR
-images, runs one anonymous entry plus three isolated platform users concurrently
-on four distinct scenarios, uploads screenshots/results, and removes the
-namespace in an `always()` cleanup step.
+Every PR must pass the `free-e2e` CI job, unless the `changes` job classifies
+the diff as inert — `run_e2e=false`, a docs or repo-meta change touching none
+of the allowlisted paths. In that case `ci-gate` prints "Browser E2E
+intentionally skipped" and passes; it never reads a missing `free-e2e` result
+as a success. It runs entirely on a GitHub-hosted
+runner: it builds both images with buildx, creates a single-node k3d cluster,
+deploys the real chart with `values.yaml` + `values-oci.yaml` +
+`values-ci-k3d.yaml` plus mock-AI/JSON-storage overrides, and runs
+`make test-e2e-live` against the bundled Traefik ingress on
+`http://sre-simulator.localhost`. It consumes no cloud credentials, no
+repository secret and no GitHub Environment, so it also gates fork PRs and
+Dependabot PRs, and `scripts/live-e2e-gate.test.sh` asserts that property by
+scanning the job block for `secrets.`, `environment:` and `azure/login`, and
+every local composite action the block `uses:` for the first and third. Both
+images are rebuilt inside the job: `docker-build` neither pushes nor exports
+its images, and publishing them from a PR-head workflow would need exactly the
+registry credentials this gate does without.
 
-Dependabot PRs take a credential-minimized path because GitHub withholds normal
+k3d rather than kind on purpose: it is the same k3s distribution as the OCI
+box. Be precise about what that buys. The gate is a regression test for the
+chart-side half of `values-oci.yaml` — the Ingress object, `className:
+traefik`, the Traefik annotation derivation, `local-path` and the replica
+pins. It does **not** exercise the OCI Traefik deployment shape: k3d keeps
+ServiceLB and the stock Traefik `Service`, while the box runs
+`--disable=servicelb` with `hostNetwork: true` and `service.enabled: false`.
+That combination is the load-bearing decision for client-IP integrity and
+remains unverified until a real VM exists.
+
+`values-oci.yaml` is not yet a deployable profile, and the gate does not make
+it one. It keeps `database.enabled: false`, so the backend renders no
+`STORAGE_BACKEND`, defaults to JSON, and `initStorage()` refuses JSON in a pod
+unless `ALLOW_DEPLOYED_JSON_STORAGE_FOR_TESTS` and `AI_MOCK_MODE` are both
+true — the test-only pair that `free-e2e` sets and a real deploy must not.
+Applying the profile to a real cluster today crashloops the backend. Storage
+and AI are flipped in the last step of the OCI rollout, once the Postgres
+adapter and the OpenRouter provider exist; until then `helm-validate` fails if
+the file drops its render-only notice, and fails again if the notice outlives
+the gap it describes.
+
+### The gate host must be a `*.localhost` name
+
+`E2E_HOST` and `exposure.host` are `sre-simulator.localhost`, and changing that
+to another loopback alias will break the suite in a way that is very hard to
+read. Only loopback addresses and `*.localhost` names are browser **secure
+contexts**. Outside one, Chromium hides `crypto.randomUUID` and
+`crypto.subtle`, which `frontend/src/hooks/useChat.ts`,
+`frontend/src/hooks/useCommand.ts`, `frontend/src/lib/auth/fingerprint.ts` and
+`frontend/src/lib/telemetry/request-context.ts` call without a guard. Chat
+messages then never enter the transcript and anonymous play cannot start,
+while the Playwright run reports no 5xx, no failed request and no console
+error, because an unhandled rejection surfaces as `pageerror`. Verified with a
+Chromium probe on both macOS and Linux: `sre-simulator.localtest.me` reports
+`isSecureContext: false`, `sre-simulator.localhost` reports `true`.
+
+Production is unaffected — the OCI path is HTTPS, hence a secure context.
+
+### Optional Azure `live-e2e`
+
+The Azure-backed `live-e2e` job is still in `ci.yml` but is opt-in: it only
+runs when the repository variable `LIVE_E2E_ENABLED` is set to `true`, and
+`ci-gate` only counts its result when that same variable is `true`. With the
+variable unset the job is skipped and cannot block a merge. Set it once the
+AKS cluster, the `live-e2e` GitHub Environment and the AI credentials behind it
+are available again; everything the job needs is unchanged.
+
+When enabled, the job is serialized, requires approval through the protected
+`live-e2e` GitHub Environment, creates an isolated
+`sre-pr-<number>-<timestamp>` namespace, publishes non-semver PR images, runs
+one anonymous entry plus three isolated platform users concurrently on four
+distinct scenarios, uploads screenshots/results, and removes the namespace in
+an `always()` cleanup step.
+
+Dependabot PRs additionally take a credential-minimized path because GitHub withholds normal
 Actions secrets and gives their pull-request workflows a read-only token. A
 unprivileged `pull_request` workflow builds the dependency-update images and
 uploads immutable, SHA-bound artifacts. A trusted `workflow_run` validates and
@@ -384,9 +449,14 @@ namespace from a pre-provisioned pool, deploys only the trusted `main` chart
 into it, and runs mock-AI/JSON browser coverage. Its kubeconfig is stored only
 in the unprotected `dependabot-e2e` Environment and is bound to those
 namespaces; it cannot read the production namespace, create namespaces, or
-delete namespaces. The main `ci-gate` waits for the `dependabot-e2e` commit
-status, so the bot path remains merge-blocking without Azure login or manual
-approval.
+delete namespaces. That path needs a live AKS cluster, so `ci-gate` only waits
+for the `dependabot-e2e` commit status when the repository variable
+`DEPENDABOT_E2E_ENABLED` is `true` — the same opt-in pattern as
+`LIVE_E2E_ENABLED`. Unset, bot PRs are gated by `free-e2e` alone. Set it to
+`true` to restore the belt-and-braces behaviour once the cluster is back;
+leaving it unset while the cluster is gone is what stops every Dependabot PR
+from polling for 70 minutes and then failing with
+`dependabot-e2e (missing)`. The path is the next thing to retire outright.
 
 ### Dependabot E2E namespace pool
 
@@ -598,6 +668,47 @@ The canonical public URL for the AKS production path is
 For AKS, `publicService` remains the rollback exposure mode when operators need
 to temporarily expose only the frontend through a `LoadBalancer` service. ARO
 still uses the Route-based fallback described in the architecture doc.
+
+### `helm test` on clusters that enforce NetworkPolicy
+
+`templates/networkpolicy.yaml` restricts backend ingress to the frontend and to
+the `helm test` pod. Whether that is enforced is up to the CNI: AKS ignores it
+unless network policy was enabled on the cluster, and so does `kind`, but k3s
+enforces it through the bundled kube-router.
+
+kube-router programs a newly created pod's IP into the allowed-source ipset
+asynchronously, and nothing in Kubernetes orders pod start after policy
+programming. For roughly the first second the backend therefore rejects the
+brand-new test pod outright, and a bare first request fails instantly with
+`curl: (7) Failed to connect ... after 1 ms`. This is a startup race, not a
+policy mismatch — the pod's labels do match the rule.
+
+The test pod absorbs that window in a `wait-for-network-policy` init container,
+which shares the pod's network namespace and IP, so once it gets through the
+policy is programmed for the whole pod. The assertions in the test container
+then run with no retry, and a failure there is a real failure.
+
+When `helm test` fails, `helm test --logs` shows only the test container, which
+never starts if the wait timed out. Read the init container directly:
+
+```bash
+kubectl -n <namespace> logs -l app.kubernetes.io/component=helm-test \
+  -c wait-for-network-policy
+```
+
+Select by label rather than by name: the pod is named from
+`sre-simulator.fullname`, so a release installed under a different name or with
+`fullnameOverride` set is called something other than `sre-simulator-test` and
+the name form returns `NotFound`. Add
+`-l app.kubernetes.io/instance=<release>` when several releases share the
+namespace.
+
+A timeout there with a healthy backend points at the NetworkPolicy rather than
+at the application:
+
+```bash
+kubectl -n <namespace> describe networkpolicy <release>-backend
+```
 
 ## Live platform-session verification
 
