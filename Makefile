@@ -266,7 +266,7 @@ security: audit lockfile-lint gitleaks grype ## Run all security checks
 # Written above the target rather than inside the recipe: make echoes recipe
 # lines, comments included, so an in-recipe note prints four lines of prose on
 # every run.
-audit: ## Check Bun-managed dependencies for known vulnerabilities
+audit: ## Audit both Bun workspaces (frontend + backend); severity via BUN_AUDIT_FAIL_LEVEL
 	node scripts/frontend-audit-check.mjs --root . --workspace-dir $(FRONTEND_DIR) --audit-level $(BUN_AUDIT_FAIL_LEVEL)
 	node scripts/frontend-audit-check.mjs --root . --workspace-dir $(BACKEND_DIR) --audit-level $(BUN_AUDIT_FAIL_LEVEL)
 
