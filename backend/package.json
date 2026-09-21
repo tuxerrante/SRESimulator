@@ -21,6 +21,7 @@
     "gpt-tokenizer": "^4.0.0",
     "helmet": "^8.3.0",
     "mssql": "^12.7.0",
+    "pg": "^8.23.0",
     "redis": "^6.2.1"
   },
   "devDependencies": {
@@ -29,6 +30,7 @@
     "@types/express": "^5.0.6",
     "@types/mssql": "^12.3.0",
     "@types/node": "^26.2.0",
+    "@types/pg": "^8.23.1",
     "@vitest/coverage-v8": "^4.1.11",
     "eslint": "^10",
     "ts-unused-exports": "^11.0.1",
