@@ -307,6 +307,24 @@ run "vcn_cidr_may_not_swallow_the_k3s_ranges" {
   ]
 }
 
+# The overlap check above cannot catch an IPv6 value: it compares network
+# addresses, and an IPv6 prefix never equals an IPv4 one, so every arm of it
+# passes and the value reaches oci_core_vcn.cidr_blocks. This root assigns no
+# IPv6 address anywhere, so the refusal belongs at plan time with the
+# variable's own name on it.
+run "vcn_cidr_may_not_be_ipv6" {
+  command = plan
+
+  variables {
+    vcn_cidr    = "2001:db8::/16"
+    subnet_cidr = "10.0.0.0/24"
+  }
+
+  expect_failures = [
+    var.vcn_cidr,
+  ]
+}
+
 run "vcn_cidr_adjacent_to_the_k3s_ranges_is_fine" {
   command = plan
 

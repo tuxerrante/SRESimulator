@@ -441,7 +441,15 @@ tf-oci-bootstrap: ## Create the Object Storage bucket that holds Terraform state
 		echo "Set OCI_STATE_COMPARTMENT_OCID to the compartment that should own the bucket."; \
 		exit 1; \
 	fi
+	@# --region, not the CLI profile's. Without it the bucket is created in
+	@# whatever region `oci setup config` last selected, while tf-oci-init
+	@# points the backend at OCI_STATE_REGION (default eu-frankfurt-1) through
+	@# OCI_STATE_ENDPOINT and -backend-config=region. When those differ the
+	@# create succeeds, prints the endpoint below for a region the bucket is
+	@# not in, and init fails looking for a bucket that does exist -- in the
+	@# other region. One flag makes the two halves of this file agree.
 	oci os bucket create \
+		--region "$(OCI_STATE_REGION)" \
 		--name "$(OCI_STATE_BUCKET)" \
 		--compartment-id "$(OCI_STATE_COMPARTMENT_OCID)" \
 		--versioning Enabled

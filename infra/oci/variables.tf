@@ -183,6 +183,19 @@ variable "vcn_cidr" {
     error_message = "vcn_cidr must be a valid CIDR block."
   }
 
+  # IPv4 only, matching the rest of this root: the VCN carries no IPv6 block,
+  # the VNIC is assigned no IPv6 address and the route table has no ::/0 rule
+  # (see README "Why there is no IPv6"). `cidrhost` accepts both families, and
+  # so does the overlap check below -- an IPv6 value simply cannot collide with
+  # 10.42/10.43, so it passes every test here and reaches oci_core_vcn to fail
+  # at apply against a provider message that says nothing about this variable.
+  # `cidrnetmask` is IPv4-only, which is what network.tf already relies on to
+  # keep an IPv6 entry out of the fetched Cloudflare list.
+  validation {
+    condition     = can(cidrnetmask(var.vcn_cidr))
+    error_message = "vcn_cidr must be an IPv4 CIDR block; this deployment provisions no IPv6 address."
+  }
+
   # The description above states the constraint; without this it is only a
   # suggestion. An overlapping VCN makes host routing ambiguous against the
   # cluster's own ranges, and the symptom is intermittent pod networking
@@ -212,6 +225,19 @@ variable "subnet_cidr" {
   validation {
     condition     = can(cidrhost(var.subnet_cidr, 0))
     error_message = "subnet_cidr must be a valid CIDR block."
+  }
+
+  # Same IPv4-only rule as vcn_cidr, and deliberately untested: the containment
+  # check below already refuses an IPv6 subnet under an IPv4 VCN, and since
+  # vcn_cidr must now be IPv4 there is no reachable case this validation
+  # catches on its own. `expect_failures` names a variable, not a validation,
+  # so a test here passes whether or not this block exists -- it was written,
+  # measured doing exactly that, and removed. What is left is message quality:
+  # the reader is told which variable is wrong rather than being sent to
+  # containment, which is about the other one.
+  validation {
+    condition     = can(cidrnetmask(var.subnet_cidr))
+    error_message = "subnet_cidr must be an IPv4 CIDR block; this deployment provisions no IPv6 address."
   }
 
   # Containment, rather than a second overlap test: a subnet inside the VCN

@@ -991,4 +991,35 @@ if ! PATH="$TERRAFORM_STUB_DIR:$PATH" make -n -C "$OCI_MAKE_DIR" \
   fail "the override hardening broke a well-formed tf-oci-plan"
 fi
 
+# --- 17. bootstrap creates the bucket the backend then looks for ----------
+# tf-oci-bootstrap creates the state bucket and tf-oci-init points the S3
+# backend at OCI_STATE_REGION. The create used to pass no --region at all, so
+# it landed wherever `oci setup config` last pointed: the create succeeds, the
+# target prints an endpoint for a region the bucket is not in, and init then
+# fails looking for a bucket that exists somewhere else. Both halves must read
+# the same variable, so both are rendered with a non-default value and must
+# carry it -- a default-valued check would pass on a hardcoded region.
+BOOTSTRAP_REGION_RENDER="$(
+  PATH="$TERRAFORM_STUB_DIR:$PATH" make -n -C "$OCI_MAKE_DIR" \
+    OCI_BACKEND_ENV_FILE=/dev/null tf-oci-bootstrap \
+    OCI_STATE_REGION=us-ashburn-1 OCI_STATE_BUCKET=b OCI_STATE_NAMESPACE=n \
+    OCI_STATE_COMPARTMENT_OCID=ocid1.compartment.oc1..x 2>&1
+)"
+
+case "$BOOTSTRAP_REGION_RENDER" in
+  *'--region "us-ashburn-1"'*) : ;;
+  *) fail "tf-oci-bootstrap creates the bucket without OCI_STATE_REGION; it would land in whatever region the OCI CLI profile selects" ;;
+esac
+
+INIT_REGION_RENDER="$(
+  PATH="$TERRAFORM_STUB_DIR:$PATH" make -n -C "$OCI_MAKE_DIR" \
+    OCI_BACKEND_ENV_FILE=/dev/null tf-oci-init OWNER_ALIAS=jdoe \
+    OCI_STATE_REGION=us-ashburn-1 OCI_STATE_BUCKET=b OCI_STATE_NAMESPACE=n 2>&1
+)"
+
+case "$INIT_REGION_RENDER" in
+  *us-ashburn-1*) : ;;
+  *) fail "tf-oci-init does not carry OCI_STATE_REGION, so section 17 is comparing bootstrap against nothing" ;;
+esac
+
 echo "terraform gate checks passed."
