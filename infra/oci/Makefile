@@ -23,7 +23,7 @@ CONFIRM_DESTROY ?=
 # variables.tf owns correctness (length, leading letter, the 15-character OCI
 # DNS label ceiling). Terraform can enforce the second only once the first
 # guarantees it is handed the value the operator actually typed.
-OWNER_ALIAS_ALLOWED := a b c d e f g h i j k l m n o p q r s t u v w x y z \
+override OWNER_ALIAS_ALLOWED := a b c d e f g h i j k l m n o p q r s t u v w x y z \
                        0 1 2 3 4 5 6 7 8 9
 
 # Read the *raw* text with $(value ...), never the variable itself. A variable
@@ -34,10 +34,10 @@ OWNER_ALIAS_ALLOWED := a b c d e f g h i j k l m n o p q r s t u v w x y z \
 # inspected. Reproduced in a scratch makefile -- the file appeared and
 # TF_VAR_FLAGS came out empty, because $(shell ...) expands to nothing, so the
 # guard reported success on a value it had already executed.
-OCI_STATE_KEY_ALLOWED := a b c d e f g h i j k l m n o p q r s t u v w x y z \
+override OCI_STATE_KEY_ALLOWED := a b c d e f g h i j k l m n o p q r s t u v w x y z \
   0 1 2 3 4 5 6 7 8 9 - . _ /
 
-OWNER_ALIAS_RAW := $(value OWNER_ALIAS)
+override OWNER_ALIAS_RAW := $(value OWNER_ALIAS)
 
 ifneq ($(OWNER_ALIAS_RAW),)
 ifneq ($(words $(OWNER_ALIAS_RAW)),1)
@@ -54,9 +54,9 @@ endif
 ifneq ($(findstring \#,$(OWNER_ALIAS_RAW)),)
 $(error OWNER_ALIAS must be lowercase alphanumeric; it contains a hash character)
 endif
-OWNER_ALIAS_RESIDUE := $(OWNER_ALIAS_RAW)
+override OWNER_ALIAS_RESIDUE := $(OWNER_ALIAS_RAW)
 $(foreach c,$(OWNER_ALIAS_ALLOWED),\
-  $(eval OWNER_ALIAS_RESIDUE := $$(subst $(c),,$(OWNER_ALIAS_RESIDUE))))
+  $(eval override OWNER_ALIAS_RESIDUE := $$(subst $(c),,$(OWNER_ALIAS_RESIDUE))))
 ifneq ($(OWNER_ALIAS_RESIDUE),)
 $(error OWNER_ALIAS must be lowercase alphanumeric; rejected: $(OWNER_ALIAS_RESIDUE))
 endif
@@ -76,8 +76,8 @@ TF_VAR_FLAGS := $(if $(OWNER_ALIAS_RAW),-var owner_alias='$(OWNER_ALIAS_RAW)',)
 # comparison happens. $(value ...) keeps make from expanding them, and
 # exporting a simply-expanded variable puts the stored text into the child
 # environment verbatim, so the recipes below compare shell variables.
-CONFIRM_APPLY_RAW   := $(value CONFIRM_APPLY)
-CONFIRM_DESTROY_RAW := $(value CONFIRM_DESTROY)
+override CONFIRM_APPLY_RAW   := $(value CONFIRM_APPLY)
+override CONFIRM_DESTROY_RAW := $(value CONFIRM_DESTROY)
 export CONFIRM_APPLY_RAW
 export CONFIRM_DESTROY_RAW
 
@@ -104,12 +104,12 @@ export CONFIRM_DESTROY_RAW
 # $(value ...) throughout, never the variable itself: reading a recursive
 # variable expands it, so any check that reads before it rejects has already
 # run whatever it was trying to refuse.
-OCI_SAFE_ALNUM := a b c d e f g h i j k l m n o p q r s t u v w x y z \
+override OCI_SAFE_ALNUM := a b c d e f g h i j k l m n o p q r s t u v w x y z \
                   A B C D E F G H I J K L M N O P Q R S T U V W X Y Z \
                   0 1 2 3 4 5 6 7 8 9
-OCI_SAFE_NAME := $(OCI_SAFE_ALNUM) - . _
-OCI_SAFE_PATH := $(OCI_SAFE_NAME) /
-OCI_SAFE_URL  := $(OCI_SAFE_PATH) :
+override OCI_SAFE_NAME := $(OCI_SAFE_ALNUM) - . _
+override OCI_SAFE_PATH := $(OCI_SAFE_NAME) /
+override OCI_SAFE_URL  := $(OCI_SAFE_PATH) :
 
 # $(1) variable name, $(2) permitted characters, $(3) human description,
 # $(4) the name to print if it differs from $(1) -- the endpoint is checked
@@ -129,8 +129,8 @@ ifneq ($$(words $$(value $(1))),1)
 $$(error $(if $(4),$(4),$(1)) must be a single whitespace-free value (got: '$$(value $(1))'))
 endif
 endif
-$(1)_RESIDUE := $$(value $(1))
-$$(foreach c,$(2),$$(eval $(1)_RESIDUE := $$$$(subst $$(c),,$$($(1)_RESIDUE))))
+override $(1)_RESIDUE := $$(value $(1))
+$$(foreach c,$(2),$$(eval override $(1)_RESIDUE := $$$$(subst $$(c),,$$($(1)_RESIDUE))))
 ifneq ($$($(1)_RESIDUE),)
 $$(error $(if $(4),$(4),$(1)) must be $(3); rejected: $$($(1)_RESIDUE))
 endif
@@ -179,10 +179,10 @@ OCI_STATE_KEY_DERIVED := $(if $(OWNER_ALIAS_RAW),$(OWNER_ALIAS_RAW)-free-sre-sim
 # empty while the alias was set, and every comparison that skips an empty key
 # then walked the state-owner check.
 ifeq ($(origin OCI_STATE_KEY),undefined)
-OCI_STATE_KEY_GIVEN :=
+override OCI_STATE_KEY_GIVEN :=
 OCI_STATE_KEY_IS_SET :=
 else
-OCI_STATE_KEY_GIVEN := $(value OCI_STATE_KEY)
+override OCI_STATE_KEY_GIVEN := $(value OCI_STATE_KEY)
 OCI_STATE_KEY_IS_SET := yes
 endif
 
@@ -201,9 +201,9 @@ endif
 ifneq ($(words $(OCI_STATE_KEY_GIVEN)),1)
 $(error OCI_STATE_KEY must be a single whitespace-free object key (got: '$(OCI_STATE_KEY_GIVEN)'))
 endif
-OCI_STATE_KEY_RESIDUE := $(OCI_STATE_KEY_GIVEN)
+override OCI_STATE_KEY_RESIDUE := $(OCI_STATE_KEY_GIVEN)
 $(foreach c,$(OCI_STATE_KEY_ALLOWED),\
-  $(eval OCI_STATE_KEY_RESIDUE := $$(subst $(c),,$(OCI_STATE_KEY_RESIDUE))))
+  $(eval override OCI_STATE_KEY_RESIDUE := $$(subst $(c),,$(OCI_STATE_KEY_RESIDUE))))
 ifneq ($(OCI_STATE_KEY_RESIDUE),)
 $(error OCI_STATE_KEY must be lowercase alphanumeric plus -._/; rejected: $(OCI_STATE_KEY_RESIDUE))
 endif

@@ -888,4 +888,82 @@ if ! grep -Fqx 'AWS_ACCESS_KEY_ID=ambient-access-key' "$TERRAFORM_ENV_FILE"; the
   fail "an ambient AWS_ACCESS_KEY_ID was clobbered when .oci-backend.env is absent"
 fi
 
+# --- 16. the guards' own variables are not a command-line channel ---------
+# Every character check in infra/oci/Makefile works by subtracting a permitted
+# alphabet from the value and erroring on what is left. Both halves of that --
+# the alphabet and the running residue -- are ordinary make variables, and a
+# command-line assignment beats a file assignment for any variable not marked
+# `override`. So the guard could be disarmed by the same command line it was
+# meant to vet, with no quoting trick and nothing to notice in the output:
+#
+#   make tf-oci-plan OWNER_ALIAS='ev!l' OWNER_ALIAS_RESIDUE=
+#
+# clears the residue the loop is about to test and the value walks through.
+#
+# Asserted behaviourally rather than by grepping for `override`, because a
+# string assertion had already approved an exploitable makefile once: it
+# confirms the keyword is present somewhere without confirming it is on the
+# variable that carries the bypass. Each arm below is a real invocation whose
+# refusal must also *name the right variable* -- an earlier version of this
+# check passed because a widened alphabet collapsed an unrelated guard first,
+# so the arm reported REFUSED having never reached the value under test.
+guard_must_refuse() {
+  local what="$1" want="$2"; shift 2
+  local out
+  if out="$(PATH="$TERRAFORM_STUB_DIR:$PATH" make -n -C "$OCI_MAKE_DIR" \
+    OCI_BACKEND_ENV_FILE=/dev/null "$@" 2>&1)"; then
+    fail "$what: the guard did not fire; the value reached the recipe"
+  fi
+  case "$out" in
+    *"$want"*) : ;;
+    *) fail "$what: refused, but not by $want -- got [$(printf '%s' "$out" | head -1)]" ;;
+  esac
+}
+
+# The full-alphabet superset is what isolates an alphabet arm: widening by one
+# character leaves every other guard in the file working normally, so the only
+# thing that can change is the value under test.
+GUARD_SUPERSET='a b c d e f g h i j k l m n o p q r s t u v w x y z
+A B C D E F G H I J K L M N O P Q R S T U V W X Y Z 0 1 2 3 4 5 6 7 8 9 - . _ !'
+
+guard_must_refuse 'a bad OWNER_ALIAS' 'OWNER_ALIAS must be' \
+  tf-oci-plan OWNER_ALIAS='ev!l'
+guard_must_refuse 'OWNER_ALIAS_RESIDUE cleared from the command line' 'OWNER_ALIAS must be' \
+  tf-oci-plan OWNER_ALIAS='ev!l' OWNER_ALIAS_RESIDUE=
+guard_must_refuse 'OWNER_ALIAS_RAW cleared from the command line' 'OWNER_ALIAS must be' \
+  tf-oci-plan OWNER_ALIAS='ev!l' OWNER_ALIAS_RAW=
+guard_must_refuse 'OWNER_ALIAS_ALLOWED widened to admit the payload' 'OWNER_ALIAS must be' \
+  tf-oci-plan OWNER_ALIAS='ev!l' OWNER_ALIAS_ALLOWED="$GUARD_SUPERSET"
+guard_must_refuse 'OCI_STATE_KEY_RESIDUE cleared from the command line' 'OCI_STATE_KEY must be' \
+  tf-oci-plan OWNER_ALIAS=jdoe OCI_STATE_KEY='a!b' OCI_STATE_KEY_RESIDUE=
+guard_must_refuse 'OCI_STATE_KEY_ALLOWED widened to admit the payload' 'OCI_STATE_KEY must be' \
+  tf-oci-plan OWNER_ALIAS=jdoe OCI_STATE_KEY='a!b' OCI_STATE_KEY_ALLOWED="$GUARD_SUPERSET"
+
+# The shared alphabets behind assert_shell_safe. OCI_SAFE_NAME is the one that
+# was genuinely reachable: overriding it admitted a '!' into the bucket name,
+# which is interpolated into a shell command line.
+guard_must_refuse 'OCI_SAFE_NAME widened to admit the payload' 'OCI_STATE_BUCKET must be' \
+  tf-oci-init OWNER_ALIAS=jdoe OCI_STATE_BUCKET='b!d' OCI_STATE_NAMESPACE=n \
+  OCI_SAFE_NAME="$GUARD_SUPERSET"
+guard_must_refuse 'OCI_SAFE_ALNUM widened to admit the payload' 'OCI_STATE_BUCKET must be' \
+  tf-oci-init OWNER_ALIAS=jdoe OCI_STATE_BUCKET='b!d' OCI_STATE_NAMESPACE=n \
+  OCI_SAFE_ALNUM="$GUARD_SUPERSET"
+guard_must_refuse 'OCI_SAFE_URL widened to admit the payload' 'OCI_STATE_ENDPOINT must be' \
+  tf-oci-init OWNER_ALIAS=jdoe OCI_STATE_BUCKET=b OCI_STATE_NAMESPACE=n \
+  OCI_STATE_ENDPOINT='h!t' OCI_SAFE_URL="$GUARD_SUPERSET :"
+guard_must_refuse 'OCI_SAFE_PATH widened to admit the payload' 'OCI_BACKEND_ENV_FILE must be' \
+  tf-oci-init OWNER_ALIAS=jdoe OCI_STATE_BUCKET=b OCI_STATE_NAMESPACE=n \
+  OCI_BACKEND_ENV_FILE='x!y' OCI_SAFE_PATH="$GUARD_SUPERSET /"
+guard_must_refuse 'the residue channel on a generic assert_shell_safe call' 'OCI_STATE_BUCKET must be' \
+  tf-oci-init OWNER_ALIAS=jdoe OCI_STATE_BUCKET='b!d' OCI_STATE_NAMESPACE=n \
+  OCI_STATE_BUCKET_RESIDUE=
+
+# The counterpart the refusals above are worthless without: a well-formed
+# invocation must still render. Otherwise every arm could be passing because
+# the target is broken outright.
+if ! PATH="$TERRAFORM_STUB_DIR:$PATH" make -n -C "$OCI_MAKE_DIR" \
+  OCI_BACKEND_ENV_FILE=/dev/null tf-oci-plan OWNER_ALIAS=jdoe >/dev/null 2>&1; then
+  fail "the override hardening broke a well-formed tf-oci-plan"
+fi
+
 echo "terraform gate checks passed."
