@@ -268,6 +268,32 @@ grep -Fq -- "make test-e2e-live" <<<"$free_e2e_block" || \
 grep -Fq -- "persist-credentials: false" <<<"$free_e2e_block" || \
   fail "free-e2e's checkout must set persist-credentials: false"
 
+# The Postgres phase. After the browser suite passes on JSON storage the job
+# redeploys the same release onto a real database, which is the only place
+# anything proves that database.driver reaches STORAGE_BACKEND and that
+# initStorage() runs its migrations from inside a pod --
+# integration-test-postgres drives the stores directly and never boots the
+# chart.
+#
+# Each assertion below guards a way the phase could report success while
+# proving nothing:
+#
+#   - without --set-string database.driver=postgres the redeploy is a no-op
+#     and the backend stays exactly where it was;
+#   - with allowDeployedJsonStorageForTests still true the backend is allowed
+#     to fall back to the JSON stores, and every later assertion passes
+#     against a database nothing ever touched;
+#   - reading the Deployment spec instead of the pod log would confirm only
+#     that helm rendered the value, not that the process acted on it.
+for required in \
+  "--set-string database.driver=postgres" \
+  "--set backend.allowDeployedJsonStorageForTests=false" \
+  "[storage] backend=postgres ready" \
+  "SELECT name FROM _migrations ORDER BY name"; do
+  grep -Fq -- "$required" <<<"$free_e2e_block" || \
+    fail "free-e2e's Postgres phase must assert on '$required'"
+done
+
 # ci-gate promotes live-e2e from optional to required on `vars.LIVE_E2E_ENABLED`,
 # but live-e2e itself also refuses to run for fork PRs, because it releases
 # cluster and AI credentials to PR code. Without the same predicate in ci-gate,
