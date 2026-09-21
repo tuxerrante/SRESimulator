@@ -68,18 +68,44 @@ spec:
     #
     # Docker hides it: since 20.10 it sets net.ipv4.ip_unprivileged_port_start
     # = 0 inside containers, so `docker run --user 65532` binds :80 happily.
-    # Kubernetes sets no such sysctl. Only a real cluster shows this.
+    # Kubernetes sets no such sysctl on a real node.
+    #
+    # k3d hides it for the same reason one level up, which is why the
+    # free-e2e gate can never catch this: a k3d "node" is itself a Docker
+    # container, so the host network namespace a hostNetwork pod joins there
+    # already has the sysctl at 0. Measured on k3d v1.35.5+k3s1 -- inside the
+    # node container /proc/sys/net/ipv4/ip_unprivileged_port_start reads 0
+    # while the real host reads 1024, and uid 65532 with hostNetwork bound :80
+    # without complaint. Only k3s on a real VM reproduces it, which is the
+    # oci-shape-e2e gate.
     #
     # Normally the chart never binds a privileged port: its default is
     # ports.web.port 8000 with exposedPort 80, and the Service does the
     # mapping. With service.enabled: false and hostNetwork: true there is no
     # Service, so Traefik has to bind :80 for real.
     #
-    # The alternative fix is net.ipv4.ip_unprivileged_port_start=0 as a node
-    # sysctl. Rejected: it lets *every* unprivileged process on the box bind
-    # low ports, it lives outside this file and so would have to be duplicated
-    # in CI, and it is a wider grant than giving one container uid 0 with all
-    # capabilities dropped but this one.
+    # Two alternatives to running as root, and neither survives.
+    #
+    # The pod-scoped one is the tempting one: the sysctl above is a *safe*
+    # sysctl, so pod.spec.securityContext.sysctls can set it with no kubelet
+    # flag, it keeps uid 65532, and it would live in this file. It
+    # is not merely unwise here, it is inadmissible -- a namespaced net sysctl
+    # cannot be set on a pod that joins the host network namespace, and the
+    # API server rejects the object outright:
+    #
+    #   spec.securityContext.sysctls[0].name: Invalid value:
+    #   "net.ipv4.ip_unprivileged_port_start": may not be specified when
+    #   'hostNetwork' is true
+    #
+    # Measured, with the control: the identical pod with hostNetwork removed is
+    # admitted and binds :80 as uid 65532. So it is hostNetwork -- the decision
+    # that preserves the client IP -- that forecloses it, not the sysctl.
+    #
+    # The node-scoped one is net.ipv4.ip_unprivileged_port_start=0 set by
+    # cloud-init. Rejected: it lets *every* unprivileged process on the box
+    # bind low ports, it lives outside this file and so would have to be
+    # duplicated in CI, and it is a wider grant than giving one container uid 0
+    # with all capabilities dropped but this one.
     podSecurityContext:
       runAsUser: 0
       runAsGroup: 0
