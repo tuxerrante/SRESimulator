@@ -23,5 +23,11 @@ tags = ["password", "mssql", "github-actions"]
 id = "hardcoded-connection-string-password-in-workflow"
 description = "Detect hardcoded SQL connection string passwords in GitHub workflows."
 path = '''(^|/)\.github/workflows/.*\.ya?ml$'''
-regex = '''(?i)Password\s*=\s*[^$;\s\n][^;\s\n]*'''
+# The quoted alternation mirrors hardcoded-mssql-sa-password-in-workflow above,
+# and is there for the same reason: the bare `[^$...]` guard is meant to skip a
+# variable reference, but a quote character satisfies it, so `Password="${var}"`
+# and `password="$(openssl rand -hex 16)"` were both read as literals. A quoted
+# literal is still caught - the first alternative requires a non-`$` character
+# immediately inside the quote.
+regex = '''(?i)Password\s*=\s*(?:["'][^$"'\n][^"'\n]*["']|[^$"'\s;#\n][^;#\n]*)'''
 tags = ["password", "sql", "connection-string", "github-actions"]
