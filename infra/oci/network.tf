@@ -39,12 +39,40 @@ data "http" "cloudflare_ipv4" {
       error_message = "https://www.cloudflare.com/ips-v4 returned an entry that is not an IPv4 CIDR block. This deployment assigns no IPv6 address and Cloudflare reaches an IPv4 origin over IPv4; set cloudflare_ipv4_ranges explicitly to pin the list."
     }
 
+    # Measured as a union, not as a sum of the parts, for the same reason
+    # spelled out at ssh_allowed_cidrs in variables.tf: a plain sum
+    # over-refuses. A duplicated line, or a /32 published beside the /24 that
+    # already contains it, is double-counted -- and the sum crossing 2^32 is
+    # read here as "the list covers the whole internet", so a bad publish that
+    # is merely redundant would fail every plan with a confident wrong answer
+    # about a safe list. The two checks are also the same check on the same
+    # kind of input, and they should not disagree about what covering the
+    # internet means.
+    #
+    # Exact rather than approximate, because CIDR blocks are laminar: any two
+    # are disjoint or one wholly contains the other. So the union is the sum of
+    # the blocks no other block contains, which is what !anytrue selects, and
+    # distinct() over the *masked* spelling is what keeps "contains" strict on
+    # the prefix length. Only the IPv4 arm is needed -- the postcondition above
+    # has already refused a non-IPv4 entry.
     postcondition {
       condition = sum(concat([0], [
-        for c in compact(split("\n", trimspace(self.response_body))) :
-        pow(2, 32 - tonumber(split("/", c)[1])) if can(cidrnetmask(c))
+        for c in distinct([
+          for x in compact(split("\n", trimspace(self.response_body))) :
+          "${cidrhost(x, 0)}/${split("/", x)[1]}" if can(cidrnetmask(x))
+        ]) :
+        pow(2, 32 - tonumber(split("/", c)[1]))
+        if !anytrue([
+          for d in distinct([
+            for x in compact(split("\n", trimspace(self.response_body))) :
+            "${cidrhost(x, 0)}/${split("/", x)[1]}" if can(cidrnetmask(x))
+          ]) :
+          tonumber(split("/", d)[1]) < tonumber(split("/", c)[1]) &&
+          cidrhost("${split("/", c)[0]}/${split("/", d)[1]}", 0) ==
+          split("/", d)[0]
+        ])
       ])) < pow(2, 32)
-      error_message = "https://www.cloudflare.com/ips-v4 returned ranges covering the entire IPv4 address space, which would leave 80/443 open to the world while restrict_ingress_to_cloudflare still reads as enabled. Set restrict_ingress_to_cloudflare = false if that is the intent."
+      error_message = "https://www.cloudflare.com/ips-v4 returned ranges whose union covers the entire IPv4 address space, which would leave 80/443 open to the world while restrict_ingress_to_cloudflare still reads as enabled. Set restrict_ingress_to_cloudflare = false if that is the intent."
     }
   }
 }
