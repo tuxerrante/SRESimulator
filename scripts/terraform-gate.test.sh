@@ -983,6 +983,41 @@ case "$tf_var_flags_line" in
   *) fail "TF_VAR_FLAGS no longer derives from the validated alias: [$tf_var_flags_line]" ;;
 esac
 
+guard_must_refuse 'OCI_STATE_KEY_IS_SET cleared from the command line' 'OCI_STATE_KEY must be' \
+  tf-oci-plan OWNER_ALIAS=jdoe OCI_STATE_KEY='a"b' OCI_STATE_KEY_IS_SET=
+
+# OCI_STATE_KEY_DERIVED is the widest of the lot and the last one found. The
+# guarded channel is OCI_STATE_KEY, which is vetted at parse time and then
+# required to equal the alias-derived value -- but the *derived* value itself
+# was an ordinary make variable, so supplying it on the command line skipped
+# the vet entirely and landed inside the double-quoted -backend-config on
+# tf-oci-init. Measured before fixing: the payload below rendered
+#
+#   -backend-config="key=x"; echo PWNED; :"" \
+#
+# which closes make's quote and runs a second command. Same assertion shape as
+# TF_VAR_FLAGS, and for the same reason -- `override` ignores the assignment
+# silently, so what has to be shown is that the key still derives from the
+# validated alias and the supplied one does not appear.
+state_key_render() {
+  PATH="$TERRAFORM_STUB_DIR:$PATH" make -n -C "$OCI_MAKE_DIR" \
+    OCI_BACKEND_ENV_FILE=/dev/null tf-oci-init OWNER_ALIAS=jdoe \
+    OCI_STATE_BUCKET=b OCI_STATE_NAMESPACE=n \
+    OCI_STATE_KEY_DERIVED='x"; echo GATE_INJECTION_MARKER; :"' 2>&1 |
+    grep -- '-backend-config="key='
+}
+
+state_key_line="$(state_key_render)"
+
+case "$state_key_line" in
+  *GATE_INJECTION_MARKER*)
+    fail "OCI_STATE_KEY_DERIVED from the command line reached the recipe: [$state_key_line]" ;;
+esac
+case "$state_key_line" in
+  *'key=jdoe-free-sre-simulator.tfstate"'*) : ;;
+  *) fail "the state key no longer derives from the validated alias: [$state_key_line]" ;;
+esac
+
 # The counterpart the refusals above are worthless without: a well-formed
 # invocation must still render. Otherwise every arm could be passing because
 # the target is broken outright.

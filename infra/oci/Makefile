@@ -174,7 +174,7 @@ OCI_STATE_REGION     ?= eu-frankfurt-1
 # and applying that plan reads as a destroy. Sharing a key on purpose is
 # still available -- by sharing the alias, which is the identity the plan uses
 # too, so the two halves cannot drift apart again.
-OCI_STATE_KEY_DERIVED := $(if $(OWNER_ALIAS_RAW),$(OWNER_ALIAS_RAW)-free-sre-simulator.tfstate,)
+override OCI_STATE_KEY_DERIVED := $(if $(OWNER_ALIAS_RAW),$(OWNER_ALIAS_RAW)-free-sre-simulator.tfstate,)
 
 # `$(value ...)` for the same reason OWNER_ALIAS gets it, one variable over:
 # a command-line assignment is a *recursive* variable, so the first reference
@@ -192,10 +192,10 @@ OCI_STATE_KEY_DERIVED := $(if $(OWNER_ALIAS_RAW),$(OWNER_ALIAS_RAW)-free-sre-sim
 # then walked the state-owner check.
 ifeq ($(origin OCI_STATE_KEY),undefined)
 override OCI_STATE_KEY_GIVEN :=
-OCI_STATE_KEY_IS_SET :=
+override OCI_STATE_KEY_IS_SET :=
 else
 override OCI_STATE_KEY_GIVEN := $(value OCI_STATE_KEY)
-OCI_STATE_KEY_IS_SET := yes
+override OCI_STATE_KEY_IS_SET := yes
 endif
 
 ifneq ($(OCI_STATE_KEY_IS_SET),)
@@ -279,17 +279,17 @@ endif
 # a space in it cannot survive the rest of this file anyway -- every guarded
 # value is checked for being a single word -- and being told so by line number
 # beats finding a truncated bucket name in a terraform command.
-OCI_DOTENV_LINE := ^[[:blank:]]*(export[[:blank:]]+)?([A-Za-z_][A-Za-z0-9_]*)[[:blank:]]*=[[:blank:]]*([^[:blank:]\#]*)([[:blank:]]+\#.*)?[[:blank:]]*$$
+override OCI_DOTENV_LINE := ^[[:blank:]]*(export[[:blank:]]+)?([A-Za-z_][A-Za-z0-9_]*)[[:blank:]]*=[[:blank:]]*([^[:blank:]\#]*)([[:blank:]]+\#.*)?[[:blank:]]*$$
 
 ifneq ($(wildcard $(OCI_BACKEND_ENV_FILE)),)
-OCI_BACKEND_ENV_TEXT := $(shell tr -d '\r' < $(OCI_BACKEND_ENV_FILE) | \
+override OCI_BACKEND_ENV_TEXT := $(shell tr -d '\r' < $(OCI_BACKEND_ENV_FILE) | \
   sed -n -E -e 's/$(OCI_DOTENV_LINE)/\2=\3/p')
 # Anything that is neither blank, a comment, nor an assignment is refused by
 # line number rather than dropped. Under `-include` such a line did something
 # -- a target, a conditional, an `include` of its own -- so ignoring it now
 # would turn a file that used to work into one that half works. Numbers only:
 # echoing the line back would be putting the file's text into make's own.
-OCI_BACKEND_ENV_BAD := $(shell tr -d '\r' < $(OCI_BACKEND_ENV_FILE) | \
+override OCI_BACKEND_ENV_BAD := $(shell tr -d '\r' < $(OCI_BACKEND_ENV_FILE) | \
   grep -n -E -v -e '^[[:blank:]]*(\#|$$)' -e '$(OCI_DOTENV_LINE)' | \
   cut -d: -f1 | tr '\n' ' ')
 ifneq ($(strip $(OCI_BACKEND_ENV_BAD)),)
@@ -299,7 +299,7 @@ assignment. `KEY := value` is a makefile assignment, not a dotenv one)
 endif
 endif
 
-dotenv_value = $(patsubst $(1)=%,%,$(filter $(1)=%,$(OCI_BACKEND_ENV_TEXT)))
+override dotenv_value = $(patsubst $(1)=%,%,$(filter $(1)=%,$(OCI_BACKEND_ENV_TEXT)))
 
 # $(1) is a key name and never a value: the generated line *calls* for the
 # value rather than carrying it, so nothing out of the file is ever pasted
@@ -354,7 +354,7 @@ $(eval $(call assert_shell_safe,OCI_STATE_COMPARTMENT_OCID,$(OCI_SAFE_NAME),an O
 # without any of the parse-time validation the command line just went
 # through, so a key set there would otherwise reach the shell interpolation in
 # tf-oci-init unvetted. The allowlist makes this value safe to interpolate.
-OCI_STATE_KEY := $(OCI_STATE_KEY_DERIVED)
+override OCI_STATE_KEY := $(OCI_STATE_KEY_DERIVED)
 
 # Binding a value only creates a make variable, and make exports nothing it
 # did not inherit. Terraform's S3 backend reads its credentials from the *environment*,
@@ -382,13 +382,13 @@ export AWS_REQUEST_CHECKSUM_CALCULATION
 # have already passed. `origin` rather than emptiness, because
 # `OCI_STATE_ENDPOINT=` is set-and-empty, which is not unset.
 ifeq ($(origin OCI_STATE_ENDPOINT),undefined)
-OCI_STATE_ENDPOINT_GIVEN :=
+override OCI_STATE_ENDPOINT_GIVEN :=
 else
-OCI_STATE_ENDPOINT_GIVEN := $(value OCI_STATE_ENDPOINT)
+override OCI_STATE_ENDPOINT_GIVEN := $(value OCI_STATE_ENDPOINT)
 endif
 $(eval $(call assert_shell_safe,OCI_STATE_ENDPOINT_GIVEN,$(OCI_SAFE_URL),a URL of alphanumerics plus -._/:,OCI_STATE_ENDPOINT))
 
-OCI_STATE_ENDPOINT := $(if $(OCI_STATE_ENDPOINT_GIVEN),$(OCI_STATE_ENDPOINT_GIVEN),https://$(OCI_STATE_NAMESPACE).compat.objectstorage.$(OCI_STATE_REGION).oraclecloud.com)
+override OCI_STATE_ENDPOINT := $(if $(OCI_STATE_ENDPOINT_GIVEN),$(OCI_STATE_ENDPOINT_GIVEN),https://$(OCI_STATE_NAMESPACE).compat.objectstorage.$(OCI_STATE_REGION).oraclecloud.com)
 
 # A non-empty OWNER_ALIAS is not the same claim as the *right* OWNER_ALIAS.
 # `init` is the only target that records the state object key -- terraform
