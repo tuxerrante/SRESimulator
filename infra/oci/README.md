@@ -15,12 +15,16 @@ configuration, and `infra/` continues to work unchanged.
 | VCN + internet gateway + route table | `10.0.0.0/16` by default; must not overlap k3s pod `10.42.0.0/16` or service `10.43.0.0/16` |
 | One public subnet | `10.0.0.0/24` |
 | Network security group on the instance VNIC | The firewall. See below. |
-| `VM.Standard.A1.Flex` instance | 2 OCPU / 12 GB / 60 GB by default — half the Always Free A1 allowance |
+| `VM.Standard.A1.Flex` instance | 2 OCPU / 12 GB / 60 GB by default — the entire Always Free A1 allowance |
 | Reserved public IP | Survives stop/start so the Cloudflare A record stays valid |
 | cloud-init | Installs pinned k3s, writes the Traefik config, flushes the host firewall, adds swap |
 
-Everything is inside the Always Free envelope (4 OCPU / 24 GB / 200 GB block
-storage per tenancy). The variable validations refuse to exceed it.
+Everything is inside the Always Free envelope (2 OCPU / 12 GB / 200 GB block
+storage per tenancy — Oracle grants 1,500 OCPU-hours and 9,000 GB-hours a
+month, which is one A1 instance at 2 OCPU / 12 GB running continuously). The
+default sizing therefore spends the whole compute allowance and leaves room for
+no second instance. The variable validations refuse to exceed it unless
+`allow_billable_shape = true` says charges are acceptable.
 
 ## Prerequisites
 

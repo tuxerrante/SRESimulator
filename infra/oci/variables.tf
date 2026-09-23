@@ -64,7 +64,7 @@ variable "availability_domain_index" {
 }
 
 # ---------------------------------------------------------------------------
-# Instance sizing -- Always Free envelope is 4 OCPU / 24 GB / 200 GB total
+# Instance sizing -- Always Free envelope is 2 OCPU / 12 GB / 200 GB total
 # ---------------------------------------------------------------------------
 variable "instance_shape" {
   description = "Compute shape. VM.Standard.A1.Flex is the aarch64 Always Free shape."
@@ -99,57 +99,59 @@ variable "allow_billable_shape" {
     Always Free A1 family.
 
     Setting this also lifts the instance_ocpus and instance_memory_gbs ceilings,
-    which exist to keep the instance inside the same Always Free allowance and
-    are meaningless once the shape is billable.
+    which exist to keep the instance inside the Always Free allowance and are
+    meaningless once the operator has accepted charges.
 
-    It does not lift them while instance_shape is still an A1 shape. A1.Flex
-    tops out at 4 OCPU / 24 GB per instance whoever is paying, so the opt-in
-    cannot buy a bigger A1 -- it can only move the refusal from plan time to
-    apply time.
+    It lifts them on an A1 shape too. A1.Flex itself goes to 76 OCPU / 472 GB;
+    2 OCPU / 12 GB is the *free allowance*, not the shape's maximum, so a
+    bigger A1 is an ordinary billable instance that OCI provisions without
+    complaint. That is exactly the purchase this opt-in exists to authorize.
   EOT
   type        = bool
   default     = false
 }
 
 variable "instance_ocpus" {
-  description = "OCPUs for the instance. The Always Free A1 allowance is 4 in total across all instances."
+  description = "OCPUs for the instance. The Always Free A1 allowance is 2 in total across all instances."
   type        = number
   default     = 2
 
-  # The ceiling is the Always Free allowance, so a deliberate paid shape lifts
-  # it -- an upgrade that could not be sized past 4 OCPUs would be pointless.
-  # The floor stays.
+  # 2 OCPU is the whole Always Free A1 allowance, not half of it: Oracle grants
+  # 1,500 OCPU-hours a month, which is one instance at 2 OCPUs running
+  # continuously. The default therefore spends the entire compute allowance and
+  # leaves room for no second instance.
   #
-  # The ceiling is keyed off the *shape*, not off the opt-in, and the
-  # difference is the whole point. 4 OCPU is also A1.Flex's own per-instance
-  # maximum, so `allow_billable_shape = true` with the shape left at
-  # VM.Standard.A1.Flex and instance_ocpus = 8 is not an upgrade -- it is a
-  # configuration OCI rejects. Letting the opt-in wave it through would move
-  # that refusal from plan time to apply time, which is the one direction worth
-  # avoiding: by then the VCN, subnet, NSG and reserved IP already exist.
+  # The ceiling is keyed off `allow_billable_shape`, not off the shape family,
+  # because on an A1 shape it is the *allowance* that binds and not the shape:
+  # A1.Flex accepts up to 76 OCPU, so `instance_ocpus = 8` on an A1 is a
+  # perfectly valid instance that OCI provisions and bills. Refusing it by
+  # default is the point -- the invoice is the first signal otherwise, weeks
+  # later -- and honouring the opt-in is what keeps the refusal a guard rather
+  # than a wall.
   validation {
     condition = (
       var.instance_ocpus >= 1 &&
-      (var.instance_ocpus <= 4 || !startswith(var.instance_shape, "VM.Standard.A1."))
+      (var.instance_ocpus <= 2 || var.allow_billable_shape)
     )
-    error_message = "instance_ocpus must be between 1 and 4. That is both the Always Free allowance and A1.Flex's own per-instance maximum, so allow_billable_shape does not lift it while instance_shape is an A1 shape -- name a larger non-A1 shape instead."
+    error_message = "instance_ocpus must be between 1 and 2 -- 2 OCPUs is the entire Always Free A1 allowance (1,500 OCPU-hours per month). Set allow_billable_shape = true to size past it and accept the charges."
   }
 }
 
 variable "instance_memory_gbs" {
-  description = "Memory in GB. The Always Free A1 allowance is 24 GB in total across all instances."
+  description = "Memory in GB. The Always Free A1 allowance is 12 GB in total across all instances."
   type        = number
   default     = 12
 
-  # Keyed off the shape for the same reason as instance_ocpus: 24 GB is the
-  # Always Free allowance *and* A1.Flex's per-instance maximum (6 GB per OCPU,
-  # 4 OCPUs), so the paid opt-in cannot buy more of it on an A1 shape.
+  # Keyed off the opt-in for the same reason as instance_ocpus: 12 GB is the
+  # whole Always Free allowance (9,000 GB-hours a month), and it is nowhere
+  # near A1.Flex's per-instance maximum of 472 GB, so nothing but this
+  # validation stands between a typo and a billable instance.
   validation {
     condition = (
       var.instance_memory_gbs >= 6 &&
-      (var.instance_memory_gbs <= 24 || !startswith(var.instance_shape, "VM.Standard.A1."))
+      (var.instance_memory_gbs <= 12 || var.allow_billable_shape)
     )
-    error_message = "instance_memory_gbs must be between 6 and 24. That is both the Always Free allowance and A1.Flex's own per-instance maximum, so allow_billable_shape does not lift it while instance_shape is an A1 shape -- name a larger non-A1 shape instead."
+    error_message = "instance_memory_gbs must be between 6 and 12 -- 12 GB is the entire Always Free A1 allowance (9,000 GB-hours per month). Set allow_billable_shape = true to size past it and accept the charges."
   }
 }
 

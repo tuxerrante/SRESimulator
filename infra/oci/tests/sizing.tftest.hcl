@@ -47,9 +47,10 @@ variables {
   cloudflare_ipv4_ranges = ["198.51.100.0/24", "203.0.113.0/24"]
 }
 # ---------------------------------------------------------------------------
-# The Always Free A1 envelope is 4 OCPU / 24 GB / 200 GB block storage in
-# total across the tenancy. Defaults here use half the compute allowance so a
-# second instance remains possible.
+# The Always Free A1 envelope is 2 OCPU / 12 GB / 200 GB block storage in
+# total across the tenancy (1,500 OCPU-hours and 9,000 GB-hours a month). The
+# defaults here spend the whole compute allowance; there is no room for a
+# second instance.
 # ---------------------------------------------------------------------------
 
 run "default_shape_is_the_free_arm_shape" {
@@ -87,8 +88,10 @@ run "boot_volume_default" {
 run "ocpus_above_allowance_rejected" {
   command = plan
 
+  # 3, not some large number: it passes the old, wrong 4 OCPU ceiling and
+  # fails the correct one, so this run discriminates between them.
   variables {
-    instance_ocpus = 5
+    instance_ocpus = 3
   }
 
   expect_failures = [
@@ -99,8 +102,9 @@ run "ocpus_above_allowance_rejected" {
 run "memory_above_allowance_rejected" {
   command = plan
 
+  # 13 for the same reason -- inside the old, wrong 24 GB ceiling.
   variables {
-    instance_memory_gbs = 32
+    instance_memory_gbs = 13
   }
 
   expect_failures = [
@@ -168,7 +172,7 @@ run "the_allowance_ceilings_lift_with_the_billable_opt_in" {
     instance_memory_gbs  = 64
   }
 
-  # The 4 OCPU / 24 GB ceilings encode the Always Free allowance. Leaving them
+  # The 2 OCPU / 12 GB ceilings encode the Always Free allowance. Leaving them
   # in force under a paid shape would make the upgrade pointless, so the same
   # opt-in releases all three.
   assert {
@@ -195,17 +199,17 @@ run "the_allowance_ceilings_still_bind_without_the_opt_in" {
 }
 
 # ---------------------------------------------------------------------------
-# The ceilings are keyed off the shape, not off the opt-in.
+# The ceilings are keyed off the opt-in, not off the shape family, and on an A1
+# shape that distinction is the whole finding.
 #
-# 4 OCPU / 24 GB is not only the Always Free allowance -- it is also A1.Flex's
-# own per-instance maximum. So `allow_billable_shape = true` with the shape
-# left at A1 is not an upgrade anyone can buy; it is a configuration OCI
-# rejects, and letting the opt-in wave it through would only move the refusal
-# from plan time to apply time, after the VCN, subnet, NSG and reserved IP
-# already exist. The pair above proves the ceilings lift for a real paid shape;
-# this pair proves the opt-in alone does not lift them.
+# 2 OCPU / 12 GB is the Always Free *allowance*. It is not A1.Flex's maximum --
+# the shape accepts up to 76 OCPU / 472 GB -- so a bigger A1 is an ordinary
+# instance OCI provisions and bills, not a configuration it rejects. Keying the
+# ceiling off the shape family would therefore have refused a purchase the
+# opt-in exists to authorize, while an earlier 4 OCPU / 24 GB ceiling let twice
+# the free allowance through under a message promising it was free.
 # ---------------------------------------------------------------------------
-run "the_opt_in_does_not_lift_the_ocpu_ceiling_on_an_a1_shape" {
+run "the_opt_in_lifts_the_ocpu_ceiling_on_an_a1_shape_too" {
   command = plan
 
   variables {
@@ -214,12 +218,13 @@ run "the_opt_in_does_not_lift_the_ocpu_ceiling_on_an_a1_shape" {
     instance_ocpus       = 8
   }
 
-  expect_failures = [
-    var.instance_ocpus,
-  ]
+  assert {
+    condition     = one(oci_core_instance.k3s.shape_config).ocpus == 8
+    error_message = "allow_billable_shape must lift the OCPU ceiling on an A1 shape; A1.Flex bills happily past the free allowance."
+  }
 }
 
-run "the_opt_in_does_not_lift_the_memory_ceiling_on_an_a1_shape" {
+run "the_opt_in_lifts_the_memory_ceiling_on_an_a1_shape_too" {
   command = plan
 
   variables {
@@ -228,7 +233,8 @@ run "the_opt_in_does_not_lift_the_memory_ceiling_on_an_a1_shape" {
     instance_memory_gbs  = 64
   }
 
-  expect_failures = [
-    var.instance_memory_gbs,
-  ]
+  assert {
+    condition     = one(oci_core_instance.k3s.shape_config).memory_in_gbs == 64
+    error_message = "allow_billable_shape must lift the memory ceiling on an A1 shape."
+  }
 }
