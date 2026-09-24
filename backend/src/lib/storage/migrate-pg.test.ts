@@ -121,6 +121,28 @@ describe("runPgMigrations", () => {
 
     vi.doUnmock("fs/promises");
   });
+
+  it("propagates a permission failure instead of blaming the build output", async () => {
+    vi.resetModules();
+    vi.doMock("fs/promises", () => ({
+      readdir: vi
+        .fn()
+        .mockRejectedValue(
+          Object.assign(new Error("permission denied"), { code: "EACCES" }),
+        ),
+      readFile: vi.fn(),
+    }));
+
+    const { runPgMigrations: run } = await import("./migrate-pg");
+    const { pool } = createFakePool();
+
+    // The build-output hint would send the operator after a Dockerfile COPY
+    // that is already correct, so the original errno has to survive.
+    await expect(run(pool)).rejects.toThrow(/permission denied/);
+    await expect(run(pool)).rejects.toMatchObject({ code: "EACCES" });
+
+    vi.doUnmock("fs/promises");
+  });
 });
 
 describe("migrations-pg/001_init.sql", () => {

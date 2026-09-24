@@ -48,7 +48,12 @@ export async function runPgMigrations(pool: Pool): Promise<void> {
       files = (await readdir(MIGRATIONS_DIR))
         .filter((f) => f.endsWith(".sql"))
         .sort();
-    } catch {
+    } catch (error) {
+      // Only a genuinely absent directory gets the build-output hint. A
+      // permission or I/O failure reported as "not found" sends the operator
+      // looking for a Dockerfile COPY that is already there, so those
+      // propagate with their own errno intact.
+      if ((error as NodeJS.ErrnoException)?.code !== "ENOENT") throw error;
       throw new Error(
         `Migrations directory not found at ${MIGRATIONS_DIR}. ` +
         "Ensure the .sql files are copied into the build output (e.g. in the Dockerfile)."

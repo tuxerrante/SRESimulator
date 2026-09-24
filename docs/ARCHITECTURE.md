@@ -593,7 +593,7 @@ accident:
 - **`statement_timeout` travels in the connection string**
   (`?options=-c statement_timeout=...`), not a runtime `SET`. Transaction
   pooling does not preserve session state, so a `SET` would apply to whichever
-  backend served that one statement. `STATEMENT_TIMEOUT_MS` (default `15000`)
+  backend served that one statement. `PG_STATEMENT_TIMEOUT_MS` (default `15000`)
   controls it.
 - **Migrations take `pg_advisory_xact_lock`**, the transaction-scoped lock.
   A session-scoped `pg_advisory_lock` would be released onto a connection
