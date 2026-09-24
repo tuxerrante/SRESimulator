@@ -2189,6 +2189,155 @@ if failures:
 PY
 }
 
+run_multi_arch_release_check() {
+  local workflow="$ROOT_DIR/.github/workflows/build-push.yml"
+
+  # The OCI free-tier box is an aarch64 A1.Flex. Until this workflow published
+  # arm64, every GHCR image was amd64-only and the pods there would have died
+  # with "exec format error" -- a CrashLoopBackOff with no other clue.
+  assert_contains "platform: linux/amd64" "$workflow"
+  assert_contains "platform: linux/arm64" "$workflow"
+
+  # Native runners, not emulation. A QEMU leg would still produce a correct
+  # arm64 image, so nothing downstream would notice -- it would just take
+  # 5-15x longer on a Bun + Next.js build and eventually time out. That makes
+  # it exactly the kind of regression a human reviewer waves through.
+  assert_contains "runner: ubuntu-24.04-arm" "$workflow"
+  if grep -q "setup-qemu-action" "$workflow"; then
+    fail "the release build must use native arm64 runners, not QEMU emulation"
+  fi
+
+  # Each architecture pushes by digest and the merge job applies the only tag.
+  # If a per-architecture leg ever tags directly, the two runners race for one
+  # tag and the loser's architecture disappears from the registry -- the
+  # manifest is simply overwritten, with no error anywhere.
+  assert_contains "push-by-digest=true" "$workflow"
+  assert_contains "docker buildx imagetools create" "$workflow"
+
+  # The registry owner is lowercased exactly once, in resolve-release-tag, and
+  # both jobs consume that output. GHCR rejects an uppercase path component,
+  # and a digest pushed under one spelling cannot be assembled under another --
+  # so reverting either wiring to a raw ${{ github.repository_owner }} breaks
+  # a release for any owner whose login is not already lowercase, which is
+  # nothing a same-owner test run would ever surface.
+  assert_contains "tr '[:upper:]' '[:lower:]'" "$workflow"
+  assert_contains 'owner: ${{ steps.owner.outputs.owner }}' "$workflow"
+  owner_refs="$(grep -c 'needs.resolve-release-tag.outputs.owner' "$workflow")"
+  if [ "$owner_refs" -ne 2 ]; then
+    fail "expected both IMAGE_REF definitions to consume the normalized owner output, found $owner_refs reference(s)"
+  fi
+  if grep -q 'ghcr.io/${{ github.repository_owner' "$workflow"; then
+    fail "an image reference bypasses the lowercased owner output"
+  fi
+
+  # Two properties of the platform verification that a rewrite would quietly
+  # drop, both of which make a correct image fail or a broken one pass:
+  #
+  #   - the platform set is compared with jq, not grepped out of the JSON. The
+  #     OCI descriptor marshals `architecture` before `os`, so any assertion
+  #     written against a field order is one upstream struct change away from
+  #     failing on an image that is perfectly fine.
+  #   - attestation manifests carry platform.os == "unknown" and must be
+  #     filtered out. Without the filter the set difference still succeeds, so
+  #     dropping it is invisible until it is not.
+  assert_contains 'select(.platform.os != "unknown")' "$workflow"
+  assert_contains '"\(.platform.os)/\(.platform.architecture)"' "$workflow"
+  if grep -Eq 'grep .*"architecture":' "$workflow"; then
+    fail "the platform check must use jq, not a field-order-sensitive grep"
+  fi
+
+  # The published tag is verified twice over, and the earlier of the two is
+  # the one that matters: it reads each digest's own platform *before*
+  # imagetools create, so a pair of same-platform digests -- which satisfies
+  # the count check -- never reaches a tag. Verification only after publishing
+  # leaves a broken ${RELEASE_TAG} live until someone notices.
+  # Anchored on the flag, not the bare template: the comment above the loop
+  # names the template too, so a bare match would be satisfied by prose after
+  # the code it describes had been rewritten.
+  assert_contains "--format '{{json .Image}}'" "$workflow"
+  python3 - "$workflow" <<'PY_INNER'
+import sys
+
+text = open(sys.argv[1]).read()
+probe = text.index("--format '{{json .Image}}'")
+publish = text.index("docker buildx imagetools create \"${tag_args[@]}\"")
+if probe > publish:
+    print("the per-digest platform probe must run before imagetools create, "
+          "or a broken tag is published before anything checks it",
+          file=sys.stderr)
+    sys.exit(1)
+PY_INNER
+
+  # The per-digest read must stay JSON-shaped. A by-digest push normally
+  # lands an OCI index -- buildx attaches a provenance attestation by default
+  # -- and imagetools drops the attestation, so a single-platform leg still
+  # answers the scalar `.Image.OS` template correctly and reverting looks
+  # harmless. It is not: on a digest carrying two real platforms `.Image` is a
+  # map, the scalar template prints "<no value>/<no value>" *and exits 0*, and
+  # the set difference below then reports both architectures missing while
+  # naming neither cause. Verified against a local registry: single-platform
+  # index -> linux/amd64, two-platform index -> <no value>/<no value>, exit 0.
+  if grep -q '{{.Image.OS}}' "$workflow"; then
+    fail "the per-digest platform read must use {{json .Image}}; the scalar template yields '<no value>' with exit 0 on a multi-platform digest"
+  fi
+
+  # Each leg pushes exactly one architecture, and the merge names one digest
+  # per architecture. A leg that pushed both would satisfy the count check and
+  # the set difference, so the refusal has to be explicit.
+  assert_contains 'Each matrix leg must push exactly one,' "$workflow"
+
+  # `outputs:` is a comma-separated list, and a YAML folded scalar (`>-`)
+  # joins its lines with a SPACE. Written that way the value carries a
+  # " name-canonical" key that BuildKit does not recognise, and the image is
+  # pushed under a name nobody can assemble. The double-quoted backslash
+  # continuation is the one YAML form that joins with nothing, so the absence
+  # of a space here is a correctness property, not formatting.
+  python3 - "$workflow" <<'PY_INNER'
+import re
+import sys
+
+lines = open(sys.argv[1]).read().splitlines()
+# `outputs:` with a value on the same line -- not the job-level `outputs:`
+# mapping key in resolve-release-tag, which is a different thing that happens
+# to share a name.
+index = next(
+    (
+        i for i, line in enumerate(lines)
+        if re.match(r"^\s*outputs:\s*\S", line)
+    ),
+    None,
+)
+if index is None:
+    print("the release build step has no outputs: value, so nothing is "
+          "pushed by digest", file=sys.stderr)
+    sys.exit(1)
+
+current = lines[index].split("outputs:", 1)[1].strip()
+if current.startswith((">", "|")):
+    print("outputs: must not use a folded or literal block scalar -- folding "
+          "inserts a space into the comma-separated list", file=sys.stderr)
+    sys.exit(1)
+
+# Join exactly the way YAML does: a trailing backslash inside a double-quoted
+# scalar continues the line with no separator at all.
+value = ""
+while current.endswith("\\"):
+    value += current[:-1]
+    index += 1
+    current = lines[index].strip()
+value = (value + current).strip().strip('"')
+
+if ", " in value or " ," in value:
+    print("outputs: contains a space beside a comma: %r" % value,
+          file=sys.stderr)
+    sys.exit(1)
+for key in ("push-by-digest=true", "name-canonical=true", "push=true"):
+    if key not in value:
+        print("outputs: is missing %s: %r" % (key, value), file=sys.stderr)
+        sys.exit(1)
+PY_INNER
+}
+
 run_bun_version_single_source_check() {
   python3 - "$ROOT_DIR" <<'PY'
 import pathlib
@@ -2326,6 +2475,7 @@ main() {
   run_e2e_image_cache_check
   run_workflow_buildx_cache_order_check
   run_bun_version_single_source_check
+  run_multi_arch_release_check
   run_e2e_route_refresh_rejects_prod_namespace_check
   run_makefile_gateway_defaults_check
   run_makefile_gateway_audit_targets_check
