@@ -1,0 +1,55 @@
+{{- /*
+  Traefik Middlewares for the k3s/OCI profile. The origin there is one 12 GB
+  A1.Flex VM with no cloud load balancer in front of it, so the only things
+  between the internet and the app are Cloudflare's proxy and Traefik itself.
+  Cloudflare absorbs volumetric traffic; these two absorb the shape it cannot
+  see, a single well-behaved client asking for expensive work in a tight loop.
+
+  Both default to false, so nothing here renders and the Ingress grows no
+  annotation on any existing profile. The CRDs only exist where Traefik is
+  installed, which is why this is opt-in rather than gated on ingress.enabled.
+*/ -}}
+{{- if eq (include "sre-simulator.exposureMode" .) "ingress" }}
+{{- with .Values.ingress.traefik }}
+{{- if .rateLimit.enabled }}
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: {{ include "sre-simulator.fullname" $ }}-ratelimit
+  labels:
+    {{- include "sre-simulator.labels" $ | nindent 4 }}
+spec:
+  rateLimit:
+    average: {{ .rateLimit.average }}
+    burst: {{ .rateLimit.burst }}
+    period: {{ .rateLimit.period }}
+    sourceCriterion:
+      # depth 0 keys on the TCP remote address. On the OCI box Traefik runs
+      # hostNetwork, so that address is the real client; any other depth reads
+      # a caller-supplied X-Forwarded-For position and lets one client pick
+      # which bucket to spend.
+      ipStrategy:
+        depth: 0
+{{- end }}
+{{- if .inFlightReq.enabled }}
+{{- if .rateLimit.enabled }}
+---
+{{- end }}
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: {{ include "sre-simulator.fullname" $ }}-inflightreq
+  labels:
+    {{- include "sre-simulator.labels" $ | nindent 4 }}
+spec:
+  inFlightReq:
+    # Chat is a long-lived SSE stream, so concurrency is the axis a request
+    # rate cannot cover: a client can sit well under the rate limit and still
+    # hold every worker open.
+    amount: {{ .inFlightReq.amount }}
+    sourceCriterion:
+      ipStrategy:
+        depth: 0
+{{- end }}
+{{- end }}
+{{- end }}

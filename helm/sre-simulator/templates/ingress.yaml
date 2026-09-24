@@ -28,6 +28,21 @@
 {{- $_ := set $annotations "traefik.ingress.kubernetes.io/router.tls" "true" -}}
 {{- $_ := set $annotations "traefik.ingress.kubernetes.io/router.tls.certresolver" .certResolver -}}
 {{- end }}
+{{- /*
+  Middleware references are namespace-qualified and provider-suffixed, which is
+  the form Traefik's Kubernetes CRD provider expects; an unqualified name
+  resolves against Traefik's own namespace and silently matches nothing.
+*/ -}}
+{{- $middlewares := list -}}
+{{- if .rateLimit.enabled -}}
+{{- $middlewares = append $middlewares (printf "%s-%s-ratelimit@kubernetescrd" $.Release.Namespace (include "sre-simulator.fullname" $)) -}}
+{{- end -}}
+{{- if .inFlightReq.enabled -}}
+{{- $middlewares = append $middlewares (printf "%s-%s-inflightreq@kubernetescrd" $.Release.Namespace (include "sre-simulator.fullname" $)) -}}
+{{- end -}}
+{{- if $middlewares -}}
+{{- $_ := set $annotations "traefik.ingress.kubernetes.io/router.middlewares" (join "," $middlewares) -}}
+{{- end -}}
 {{- end }}
 apiVersion: networking.k8s.io/v1
 kind: Ingress

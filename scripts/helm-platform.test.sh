@@ -23,8 +23,11 @@ test_pod_render="$(mktemp)"
 gw_xff_render="$(mktemp)"
 trusted_ip_blank_render="$(mktemp)"
 trusted_ip_padded_render="$(mktemp)"
+traefik_mw_render="$(mktemp)"
+traefik_mw_partial_render="$(mktemp)"
+traefik_mw_route_render="$(mktemp)"
 openrouter_render="$(mktemp)"
-trap 'rm -f "${route_render}" "${auth_render}" "${auth_guard_render}" "${auth_disabled_render}" "${lb_render}" "${lb_no_db_render}" "${ingress_render}" "${gw_render}" "${hostless_render}" "${legacy_kv_render}" "${gw_bad_scheme_err}" "${gw_missing_host_err}" "${gw_route_host_bypass_err}" "${gw_ingress_host_bypass_err}" "${gw_whitespace_host_err}" "${test_pod_render}" "${gw_xff_render}" "${trusted_ip_blank_render}" "${trusted_ip_padded_render}" "${openrouter_render}"' EXIT
+trap 'rm -f "${route_render}" "${auth_render}" "${auth_guard_render}" "${auth_disabled_render}" "${lb_render}" "${lb_no_db_render}" "${ingress_render}" "${gw_render}" "${hostless_render}" "${legacy_kv_render}" "${gw_bad_scheme_err}" "${gw_missing_host_err}" "${gw_route_host_bypass_err}" "${gw_ingress_host_bypass_err}" "${gw_whitespace_host_err}" "${test_pod_render}" "${gw_xff_render}" "${trusted_ip_blank_render}" "${trusted_ip_padded_render}" "${traefik_mw_render}" "${traefik_mw_partial_render}" "${traefik_mw_route_render}" "${openrouter_render}"' EXIT
 
 fail() {
   echo "FAIL: $*" >&2
@@ -483,6 +486,103 @@ helm template sre-simulator "${CHART_DIR}" \
 
 grep -Fq 'value: "x-real-ip"' "${trusted_ip_padded_render}" || \
   fail "frontend.trustedClientIpHeader must reach the container trimmed."
+
+# ---------------------------------------------------------------------------
+# Traefik Middlewares (OCI profile)
+# ---------------------------------------------------------------------------
+# Both switches default to false, and that default is what keeps every existing
+# profile byte-identical. Assert the off state on renders made above rather
+# than on a fresh one, so the claim is about the profiles actually shipped.
+if grep -Fq 'kind: Middleware' "${ingress_render}"; then
+  fail "ingress.traefik.rateLimit/inFlightReq default to false; no Middleware may render."
+fi
+
+if grep -Fq 'router.middlewares' "${ingress_render}"; then
+  fail "With both Traefik middlewares disabled the Ingress must grow no router.middlewares annotation."
+fi
+
+helm template sre-simulator "${CHART_DIR}" \
+  --namespace oci-live \
+  --set exposure.mode=ingress \
+  --set exposure.host=ingress.example.com \
+  --set exposure.scheme=https \
+  --set ingress.className=traefik \
+  --set ingress.traefik.rateLimit.enabled=true \
+  --set ingress.traefik.inFlightReq.enabled=true >"${traefik_mw_render}"
+
+# `|| true`: grep -c exits 1 on zero matches, and under `set -e` that kills
+# the script inside the command substitution -- so the assertion below would
+# never run and a render with no Middleware at all would look like a pass.
+middleware_count="$(grep -Ec '^kind: Middleware$' "${traefik_mw_render}" || true)"
+[ "${middleware_count}" -eq 2 ] || \
+  fail "Enabling both Traefik middlewares should render exactly two Middleware objects, got ${middleware_count}."
+
+grep -Eq '^apiVersion: traefik\.io/v1alpha1$' "${traefik_mw_render}" || \
+  fail "Middlewares must use the traefik.io/v1alpha1 CRD group; containo.us was removed in Traefik v3."
+
+# depth 0 keys the limiter on the TCP remote address. Any other depth reads a
+# position in a caller-supplied X-Forwarded-For, which lets one client choose
+# which bucket to spend -- the limiter then reads as working while buying
+# nothing. Both middlewares must carry it.
+depth_zero_count="$(grep -Ec '^        depth: 0$' "${traefik_mw_render}" || true)"
+[ "${depth_zero_count}" -eq 2 ] || \
+  fail "Both Middlewares must key on the TCP remote address (ipStrategy.depth: 0), got ${depth_zero_count}."
+
+middleware_ref="$(grep -Eo 'traefik\.ingress\.kubernetes\.io/router\.middlewares: .*' "${traefik_mw_render}" | sed 's/^[^ ]* //' || true)"
+[ -n "${middleware_ref}" ] || \
+  fail "Enabling a Traefik middleware must annotate the Ingress with router.middlewares."
+
+# A reference that is not <namespace>-<name>@kubernetescrd resolves against
+# Traefik's own namespace instead, matches nothing, and Traefik answers 500
+# with the router otherwise looking correctly configured.
+case "${middleware_ref}" in
+  "oci-live-sre-simulator-ratelimit@kubernetescrd,oci-live-sre-simulator-inflightreq@kubernetescrd") ;;
+  *) fail "router.middlewares must be namespace-qualified and @kubernetescrd-suffixed, got '${middleware_ref}'." ;;
+esac
+
+# The annotation and the objects are written by two different templates, so a
+# rename on either side is a runtime-only failure. Check the pair, not each
+# side against a literal.
+while IFS= read -r ref; do
+  object_name="${ref#oci-live-}"
+  object_name="${object_name%@kubernetescrd}"
+  grep -Eq "^  name: ${object_name}$" "${traefik_mw_render}" || \
+    fail "The Ingress references middleware '${object_name}' but no Middleware object of that name is rendered."
+done < <(printf '%s' "${middleware_ref}" | tr ',' '\n')
+
+# Enabling one must not drag in the other, and the document separator has to
+# follow the same condition or the render grows a stray empty document.
+helm template sre-simulator "${CHART_DIR}" \
+  --namespace oci-live \
+  --set exposure.mode=ingress \
+  --set exposure.host=ingress.example.com \
+  --set exposure.scheme=https \
+  --set ingress.className=traefik \
+  --set ingress.traefik.rateLimit.enabled=true >"${traefik_mw_partial_render}"
+
+partial_count="$(grep -Ec '^kind: Middleware$' "${traefik_mw_partial_render}" || true)"
+[ "${partial_count}" -eq 1 ] || \
+  fail "Enabling only the rate limiter should render exactly one Middleware, got ${partial_count}."
+
+if grep -Fq 'inflightreq' "${traefik_mw_partial_render}"; then
+  fail "The in-flight middleware must not render, or be referenced, while disabled."
+fi
+
+grep -Fq 'router.middlewares: oci-live-sre-simulator-ratelimit@kubernetescrd' "${traefik_mw_partial_render}" || \
+  fail "With one middleware enabled the annotation must reference exactly that one."
+
+# Route and gateway exposure never see a Traefik Ingress, so the Middlewares
+# would be orphaned CRDs the cluster may not even have registered.
+helm template sre-simulator "${CHART_DIR}" \
+  --namespace oci-live \
+  --set exposure.mode=route \
+  --set exposure.host=route.example.com \
+  --set ingress.traefik.rateLimit.enabled=true \
+  --set ingress.traefik.inFlightReq.enabled=true >"${traefik_mw_route_render}"
+
+if grep -Fq 'kind: Middleware' "${traefik_mw_route_render}"; then
+  fail "Traefik Middlewares must render only in ingress exposure mode."
+fi
 
 # ---------------------------------------------------------------------------
 # OpenRouter env wiring
