@@ -118,6 +118,9 @@ describe("runPgMigrations", () => {
     await expect(run(pool)).rejects.toThrow(
       /Migrations directory not found at .*migrations-pg\. Ensure the \.sql files are copied into the build output/,
     );
+    // The hint replaces the original error, so the errno has to stay reachable
+    // for anyone debugging from a stack trace rather than the message.
+    await expect(run(pool)).rejects.toMatchObject({ cause: { code: "ENOENT" } });
 
     vi.doUnmock("fs/promises");
   });

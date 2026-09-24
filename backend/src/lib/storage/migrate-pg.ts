@@ -54,10 +54,15 @@ export async function runPgMigrations(pool: Pool): Promise<void> {
       // looking for a Dockerfile COPY that is already there, so those
       // propagate with their own errno intact.
       if ((error as NodeJS.ErrnoException)?.code !== "ENOENT") throw error;
-      throw new Error(
+      // Cause is attached after construction rather than through the Error
+      // options argument, matching json-process-lock.ts: the backend's lib
+      // target predates ErrorOptions, so the two-argument form does not typecheck.
+      const hint = new Error(
         `Migrations directory not found at ${MIGRATIONS_DIR}. ` +
         "Ensure the .sql files are copied into the build output (e.g. in the Dockerfile)."
-      );
+      ) as Error & { cause?: unknown };
+      hint.cause = error;
+      throw hint;
     }
 
     for (const file of files) {
