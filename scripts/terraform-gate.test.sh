@@ -15,6 +15,10 @@
 #      and the oci-shape-e2e job must consume the same bytes; a private copy
 #      would green-light a Traefik config the box never runs.
 #
+# The same three properties are asserted for `oci-shape-e2e`, the companion
+# job that boots real k3s on a free arm64 runner and exercises the deployment
+# shape statically-checked Terraform cannot reach.
+#
 # shellcheck disable=SC2016
 # Every single-quoted string below is a literal to search for in another file,
 # not a shell expression: `${{ needs... }}`, `$(date +%F)` and `$(OWNER_ALIAS)`
@@ -69,11 +73,15 @@ job_block() {
 TERRAFORM_JOB="$(job_block terraform-validate)"
 [ -n "$TERRAFORM_JOB" ] || fail "terraform-validate job not found in $WORKFLOW"
 
+SHAPE_JOB="$(job_block oci-shape-e2e)"
+[ -n "$SHAPE_JOB" ] || fail "oci-shape-e2e job not found in $WORKFLOW"
+
 JOB_FILE="$(mktemp)"
 # Both temp files are declared here so the one trap names both. A trailing
 # `rm` after the last assertion would only run on a passing run, and the run
 # that leaks is the failing one -- which is exactly when someone is iterating.
 K8S_API_FILE="$(mktemp)"
+SHAPE_FILE="$(mktemp)"
 # Section 11 runs the make targets for real against a recording `terraform`
 # stub; both the stub directory and its log belong to the same trap.
 TERRAFORM_STUB_DIR="$(mktemp -d)"
@@ -81,10 +89,15 @@ TERRAFORM_ARGV_FILE="$(mktemp)"
 # Section 15 asserts the two backend credentials reach terraform's
 # *environment* rather than a command line, so the stub records that too.
 TERRAFORM_ENV_FILE="$(mktemp)"
+# Section 19 reads the jobs that run this very script, so it needs their
+# blocks on disk too; declared here so the one trap names them.
+SHELL_CALLER_FILE="$(mktemp)"
 OCI_MAKE_DIR=""
-trap 'rm -f "$JOB_FILE" "$K8S_API_FILE" "$TERRAFORM_ARGV_FILE" "$TERRAFORM_ENV_FILE"; \
+trap 'rm -f "$JOB_FILE" "$K8S_API_FILE" "$SHAPE_FILE" "$TERRAFORM_ARGV_FILE" \
+      "$TERRAFORM_ENV_FILE" "$SHELL_CALLER_FILE"; \
       rm -rf "$TERRAFORM_STUB_DIR" ${OCI_MAKE_DIR:+"$OCI_MAKE_DIR"}' EXIT
 printf '%s\n' "$TERRAFORM_JOB" > "$JOB_FILE"
+printf '%s\n' "$SHAPE_JOB" > "$SHAPE_FILE"
 
 # --- 1. ci-gate must count the result -------------------------------------
 assert_contains "  terraform-validate:" "$WORKFLOW"
@@ -103,6 +116,20 @@ assert_not_contains 'terraform apply' "$JOB_FILE"
 assert_not_contains 'terraform destroy' "$JOB_FILE"
 # -backend=false is what keeps the unit runs off the real OCI state bucket.
 assert_contains 'terraform init -backend=false -input=false' "$JOB_FILE"
+
+# Same reason the oci-shape-e2e block is checked for this below, and the same
+# reason the shell-suite callers are in section 19: this job runs PR-controlled
+# code -- the PR's own *.tftest.hcl under `terraform test`, and the PR's
+# cloud-init.yaml.tftpl rendered through `terraform console` -- so a
+# GITHUB_TOKEN persisted into .git/config by the default checkout is readable
+# by it. The three assertions above reject the credentials a job asks for;
+# this one rejects the credential it gets by saying nothing.
+assert_contains 'actions/checkout@' "$JOB_FILE"
+grep -Fq 'persist-credentials: false' "$JOB_FILE" ||
+  fail "terraform-validate runs PR-authored terraform tests and renders the \
+PR's cloud-init with the default checkout, so its GITHUB_TOKEN sits in \
+.git/config where that code can read it; set persist-credentials: false on \
+its checkout"
 
 # --- 3. both roots are actually covered -----------------------------------
 # infra/tests/*.tftest.hcl was run by no workflow before this job existed.
@@ -887,7 +914,6 @@ fi
 if ! grep -Fqx 'AWS_ACCESS_KEY_ID=ambient-access-key' "$TERRAFORM_ENV_FILE"; then
   fail "an ambient AWS_ACCESS_KEY_ID was clobbered when .oci-backend.env is absent"
 fi
-
 # --- 16. the guards' own variables are not a command-line channel ---------
 # Every character check in infra/oci/Makefile works by subtracting a permitted
 # alphabet from the value and erroring on what is left. Both halves of that --
@@ -1056,5 +1082,131 @@ case "$INIT_REGION_RENDER" in
   *us-ashburn-1*) : ;;
   *) fail "tf-oci-init does not carry OCI_STATE_REGION, so section 17 is comparing bootstrap against nothing" ;;
 esac
+
+# --- 18. the oci-shape-e2e job --------------------------------------------
+# ci-gate must count it, for the same reason terraform-validate is counted.
+assert_contains "  oci-shape-e2e:" "$WORKFLOW"
+assert_contains "      - oci-shape-e2e" "$WORKFLOW"
+assert_contains 'OCI_SHAPE_RESULT: ${{ needs.oci-shape-e2e.result }}' \
+  "$WORKFLOW"
+assert_contains '"oci-shape-e2e:${OCI_SHAPE_RESULT}"' "$WORKFLOW"
+
+# Credential-free, like its sibling: it boots a throwaway cluster on the
+# runner itself and never talks to a cloud.
+assert_not_contains 'secrets.' "$SHAPE_FILE"
+assert_not_contains 'environment:' "$SHAPE_FILE"
+assert_not_contains 'azure/login' "$SHAPE_FILE"
+assert_not_contains 'terraform apply' "$SHAPE_FILE"
+
+# Credential-free has to include the one credential checkout hands out for
+# free. This job renders the PR's own cloud-init.yaml.tftpl and runs the
+# extracted fragment under `sudo bash -c`, so a GITHUB_TOKEN left in
+# .git/config is readable by PR-controlled shell. harden-runner is on
+# `egress-policy: audit`, which records egress rather than blocking it, so it
+# is not the control here. dependabot-e2e{,-build}.yml already set this flag
+# for the same reason.
+assert_contains 'persist-credentials: false' "$SHAPE_FILE"
+
+# The k3s install block is lifted out of the *rendered* bootstrap script and
+# run here, so what this job proves is only ever what the extraction caught.
+# The first anchor was the literal `curl -sfL https://get.k3s.io`; when
+# cloud-init.yaml.tftpl moved to a tagged, checksum-verified installer that
+# string stopped existing, the extraction silently went empty, and the single
+# `--disable=servicelb` check then failed with a message naming neither the
+# anchor nor the line that had moved. Two things are asserted as a result.
+#
+# First, that the extraction is anchored on the block the shell delimits
+# rather than on a substring of one command inside it, so an edit *within*
+# the block cannot empty it.
+assert_contains "sed -n '/^if ! command -v k3s /,/^fi\$/p'" "$SHAPE_FILE"
+
+# Second, that the digest verification is among the lines required to be
+# present in what actually executes. That pin is what stops a rewritten tag
+# running as root at boot, and it had no test at all: the old check tested
+# one flag, so an extraction that had lost the sha256 check would have passed
+# and this job would have called the shape proven without ever running it.
+assert_contains "'sha256sum -c -'" "$SHAPE_FILE"
+assert_contains "'curl -sfL -o /opt/k3s-install.sh'" "$SHAPE_FILE"
+
+# The runner must be the free arm64 image. The box is aarch64, and the point
+# of the job is to run the shape on the architecture that ships.
+assert_contains 'runs-on: ubuntu-24.04-arm' "$SHAPE_FILE"
+
+# The job must install the *shared* config, and must prove it did: the diff
+# is what stops a CI-only tweak from making a red job green.
+assert_contains 'SHARED_CONFIG: infra/oci/traefik-config.yaml' "$SHAPE_FILE"
+assert_contains 'diff -u' "$SHAPE_FILE"
+assert_contains \
+  '/var/lib/rancher/k3s/server/manifests/traefik-config.yaml' "$SHAPE_FILE"
+
+# k3s must be installed with the flags cloud-init renders, not retyped ones.
+assert_contains 'local.cloud_init' "$SHAPE_FILE"
+assert_contains '--disable=servicelb' "$SHAPE_FILE"
+
+# The four things only a running cluster can show.
+assert_contains 'hostNetwork' "$SHAPE_FILE"
+assert_contains 'X-Real-Ip' "$SHAPE_FILE"
+assert_contains 'permanent: true/permanent: false' "$SHAPE_FILE"
+assert_contains 'updateStrategy' "$SHAPE_FILE"
+
+# The image assertion must read the *running* container. Reading the Deployment
+# template instead reports desired state: with the rollout paused and the pin
+# applied to the template, a k3d reproduction showed the template reading
+# v3.7.13 while the pod ran v3.3.6 and every other assertion here still passed.
+#
+# The whole jsonpath, and `imageID` rather than `image`. What this asserted
+# before -- `status.containerStatuses[0].image` -- is a *prefix* of the imageID
+# path, so it was satisfied by a job reading either field, and those two fields
+# are exactly the distinction the step's own comment exists to make: on
+# k3s/containerd `image` is the local config digest while `imageID` carries the
+# manifest digest the pin names. A lock that cannot tell them apart does not
+# lock the choice the step made.
+assert_contains '{.items[0].status.containerStatuses[0].imageID}' "$SHAPE_FILE"
+assert_not_contains 'spec.template.spec.containers[0].image' "$SHAPE_FILE"
+
+# The route poll must go over https. Entrypoint-level redirections answer every
+# :80 request with a 301 before any router matches -- confirmed against traefik
+# v3.7.13 with no routers configured -- so polling :80 for a 301 would report a
+# reconciled Ingress that does not exist.
+assert_contains 'whoami route observed after' "$SHAPE_FILE"
+if grep -Eq 'http://127\.0\.0\.1/ \|\| true' "$SHAPE_FILE"; then
+  fail "the route poll must use https; a :80 301 is answered before routing"
+fi
+
+# Under `set -euo pipefail` a missing X-Real-Ip makes grep exit 1 and takes the
+# step down before the branch that reports it, so the one failure this job
+# exists to catch is the one it cannot report.
+assert_contains "| tr -d '[:space:]' || true" "$SHAPE_FILE"
+# --- 19. the jobs that run this script must not hold a token ---------------
+#
+# `make test-integration` depends on `make test-shell`, which runs every
+# scripts/*.test.sh in the PR's own tree -- this file among them. That is
+# PR-authored shell with network access, and a checkout left at its default
+# leaves the job's GITHUB_TOKEN in .git/config where any of those scripts can
+# read it. The `env -i` each invocation carries is not the control: it clears
+# the environment, and the token is on disk.
+#
+# Asserted here rather than anywhere else because this suite is one of the
+# scripts that inclusion admits, so the precondition for running it belongs
+# with it. Block-scoped: the file already carries the flag on two other jobs,
+# so a file-wide grep would pass while both of these jobs kept the token.
+for shell_caller in integration-test integration-test-mssql; do
+  job_block "$shell_caller" > "$SHELL_CALLER_FILE"
+  [ -s "$SHELL_CALLER_FILE" ] ||
+    fail "$shell_caller job not found in $WORKFLOW"
+
+  # Only jobs that really do run the shell suite; if one stops calling it,
+  # this assertion should go with it rather than linger as a rule nobody can
+  # explain.
+  if ! grep -Eq 'make (test-integration|test-shell|quality-gate)\b' \
+      "$SHELL_CALLER_FILE"; then
+    fail "$shell_caller no longer runs the shell suite; drop it from this list"
+  fi
+  assert_contains 'actions/checkout@' "$SHELL_CALLER_FILE"
+  grep -Fq 'persist-credentials: false' "$SHELL_CALLER_FILE" ||
+    fail "$shell_caller runs PR-authored shell from make test-shell with the \
+default checkout, so its GITHUB_TOKEN sits in .git/config where that shell \
+can read it; set persist-credentials: false on its checkout"
+done
 
 echo "terraform gate checks passed."

@@ -332,6 +332,18 @@ jobs:
         # v6.0.2
         uses: >-
           actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          # `make test-integration` depends on `make test-shell`, which runs
+          # every scripts/*.test.sh in the PR's own tree -- PR-authored shell,
+          # with network access, as the runner's own user. Left at the
+          # default, checkout leaves this job's GITHUB_TOKEN in .git/config,
+          # so one of those scripts could read and send it. The `env -i` on
+          # each invocation is no defence: it clears the environment, and the
+          # token is on disk.
+          #
+          # Nothing in this job talks to git after the checkout, so removing
+          # the credential costs it nothing.
+          persist-credentials: false
 
       - name: Setup Bun toolchain
         uses: ./.github/actions/setup-bun-toolchain
@@ -381,6 +393,18 @@ jobs:
         # v6.0.2
         uses: >-
           actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          # `make test-integration` depends on `make test-shell`, which runs
+          # every scripts/*.test.sh in the PR's own tree -- PR-authored shell,
+          # with network access, as the runner's own user. Left at the
+          # default, checkout leaves this job's GITHUB_TOKEN in .git/config,
+          # so one of those scripts could read and send it. The `env -i` on
+          # each invocation is no defence: it clears the environment, and the
+          # token is on disk.
+          #
+          # Nothing in this job talks to git after the checkout, so removing
+          # the credential costs it nothing.
+          persist-credentials: false
 
       - name: Setup Bun toolchain
         uses: ./.github/actions/setup-bun-toolchain
@@ -817,6 +841,536 @@ jobs:
 
           bash -n "${RUNNER_TEMP}/bootstrap-k3s.sh"
           shellcheck "${RUNNER_TEMP}/bootstrap-k3s.sh"
+
+  # ---------------------------------------------------------------------
+  # The OCI box's deployment shape, on real k3s.
+  #
+  # free-e2e covers the chart on k3d, but k3d keeps ServiceLB and the stock
+  # Traefik Service. The box runs the opposite: --disable=servicelb,
+  # service.enabled: false, hostNetwork: true. That combination is what
+  # preserves the client IP, and nothing else in CI exercises it.
+  #
+  # A GitHub-hosted Linux runner is already a VM, so k3s is installed
+  # directly on it rather than nested inside another one. ubuntu-24.04-arm
+  # is free for public repositories and matches the A1.Flex architecture.
+  #
+  # Three bugs found on a local aarch64 dry-run VM are the reason this job
+  # exists. Two of them are only visible here:
+  #
+  #   * redirectTo (removed in Traefik chart v34) is a hard install failure
+  #     that leaves Traefik at chart defaults with servicelb already
+  #     disabled -- no ingress at all. Fresh boot catches it.
+  #   * Without updateStrategy: Recreate the surge pod can never schedule on
+  #     a single hostNetwork node, so the old pod keeps serving the old
+  #     config while helm reports success. A fresh boot cannot see this at
+  #     all; it needs a second apply, which is what the mutate step below
+  #     does.
+  # ---------------------------------------------------------------------
+  oci-shape-e2e:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 25
+    permissions:
+      contents: read
+    env:
+      MANIFEST_DIR: /var/lib/rancher/k3s/server/manifests
+      MANIFEST: /var/lib/rancher/k3s/server/manifests/traefik-config.yaml
+      SHARED_CONFIG: infra/oci/traefik-config.yaml
+      # CI can never complete an ACME order (no public DNS for a runner), so
+      # the address is a dummy and Traefik serves its self-signed default
+      # certificate. Everything below therefore uses curl -k.
+      CI_ACME_EMAIL: ci@example.invalid
+      PROBE_HOST: shape-probe.example.test
+    steps:
+      - name: Harden runner
+        # v2.21.0
+        uses: >-
+          step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        # v6.0.2
+        uses: >-
+          actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          # This job extracts a shell fragment out of the PR's own
+          # cloud-init.yaml.tftpl and runs it under `sudo bash -c`. Left at
+          # the default, checkout writes the workflow GITHUB_TOKEN into
+          # .git/config, so that PR-controlled fragment could read and
+          # exfiltrate it; harden-runner's `egress-policy: audit` records
+          # egress, it does not block it. The job needs no git credentials.
+          persist-credentials: false
+
+      - name: Setup Terraform
+        # v4.0.1
+        uses: >-
+          hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e
+        with:
+          terraform_version: "1.16.3"
+          terraform_wrapper: false
+
+      - name: Install the Traefik config the box will run
+        run: |
+          set -euo pipefail
+
+          # Copied, not forked. The only permitted difference from the file in
+          # the repository is the ACME address, and the round-trip diff below
+          # proves that is the only one -- so a CI-only tweak to make this job
+          # pass cannot survive review.
+          sudo mkdir -p "${MANIFEST_DIR}"
+          sed "s/ACME_EMAIL_PLACEHOLDER/${CI_ACME_EMAIL}/" "${SHARED_CONFIG}" \
+            | sudo tee "${MANIFEST}" >/dev/null
+
+          diff -u "${SHARED_CONFIG}" \
+            <(sudo sed "s/${CI_ACME_EMAIL}/ACME_EMAIL_PLACEHOLDER/" \
+                "${MANIFEST}")
+          echo "Manifest matches ${SHARED_CONFIG} byte for byte."
+
+      - name: Install k3s with cloud-init's own flags
+        run: |
+          set -euo pipefail
+
+          # The install command is lifted out of the rendered cloud-init
+          # rather than retyped, so the flags cannot drift from what the
+          # instance boots. Rendering goes through the Terraform root's own
+          # local.cloud_init for the same reason.
+          pushd infra/oci >/dev/null
+          printf 'terraform {\n  backend "local" {}\n}\n' > backend_override.tf
+          terraform init -reconfigure -input=false >/dev/null
+          expression="jsonencode(one(["
+          expression+="for f in yamldecode(local.cloud_init).write_files : "
+          expression+='f.content if f.path == "/opt/bootstrap-k3s.sh"'
+          expression+="]))"
+          printf '%s\n' "${expression}" \
+            | terraform console -var-file=terraform.tfvars.example \
+            | jq -r . \
+            | jq -r . \
+            > "${RUNNER_TEMP}/bootstrap-k3s.sh"
+          rm -f backend_override.tf
+          popd >/dev/null
+
+          # Extracted on the script's own structure -- the whole
+          # `if ! command -v k3s ... fi` block, plus the log() helper it
+          # calls -- rather than on a substring of one command. The previous
+          # anchor was the literal `curl -sfL https://get.k3s.io`, and when
+          # the template moved to a tagged, checksum-verified installer that
+          # string stopped existing: the extraction went empty and this step
+          # failed with a message about servicelb, which named neither the
+          # anchor nor the line that had moved. A block that begins and ends
+          # on lines the shell itself delimits survives an edit inside it.
+          install_cmd="$(
+            sed -n '/^log() {/p' "${RUNNER_TEMP}/bootstrap-k3s.sh"
+            sed -n '/^if ! command -v k3s /,/^fi$/p' \
+              "${RUNNER_TEMP}/bootstrap-k3s.sh"
+          )"
+
+          # Every assertion below names a line that must be *executed here*,
+          # not merely present in the template. The old check tested one flag,
+          # so an extraction that had lost the digest verification -- the
+          # control that stops a rewritten tag executing as root at boot --
+          # would have passed it and this job would have reported the shape
+          # proven while never running the pin.
+          missing=()
+          for needle in \
+            'curl -sfL -o /opt/k3s-install.sh' \
+            'sha256sum -c -' \
+            'refusing to execute it' \
+            'sh /opt/k3s-install.sh server' \
+            '--disable=metrics-server' \
+            '--disable=servicelb' \
+            '--write-kubeconfig-mode 600' \
+            '--tls-san'
+          do
+            grep -qF -- "${needle}" <<<"${install_cmd}" \
+              || missing+=("${needle}")
+          done
+          if [ "${#missing[@]}" -gt 0 ]; then
+            echo "::error::The k3s install block extracted from the rendered" \
+              "bootstrap script is missing: ${missing[*]}." \
+              "cloud-init.yaml.tftpl has been restructured; re-anchor the" \
+              "sed above on the block that now installs k3s."
+            exit 1
+          fi
+
+          # A fragment that does not parse would otherwise fail part-way
+          # through `sudo bash -c`, after the download and before the flags,
+          # which reads as a k3s problem rather than an extraction one.
+          if ! bash -n <<<"${install_cmd}"; then
+            echo "::error::The extracted k3s install block is not valid" \
+              "shell;" \
+              "the sed range no longer lines up with the script's structure."
+            exit 1
+          fi
+          echo "Running the install command cloud-init runs:"
+          echo "${install_cmd}"
+
+          # The manifest is already in place, exactly as on a fresh boot,
+          # where cloud-init writes it before k3s ever starts. That ordering
+          # is what makes a bad HelmChartConfig fatal instead of cosmetic.
+          sudo bash -c "${install_cmd}"
+
+          mkdir -p "${HOME}/.kube"
+          sudo cp /etc/rancher/k3s/k3s.yaml "${HOME}/.kube/config"
+          sudo chown "$(id -u):$(id -g)" "${HOME}/.kube/config"
+          chmod 600 "${HOME}/.kube/config"
+          echo "KUBECONFIG=${HOME}/.kube/config" >> "$GITHUB_ENV"
+
+      - name: Wait for the node and for Traefik
+        run: |
+          set -euo pipefail
+          kubectl wait --for=condition=Ready node --all --timeout=300s
+          job_selector='helmcharts.helm.cattle.io/chart=traefik'
+          for _ in $(seq 1 60); do
+            if kubectl -n kube-system get deploy/traefik >/dev/null 2>&1; then
+              break
+            fi
+            # An invalid HelmChartConfig makes the install job fail rather
+            # than the Deployment appear late, and waiting out the rollout
+            # timeout reports that as an unexplained NotFound five minutes
+            # later. The chart's own `fail` message is the actual answer, so
+            # surface it the moment it exists.
+            if [ "$(kubectl -n kube-system get jobs -l "${job_selector}" \
+              -o jsonpath='{.items[*].status.failed}')" != "" ]; then
+              echo "::error::Traefik HelmChartConfig rejected by the chart."
+              kubectl -n kube-system logs -l "${job_selector}" --tail=50
+              exit 1
+            fi
+            sleep 5
+          done
+          # Bug 1's signature, for the case where the job never even starts.
+          kubectl -n kube-system rollout status deploy/traefik --timeout=300s
+
+      - name: Assert the deployment shape
+        run: |
+          set -euo pipefail
+          failed=0
+
+          echo "--- no svclb DaemonSet (--disable=servicelb) ---"
+          if kubectl -n kube-system get daemonset -o name \
+            | grep -q 'svclb'; then
+            echo "::error::A svclb DaemonSet exists. It contends with" \
+              "hostNetwork Traefik for ports 80 and 443 and masquerades the" \
+              "source address."
+            failed=1
+          fi
+
+          echo "--- no traefik Service (service.enabled: false) ---"
+          if kubectl -n kube-system get svc traefik >/dev/null 2>&1; then
+            echo "::error::A traefik Service exists. With hostNetwork it is" \
+              "dead weight that reintroduces NAT."
+            failed=1
+          fi
+
+          echo "--- Traefik runs in the host network namespace ---"
+          host_network="$(
+            kubectl -n kube-system get deploy/traefik \
+              -o jsonpath='{.spec.template.spec.hostNetwork}'
+          )"
+          if [[ "${host_network}" != "true" ]]; then
+            echo "::error::hostNetwork is '${host_network}', not true." \
+              "Without it the TCP remote address is not the client address."
+            failed=1
+          fi
+
+          pod_ip="$(
+            kubectl -n kube-system get pods \
+              -l app.kubernetes.io/name=traefik \
+              -o jsonpath='{.items[0].status.podIP}'
+          )"
+          host_ip="$(
+            kubectl -n kube-system get pods \
+              -l app.kubernetes.io/name=traefik \
+              -o jsonpath='{.items[0].status.hostIP}'
+          )"
+          echo "podIP=${pod_ip} hostIP=${host_ip}"
+          if [[ "${pod_ip}" != "${host_ip}" ]]; then
+            echo "::error::podIP != hostIP, so Traefik is not actually in" \
+              "the host network namespace."
+            failed=1
+          fi
+
+          echo "--- the pinned image is the one actually running ---"
+          # Every other assertion in this job passes just as happily against
+          # the chart's default image, so without this one a misplaced `image:`
+          # key would silently leave k3s running
+          # rancher/mirrored-library-traefik:3.3.6 -- 4 CRITICAL CVEs in the
+          # TLS path this pod terminates -- and the gate would stay green.
+          #
+          # The expectation is read out of the shared file rather than
+          # hardcoded here, because that file's own comment says the tag no
+          # longer tracks the chart appVersion and has to be bumped by hand.
+          # A hardcoded copy would turn every bump into a two-file edit and
+          # would eventually be the stale one.
+          # The value may sit beside its key or on the next line -- the tag
+          # carries a digest and the pair is 90 characters, which
+          # `yamllint --strict` refuses, so the shared file puts it on its
+          # own line. A `sed 's/^ *tag: *//p'` reads empty there, and an
+          # empty expectation is the one failure mode this whole block exists
+          # to rule out. `$1 == key` skips the commented copies: awk sees `#`
+          # as the first field on those lines.
+          read_pin() {
+            awk -v key="$1:" '
+              $1 == key {
+                if (NF > 1) { print $2; exit }
+                getline
+                gsub(/^[ \t]+|[ \t]+$/, "", $0)
+                print
+                exit
+              }
+            ' "${SHARED_CONFIG}"
+          }
+          pinned_repo="$(read_pin repository)"
+          pinned_tag="$(read_pin tag)"
+          pinned_digest="${pinned_tag##*@}"
+          if [[ -z "${pinned_repo}" || -z "${pinned_tag}" ]]; then
+            echo "::error::Could not read image.repository/image.tag out of" \
+              "${SHARED_CONFIG}. The pin is what keeps an internet-facing" \
+              "ingress off a 4-critical-CVE base image; a gate that cannot" \
+              "find it must fail, not skip."
+            failed=1
+          fi
+          if [[ "${pinned_digest}" == "${pinned_tag}" ]]; then
+            echo "::error::${SHARED_CONFIG} pins '${pinned_tag}', which" \
+              "carries no digest. A tag is mutable, so the scanned bytes and" \
+              "the running bytes stop being the same claim -- and the check" \
+              "below reads a digest, so it would compare against nothing."
+            failed=1
+          fi
+          # Read the *running* container, not the Deployment template. The
+          # template is desired state: anything that rewrites the image on the
+          # way to the pod -- a mutating webhook, a paused rollout, a manual
+          # edit -- leaves the template reading correct while the node runs
+          # something else. Reproduced on k3d before writing this: with the
+          # rollout paused and the pin applied to the template, the template
+          # read v3.7.13 while the pod ran v3.3.6 and every other assertion in
+          # this job still passed. That is bug 6 again, one level down.
+          #
+          # `imageID`, not `image`. Once the reference carries a digest the
+          # two stop agreeing, and only one of them still states the claim
+          # the pin exists to make. Measured on k3s/containerd with a pod
+          # pinned to exactly this reference:
+          #
+          #   spec    docker.io/library/traefik:v3.7.13@sha256:1c32e7c3...
+          #   image   sha256:be6691ff...          <- the local config digest
+          #   imageID docker.io/library/traefik@sha256:1c32e7c3...
+          #
+          # So `image` is not even a reference here, and comparing it against
+          # repo:tag would fail on a perfectly correct deployment; `imageID`
+          # carries the manifest digest, which is the byte-level identity the
+          # trivy scan in the shared file describes. The tag is deliberately
+          # not part of this comparison -- it is a human-readable label on a
+          # reference whose authority is the digest.
+          running_image_id="$(
+            kubectl -n kube-system get pods \
+              -l app.kubernetes.io/name=traefik \
+              -o jsonpath='{.items[0].status.containerStatuses[0].imageID}'
+          )"
+          if [[ -z "${running_image_id}" ]]; then
+            echo "::error::No Traefik container status to read. The pod is" \
+              "not running, so nothing here proves which image it would use."
+            failed=1
+          fi
+          echo "pinned=${pinned_repo}@${pinned_digest}" \
+            "running=${running_image_id}"
+          if [[ "${running_image_id}" != "${pinned_repo}@${pinned_digest}" ]]
+          then
+            echo "::error::Traefik is running '${running_image_id}' but" \
+              "${SHARED_CONFIG} pins" \
+              "'${pinned_repo}@${pinned_digest}'. The image override did" \
+              "not take effect."
+            failed=1
+          fi
+
+          exit "${failed}"
+
+      - name: Deploy a header-echoing probe behind the Ingress
+        run: |
+          set -euo pipefail
+          # traefik/whoami echoes the request headers it received, which is a
+          # far more direct read on client-IP integrity than any application
+          # response. It is published for linux/arm64.
+          kubectl create namespace shape-probe
+          kubectl -n shape-probe create deployment whoami \
+            --image=traefik/whoami:v1.10.2
+          kubectl -n shape-probe expose deployment whoami --port=80
+          kubectl -n shape-probe create ingress whoami \
+            --class=traefik \
+            --rule="${PROBE_HOST}/*=whoami:80"
+          kubectl -n shape-probe rollout status deploy/whoami --timeout=180s
+
+          # A Ready backend is not a programmed route. Traefik's Kubernetes
+          # provider reconciles Ingresses asynchronously, so the client pod can
+          # run while the router still does not exist and the first request
+          # 404s -- which would fail the client-IP assertion on timing rather
+          # than on substance, the flakiest possible way to lose a real signal.
+          #
+          # The poll must go over https. Entrypoint-level `redirections` answer
+          # *every* :80 request with a 301 before any router is matched:
+          # verified against traefik v3.7.13 with zero routers configured,
+          # where :80 returned 301 and :443 returned 404. So a 301 on :80 says
+          # nothing about whether this Ingress was ever reconciled, and only
+          # the https 200 does.
+          for attempt in $(seq 1 60); do
+            code="$(
+              curl -sk -o /dev/null -w '%{http_code}' --max-time 5 \
+                -H "Host: ${PROBE_HOST}" https://127.0.0.1/ || true
+            )"
+            if [[ "${code}" == "200" ]]; then
+              echo "whoami route observed after ${attempt} attempt(s)"
+              break
+            fi
+            if [[ "${attempt}" -eq 60 ]]; then
+              echo "::error::Traefik never routed ${PROBE_HOST} (last status" \
+                "'${code}'). The Ingress exists but no router matched it."
+              exit 1
+            fi
+            sleep 2
+          done
+
+      - name: Assert the redirect and client-IP integrity
+        run: |
+          set -euo pipefail
+
+          # The request must come from a genuine non-loopback source. Loopback
+          # and SSH-tunnelled traffic prove nothing here: on the real box they
+          # hit the "-i lo -j ACCEPT" rule, and any of them would report a
+          # client IP that no external caller would ever produce. A pod
+          # curling the node's primary address is the closest CI can get to a
+          # real external client.
+          # Column 6 of `get nodes -o wide` is INTERNAL-IP.
+          node_ip="$(kubectl get nodes -o wide --no-headers | awk '{print $6}')"
+          echo "node_ip=${node_ip}"
+
+          kubectl -n shape-probe run client \
+            --image=curlimages/curl:8.13.0 \
+            --restart=Never \
+            --command -- sh -c "
+              echo \"PROBE_POD_IP=\$(hostname -i)\";
+              echo \"REDIRECT_CODE=\$(curl -s -o /dev/null -w '%{http_code}' \
+                -H 'Host: ${PROBE_HOST}' http://${node_ip}/)\";
+              echo '--- whoami over https ---';
+              curl -sk -H 'Host: ${PROBE_HOST}' https://${node_ip}/
+            "
+          kubectl -n shape-probe wait pod/client \
+            --for=jsonpath='{.status.phase}'=Succeeded --timeout=180s
+          out="$(kubectl -n shape-probe logs pod/client)"
+          echo "${out}"
+
+          probe_ip="$(
+            sed -n 's/^PROBE_POD_IP=//p' <<<"${out}" | tr -d '[:space:]'
+          )"
+          redirect_code="$(
+            sed -n 's/^REDIRECT_CODE=//p' <<<"${out}" | tr -d '[:space:]'
+          )"
+          # `|| true` is load-bearing under `set -euo pipefail`: with no
+          # X-Real-Ip in the output grep exits 1, pipefail propagates it, and
+          # the assignment takes the step down *before* the empty-header branch
+          # below can run. The one failure this assertion exists to report --
+          # the header missing entirely -- was the one it could not report.
+          real_ip="$(
+            grep -i '^X-Real-Ip:' <<<"${out}" | head -1 | cut -d: -f2- \
+              | tr -d '[:space:]' || true
+          )"
+
+          failed=0
+
+          # Bug 1: with the removed redirectTo syntax the chart install fails
+          # outright, so there is no redirect to observe. Asserting the exact
+          # code also pins the `permanent: true` the mutate step flips.
+          if [[ "${redirect_code}" != "301" ]]; then
+            echo "::error::Expected a 301 from the web entrypoint, got" \
+              "'${redirect_code}'."
+            failed=1
+          fi
+
+          # The load-bearing assertion of the whole OCI design.
+          if [[ -z "${real_ip}" ]]; then
+            echo "::error::whoami saw no X-Real-Ip header at all."
+            failed=1
+          elif [[ "${real_ip}" != "${probe_ip}" ]]; then
+            echo "::error::X-Real-Ip is '${real_ip}' but the client was" \
+              "'${probe_ip}'. The source address is being masqueraded," \
+              "which breaks every per-client-IP control in the app."
+            failed=1
+          else
+            echo "X-Real-Ip (${real_ip}) is the true client address."
+          fi
+
+          exit "${failed}"
+
+      - name: Re-apply a changed config and prove the running pod picked it up
+        run: |
+          set -euo pipefail
+
+          # This is the only step that can see bug 2, and no fresh-boot test
+          # ever will. Traefik's Deployment defaults to RollingUpdate with
+          # maxSurge 1 / maxUnavailable 0; with hostNetwork on a single node
+          # the surge pod can never schedule ("didn't have free ports for the
+          # requested pod ports"). The old pod keeps serving the OLD config,
+          # `kubectl get deploy` shows the NEW args, and helm reports
+          # "deployed successfully" -- so every Traefik change after the first
+          # silently no-ops unless updateStrategy is Recreate.
+          #
+          # The assertion is deliberately behavioural rather than a read of
+          # the pod spec: flipping `permanent` changes 301 to 302 on the wire,
+          # which can only happen if the process actually serving traffic
+          # reloaded.
+          sudo sed -i 's/permanent: true/permanent: false/' "${MANIFEST}"
+          grep -q 'permanent: false' <(sudo cat "${MANIFEST}")
+
+          node_ip="$(kubectl get nodes -o wide --no-headers | awk '{print $6}')"
+
+          observed=""
+          for _ in $(seq 1 60); do
+            kubectl -n shape-probe delete pod recheck --ignore-not-found \
+              >/dev/null 2>&1
+            kubectl -n shape-probe run recheck \
+              --image=curlimages/curl:8.13.0 \
+              --restart=Never --quiet --attach --rm \
+              --command -- curl -s -o /dev/null -w '%{http_code}' \
+                -H "Host: ${PROBE_HOST}" "http://${node_ip}/" \
+              > "${RUNNER_TEMP}/code" 2>/dev/null || true
+            observed="$(tr -dc '0-9' < "${RUNNER_TEMP}/code")"
+            if [[ "${observed}" == "302" ]]; then
+              break
+            fi
+            sleep 5
+          done
+
+          if [[ "${observed}" != "302" ]]; then
+            echo "::error::After re-applying the HelmChartConfig the running" \
+              "Traefik still answers '${observed}', not 302. The rollout is" \
+              "deadlocked -- check that updateStrategy.type is Recreate."
+            kubectl -n kube-system get pods \
+              -l app.kubernetes.io/name=traefik -o wide || true
+            exit 1
+          fi
+          echo "The running Traefik picked up the second apply."
+
+      - name: Collect diagnostics
+        if: failure()
+        run: |
+          set -uo pipefail
+          echo "--- nodes ---"
+          kubectl get nodes -o wide || true
+          echo "--- kube-system ---"
+          kubectl -n kube-system get deploy,ds,svc,pod -o wide || true
+          echo "--- helm jobs ---"
+          kubectl -n kube-system get jobs -o wide || true
+          echo "--- helm install job logs ---"
+          kubectl -n kube-system logs \
+            -l helmcharts.helm.cattle.io/chart=traefik --tail=200 || true
+          echo "--- traefik pod detail ---"
+          kubectl -n kube-system describe pods \
+            -l app.kubernetes.io/name=traefik || true
+          echo "--- traefik logs ---"
+          kubectl -n kube-system logs deploy/traefik --tail=200 || true
+          echo "--- probe namespace ---"
+          kubectl -n shape-probe get all -o wide || true
+          echo "--- installed manifest ---"
+          sudo cat "${MANIFEST}" || true
+          echo "--- k3s service ---"
+          sudo journalctl -u k3s --no-pager --lines=200 || true
 
   docker-build:
     runs-on: ubuntu-latest
@@ -1400,6 +1954,7 @@ jobs:
       - security
       - helm-validate
       - terraform-validate
+      - oci-shape-e2e
       - docker-build
       - free-e2e
       - live-e2e
@@ -1419,6 +1974,7 @@ jobs:
           SECURITY_RESULT: ${{ needs.security.result }}
           HELM_RESULT: ${{ needs.helm-validate.result }}
           TERRAFORM_RESULT: ${{ needs.terraform-validate.result }}
+          OCI_SHAPE_RESULT: ${{ needs.oci-shape-e2e.result }}
           DOCKER_RESULT: ${{ needs.docker-build.result }}
           FREE_E2E_RESULT: ${{ needs.free-e2e.result }}
           LIVE_E2E_RESULT: ${{ needs.live-e2e.result }}
@@ -1464,6 +2020,7 @@ jobs:
           echo "  security:                   ${SECURITY_RESULT}"
           echo "  helm-validate:              ${HELM_RESULT}"
           echo "  terraform-validate:         ${TERRAFORM_RESULT}"
+          echo "  oci-shape-e2e:              ${OCI_SHAPE_RESULT}"
           echo "  docker-build:               ${DOCKER_RESULT}"
           echo "  run browser e2e:            ${RUN_E2E}"
           echo "  free-e2e:                   ${FREE_E2E_RESULT}"
@@ -1479,6 +2036,7 @@ jobs:
             "security:${SECURITY_RESULT}" \
             "helm-validate:${HELM_RESULT}" \
             "terraform-validate:${TERRAFORM_RESULT}" \
+            "oci-shape-e2e:${OCI_SHAPE_RESULT}" \
             "docker-build:${DOCKER_RESULT}"; do
             name="${name_result%%:*}"
             result="${name_result#*:}"
