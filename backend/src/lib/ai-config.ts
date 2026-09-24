@@ -15,7 +15,18 @@ export const DEFAULT_AZURE_OPENAI_API_VERSION = "2024-10-21";
 // deployment default in infra/variables.tf (aoai_model_name). gpt-4o was stale.
 export const DEFAULT_AZURE_MODEL = "gpt-5.6-terra";
 
-export type AiProvider = "vertex" | "azure-openai";
+// Display fallback when AI_OPENROUTER_MODEL is unset. It is never used for a
+// live call: getAiReadiness() refuses to be ready without AI_OPENROUTER_MODEL,
+// and getOpenRouterModelForRoute() throws rather than guessing. It exists so
+// readiness/probe/token-metrics report a slug-shaped string in mock mode
+// instead of an empty one. The free catalogue churns, so treat this as
+// documentation of the shape, not as a supported default.
+export const DEFAULT_OPENROUTER_MODEL = "z-ai/glm-5.2:free";
+// OpenRouter speaks the OpenAI chat/completions dialect at this prefix; the
+// transport appends "/chat/completions".
+export const DEFAULT_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
+
+export type AiProvider = "vertex" | "azure-openai" | "openrouter";
 
 export interface AiReadiness {
   ready: boolean;
@@ -31,6 +42,8 @@ export interface AiReadiness {
     azureOpenAiEndpointConfigured: boolean;
     azureOpenAiApiKeyConfigured: boolean;
     azureOpenAiDeploymentConfigured: boolean;
+    openRouterApiKeyConfigured: boolean;
+    openRouterModelConfigured: boolean;
   };
   reasons: string[];
 }
@@ -53,11 +66,22 @@ function isReadableFile(path: string): boolean {
 }
 
 export function getConfiguredModel(): string {
+  const provider = getConfiguredProvider();
+  // On OpenRouter the slug *is* the model, so AI_OPENROUTER_MODEL wins over the
+  // generic AI_MODEL: a deployment switched over from Azure normally still
+  // carries an AI_MODEL left from that provider, and reporting it here would
+  // make /api/ai/token-metrics and /api/ai/probe name a model nothing called.
+  if (provider === "openrouter") {
+    const openRouterModel = process.env.AI_OPENROUTER_MODEL?.trim();
+    if (openRouterModel && openRouterModel.length > 0) return openRouterModel;
+  }
+
   const model = process.env.AI_MODEL?.trim() ?? process.env.CLAUDE_MODEL?.trim();
   if (model && model.length > 0) return model;
-  return getConfiguredProvider() === "azure-openai"
-    ? DEFAULT_AZURE_MODEL
-    : DEFAULT_CLAUDE_MODEL;
+
+  if (provider === "azure-openai") return DEFAULT_AZURE_MODEL;
+  if (provider === "openrouter") return DEFAULT_OPENROUTER_MODEL;
+  return DEFAULT_CLAUDE_MODEL;
 }
 
 export function getConfiguredProvider(): AiProvider {
@@ -71,7 +95,26 @@ export function getConfiguredProvider(): AiProvider {
   ) {
     return "azure-openai";
   }
+  if (rawProvider === "openrouter" || rawProvider === "open-router" || rawProvider === "open_router") {
+    return "openrouter";
+  }
   return "vertex";
+}
+
+/**
+ * Degrading to simulated output keeps a spent free-tier budget playable, where a
+ * hard error response reads as an outage. Setting this to false restores the
+ * pre-OpenRouter behaviour exactly: a quota failure is an AiThrottledError like
+ * any other, and every route answers it the way it always has.
+ */
+export function shouldDegradeOnQuotaExhausted(): boolean {
+  return parseBoolean(process.env.AI_DEGRADE_ON_QUOTA_EXHAUSTED, true);
+}
+
+export function getOpenRouterBaseUrl(): string {
+  const base = process.env.AI_OPENROUTER_BASE_URL?.trim();
+  const resolved = base && base.length > 0 ? base : DEFAULT_OPENROUTER_BASE_URL;
+  return resolved.replace(/\/+$/, "");
 }
 
 export function getAiReadiness(): AiReadiness {
@@ -84,6 +127,8 @@ export function getAiReadiness(): AiReadiness {
   const azureEndpoint = process.env.AI_AZURE_OPENAI_ENDPOINT?.trim() ?? "";
   const azureApiKey = process.env.AI_AZURE_OPENAI_API_KEY?.trim() ?? "";
   const azureDeployment = process.env.AI_AZURE_OPENAI_DEPLOYMENT?.trim() ?? "";
+  const openRouterApiKey = process.env.AI_OPENROUTER_API_KEY?.trim() ?? "";
+  const openRouterModel = process.env.AI_OPENROUTER_MODEL?.trim() ?? "";
 
   const checks = {
     cloudMlRegionConfigured: cloudMlRegion.length > 0,
@@ -94,6 +139,8 @@ export function getAiReadiness(): AiReadiness {
     azureOpenAiEndpointConfigured: azureEndpoint.length > 0,
     azureOpenAiApiKeyConfigured: azureApiKey.length > 0,
     azureOpenAiDeploymentConfigured: azureDeployment.length > 0,
+    openRouterApiKeyConfigured: openRouterApiKey.length > 0,
+    openRouterModelConfigured: openRouterModel.length > 0,
   };
 
   const reasons: string[] = [];
@@ -123,6 +170,23 @@ export function getAiReadiness(): AiReadiness {
     !checks.azureOpenAiDeploymentConfigured
   ) {
     reasons.push("AI_AZURE_OPENAI_DEPLOYMENT is not configured");
+  }
+  if (
+    !mockMode &&
+    provider === "openrouter" &&
+    !checks.openRouterApiKeyConfigured
+  ) {
+    reasons.push("AI_OPENROUTER_API_KEY is not configured");
+  }
+  // Required even though AI_OPENROUTER_MODEL_<ROUTE> can override it per route:
+  // it is the fallback every route without an override resolves to, so without
+  // it a single missing override is a runtime throw rather than a startup one.
+  if (
+    !mockMode &&
+    provider === "openrouter" &&
+    !checks.openRouterModelConfigured
+  ) {
+    reasons.push("AI_OPENROUTER_MODEL is not configured");
   }
   if (
     !mockMode &&
