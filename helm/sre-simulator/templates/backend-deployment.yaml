@@ -85,6 +85,13 @@ spec:
                   name: {{ .Values.ai.azureOpenai.credentials.existingSecretName }}
                   key: {{ .Values.ai.azureOpenai.credentials.key }}
             {{- end }}
+            {{- if .Values.ai.openrouter.credentials.existingSecretName }}
+            - name: AI_OPENROUTER_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.ai.openrouter.credentials.existingSecretName }}
+                  key: {{ .Values.ai.openrouter.credentials.key }}
+            {{- end }}
             {{- $probeToken := .Values.ai.liveProbeToken | default "" | trim }}
             {{- if $probeToken }}
             - name: AI_LIVE_PROBE_TOKEN

@@ -23,7 +23,8 @@ test_pod_render="$(mktemp)"
 gw_xff_render="$(mktemp)"
 trusted_ip_blank_render="$(mktemp)"
 trusted_ip_padded_render="$(mktemp)"
-trap 'rm -f "${route_render}" "${auth_render}" "${auth_guard_render}" "${auth_disabled_render}" "${lb_render}" "${lb_no_db_render}" "${ingress_render}" "${gw_render}" "${hostless_render}" "${legacy_kv_render}" "${gw_bad_scheme_err}" "${gw_missing_host_err}" "${gw_route_host_bypass_err}" "${gw_ingress_host_bypass_err}" "${gw_whitespace_host_err}" "${test_pod_render}" "${gw_xff_render}" "${trusted_ip_blank_render}" "${trusted_ip_padded_render}"' EXIT
+openrouter_render="$(mktemp)"
+trap 'rm -f "${route_render}" "${auth_render}" "${auth_guard_render}" "${auth_disabled_render}" "${lb_render}" "${lb_no_db_render}" "${ingress_render}" "${gw_render}" "${hostless_render}" "${legacy_kv_render}" "${gw_bad_scheme_err}" "${gw_missing_host_err}" "${gw_route_host_bypass_err}" "${gw_ingress_host_bypass_err}" "${gw_whitespace_host_err}" "${test_pod_render}" "${gw_xff_render}" "${trusted_ip_blank_render}" "${trusted_ip_padded_render}" "${openrouter_render}"' EXIT
 
 fail() {
   echo "FAIL: $*" >&2
@@ -482,5 +483,58 @@ helm template sre-simulator "${CHART_DIR}" \
 
 grep -Fq 'value: "x-real-ip"' "${trusted_ip_padded_render}" || \
   fail "frontend.trustedClientIpHeader must reach the container trimmed."
+
+# ---------------------------------------------------------------------------
+# OpenRouter env wiring
+# ---------------------------------------------------------------------------
+if grep -Fq 'AI_OPENROUTER' "${route_render}"; then
+  fail "Every ai.openrouter field is empty by default; no AI_OPENROUTER_* variable may render."
+fi
+
+helm template sre-simulator "${CHART_DIR}" \
+  --set exposure.mode=ingress \
+  --set exposure.host=ingress.example.com \
+  --set exposure.scheme=https \
+  --set-string ai.openrouter.baseUrl=https://openrouter.example/api/v1 \
+  --set-string ai.openrouter.model=vendor/base:free \
+  --set-string ai.openrouter.routeModels.chat=vendor/chat:free \
+  --set-string ai.openrouter.routeModels.command=vendor/command:free \
+  --set-string ai.openrouter.siteUrl=https://sre.example \
+  --set-string ai.openrouter.appTitle="SRE Simulator" \
+  --set ai.openrouter.credentials.existingSecretName=openrouter-api \
+  --set-string ai.openrouter.credentials.key=token >"${openrouter_render}"
+
+for entry in \
+  'AI_OPENROUTER_BASE_URL: "https://openrouter.example/api/v1"' \
+  'AI_OPENROUTER_MODEL: "vendor/base:free"' \
+  'AI_OPENROUTER_MODEL_CHAT: "vendor/chat:free"' \
+  'AI_OPENROUTER_MODEL_COMMAND: "vendor/command:free"' \
+  'AI_OPENROUTER_SITE_URL: "https://sre.example"' \
+  'AI_OPENROUTER_APP_TITLE: "SRE Simulator"'; do
+  grep -Fq "${entry}" "${openrouter_render}" || \
+    fail "The ConfigMap should carry ${entry%%:*}."
+done
+
+# scenario and probe were deliberately left unset: the backend falls back to
+# the command model and then to the base model, so rendering them empty would
+# override that chain with an empty string.
+if grep -Eq 'AI_OPENROUTER_MODEL_(SCENARIO|PROBE)' "${openrouter_render}"; then
+  fail "An unset route model must render no variable at all, not an empty one."
+fi
+
+# The API key is the one OpenRouter value that is a credential. It must arrive
+# by secretKeyRef; a ConfigMap entry would put it in plain `kubectl get cm`.
+if grep -Eq '^  AI_OPENROUTER_API_KEY:' "${openrouter_render}"; then
+  fail "AI_OPENROUTER_API_KEY must never be a ConfigMap entry."
+fi
+
+grep -Fq -e '- name: AI_OPENROUTER_API_KEY' "${openrouter_render}" || \
+  fail "An ai.openrouter.credentials.existingSecretName should wire AI_OPENROUTER_API_KEY into the backend."
+
+grep -A 4 -e '- name: AI_OPENROUTER_API_KEY' "${openrouter_render}" | grep -Fq 'name: openrouter-api' || \
+  fail "AI_OPENROUTER_API_KEY should read from the configured existing secret."
+
+grep -A 4 -e '- name: AI_OPENROUTER_API_KEY' "${openrouter_render}" | grep -Fq 'key: token' || \
+  fail "AI_OPENROUTER_API_KEY should read the configured secret key."
 
 echo "Helm platform rendering checks passed."
