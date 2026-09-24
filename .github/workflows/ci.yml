@@ -20,7 +20,7 @@ jobs:
       - name: Harden runner
         # v2.21.0
         uses: >-
-          step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c
+          step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1
         with:
           egress-policy: audit
 
@@ -38,7 +38,7 @@ jobs:
       - name: Harden runner
         # v2.21.0
         uses: >-
-          step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c
+          step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1
         with:
           egress-policy: audit
 
@@ -99,7 +99,7 @@ jobs:
       - name: Harden runner
         # v2.21.0
         uses: >-
-          step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c
+          step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1
         with:
           egress-policy: audit
 
@@ -234,7 +234,7 @@ jobs:
       - name: Harden runner
         # v2.21.0
         uses: >-
-          step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c
+          step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1
         with:
           egress-policy: audit
 
@@ -249,7 +249,7 @@ jobs:
       - name: Ensure SHA-pinned actions
         # v5.0.3
         uses: >-
-          zgosalvez/github-actions-ensure-sha-pinned-actions@c5fc58bd0be7a4b94b73ce40250322d5b838a108
+          zgosalvez/github-actions-ensure-sha-pinned-actions@62574f011e0d1967d555a862bd28a7abba8684fe
 
       - name: Install dependencies
         run: make install
@@ -267,7 +267,7 @@ jobs:
       - name: Harden runner
         # v2.21.0
         uses: >-
-          step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c
+          step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1
         with:
           egress-policy: audit
 
@@ -324,7 +324,7 @@ jobs:
       - name: Harden runner
         # v2.21.0
         uses: >-
-          step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c
+          step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1
         with:
           egress-policy: audit
 
@@ -385,7 +385,7 @@ jobs:
       - name: Harden runner
         # v2.21.0
         uses: >-
-          step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c
+          step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1
         with:
           egress-policy: audit
 
@@ -465,7 +465,7 @@ jobs:
       - name: Harden runner
         # v2.21.0
         uses: >-
-          step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c
+          step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1
         with:
           egress-policy: audit
 
@@ -505,7 +505,7 @@ jobs:
       - name: Harden runner
         # v2.21.0
         uses: >-
-          step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c
+          step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1
         with:
           egress-policy: audit
 
@@ -735,7 +735,7 @@ jobs:
       - name: Harden runner
         # v2.21.0
         uses: >-
-          step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c
+          step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1
         with:
           egress-policy: audit
 
@@ -884,7 +884,7 @@ jobs:
       - name: Harden runner
         # v2.21.0
         uses: >-
-          step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c
+          step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1
         with:
           egress-policy: audit
 
@@ -1386,7 +1386,7 @@ jobs:
       - name: Harden runner
         # v2.21.0
         uses: >-
-          step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c
+          step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1
         with:
           egress-policy: audit
 
@@ -1467,7 +1467,7 @@ jobs:
       - name: Harden runner
         # v2.21.0
         uses: >-
-          step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c
+          step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1
         with:
           egress-policy: audit
 
@@ -1514,14 +1514,14 @@ jobs:
       - name: Set up Docker Buildx
         # v4.3.0
         uses: >-
-          docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e
+          docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069
         with:
           driver: docker-container
 
       - name: Build frontend image
         # v7.3.0
         uses: >-
-          docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a
+          docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc
         with:
           context: .
           file: frontend/Dockerfile
@@ -1535,7 +1535,7 @@ jobs:
       - name: Build backend image
         # v7.3.0
         uses: >-
-          docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a
+          docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc
         with:
           context: .
           file: backend/Dockerfile
@@ -1839,7 +1839,7 @@ jobs:
       - name: Harden runner
         # v2.21.0
         uses: >-
-          step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c
+          step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1
         with:
           egress-policy: audit
 
@@ -1864,7 +1864,7 @@ jobs:
       - name: Azure login
         # v3.0.0
         uses: >-
-          azure/login@f5d393ae46f8fde4be8b75f32e3fc50e654ad0ca
+          azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
@@ -2174,7 +2174,7 @@ jobs:
       - name: Harden runner
         # v2.21.0
         uses: >-
-          step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c
+          step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1
         with:
           egress-policy: audit
 

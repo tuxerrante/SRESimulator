@@ -17,7 +17,7 @@ jobs:
       - name: Harden runner
         # v2.21.0
         uses: >-
-          step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c
+          step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1
         with:
           egress-policy: audit
 
@@ -32,7 +32,7 @@ jobs:
       - name: Ensure SHA-pinned actions
         # v5.0.3
         uses: >-
-          zgosalvez/github-actions-ensure-sha-pinned-actions@c5fc58bd0be7a4b94b73ce40250322d5b838a108
+          zgosalvez/github-actions-ensure-sha-pinned-actions@62574f011e0d1967d555a862bd28a7abba8684fe
 
       - name: Install pre-commit
         run: python3 -m pip install --upgrade pre-commit
