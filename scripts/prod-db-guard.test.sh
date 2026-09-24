@@ -122,6 +122,14 @@ run_helper_tests() {
   fi
   assert_contains "DB_SECRET_NAME is required for production deployment with STORAGE_BACKEND=mssql." "$TMP_DIR/missing-db-secret.txt"
 
+  # The OCI flavor passes its driver so the refusal names the backend the
+  # operator is actually deploying; a hardcoded mssql message would send them
+  # after an Azure SQL secret that has nothing to do with the failure.
+  if DB_SECRET_NAME="" require_prod_db_secret_name postgres >"$TMP_DIR/missing-db-secret-pg.txt" 2>&1; then
+    fail "require_prod_db_secret_name should fail when DB_SECRET_NAME is empty"
+  fi
+  assert_contains "DB_SECRET_NAME is required for production deployment with STORAGE_BACKEND=postgres." "$TMP_DIR/missing-db-secret-pg.txt"
+
   if ! PATH="$TMP_DIR:$PATH" DB_SECRET_NAME="sre-sql-creds" require_db_secret_exists_in_namespace "sre-simulator" >"$TMP_DIR/secret-present.txt" 2>&1; then
     cat "$TMP_DIR/secret-present.txt" >&2 || true
     fail "require_db_secret_exists_in_namespace should pass when the secret exists"
