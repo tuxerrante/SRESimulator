@@ -8,7 +8,8 @@
        build dev start capture-readme-hero \
        docker-build-frontend docker-build-backend docker-build \
        pre-commit all \
-       tf-bootstrap tf-pull-secret tf-preflight tf-init tf-init-local tf-init-isolated tf-validate tf-fmt tf-test tf-plan tf-apply tf-destroy tf-kubeconfig tf-output
+       tf-bootstrap tf-pull-secret tf-preflight tf-init tf-init-local tf-init-isolated tf-validate tf-fmt tf-test tf-plan tf-apply tf-destroy tf-kubeconfig tf-output \
+       tf-oci-bootstrap tf-oci-init tf-oci-init-local tf-oci-validate tf-oci-fmt tf-oci-test tf-oci-plan tf-oci-apply tf-oci-destroy tf-oci-kubeconfig tf-oci-ssh tf-oci-output
 
 SHELL := /bin/bash
 
@@ -347,6 +348,7 @@ test-shell: ## Run shell regression tests
 	env -i PATH="$$PATH" HOME="$$HOME" TMPDIR="$${TMPDIR:-/tmp}" bash scripts/release-version-sync.test.sh
 	env -i PATH="$$PATH" HOME="$$HOME" TMPDIR="$${TMPDIR:-/tmp}" bash scripts/security-parallel.test.sh
 	env -i PATH="$$PATH" HOME="$$HOME" TMPDIR="$${TMPDIR:-/tmp}" bash scripts/select-deploy.test.sh
+	env -i PATH="$$PATH" HOME="$$HOME" TMPDIR="$${TMPDIR:-/tmp}" bash scripts/terraform-gate.test.sh
 	env -i PATH="$$PATH" HOME="$$HOME" TMPDIR="$${TMPDIR:-/tmp}" bash infra/scripts/tf-preflight.test.sh
 
 release-prepare: ## Update semver surfaces for a release tag
@@ -1341,3 +1343,45 @@ tf-kubeconfig: ## Extract kubeconfig from ARO cluster
 
 tf-output: ## Show all Terraform outputs
 	$(MAKE) -C infra tf-output
+
+# ──────────────────────────────────────────────
+# OCI free-tier infrastructure (delegates to infra/oci/Makefile)
+#
+# A separate Terraform root, not a flavor of the Azure one: different
+# providers, different state, different lifecycle.
+# ──────────────────────────────────────────────
+tf-oci-bootstrap: ## Create the OCI Object Storage bucket for Terraform state (one-time)
+	$(MAKE) -C infra/oci tf-oci-bootstrap
+
+tf-oci-init: ## Terraform init for the OCI root (see infra/oci/Makefile)
+	$(MAKE) -C infra/oci tf-oci-init
+
+tf-oci-init-local: ## Terraform init for the OCI root without remote backend
+	$(MAKE) -C infra/oci tf-oci-init-local
+
+tf-oci-validate: ## Validate the OCI Terraform configuration
+	$(MAKE) -C infra/oci tf-oci-validate
+
+tf-oci-fmt: ## Format the OCI Terraform files
+	$(MAKE) -C infra/oci tf-oci-fmt
+
+tf-oci-test: ## Run OCI Terraform unit tests (no credentials needed)
+	$(MAKE) -C infra/oci tf-oci-test
+
+tf-oci-plan: ## Terraform plan for the OCI free-tier box
+	$(MAKE) -C infra/oci tf-oci-plan
+
+tf-oci-apply: ## Terraform apply for the OCI free-tier box
+	$(MAKE) -C infra/oci tf-oci-apply
+
+tf-oci-destroy: ## Terraform destroy for the OCI free-tier box
+	$(MAKE) -C infra/oci tf-oci-destroy
+
+tf-oci-kubeconfig: ## Fetch a kubeconfig for the OCI box (via SSH tunnel)
+	$(MAKE) -C infra/oci tf-oci-kubeconfig
+
+tf-oci-ssh: ## SSH into the OCI free-tier box
+	$(MAKE) -C infra/oci tf-oci-ssh
+
+tf-oci-output: ## Show all OCI Terraform outputs
+	$(MAKE) -C infra/oci tf-oci-output
