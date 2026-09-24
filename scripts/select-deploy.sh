@@ -21,7 +21,11 @@ case "${CLUSTER_FLAVOR:-aks}" in
     # shellcheck disable=SC1091
     source "${SCRIPT_DIR}/aro-deploy.sh"
     ;;
+  oci)
+    # shellcheck disable=SC1091
+    source "${SCRIPT_DIR}/oci-deploy.sh"
+    ;;
   *)
-    fail_selection "error: unsupported CLUSTER_FLAVOR='${CLUSTER_FLAVOR:-}' (expected aks or aro)"
+    fail_selection "error: unsupported CLUSTER_FLAVOR='${CLUSTER_FLAVOR:-}' (expected aks, aro, or oci)"
     ;;
 esac

@@ -256,14 +256,18 @@ ensure_db_secret_for_e2e_namespace() {
   copy_secret_across_namespaces "$src_ns" "$dst_ns" "$DB_SECRET_NAME"
 }
 
-# Usage: require_prod_db_secret_name
-# Production releases must opt into Azure SQL explicitly; refuse silent
-# fallback to JSON/PVC mode when DB_SECRET_NAME is missing.
+# Usage: require_prod_db_secret_name [driver]
+# Production releases must opt into a real database explicitly; refuse silent
+# fallback to JSON/PVC mode when DB_SECRET_NAME is missing. The driver only
+# names the backend in the message, so an operator on the OCI box is not sent
+# looking for an Azure SQL secret they were never going to create. It defaults
+# to mssql, which keeps the Azure flavors' message byte-identical.
 require_prod_db_secret_name() {
+  local driver="${1:-${STORAGE_DRIVER:-mssql}}"
   if [ -n "${DB_SECRET_NAME:-}" ]; then
     return 0
   fi
-  echo "DB_SECRET_NAME is required for production deployment with STORAGE_BACKEND=mssql." >&2
+  echo "DB_SECRET_NAME is required for production deployment with STORAGE_BACKEND=${driver}." >&2
   return 1
 }
 

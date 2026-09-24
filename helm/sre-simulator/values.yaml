@@ -176,6 +176,30 @@ ai:
     credentials:
       existingSecretName: ""
       key: api-key
+  # OpenRouter reaches the same OpenAI-compatible transport as azureOpenai, so
+  # only the endpoint, the auth header and the model naming differ. Every field
+  # here is empty by default and an empty field renders no environment variable
+  # at all, which is what keeps the Azure and Vertex profiles byte-identical.
+  openrouter:
+    # Empty falls back to the backend's own DEFAULT_OPENROUTER_BASE_URL. Set it
+    # only to pin a proxy or a pre-release endpoint.
+    baseUrl: ""
+    # Fallback model for any route that names none below.
+    model: ""
+    # Free slugs churn, so the split lives in configuration rather than code.
+    # scenario and probe fall back to command, then to model, in the backend.
+    routeModels:
+      chat: ""
+      command: ""
+      scenario: ""
+      probe: ""
+    # Sent as HTTP-Referer / X-Title. OpenRouter shows them on the account's
+    # public activity page, so they are attribution, not credentials.
+    siteUrl: ""
+    appTitle: ""
+    credentials:
+      existingSecretName: ""
+      key: api-key
 
 exposure:
   # route: OpenShift Route
@@ -211,6 +235,22 @@ ingress:
   traefik:
     certResolver: ""
     entryPoint: websecure
+    # Traefik Middlewares for the OCI box, where the origin is a single 12 GB
+    # VM with no cloud load balancer in front of it. Both default to false, so
+    # no Middleware object is rendered and the Ingress grows no annotation:
+    # every existing profile's render is unchanged.
+    #
+    # ipStrategy.depth stays 0 on purpose. Traefik then keys on the TCP remote
+    # address, which hostNetwork Traefik sees unmasqueraded; reading a position
+    # in X-Forwarded-For would let a caller choose which bucket to spend.
+    rateLimit:
+      enabled: false
+      average: 30
+      burst: 60
+      period: 1m
+    inFlightReq:
+      enabled: false
+      amount: 20
   tls:
     enabled: false
     secretName: ""

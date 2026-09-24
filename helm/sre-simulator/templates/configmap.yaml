@@ -34,6 +34,34 @@ data:
   {{- end }}
   {{- end }}
   AI_AZURE_OPENAI_API_VERSION: "{{ .Values.ai.azureOpenai.apiVersion }}"
+  {{- with .Values.ai.openrouter }}
+  {{- if .baseUrl }}
+  AI_OPENROUTER_BASE_URL: "{{ .baseUrl }}"
+  {{- end }}
+  {{- if .model }}
+  AI_OPENROUTER_MODEL: "{{ .model }}"
+  {{- end }}
+  {{- with .routeModels }}
+  {{- if .chat }}
+  AI_OPENROUTER_MODEL_CHAT: "{{ .chat }}"
+  {{- end }}
+  {{- if .command }}
+  AI_OPENROUTER_MODEL_COMMAND: "{{ .command }}"
+  {{- end }}
+  {{- if .scenario }}
+  AI_OPENROUTER_MODEL_SCENARIO: "{{ .scenario }}"
+  {{- end }}
+  {{- if .probe }}
+  AI_OPENROUTER_MODEL_PROBE: "{{ .probe }}"
+  {{- end }}
+  {{- end }}
+  {{- if .siteUrl }}
+  AI_OPENROUTER_SITE_URL: "{{ .siteUrl }}"
+  {{- end }}
+  {{- if .appTitle }}
+  AI_OPENROUTER_APP_TITLE: "{{ .appTitle }}"
+  {{- end }}
+  {{- end }}
   TRUST_PROXY_HEADERS: {{ ternary "true" "false" .Values.backend.trustProxyHeaders | quote }}
   PERSISTENT_LEADERBOARD_ENABLED: {{ ternary "true" "false" .Values.backend.persistentLeaderboardEnabled | quote }}
   ALLOW_DEPLOYED_JSON_STORAGE_FOR_TESTS: {{ include "sre-simulator.boolString" .Values.backend.allowDeployedJsonStorageForTests | quote }}

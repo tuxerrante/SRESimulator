@@ -35,12 +35,19 @@ run_direct_exec_checks() {
     fail "direct execution should succeed for CLUSTER_FLAVOR=aro"
   fi
 
+  if ! CLUSTER_FLAVOR=oci bash "$ROOT_DIR/scripts/select-deploy.sh" \
+    >"$TMP_DIR/direct-oci.txt" 2>&1; then
+    cat "$TMP_DIR/direct-oci.txt" >&2 || true
+    fail "direct execution should succeed for CLUSTER_FLAVOR=oci"
+  fi
+
   if CLUSTER_FLAVOR=invalid bash "$ROOT_DIR/scripts/select-deploy.sh" \
     >"$TMP_DIR/direct-invalid.txt" 2>&1; then
     fail "direct execution should fail for an unsupported cluster flavor"
   fi
 
   assert_contains "unsupported CLUSTER_FLAVOR='invalid'" "$TMP_DIR/direct-invalid.txt"
+  assert_contains "(expected aks, aro, or oci)" "$TMP_DIR/direct-invalid.txt"
   assert_not_contains "return: can only" "$TMP_DIR/direct-invalid.txt"
 }
 

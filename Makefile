@@ -4,6 +4,7 @@
        typecheck typecheck-backend validate \
        security audit lockfile-lint gitleaks grype require-mssql-sa-password require-mssql-database-url \
        test test-shell test-integration test-e2e-live playwright-install test-mssql dev-db smoke-backend-mssql smoke-local-vertex release-prepare verify-release-version env-check dependabot-e2e-kubeconfig dependabot-e2e-pool cleanup-e2e-namespaces cluster-capacity-report aro-login aks-login e2e-azure-route e2e-azure-route-up e2e-azure-route-refresh e2e-azure-route-down \
+       oci-up oci-refresh oci-down oci-status \
        prod-up prod-up-tag prod-down prod-status public-exposure-audit db-mode-check db-port-forward-check db-inspect db-inspect-live db-admin-stats db-admin-stats-live geneva-suppression-check prod-up-final \
        build dev start capture-readme-hero \
        docker-build-frontend docker-build-backend docker-build \
@@ -95,6 +96,30 @@ E2E_REQUIRED_VARS := AZURE_SUBSCRIPTION_ID AOAI_RG AOAI_ACCOUNT AOAI_DEPLOYMENT 
 PROD_NAMESPACE ?= sre-simulator
 PROD_METADATA_FILE ?= data/prod-route.env
 GENEVA_SUPPRESSION_RULE_ACTIVE ?= false
+
+# OCI free-tier route (single-node k3s on an Always Free A1.Flex box).
+# Deliberately parallel to the Azure route rather than a CLUSTER_FLAVOR of it:
+# e2e-azure-route-up calls aoai_fetch_creds unconditionally and
+# E2E_REQUIRED_VARS mandates the four AZURE_/AOAI_ names, none of which exists
+# on this path. Every knob is OCI_-prefixed so it cannot collide with the
+# wholesale-exported AKS_* block above.
+OCI_NAMESPACE ?= sre-simulator
+OCI_METADATA_FILE ?= data/oci-route.env
+OCI_INGRESS_HOST ?=
+OCI_IMAGE_TAG ?= latest
+OCI_IMAGE_REGISTRY ?= ghcr.io
+OCI_IMAGE_OWNER ?= tuxerrante
+OCI_REQUIRED_PLATFORM ?= linux/arm64
+OCI_OPENROUTER_SECRET_NAME ?=
+OCI_OPENROUTER_MODEL_CHAT ?=
+OCI_OPENROUTER_MODEL_COMMAND ?=
+OCI_OPENROUTER_MODEL_SCENARIO ?=
+OCI_OPENROUTER_MODEL_PROBE ?=
+OCI_REQUIRED_VARS := OCI_INGRESS_HOST DB_SECRET_NAME OCI_OPENROUTER_SECRET_NAME
+OCI_MISSING_VARS := $(strip \
+  $(if $(strip $(OCI_INGRESS_HOST)),,OCI_INGRESS_HOST) \
+  $(if $(strip $(DB_SECRET_NAME)),,DB_SECRET_NAME) \
+  $(if $(strip $(OCI_OPENROUTER_SECRET_NAME)),,OCI_OPENROUTER_SECRET_NAME))
 # Treat command-line and environment-provided values as explicit operator overrides.
 AKS_EXPOSURE_MODE_EXPLICIT := $(filter-out default file undefined automatic,$(origin AKS_EXPOSURE_MODE))
 # Optional: when set with DB_SECRET_NAME, copy the DB secret from this namespace into the E2E namespace before Helm.
@@ -114,6 +139,8 @@ export AOAI_DEPLOYMENT_CHAT AOAI_DEPLOYMENT_COMMAND AOAI_DEPLOYMENT_SCENARIO AOA
 export E2E_RELEASE BUN_VERSION
 export PROD_NAMESPACE DB_SECRET_NAME DB_SECRET_SOURCE_NAMESPACE
 export DEPENDABOT_E2E_KUBECONFIG_B64
+export OCI_NAMESPACE OCI_INGRESS_HOST OCI_IMAGE_REGISTRY OCI_IMAGE_OWNER OCI_REQUIRED_PLATFORM
+export OCI_OPENROUTER_SECRET_NAME OCI_OPENROUTER_MODEL_CHAT OCI_OPENROUTER_MODEL_COMMAND OCI_OPENROUTER_MODEL_SCENARIO OCI_OPENROUTER_MODEL_PROBE
 
 E2E_ENV_FILE_KEYS := $(strip $(shell if [ -f "$(E2E_ENV_FILE)" ]; then awk -F '=' '/^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*=/{ sub(/^[[:space:]]*/, "", $$1); print $$1 }' "$(E2E_ENV_FILE)"; fi))
 
@@ -899,6 +926,121 @@ e2e-azure-route-down: ## Delete temporary Azure OpenAI e2e namespace (uses NS=..
 	"$$KUBE_CLI" wait --for=delete "namespace/$$TARGET_NS" --timeout=10m >/dev/null || true; \
 	if [ -f "$(E2E_METADATA_FILE)" ]; then rm -f "$(E2E_METADATA_FILE)"; fi; \
 	echo "Temporary e2e environment removed."
+
+# ──────────────────────────────────────────────
+# OCI free-tier route (single-node k3s, GHCR release images, Traefik ingress)
+# ──────────────────────────────────────────────
+# On the OCI box there is no separate e2e namespace: OCI_NAMESPACE is the
+# production namespace, so oci-down borrows prod-down's confirmation token
+# rather than e2e-azure-route-down's "refuse if it equals PROD_NAMESPACE".
+oci-up: ## Deploy released GHCR images to the OCI k3s box and print the public URL
+	@set -eo pipefail; \
+	if [ -n "$(OCI_MISSING_VARS)" ]; then \
+		echo "Missing required env vars: $(OCI_MISSING_VARS)"; \
+		echo "Export: $(OCI_REQUIRED_VARS) (or set them in $(E2E_ENV_FILE))."; \
+		exit 1; \
+	fi; \
+	export CLUSTER_FLAVOR=oci; \
+	. scripts/select-deploy.sh; \
+	NS="$(OCI_NAMESPACE)"; \
+	TAG="$${TAG:-$(OCI_IMAGE_TAG)}"; \
+	PROBE_TOKEN="probe-$$(date +%Y%m%d-%H%M%S)"; \
+	echo "Using namespace: $$NS"; \
+	cluster_login; \
+	print_cluster_login_summary; \
+	prepare_release_images "$$NS" "$$TAG"; \
+	helm_deploy_sre "$$NS" "$$TAG" "$$PROBE_TOKEN"; \
+	wait_for_rollout "$$NS"; \
+	mkdir -p "$$(dirname "$(OCI_METADATA_FILE)")"; \
+	printf 'NS=%s\nRELEASE=%s\nURL=%s\nTAG=%s\nCLUSTER_FLAVOR=%s\n' "$$NS" "$(E2E_RELEASE)" "$$DEPLOY_SCHEME://$$DEPLOY_HOST" "$$TAG" "oci" > "$(OCI_METADATA_FILE)"; \
+	probe_readiness "$$DEPLOY_SCHEME" "$$DEPLOY_HOST" "$$PROBE_TOKEN"; \
+	echo "OCI deployment is ready."; \
+	echo "URL: $$DEPLOY_SCHEME://$$DEPLOY_HOST"; \
+	echo "Probe status: 200"; \
+	echo "Metadata saved to $(OCI_METADATA_FILE)"
+
+oci-refresh: ## Redeploy the OCI namespace at TAG=... (defaults to the recorded tag)
+	@set -eo pipefail; \
+	if [ -n "$(OCI_MISSING_VARS)" ]; then \
+		echo "Missing required env vars: $(OCI_MISSING_VARS)"; \
+		echo "Export: $(OCI_REQUIRED_VARS) (or set them in $(E2E_ENV_FILE))."; \
+		exit 1; \
+	fi; \
+	export CLUSTER_FLAVOR=oci; \
+	. scripts/select-deploy.sh; \
+	NS="$(OCI_NAMESPACE)"; \
+	RECORDED_TAG=""; \
+	if [ -f "$(OCI_METADATA_FILE)" ]; then \
+		RECORDED_TAG="$$(sed -n 's/^TAG=//p' "$(OCI_METADATA_FILE)")"; \
+	fi; \
+	TAG="$${TAG:-$${RECORDED_TAG:-$(OCI_IMAGE_TAG)}}"; \
+	PROBE_TOKEN="probe-$$(date +%Y%m%d-%H%M%S)"; \
+	echo "Refreshing namespace $$NS at tag $$TAG"; \
+	cluster_login; \
+	prepare_release_images "$$NS" "$$TAG"; \
+	helm_deploy_sre "$$NS" "$$TAG" "$$PROBE_TOKEN"; \
+	wait_for_rollout "$$NS"; \
+	mkdir -p "$$(dirname "$(OCI_METADATA_FILE)")"; \
+	printf 'NS=%s\nRELEASE=%s\nURL=%s\nTAG=%s\nCLUSTER_FLAVOR=%s\n' "$$NS" "$(E2E_RELEASE)" "$$DEPLOY_SCHEME://$$DEPLOY_HOST" "$$TAG" "oci" > "$(OCI_METADATA_FILE)"; \
+	probe_readiness "$$DEPLOY_SCHEME" "$$DEPLOY_HOST" "$$PROBE_TOKEN"; \
+	echo "OCI deployment refreshed."; \
+	echo "URL: $$DEPLOY_SCHEME://$$DEPLOY_HOST"; \
+	echo "Probe status: 200"; \
+	echo "Metadata saved to $(OCI_METADATA_FILE)"
+
+oci-down: ## Delete the OCI namespace (REQUIRES CONFIRMATION – type namespace name)
+	@set -e; \
+	NS="$(OCI_NAMESPACE)"; \
+	echo ""; \
+	echo "╔═══════════════════════════════════════════════════════╗"; \
+	echo "║  WARNING: this namespace is the live deployment on    ║"; \
+	echo "║  the OCI box, not a temporary e2e namespace.          ║"; \
+	echo "║                                                       ║"; \
+	echo "║  All resources in it are destroyed. Neon Postgres     ║"; \
+	echo "║  and OpenRouter are external and are NOT affected.    ║"; \
+	echo "╚═══════════════════════════════════════════════════════╝"; \
+	echo ""; \
+	printf "Type the namespace name to confirm deletion: "; \
+	read CONFIRM; \
+	if [ "$$CONFIRM" != "$$NS" ]; then \
+		echo "Confirmation failed. Expected '$$NS', got '$$CONFIRM'."; \
+		exit 1; \
+	fi; \
+	export CLUSTER_FLAVOR=oci; \
+	. scripts/select-deploy.sh; \
+	echo "Deleting namespace $$NS"; \
+	"$$KUBE_CLI" delete namespace "$$NS" --wait=false >/dev/null; \
+	"$$KUBE_CLI" wait --for=delete "namespace/$$NS" --timeout=10m >/dev/null || true; \
+	if [ -f "$(OCI_METADATA_FILE)" ]; then rm -f "$(OCI_METADATA_FILE)"; fi; \
+	echo "OCI namespace removed. Neon and OpenRouter resources remain intact."
+
+oci-status: ## Show OCI namespace status (pods, ingress, Traefik middlewares)
+	@set -e; \
+	export CLUSTER_FLAVOR=oci; \
+	. scripts/select-deploy.sh; \
+	NS="$(OCI_NAMESPACE)"; \
+	if ! "$$KUBE_CLI" get namespace "$$NS" >/dev/null 2>&1; then \
+		echo "OCI namespace '$$NS' does not exist. Run 'make oci-up' to create it."; \
+		exit 0; \
+	fi; \
+	echo "Namespace: $$NS"; \
+	echo "Cluster flavor: oci"; \
+	echo ""; \
+	echo "Pods:"; \
+	"$$KUBE_CLI" -n "$$NS" get pods -o wide 2>/dev/null || echo "  (no pods)"; \
+	echo ""; \
+	echo "Ingress:"; \
+	"$$KUBE_CLI" -n "$$NS" get ingress 2>/dev/null || echo "  (no ingress)"; \
+	echo ""; \
+	echo "Traefik middlewares:"; \
+	"$$KUBE_CLI" -n "$$NS" get middlewares.traefik.io 2>/dev/null || echo "  (none)"; \
+	echo ""; \
+	if [ -f "$(OCI_METADATA_FILE)" ]; then \
+		echo "Last recorded deployment ($(OCI_METADATA_FILE)):"; \
+		cat "$(OCI_METADATA_FILE)"; \
+	else \
+		echo "No deployment metadata at $(OCI_METADATA_FILE)."; \
+	fi
 
 # ──────────────────────────────────────────────
 # Production namespace (stable deployment, shared cluster + AOAI)
