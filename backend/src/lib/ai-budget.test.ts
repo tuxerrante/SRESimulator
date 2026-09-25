@@ -1348,4 +1348,37 @@ describe("the charge contract's own documentation", () => {
       "routes that charge the budget but are absent from the exhaustedBehaviour prose",
     ).toEqual([]);
   });
+
+  it("names every route that answers a store outage with 503", () => {
+    // Sixth inventory in this file, for the same reason as the other five: the
+    // doc sentence is the only place a client learns that a route declining to
+    // degrade answers an outage differently from a spent day, and a route
+    // added to the helper without a mention would make it quietly wrong.
+    const refusing = readdirSync(routesDir)
+      .filter((name) => name.endsWith(".ts") && !name.endsWith(".test.ts"))
+      .filter((name) =>
+        readFileSync(resolve(routesDir, name), "utf8").includes("rejectWithAiBudgetRefusal(res)"),
+      )
+      .map((name) => name.replace(/\.ts$/, ""));
+    expect(
+      refusing.length,
+      "no routes call rejectWithAiBudgetRefusal(res)",
+    ).toBeGreaterThan(0);
+
+    const runtimeDoc = readFileSync(resolve(process.cwd(), "../docs/AI_RUNTIME.md"), "utf8");
+
+    // Scoped to the outage paragraph rather than the file: every one of these
+    // route names appears elsewhere in the document, so a wider search would
+    // pass on exactly the omission this case exists for.
+    const prose = runtimeDoc
+      .split("A store outage answers **503 `ai_budget_unavailable`**")[1]
+      ?.split("\n\n**")[0];
+    expect(prose, "no store-outage paragraph in docs/AI_RUNTIME.md").toBeDefined();
+
+    const unmentioned = refusing.filter((name) => !(prose ?? "").includes(name));
+    expect(
+      unmentioned,
+      "routes that answer a store outage with 503 but are absent from its paragraph",
+    ).toEqual([]);
+  });
 });

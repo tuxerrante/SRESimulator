@@ -641,7 +641,7 @@ streaming response can be read without parsing a body:
 | `minute-exhausted` | Refused on the per-minute window (429, retry helps) |
 | `daily-exhausted` | Refused on the daily window (429). Reached under `reject` mode, and always on the live probe, which has no simulated answer to degrade to |
 | `degraded` | Daily budget spent and this response is simulated output |
-| `store-unavailable` | Window store unreadable: 503 under `reject` mode, or a simulated answer under `degrade` |
+| `store-unavailable` | Window store unreadable: 503 under `reject` mode, a simulated answer under `degrade`, and 503 again on the routes that decline to degrade |
 | `fail-open` | Store unavailable and `AI_GLOBAL_BUDGET_FAIL_MODE=open` |
 
 `chargeAiBudget` writes the *cause* it observed and the route overwrites it
@@ -658,10 +658,17 @@ The 429 body keeps `error` as its first key so existing clients surface a
 sane message, and adds `code: "ai_budget_exhausted"`, `scope`,
 `retryAfterSeconds`, `resetAt` and `degraded`.
 
-A store outage under `reject` mode answers **503 `ai_budget_unavailable`**, not
-429. Nothing was observed and nothing was spent, so reporting an exhausted day
-would send the client away until tomorrow for what is usually a blip, and send
-the operator reading the response to the budget instead of to the store.
+A store outage answers **503 `ai_budget_unavailable`**, not 429. Nothing was
+observed and nothing was spent, so reporting an exhausted day would send the
+client away until tomorrow for what is usually a blip, and send the operator
+reading the response to the budget instead of to the store.
+
+That holds on both paths that refuse rather than degrade: the middleware under
+`AI_GLOBAL_DAILY_EXHAUSTED_MODE=reject`, and chat and command under
+`AI_DEGRADE_ON_QUOTA_EXHAUSTED=false`, which see the same `exhausted` verdict a
+spent day produces and tell the two apart by the header alone. Both go through
+one refusal helper, so a route cannot answer an outage with "come back
+tomorrow".
 
 **The counters are process-local unless Redis is configured.** With more than
 one replica each pod would allow the full budget, which is why the OCI values
