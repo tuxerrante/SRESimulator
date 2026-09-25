@@ -106,10 +106,12 @@ async function loadBudgetWithRecordingStore(): Promise<{
   budget: typeof import("./ai-budget");
   consumedKeys: string[];
   consumedWindowsMs: number[];
+  recordedKeys: string[];
 }> {
   vi.resetModules();
   const consumedKeys: string[] = [];
   const consumedWindowsMs: number[] = [];
+  const recordedKeys: string[] = [];
   const counts = new Map<string, number>();
   vi.doMock("./rate-limit", () => ({
     consumeSharedWindow: vi.fn(
@@ -129,8 +131,30 @@ async function loadBudgetWithRecordingStore(): Promise<{
         };
       },
     ),
+    // Kept separate from `consumedKeys` because the whole difference between
+    // the two operations is that this one cannot decline, so a ledger that
+    // merged them could not tell a charged retry from a refused one.
+    recordSharedWindow: vi.fn(
+      async (key: string, windowMs: number, limit: number, nowMs: number) => {
+        recordedKeys.push(key);
+        const used = (counts.get(key) ?? 0) + 1;
+        counts.set(key, used);
+        return {
+          record: {
+            remaining: Math.max(0, limit - used),
+            resetAtMs: nowMs + windowMs,
+          },
+          distributed: false,
+        };
+      },
+    ),
   }));
-  return { budget: await import("./ai-budget"), consumedKeys, consumedWindowsMs };
+  return {
+    budget: await import("./ai-budget"),
+    consumedKeys,
+    consumedWindowsMs,
+    recordedKeys,
+  };
 }
 
 /**
@@ -174,6 +198,9 @@ async function loadBudgetWithBrokenStore(): Promise<typeof import("./ai-budget")
   vi.resetModules();
   vi.doMock("./rate-limit", () => ({
     consumeSharedWindow: vi.fn(async () => {
+      throw new Error("budget store unavailable");
+    }),
+    recordSharedWindow: vi.fn(async () => {
       throw new Error("budget store unavailable");
     }),
   }));
@@ -540,42 +567,39 @@ describe("chargeAiProviderRetry", () => {
   });
 
   it("charges a second provider request the route never paid for", async () => {
-    const { budget, consumedKeys } = await loadBudgetWithRecordingStore();
+    const { budget, consumedKeys, recordedKeys } = await loadBudgetWithRecordingStore();
 
     await charge(budget.chargeAiBudget);
     await budget.chargeAiProviderRetry();
 
     const dayKey = `global:ai:day:${new Date().toISOString().slice(0, 10)}`;
-    expect(consumedKeys).toEqual([
-      "global:ai:minute",
-      dayKey,
-      "global:ai:minute",
-      dayKey,
-    ]);
+    expect(consumedKeys).toEqual(["global:ai:minute", dayKey]);
+    expect(recordedKeys).toEqual(["global:ai:minute", dayKey]);
   });
 
-  it("charges the day even when the minute window is already spent", async () => {
+  it("charges both windows even when the minute window is already spent", async () => {
     // The opposite of chargeAiBudget's ordering rule, on purpose: that rule
     // holds because a caller refused on the minute window never reached the
-    // provider. This request is already going out, so skipping the day would
-    // under-count a spend that really happens.
+    // provider. This request is already going out, so skipping either window
+    // would under-count a spend that really happens.
     process.env.AI_GLOBAL_MINUTE_MAX = "1";
-    const { budget, consumedKeys } = await loadBudgetWithRecordingStore();
+    const { budget, recordedKeys } = await loadBudgetWithRecordingStore();
 
     await charge(budget.chargeAiBudget);
     await budget.chargeAiProviderRetry();
 
     const dayKey = `global:ai:day:${new Date().toISOString().slice(0, 10)}`;
-    expect(consumedKeys.filter((key) => key === dayKey)).toHaveLength(2);
+    expect(recordedKeys).toEqual(["global:ai:minute", dayKey]);
   });
 
   it("charges nothing when the limiter is off", async () => {
     process.env.AI_PROVIDER = "azure";
-    const { budget, consumedKeys } = await loadBudgetWithRecordingStore();
+    const { budget, consumedKeys, recordedKeys } = await loadBudgetWithRecordingStore();
 
     await budget.chargeAiProviderRetry();
 
     expect(consumedKeys).toEqual([]);
+    expect(recordedKeys).toEqual([]);
   });
 
   it("swallows a store outage rather than losing an answer already paid for", async () => {
@@ -586,6 +610,42 @@ describe("chargeAiProviderRetry", () => {
 
     expect(warn).toHaveBeenCalled();
     warn.mockRestore();
+  });
+
+  it("still occupies the minute window after the requests it overran expire", async () => {
+    // The sharp edge of recording rather than consuming, and the one a call
+    // count cannot show. Two retries go out while the minute window is full:
+    // a consume would add nothing, so a minute later the window would read
+    // empty and the deployment would sail past the provider's per-minute cap
+    // on requests it had already made.
+    process.env.AI_GLOBAL_MINUTE_MAX = "2";
+    const { chargeAiBudget, chargeAiProviderRetry } = await loadBudget();
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date("2026-09-18T12:00:00.000Z"));
+      const first = await charge(chargeAiBudget);
+      const second = await charge(chargeAiBudget);
+
+      // Mid-window, so these two entries outlive the two above.
+      vi.setSystemTime(new Date("2026-09-18T12:00:30.000Z"));
+      await chargeAiProviderRetry();
+      await chargeAiProviderRetry();
+
+      // Past the first pair's expiry, inside the retries'.
+      vi.setSystemTime(new Date("2026-09-18T12:01:01.000Z"));
+      const afterRollover = await charge(chargeAiBudget);
+
+      expect(first.outcome).toBe("ok");
+      expect(second.outcome).toBe("ok");
+      // `answered`, not `exhausted`: a minute overrun is a 429 the middleware
+      // writes itself, because the window rolls in under a minute and a retry
+      // genuinely helps. `exhausted` is the daily scope's degrade signal.
+      expect(afterRollover.outcome).toBe("answered");
+      expect(afterRollover.res.statusCode).toBe(429);
+      expect(afterRollover.res.headers["x-sresim-ai-budget"]).toBe("minute-exhausted");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("makes the overspend visible to the next caller", async () => {

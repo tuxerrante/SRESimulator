@@ -478,4 +478,37 @@ describe("InMemorySlidingWindowStore", () => {
     expect(decision.allowed).toBe(false);
     expect(decision.remaining).toBe(0);
   });
+
+  // `record` exists because `consume` adds nothing once a window is full, so
+  // charging an already-in-flight request through it would leave exactly the
+  // requests that overran the cap unrecorded.
+  it("adds an entry past capacity and dates the window from its front", async () => {
+    const store = new InMemorySlidingWindowStore();
+    const key = "global:ai:minute";
+
+    expect((await store.consume(key, 0, MINUTE_MS, 2)).allowed).toBe(true);
+    expect((await store.consume(key, 0, MINUTE_MS, 2)).allowed).toBe(true);
+    // The positive arm: the window really is full, so what `record` does next
+    // is the property under test and not an artefact of an empty bucket.
+    expect((await store.consume(key, 0, MINUTE_MS, 2)).allowed).toBe(false);
+
+    // Two retries, because one is not enough to refill a two-slot window once
+    // the originals expire -- and it is the refill that proves the recording
+    // outlives the requests it overran.
+    const recorded = await store.record(key, 30_000, MINUTE_MS, 2);
+    await store.record(key, 30_000, MINUTE_MS, 2);
+
+    // Floors at zero rather than going negative: an over-capacity window has
+    // to answer the same shape an empty one does.
+    expect(recorded.remaining).toBe(0);
+    // Dated from the oldest surviving entry, not from `now`. Over capacity the
+    // window drains from its front, so `now + windowMs` would promise a slot
+    // 30s later than the one that actually frees up.
+    expect(recorded.resetAtMs).toBe(MINUTE_MS);
+
+    // The harm the recording exists to prevent: once the two original entries
+    // expire a consume would find an empty window and wave the caller through,
+    // past a cap the recorded request already overran.
+    expect((await store.consume(key, 61_000, MINUTE_MS, 2)).allowed).toBe(false);
+  });
 });

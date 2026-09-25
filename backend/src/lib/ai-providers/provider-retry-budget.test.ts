@@ -73,13 +73,21 @@ const BASIC_REQUEST = {
  * which cannot distinguish "charged once" from "charged twice" when both
  * requests belong to the same call. So these cases assert against the shared
  * window store -- the thing the charge actually changes.
+ *
+ * The two ledgers stay apart on purpose. A retry charge has to *record*, not
+ * *consume*: the send is already in flight, so an operation that can decline
+ * would leave the request the provider has seen unaccounted for. Merging the
+ * two into one ledger could not tell a recorded retry from a refused one,
+ * which is the whole property under test.
  */
 async function loadRuntimeWithRecordingStore(): Promise<{
   runtime: typeof import("../ai-runtime");
   consumedKeys: string[];
+  recordedKeys: string[];
 }> {
   vi.resetModules();
   const consumedKeys: string[] = [];
+  const recordedKeys: string[] = [];
   vi.doMock("../rate-limit", () => ({
     consumeSharedWindow: vi.fn(
       async (key: string, windowMs: number, limit: number, nowMs: number) => {
@@ -91,12 +99,26 @@ async function loadRuntimeWithRecordingStore(): Promise<{
             resetAtMs: nowMs + windowMs,
             retryAfterSeconds: Math.ceil(windowMs / 1000),
           },
+          releaseToken: `${nowMs}`,
           distributed: false,
         };
       },
     ),
+    recordSharedWindow: vi.fn(
+      async (key: string, windowMs: number, limit: number, nowMs: number) => {
+        recordedKeys.push(key);
+        return {
+          record: {
+            remaining: Math.max(limit - 1, 0),
+            resetAtMs: nowMs + windowMs,
+          },
+          distributed: false,
+        };
+      },
+    ),
+    releaseSharedWindow: vi.fn(async () => {}),
   }));
-  return { runtime: await import("../ai-runtime"), consumedKeys };
+  return { runtime: await import("../ai-runtime"), consumedKeys, recordedKeys };
 }
 
 function dayKey(): string {
@@ -126,7 +148,7 @@ describe("a provider request beyond the first is charged to the shared budget", 
   });
 
   it("charges nothing when the one request the route paid for is the only one sent", async () => {
-    const { runtime, consumedKeys } = await loadRuntimeWithRecordingStore();
+    const { runtime, consumedKeys, recordedKeys } = await loadRuntimeWithRecordingStore();
     vi.stubGlobal(
       "fetch",
       vi.fn(async () => okResponse("hi")),
@@ -134,11 +156,12 @@ describe("a provider request beyond the first is charged to the shared budget", 
 
     await expect(runtime.generateAiText({ ...BASIC_REQUEST })).resolves.toBe("hi");
 
+    expect(recordedKeys).toEqual([]);
     expect(consumedKeys).toEqual([]);
   });
 
   it("charges the 429 backoff attempt, which the route never paid for", async () => {
-    const { runtime, consumedKeys } = await loadRuntimeWithRecordingStore();
+    const { runtime, consumedKeys, recordedKeys } = await loadRuntimeWithRecordingStore();
     const fetchMock = vi
       .fn()
       .mockImplementationOnce(async () => throttledResponse())
@@ -148,7 +171,10 @@ describe("a provider request beyond the first is charged to the shared budget", 
     await expect(runtime.generateAiText({ ...BASIC_REQUEST })).resolves.toBe("hi");
 
     expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect(consumedKeys).toEqual(["global:ai:minute", dayKey()]);
+    expect(recordedKeys).toEqual(["global:ai:minute", dayKey()]);
+    // Recorded, never consumed: a capped consume could refuse a send that
+    // has already left the process.
+    expect(consumedKeys).toEqual([]);
   });
 
   it("charges the reasoning retry, which re-enters the transport from ai-runtime", async () => {
@@ -156,7 +182,7 @@ describe("a provider request beyond the first is charged to the shared budget", 
     // is the case that proves the count survives the `{ ...request }` spread
     // `generateAiText` retries through. Dropping the count there would make
     // the retry read as a first request and cost the account a free one.
-    const { runtime, consumedKeys } = await loadRuntimeWithRecordingStore();
+    const { runtime, consumedKeys, recordedKeys } = await loadRuntimeWithRecordingStore();
     const fetchMock = vi
       .fn()
       .mockImplementationOnce(async () => reasoningExhaustedResponse())
@@ -166,11 +192,14 @@ describe("a provider request beyond the first is charged to the shared budget", 
     await expect(runtime.generateAiText({ ...BASIC_REQUEST })).resolves.toBe("hi");
 
     expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect(consumedKeys).toEqual(["global:ai:minute", dayKey()]);
+    expect(recordedKeys).toEqual(["global:ai:minute", dayKey()]);
+    // Recorded, never consumed: a capped consume could refuse a send that
+    // has already left the process.
+    expect(consumedKeys).toEqual([]);
   });
 
   it("charges every extra send, not just the first of them", async () => {
-    const { runtime, consumedKeys } = await loadRuntimeWithRecordingStore();
+    const { runtime, consumedKeys, recordedKeys } = await loadRuntimeWithRecordingStore();
     const fetchMock = vi
       .fn()
       .mockImplementationOnce(async () => throttledResponse())
@@ -181,16 +210,17 @@ describe("a provider request beyond the first is charged to the shared budget", 
     await expect(runtime.generateAiText({ ...BASIC_REQUEST })).resolves.toBe("hi");
 
     expect(fetchMock).toHaveBeenCalledTimes(3);
-    expect(consumedKeys).toEqual([
+    expect(recordedKeys).toEqual([
       "global:ai:minute",
       dayKey(),
       "global:ai:minute",
       dayKey(),
     ]);
+    expect(consumedKeys).toEqual([]);
   });
 
   it("charges a streamed retry too", async () => {
-    const { runtime, consumedKeys } = await loadRuntimeWithRecordingStore();
+    const { runtime, consumedKeys, recordedKeys } = await loadRuntimeWithRecordingStore();
     const encoder = new TextEncoder();
     const streamOk = (): Response =>
       new Response(
@@ -219,7 +249,10 @@ describe("a provider request beyond the first is charged to the shared budget", 
     }
 
     expect(text).toBe("hi");
-    expect(consumedKeys).toEqual(["global:ai:minute", dayKey()]);
+    expect(recordedKeys).toEqual(["global:ai:minute", dayKey()]);
+    // Recorded, never consumed: a capped consume could refuse a send that
+    // has already left the process.
+    expect(consumedKeys).toEqual([]);
   });
 
   it("charges nothing on a provider whose budget is not being shared", async () => {
@@ -227,7 +260,7 @@ describe("a provider request beyond the first is charged to the shared budget", 
     process.env.AI_AZURE_OPENAI_ENDPOINT = "https://example.openai.azure.com";
     process.env.AI_AZURE_OPENAI_API_KEY = "azure-key";
     process.env.AI_AZURE_OPENAI_DEPLOYMENT = "gpt-test";
-    const { runtime, consumedKeys } = await loadRuntimeWithRecordingStore();
+    const { runtime, consumedKeys, recordedKeys } = await loadRuntimeWithRecordingStore();
     const fetchMock = vi
       .fn()
       .mockImplementationOnce(async () => throttledResponse())
@@ -237,6 +270,7 @@ describe("a provider request beyond the first is charged to the shared budget", 
     await expect(runtime.generateAiText({ ...BASIC_REQUEST })).resolves.toBe("hi");
 
     expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(recordedKeys).toEqual([]);
     expect(consumedKeys).toEqual([]);
 
     delete process.env.AI_AZURE_OPENAI_ENDPOINT;

@@ -34,6 +34,12 @@ export interface SlidingWindowDecision {
   releaseToken?: string;
 }
 
+/** What a window holds after an entry was added to it. */
+export interface SlidingWindowRecord {
+  remaining: number;
+  resetAtMs: number;
+}
+
 interface SlidingWindowStore {
   readonly distributed: boolean;
   consume(
@@ -42,6 +48,22 @@ interface SlidingWindowStore {
     windowMs: number,
     limit: number,
   ): Promise<SlidingWindowDecision>;
+  /**
+   * Add an entry to the window and report what it now holds, without ever
+   * refusing. `consume` adds nothing once the window is full, which is right
+   * for a caller asking permission and wrong for one reporting a request that
+   * is already in flight: the entry the refusal declined to write is exactly
+   * the one that would have kept the window accurate.
+   *
+   * `remaining` floors at zero and `resetAtMs` is the oldest entry's expiry,
+   * so an over-capacity window answers the same shape as an empty one.
+   */
+  record(
+    key: string,
+    nowMs: number,
+    windowMs: number,
+    limit: number,
+  ): Promise<SlidingWindowRecord>;
   /**
    * Best-effort compensation for a multi-window charge that failed partway.
    * Not a general refund: the only caller is a failure path that has already
@@ -95,6 +117,30 @@ redis.call("PEXPIRE", key, windowMs)
 
 local count = redis.call("ZCARD", key)
 return {1, count, now + windowMs}
+`;
+/**
+ * The unconditional sibling of the script above: no capacity branch, so the
+ * entry always lands. The reset comes from the oldest surviving member rather
+ * than from `now`, because over capacity the window drains from its front.
+ */
+const REDIS_RECORD_WINDOW_SCRIPT = `
+local key = KEYS[1]
+local now = tonumber(ARGV[1])
+local windowMs = tonumber(ARGV[2])
+local member = ARGV[4]
+local cutoff = now - windowMs
+
+redis.call("ZREMRANGEBYSCORE", key, "-inf", cutoff)
+redis.call("ZADD", key, now, member)
+redis.call("PEXPIRE", key, windowMs)
+
+local count = redis.call("ZCARD", key)
+local oldest = redis.call("ZRANGE", key, 0, 0, "WITHSCORES")
+local resetAt = now + windowMs
+if oldest[2] then
+  resetAt = tonumber(oldest[2]) + windowMs
+end
+return {1, count, resetAt}
 `;
 
 function readPositiveLimitFromEnv(
@@ -437,6 +483,29 @@ export class InMemorySlidingWindowStore implements SlidingWindowStore {
     };
   }
 
+  async record(
+    key: string,
+    nowMs: number,
+    windowMs: number,
+    limit: number,
+  ): Promise<SlidingWindowRecord> {
+    const cutoff = nowMs - windowMs;
+    this.operationsSinceSweep += 1;
+    if (this.operationsSinceSweep >= IN_MEMORY_SWEEP_INTERVAL) {
+      this.pruneExpiredBuckets(nowMs);
+      this.operationsSinceSweep = 0;
+    }
+
+    const timestamps = this.readActiveBucket(key, cutoff);
+    timestamps.push(nowMs);
+    this.buckets.set(key, { windowMs, timestamps });
+
+    return {
+      remaining: Math.max(limit - timestamps.length, 0),
+      resetAtMs: (timestamps[0] ?? nowMs) + windowMs,
+    };
+  }
+
   /**
    * Entries here are bare timestamps, so two slots taken in the same
    * millisecond are indistinguishable -- which is exactly why removing the
@@ -574,6 +643,29 @@ class RedisSlidingWindowStore implements SlidingWindowStore {
     return decision.allowed ? { ...decision, releaseToken: member } : decision;
   }
 
+  async record(
+    key: string,
+    nowMs: number,
+    windowMs: number,
+    limit: number,
+  ): Promise<SlidingWindowRecord> {
+    const client = await this.getClient();
+    const result = await client.sendCommand<string[]>([
+      "EVAL",
+      REDIS_RECORD_WINDOW_SCRIPT,
+      "1",
+      `${REDIS_KEY_PREFIX}:${key}`,
+      String(nowMs),
+      String(windowMs),
+      String(limit),
+      this.nextMember(nowMs),
+    ]);
+    // The script never refuses, so the shared parser's allowed branch is the
+    // only one reachable and its `remaining` is the count this needs.
+    const decision = this.parseResult(result, nowMs, windowMs, limit);
+    return { remaining: decision.remaining, resetAtMs: decision.resetAtMs };
+  }
+
   /**
    * Members are unique per process and per call, so this removes the one entry
    * this process added and nothing else. The key keeps its PEXPIRE from the
@@ -659,6 +751,27 @@ export async function consumeSharedWindow(
  * cannot make the failure path worse than it is today, and when the store is
  * merely intermittent it stops a refused request from leaking a slot.
  */
+/**
+ * Add one entry to a window without asking whether there was room.
+ *
+ * For a caller reporting a provider request that is already on the wire: it
+ * cannot be refused, so `consumeSharedWindow` would answer a question nobody
+ * asked and, once the window is full, would answer it by recording nothing --
+ * leaving the very requests that overran the cap invisible to the window that
+ * exists to catch them. Like `consumeSharedWindow` this neither catches nor
+ * reports; the caller decides what an unavailable store means.
+ */
+export async function recordSharedWindow(
+  key: string,
+  windowMs: number,
+  limit: number,
+  nowMs: number = Date.now(),
+): Promise<{ record: SlidingWindowRecord; distributed: boolean }> {
+  const store = getSlidingWindowStore();
+  const record = await store.record(key, nowMs, windowMs, limit);
+  return { record, distributed: store.distributed };
+}
+
 export async function releaseSharedWindow(key: string, releaseToken: string): Promise<void> {
   const store = getSlidingWindowStore();
   await store.release(key, releaseToken);

@@ -5,7 +5,7 @@ import {
   shouldDegradeOnQuotaExhausted,
 } from "./ai-config";
 import { fetchOpenRouterKeyStatus } from "./ai-providers/openrouter";
-import { consumeSharedWindow, releaseSharedWindow } from "./rate-limit";
+import { consumeSharedWindow, recordSharedWindow, releaseSharedWindow } from "./rate-limit";
 
 const MINUTE_MS = 60 * 1000;
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -550,6 +550,13 @@ export async function chargeAiBudget(res: Response): Promise<AiBudgetOutcome> {
  * request is already going out, so both windows have to reflect it or they
  * describe a spend that did not happen the way they say.
  *
+ * Which is why this records rather than consumes. `consumeSharedWindow` adds
+ * no entry once a window is full, so charging a retry through it would leave
+ * exactly the requests that overran the cap unrecorded -- and on the minute
+ * window, whose entries expire continuously, that under-count opens the next
+ * minute's allowance early and walks the deployment past the provider's real
+ * per-minute limit.
+ *
  * It never refuses and never throws. The first request of this call was
  * already paid for and is in flight, so declining the retry would abandon a
  * slot already spent and hand the caller a 500 where the degraded answer is
@@ -568,17 +575,17 @@ export async function chargeAiProviderRetry(): Promise<void> {
   const dailyMax = getGlobalDailyMax();
 
   try {
-    const minute = await consumeSharedWindow(MINUTE_KEY, MINUTE_MS, minuteMax, nowMs);
+    const minute = await recordSharedWindow(MINUTE_KEY, MINUTE_MS, minuteMax, nowMs);
     rememberWindow("minute", {
       limit: minuteMax,
-      remaining: minute.decision.remaining,
-      resetAtMs: minute.decision.resetAtMs,
+      remaining: minute.record.remaining,
+      resetAtMs: minute.record.resetAtMs,
     });
 
-    const day = await consumeSharedWindow(dayKeyForUtcDate(nowMs), DAY_MS, dailyMax, nowMs);
+    const day = await recordSharedWindow(dayKeyForUtcDate(nowMs), DAY_MS, dailyMax, nowMs);
     rememberWindow("daily", {
       limit: dailyMax,
-      remaining: day.decision.remaining,
+      remaining: day.record.remaining,
       resetAtMs: nextUtcMidnightMs(nowMs),
     });
   } catch (error) {
