@@ -1,4 +1,4 @@
-import { pgQuery, type PgQueryable } from "./pg-pool";
+import { pgQuery, pgReadQuery, type PgQueryable } from "./pg-pool";
 import type { AnonymousTrialClaim, IAnonymousTrialStore } from "./types";
 
 /**
@@ -18,7 +18,7 @@ export class PgAnonymousTrialStore implements IAnonymousTrialStore {
   constructor(private pool: PgTransactional) {}
 
   async hasActiveClaim(claimKey: string, now: number = Date.now()): Promise<boolean> {
-    const result = await pgQuery<{ one: number }>(this.pool, `
+    const result = await pgReadQuery<{ one: number }>(this.pool, `
       SELECT 1 AS one
       FROM anonymous_trial_claims
       WHERE claim_key = $1

@@ -6,7 +6,7 @@ import type {
   GameplayScenarioAnalytics,
   RecentGameplaySession,
 } from "../../../../shared/types/gameplay";
-import { pgQuery, type PgQueryable } from "./pg-pool";
+import { pgQuery, pgReadQuery, type PgQueryable } from "./pg-pool";
 import type { GameplayAnalyticsFilters, IMetricsStore, GameplayRecord } from "./types";
 
 const DUPLICATE_LIFECYCLE_INDEX = "ux_gameplay_metrics_session_lifecycle";
@@ -223,7 +223,7 @@ export class PgMetricsStore implements IMetricsStore {
   }
 
   async getPlayerHistory(nickname: string): Promise<GameplayRecord[]> {
-    const result = await pgQuery<GameplayRow>(this.pool, `
+    const result = await pgReadQuery<GameplayRow>(this.pool, `
       SELECT ${GAMEPLAY_COLUMNS}
       FROM gameplay_metrics
       WHERE nickname = $1
@@ -238,7 +238,7 @@ export class PgMetricsStore implements IMetricsStore {
     sessionToken: string,
     lifecycleState: GameplayLifecycleState,
   ): Promise<boolean> {
-    const result = await pgQuery<{ matched: number }>(this.pool, `
+    const result = await pgReadQuery<{ matched: number }>(this.pool, `
       SELECT 1 AS matched
       FROM gameplay_metrics
       WHERE session_token = $1
@@ -250,7 +250,7 @@ export class PgMetricsStore implements IMetricsStore {
   }
 
   async getLatestBySessionToken(sessionToken: string): Promise<GameplayRecord | null> {
-    const result = await pgQuery<GameplayRow>(this.pool, `
+    const result = await pgReadQuery<GameplayRow>(this.pool, `
       SELECT ${GAMEPLAY_COLUMNS}
       FROM gameplay_metrics
       WHERE session_token = $1
@@ -270,7 +270,7 @@ export class PgMetricsStore implements IMetricsStore {
   }
 
   async getLatestCompletedBySessionToken(sessionToken: string): Promise<GameplayRecord | null> {
-    const result = await pgQuery<GameplayRow>(this.pool, `
+    const result = await pgReadQuery<GameplayRow>(this.pool, `
       SELECT ${GAMEPLAY_COLUMNS}
       FROM gameplay_metrics
       WHERE session_token = $1
@@ -305,7 +305,7 @@ export class PgMetricsStore implements IMetricsStore {
   async getGameplayAnalytics(
     filters?: GameplayAnalyticsFilters,
   ): Promise<GameplayAnalytics> {
-    const result = await pgQuery<{ analytics: AnalyticsPayload }>(this.pool, `
+    const result = await pgReadQuery<{ analytics: AnalyticsPayload }>(this.pool, `
       WITH ranked_sessions AS (
         SELECT
           platform,

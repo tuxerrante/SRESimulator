@@ -560,20 +560,20 @@ describe("PgMetricsStore", () => {
   });
 });
 
-describe("pgQuery retry", () => {
+describe("pgReadQuery retry", () => {
   beforeEach(() => {
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
   });
 
-  it("retries once when the connection was dropped underneath the query", async () => {
-    const { pgQuery } = await import("./pg-pool");
+  it("retries once when the connection was dropped underneath the read", async () => {
+    const { pgReadQuery } = await import("./pg-pool");
     const dropped = Object.assign(new Error("terminating connection"), { code: "57P01" });
     const query = vi
       .fn()
       .mockRejectedValueOnce(dropped)
       .mockResolvedValue({ rows: [{ one: 1 }], rowCount: 1 });
 
-    await expect(pgQuery({ query }, "SELECT 1")).resolves.toEqual({
+    await expect(pgReadQuery({ query }, "SELECT 1")).resolves.toEqual({
       rows: [{ one: 1 }],
       rowCount: 1,
     });
@@ -581,11 +581,72 @@ describe("pgQuery retry", () => {
   });
 
   it("does not retry a statement that failed on its own merits", async () => {
-    const { pgQuery } = await import("./pg-pool");
+    const { pgReadQuery } = await import("./pg-pool");
     const badSyntax = Object.assign(new Error("syntax error"), { code: "42601" });
     const query = vi.fn().mockRejectedValue(badSyntax);
 
-    await expect(pgQuery({ query }, "SELEKT 1")).rejects.toThrow("syntax error");
+    await expect(pgReadQuery({ query }, "SELECT nope")).rejects.toThrow("syntax error");
     expect(query).toHaveBeenCalledTimes(1);
+  });
+
+  it("refuses a write before it reaches the database", async () => {
+    const { pgReadQuery } = await import("./pg-pool");
+    const query = vi.fn();
+
+    // The guard is what makes the read/write split enforceable rather than a
+    // naming convention: a write routed here would otherwise look correct until
+    // a suspend replayed it in production.
+    await expect(pgReadQuery({ query }, "INSERT INTO sessions VALUES ($1)")).rejects.toThrow(
+      /not read-only/,
+    );
+    expect(query).not.toHaveBeenCalled();
+  });
+
+  it("refuses a data-modifying CTE, which still opens with WITH", async () => {
+    const { pgReadQuery } = await import("./pg-pool");
+    const query = vi.fn();
+
+    await expect(
+      pgReadQuery({ query }, "WITH moved AS (DELETE FROM sessions RETURNING *) SELECT * FROM moved"),
+    ).rejects.toThrow(/not read-only/);
+    expect(query).not.toHaveBeenCalled();
+  });
+});
+
+describe("pgQuery never retries", () => {
+  it("surfaces a dropped connection instead of replaying the write", async () => {
+    const { pgQuery } = await import("./pg-pool");
+    const dropped = Object.assign(new Error("terminating connection"), { code: "57P01" });
+    const query = vi.fn().mockRejectedValue(dropped);
+
+    // A retry here could duplicate a write the server already committed but
+    // never got to acknowledge — PgSessionStore.create() is a plain INSERT.
+    await expect(pgQuery({ query }, "INSERT INTO sessions VALUES ($1)")).rejects.toThrow(
+      "terminating connection",
+    );
+    expect(query).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("isReadOnlyStatement", () => {
+  it("does not mistake this schema's column names for write keywords", async () => {
+    const { isReadOnlyStatement } = await import("./pg-pool");
+
+    // `created_at` / `updated_at` continue into another word character, so the
+    // \b anchors do not fire. That is the whole reason the guard can be a
+    // keyword test rather than a parser.
+    expect(
+      isReadOnlyStatement("SELECT created_at, updated_at FROM sessions WHERE is_deleted = false"),
+    ).toBe(true);
+  });
+
+  it("classifies every statement the pg stores actually issue", async () => {
+    const { isReadOnlyStatement } = await import("./pg-pool");
+
+    expect(isReadOnlyStatement("  \n  SELECT * FROM players")).toBe(true);
+    expect(isReadOnlyStatement("WITH ranked AS (SELECT 1) SELECT * FROM ranked")).toBe(true);
+    expect(isReadOnlyStatement("INSERT INTO players VALUES ($1) ON CONFLICT DO UPDATE SET x=1")).toBe(false);
+    expect(isReadOnlyStatement("UPDATE sessions SET end_time = $1")).toBe(false);
+    expect(isReadOnlyStatement("DELETE FROM sessions WHERE start_time < $1")).toBe(false);
   });
 });

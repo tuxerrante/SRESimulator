@@ -1,5 +1,5 @@
 import type { GithubViewer } from "../../../../shared/auth/viewer";
-import { pgQuery, type PgQueryable } from "./pg-pool";
+import { pgQuery, pgReadQuery, type PgQueryable } from "./pg-pool";
 import type { IPlayerStore, PlayerRecord } from "./types";
 
 export class PgPlayerStore implements IPlayerStore {
@@ -30,7 +30,7 @@ export class PgPlayerStore implements IPlayerStore {
   }
 
   async getByGithubUserId(githubUserId: string): Promise<PlayerRecord | null> {
-    const result = await pgQuery<{
+    const result = await pgReadQuery<{
       github_user_id: string;
       github_login: string;
       display_name: string;

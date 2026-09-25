@@ -608,9 +608,22 @@ accident:
 
 Neon's free plan autosuspends compute after five minutes of idleness and the
 setting cannot be disabled, so `pool.on("error")` is mandatory: an unhandled
-`error` on an idle `pg` client terminates the Node process. The pool retries
-once on `ECONNRESET`/`EPIPE`/`ETIMEDOUT` and on SQLSTATE `57P01`/`57P02`, with
-a 10-second connect timeout sized for a cold start.
+`error` on an idle `pg` client terminates the Node process. The connect timeout
+is 10 seconds, sized for a cold start.
+
+**Only reads retry, and the split is enforced rather than trusted.** A dropped
+connection does not tell the client whether the server committed, so replaying
+a write either duplicates it or turns it into a unique violation the caller
+never provoked. `pgReadQuery` retries once on
+`ECONNRESET`/`EPIPE`/`ETIMEDOUT` and on SQLSTATE `57P01`/`57P02` — replaying a
+read is free, and the first query after five idle minutes routinely lands on a
+connection that was alive when it was checked out. `pgQuery` never retries and
+is what every write goes through. `pgReadQuery` refuses a statement that is not
+read-only before it reaches the database, because routing a write through it
+would otherwise stay invisible until a suspend happened to land mid-write in
+production. The check reads the statement rather than the function name: the
+analytics query opens with `WITH`, and a data-modifying CTE
+(`WITH ... AS (INSERT ...)`) opens with `WITH` too and is still a write.
 
 For the same reason **`/readyz` does not touch the database by default**. A
 `SELECT 1` on a probe that fires every ten seconds keeps the compute awake

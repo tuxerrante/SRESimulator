@@ -4,7 +4,8 @@ import type { Pool, PoolConfig, QueryResultRow } from "pg";
  * Neon's free plan allows 0.5 GB and autosuspends compute after 5 minutes of
  * idleness, which cannot be disabled. Everything here is shaped by that:
  * a small pool, a connect timeout long enough to absorb a cold start, and a
- * one-shot retry for the connection the suspend killed underneath us.
+ * one-shot retry — for reads only — of the connection the suspend killed
+ * underneath us.
  */
 const DEFAULT_MAX_CLIENTS = 5;
 const DEFAULT_IDLE_TIMEOUT_MS = 30_000;
@@ -113,24 +114,73 @@ export interface PgQueryable {
 }
 
 /**
- * Run a query, retrying once if the connection was torn down underneath us.
+ * Run a query without any automatic retry.
  *
- * Only connection-level failures are retried, and only once: a statement that
- * failed for its own reasons is not made correct by running it again, and every
- * caller here is either read-only or idempotent under a unique constraint.
+ * This is the default because a dropped connection does not tell the client
+ * whether the server committed. Replaying a write that already landed either
+ * duplicates it or turns it into a unique-violation the caller never provoked,
+ * and the pool reconnects for the next request anyway — so a write that races a
+ * Neon suspend surfaces one honest error rather than a silent double effect.
+ *
+ * Reads go through {@link pgReadQuery}, which is where the retry lives.
  */
 export async function pgQuery<R extends QueryResultRow>(
   pool: PgQueryable,
   text: string,
   values?: unknown[],
 ): Promise<PgQueryResult<R>> {
+  return pool.query<R>(text, values);
+}
+
+/**
+ * A statement that reaches the database only to read it. `WITH` is allowed
+ * because the analytics query is a CTE chain, but a data-modifying CTE
+ * (`WITH ... AS (INSERT ...)`) is still a write and is caught by the second
+ * test rather than by the leading keyword.
+ *
+ * Word boundaries keep the column names this schema actually uses — and
+ * `created_at`, `updated_at`, `is_deleted` — from reading as write keywords,
+ * because each continues into another word character.
+ */
+const READ_STATEMENT_START = /^\s*(?:--[^\n]*\n|\/\*[\s\S]*?\*\/|\s)*(select|with)\b/i;
+const WRITE_KEYWORD =
+  /\b(insert|update|delete|merge|truncate|create|drop|alter|grant|revoke|call)\b/i;
+
+export function isReadOnlyStatement(text: string): boolean {
+  return READ_STATEMENT_START.test(text) && !WRITE_KEYWORD.test(text);
+}
+
+/**
+ * Run a read, retrying once if the connection was torn down underneath us.
+ *
+ * Neon drops idle server connections whenever compute suspends, so the first
+ * query after five idle minutes routinely fails on a connection that was alive
+ * when it was checked out. Replaying a read is free: it cannot have committed
+ * anything, so the worst case is the same rows a moment later.
+ *
+ * The statement is checked rather than trusted. Routing a write through here is
+ * exactly the mistake this split exists to prevent, and it would otherwise be
+ * invisible until a suspend happened to land mid-write in production.
+ */
+export async function pgReadQuery<R extends QueryResultRow>(
+  pool: PgQueryable,
+  text: string,
+  values?: unknown[],
+): Promise<PgQueryResult<R>> {
+  if (!isReadOnlyStatement(text)) {
+    throw new Error(
+      "pgReadQuery refuses a statement that is not read-only; use pgQuery, " +
+        "which does not retry, so a committed write cannot be replayed.",
+    );
+  }
+
   try {
     return await pool.query<R>(text, values);
   } catch (error) {
     if (!isRetryableConnectionError(error)) {
       throw error;
     }
-    console.warn("[storage] retrying Postgres query after a dropped connection");
+    console.warn("[storage] retrying Postgres read after a dropped connection");
     return pool.query<R>(text, values);
   }
 }

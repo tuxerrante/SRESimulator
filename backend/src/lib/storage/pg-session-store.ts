@@ -1,6 +1,6 @@
 import type { Difficulty } from "../../../../shared/types/game";
 import { DEFAULT_PLATFORM_ID } from "../../../../shared/types/platform";
-import { pgQuery, type PgQueryable } from "./pg-pool";
+import { pgQuery, pgReadQuery, type PgQueryable } from "./pg-pool";
 import type { CreateGameSessionInput, ISessionStore, GameSession, TrafficSource } from "./types";
 
 const SESSION_TTL_MS = 24 * 60 * 60 * 1000;
@@ -138,7 +138,7 @@ export class PgSessionStore implements ISessionStore {
 
     const cutoff = Date.now() - SESSION_TTL_MS;
 
-    const result = await pgQuery<SessionRow>(this.pool, `
+    const result = await pgReadQuery<SessionRow>(this.pool, `
       SELECT ${SESSION_COLUMNS}
       FROM sessions
       WHERE token = $1

@@ -1,7 +1,7 @@
 import type { Difficulty } from "../../../../shared/types/game";
 import type { PlatformId } from "../../../../shared/types/platform";
 import type { LeaderboardEntry, HallOfFameEntry } from "../../../../shared/types/leaderboard";
-import { pgQuery, type PgQueryable } from "./pg-pool";
+import { pgQuery, pgReadQuery, type PgQueryable } from "./pg-pool";
 import type { ILeaderboardStore, LeaderboardFilters } from "./types";
 
 const MAX_ENTRIES_PER_DIFFICULTY = 10;
@@ -63,7 +63,7 @@ export class PgLeaderboardStore implements ILeaderboardStore {
     // Difficulty is folded into one placeholder rather than branching the SQL:
     // a NULL parameter means "any", the same trick the platform filter already
     // uses on both backends.
-    const result = await pgQuery<LeaderboardRow>(this.pool, `
+    const result = await pgReadQuery<LeaderboardRow>(this.pool, `
       SELECT *
       FROM leaderboard_entries
       WHERE ($1::text IS NULL OR difficulty = $1)
@@ -79,7 +79,7 @@ export class PgLeaderboardStore implements ILeaderboardStore {
   }
 
   async getHallOfFame(platform: PlatformId): Promise<HallOfFameEntry[]> {
-    const result = await pgQuery<{
+    const result = await pgReadQuery<{
       nickname: string;
       easy: number | null;
       medium: number | null;
