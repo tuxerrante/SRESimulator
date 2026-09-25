@@ -11,6 +11,11 @@ import { createSignedClientIp } from "../../../shared/auth/client-ip";
 import { createViewerSessionToken } from "../../../shared/auth/session";
 import { getRateLimitKey, InMemorySlidingWindowStore } from "./rate-limit";
 
+const MINUTE_MS = 60_000;
+const DAY_MS = 86_400_000;
+/** Mirrors the module-private sweep interval in rate-limit.ts. */
+const IN_MEMORY_SWEEP_INTERVAL = 256;
+
 interface TestRequest {
   ip?: string;
   socket?: {
@@ -427,5 +432,125 @@ describe("InMemorySlidingWindowStore", () => {
     expect(storeBuckets.size).toBe(1);
     expect(storeBuckets.has("session:expired")).toBe(false);
     expect(storeBuckets.has("session:active")).toBe(true);
+  });
+
+  // Until the global AI budget arrived, every key in this store was a
+  // per-identity window of the same duration, so the sweep could reuse the
+  // current call's cutoff for all of them. The budget puts a 24-hour key and a
+  // 60-second key in one map, and a borrowed cutoff evicts the long window's
+  // history.
+  it("prunes each bucket against its own window, not the caller's", async () => {
+    const store = new InMemorySlidingWindowStore();
+    const storeBuckets = (store as unknown as { buckets: Map<string, unknown> }).buckets;
+    const storeState = store as unknown as { operationsSinceSweep: number };
+
+    await store.consume("global:ai:day:2026-09-19", 0, DAY_MS, 1000);
+    storeState.operationsSinceSweep = IN_MEMORY_SWEEP_INTERVAL - 1;
+
+    // A minute-window request two minutes later: the day is nowhere near over.
+    await store.consume("global:ai:minute", 2 * MINUTE_MS, MINUTE_MS, 20);
+
+    expect(storeBuckets.has("global:ai:day:2026-09-19")).toBe(true);
+  });
+
+  // The consequence, asserted through the decision rather than the map: a
+  // shared daily cap that resets under ordinary minute traffic is not a cap,
+  // and the provider account it protects is spent by the players who arrive
+  // after the sweep.
+  it("keeps the daily cap enforced across a day of minute-window traffic", async () => {
+    const store = new InMemorySlidingWindowStore();
+    const dayKey = "global:ai:day:2026-09-19";
+    let now = 0;
+
+    for (let request = 0; request < 3; request += 1) {
+      now += MINUTE_MS;
+      await store.consume("global:ai:minute", now, MINUTE_MS, 20);
+      await store.consume(dayKey, now, DAY_MS, 3);
+    }
+
+    // Enough minute-window traffic to trip several sweeps, still the same day.
+    for (let sweep = 0; sweep < 3 * IN_MEMORY_SWEEP_INTERVAL; sweep += 1) {
+      now += 1_000;
+      await store.consume("global:ai:minute", now, MINUTE_MS, 20);
+    }
+
+    const decision = await store.consume(dayKey, now, DAY_MS, 3);
+    expect(decision.allowed).toBe(false);
+    expect(decision.remaining).toBe(0);
+  });
+
+  // `record` exists because `consume` adds nothing once a window is full, so
+  // charging an already-in-flight request through it would leave exactly the
+  // requests that overran the cap unrecorded.
+  it("adds an entry past capacity and dates the window from its front", async () => {
+    const store = new InMemorySlidingWindowStore();
+    const key = "global:ai:minute";
+
+    expect((await store.consume(key, 0, MINUTE_MS, 2)).allowed).toBe(true);
+    expect((await store.consume(key, 0, MINUTE_MS, 2)).allowed).toBe(true);
+    // The positive arm: the window really is full, so what `record` does next
+    // is the property under test and not an artefact of an empty bucket.
+    expect((await store.consume(key, 0, MINUTE_MS, 2)).allowed).toBe(false);
+
+    // Two retries, because one is not enough to refill a two-slot window once
+    // the originals expire -- and it is the refill that proves the recording
+    // outlives the requests it overran.
+    const recorded = await store.record(key, 30_000, MINUTE_MS, 2);
+    await store.record(key, 30_000, MINUTE_MS, 2);
+
+    // Floors at zero rather than going negative: an over-capacity window has
+    // to answer the same shape an empty one does.
+    expect(recorded.remaining).toBe(0);
+    // Dated from the oldest surviving entry, not from `now`. Over capacity the
+    // window drains from its front, so `now + windowMs` would promise a slot
+    // 30s later than the one that actually frees up.
+    expect(recorded.resetAtMs).toBe(MINUTE_MS);
+
+    // The harm the recording exists to prevent: once the two original entries
+    // expire a consume would find an empty window and wave the caller through,
+    // past a cap the recorded request already overran.
+    expect((await store.consume(key, 61_000, MINUTE_MS, 2)).allowed).toBe(false);
+  });
+
+  // The token used to be the entry's timestamp, so two charges taken in the
+  // same millisecond were handed the same one. The count still came out right
+  // -- one release removed one entry -- but only because those entries were
+  // interchangeable, which is a property of the representation rather than of
+  // the contract. The Redis store never had it: its members carry a sequence
+  // and `release` issues `ZREM` on the exact member it returned.
+  it("identifies same-millisecond charges apart from one another", async () => {
+    const store = new InMemorySlidingWindowStore();
+    const key = "global:ai:minute";
+
+    const first = await store.consume(key, 0, MINUTE_MS, 5);
+    const second = await store.consume(key, 0, MINUTE_MS, 5);
+
+    expect(first.releaseToken).toBeTruthy();
+    expect(second.releaseToken).toBeTruthy();
+    expect(first.releaseToken).not.toBe(second.releaseToken);
+  });
+
+  // The observable consequence, and the reason the parity is worth having: a
+  // release is compensation for one charge, so repeating it must give back
+  // nothing. Released by timestamp the repeat matched the *other*
+  // same-millisecond charge and handed back a slot that was still in flight.
+  it("gives one slot back however many times the same charge is released", async () => {
+    const store = new InMemorySlidingWindowStore();
+    const key = "global:ai:minute";
+    const limit = 5;
+
+    const charged = await store.consume(key, 0, MINUTE_MS, limit);
+    await store.consume(key, 0, MINUTE_MS, limit);
+
+    await store.release(key, charged.releaseToken!);
+    await store.release(key, charged.releaseToken!);
+
+    // One charge outstanding, so four slots are left. Six would mean the
+    // second release took the other charge's entry with it.
+    let granted = 0;
+    while ((await store.consume(key, 0, MINUTE_MS, limit)).allowed) {
+      granted += 1;
+    }
+    expect(granted).toBe(4);
   });
 });

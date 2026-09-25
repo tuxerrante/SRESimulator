@@ -1,5 +1,6 @@
 import { assertAiReadyForRuntime, getAiReadiness } from "./ai-config";
 import { getProviderAdapter } from "./ai-providers";
+import { isAiGlobalBudgetEnabled } from "./ai-budget";
 import {
   AiReasoningExhaustedError,
   AiReasoningRetryEvent,
@@ -55,6 +56,16 @@ export function warmupAiModel(route: AiRoute = "command"): void {
   // trade: `/api/scenario` fires one on every catalog-served scenario, which
   // is precisely the path that needs no model at all.
   if (getProviderAdapter(readiness.provider).warmupCostsSharedQuota) return;
+  // The same trade, reached from the other side. `warmupCostsSharedQuota` is
+  // a property of the provider -- OpenRouter's free tier is capped per account
+  // whether or not this deployment meters it. `AI_GLOBAL_BUDGET_ENABLED` is
+  // the operator saying the account is capped, and it is accepted on Azure and
+  // Vertex too. A keep-alive ping is fire-and-forget by design: nothing here
+  // can be refused, and charging it would let a warmup spend the slot a
+  // player's next request needed. So an opted-in deployment does not warm up,
+  // and the budget's promise -- no provider traffic outside the cap -- holds
+  // for every provider rather than only the one it was written for.
+  if (isAiGlobalBudgetEnabled()) return;
 
   generateAiText({
     system: "You are a keep-alive bot. Respond with 'ping'.",

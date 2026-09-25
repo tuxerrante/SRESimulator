@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { generateAiText, streamAiText } from "../ai-runtime";
 import { AiQuotaExhaustedError, AiThrottledError } from "./types";
@@ -19,6 +21,7 @@ const TEST_ENV_KEYS = [
   "AI_AZURE_OPENAI_ENDPOINT",
   "AI_AZURE_OPENAI_API_KEY",
   "AI_AZURE_OPENAI_DEPLOYMENT",
+  "AI_GLOBAL_BUDGET_ENABLED",
 ] as const;
 
 const ORIGINAL_ENV_VALUES: Record<string, string | undefined> = {};
@@ -459,5 +462,236 @@ describe("keep-alive warmups and a shared account-wide budget", () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("stops warming up Azure once the operator says the account is capped", async () => {
+    // `warmupCostsSharedQuota` is a property of the provider; this is the
+    // operator saying the same thing about their own account, and it is
+    // accepted on every provider. A warmup is fire-and-forget by design --
+    // nothing in it can be refused -- so it cannot be routed through the
+    // budget the way a route is, and charging it would let a keep-alive ping
+    // spend the slot a player's next request needed.
+    process.env.AI_PROVIDER = "azure-openai";
+    process.env.AI_MODEL = "gpt-5.2";
+    process.env.AI_AZURE_OPENAI_ENDPOINT = "https://example.openai.azure.com";
+    process.env.AI_AZURE_OPENAI_API_KEY = "test-key";
+    process.env.AI_AZURE_OPENAI_DEPLOYMENT = "gpt-5.2";
+    process.env.AI_GLOBAL_BUDGET_ENABLED = "true";
+    const fetchMock = vi.fn().mockImplementation(() => okResponse("ping"));
+    vi.stubGlobal("fetch", fetchMock);
+
+    (await freshWarmup())("chat");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("the account's own free-tier counter", () => {
+  // The result is cached in a module-level variable, so each case needs a
+  // fresh module graph rather than a reset seam exported only for tests.
+  async function freshKeyStatus(): Promise<
+    typeof import("./openrouter")["fetchOpenRouterKeyStatus"]
+  > {
+    vi.resetModules();
+    return (await import("./openrouter")).fetchOpenRouterKeyStatus;
+  }
+
+  function keyResponse(data: unknown): Response {
+    return new Response(JSON.stringify({ data }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  }
+
+  beforeEach(() => {
+    clearTestEnv();
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+    process.env.AI_OPENROUTER_API_KEY = "test-key";
+  });
+
+  afterAll(() => {
+    vi.resetModules();
+    vi.unstubAllGlobals();
+    restoreTestEnv();
+  });
+
+  it("reads the nested counter object the endpoint actually returns", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockImplementation(() =>
+      keyResponse({
+        label: "sk-or-v1-...",
+        limit_remaining: 18.42,
+        free_model_daily_requests: { used: 60, limit: 1000, remaining: 940 },
+      }),
+    ));
+
+    await expect((await freshKeyStatus())()).resolves.toEqual({
+      dailyLimit: 1000,
+      dailyRemaining: 940,
+    });
+  });
+
+  it("stays quiet rather than reporting a credit balance as a request count", async () => {
+    // `limit_remaining` is the nearest-looking field and it is currency. A
+    // banner reading "18.42 requests left today" is worse than no banner.
+    vi.stubGlobal("fetch", vi.fn().mockImplementation(() =>
+      keyResponse({ limit_remaining: 18.42, usage: 1.58 }),
+    ));
+
+    await expect((await freshKeyStatus())()).resolves.toEqual({
+      dailyLimit: null,
+      dailyRemaining: null,
+    });
+  });
+
+  it("bounds the lookup, because a banner is not worth a hung request", async () => {
+    const fetchMock = vi.fn().mockImplementation(() =>
+      keyResponse({ free_model_daily_requests: { limit: 1000, remaining: 940 } }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await (await freshKeyStatus())();
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(init.signal).toBeInstanceOf(AbortSignal);
+    expect(init.signal?.aborted).toBe(false);
+  });
+
+  it("shares one refresh between callers that arrive together", async () => {
+    // `/api/ai/budget` is public and the banner polls it, so the instant the
+    // TTL expires every concurrent visitor would otherwise open its own
+    // `GET /key` -- a self-inflicted herd against the rate limit this lookup
+    // exists to report on.
+    let release: (() => void) | undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const fetchMock = vi.fn().mockImplementation(async () => {
+      await gate;
+      return keyResponse({ free_model_daily_requests: { limit: 1000, remaining: 940 } });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const fetchKeyStatus = await freshKeyStatus();
+
+    const inFlight = [fetchKeyStatus(), fetchKeyStatus(), fetchKeyStatus()];
+    release?.();
+    const results = await Promise.all(inFlight);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    for (const result of results) {
+      expect(result).toEqual({ dailyLimit: 1000, dailyRemaining: 940 });
+    }
+  });
+
+  it("does not answer for one account out of the cache of another", async () => {
+    // Within the TTL the cached reading is served without a request. That is
+    // right for a refresh and wrong for a rotation: the two keys are two
+    // accounts, and the second one has never been looked up.
+    const fetchMock = vi.fn().mockImplementation(() =>
+      keyResponse({ free_model_daily_requests: { limit: 1000, remaining: 940 } }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const fetchKeyStatus = await freshKeyStatus();
+    await fetchKeyStatus();
+    await fetchKeyStatus();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    process.env.AI_OPENROUTER_API_KEY = "a-different-account";
+    await fetchKeyStatus();
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const [, second] = fetchMock.mock.calls[1] as [string, RequestInit];
+    expect((second.headers as Record<string, string>).authorization).toBe(
+      "Bearer a-different-account",
+    );
+  });
+
+  it("does not answer for one base URL out of the cache of another", async () => {
+    // The key is only half of what selects an account: the same credential
+    // against a different gateway is a different account with its own tier.
+    const fetchMock = vi.fn().mockImplementation(() =>
+      keyResponse({ free_model_daily_requests: { limit: 1000, remaining: 940 } }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const fetchKeyStatus = await freshKeyStatus();
+    await fetchKeyStatus();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    process.env.AI_OPENROUTER_BASE_URL = "https://gateway.test/v1";
+    await fetchKeyStatus();
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const [secondUrl] = fetchMock.mock.calls[1] as [string];
+    expect(secondUrl).toBe("https://gateway.test/v1/key");
+  });
+
+  it("does not hand a refresh opened on one account to a caller on another", async () => {
+    // The coalescing above is what makes this reachable: a rotation during a
+    // slow lookup would otherwise be answered by the request already in the
+    // air, which is asking the wrong account.
+    let release: (() => void) | undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const fetchMock = vi.fn().mockImplementation(async () => {
+      await gate;
+      return keyResponse({ free_model_daily_requests: { limit: 1000, remaining: 940 } });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const fetchKeyStatus = await freshKeyStatus();
+
+    const first = fetchKeyStatus();
+    process.env.AI_OPENROUTER_API_KEY = "a-different-account";
+    const second = fetchKeyStatus();
+    release?.();
+    await Promise.all([first, second]);
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("never throws, whatever the lookup does", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("network unreachable")));
+
+    await expect((await freshKeyStatus())()).resolves.toBeNull();
+  });
+});
+
+describe("the quota cache's own shape", () => {
+  // The account identity is the API key, in plaintext, and the review that
+  // asked for it to be digested named diagnostic dumps as the exposure. It is
+  // not digested -- a digest is what CodeQL blocked the merge on -- so the
+  // hazard is closed structurally instead: the identity lives *beside* the
+  // cache entry, never on it, so the objects a debug line would print carry a
+  // timestamp and two numbers and nothing else.
+  //
+  // That is a property of a declaration, and a declaration is exactly the kind
+  // of thing a later change reverts without noticing. Reading it back out of
+  // the source is what keeps it true.
+  const source = readFileSync(
+    // Vitest runs from `backend/`, the convention the other source-reading
+    // suites already follow.
+    resolve(process.cwd(), "src/lib/ai-providers/openrouter.ts"),
+    "utf8",
+  );
+
+  function declaredFields(interfaceName: string): string[] {
+    const start = source.indexOf(`interface ${interfaceName} {`);
+    expect(start, `no declaration for ${interfaceName}`).toBeGreaterThan(-1);
+    const body = source.slice(start, source.indexOf("\n}", start));
+    return [...body.matchAll(/^\s{2}(\w+)[?]?:/gm)].map((match) => match[1]);
+  }
+
+  it("keeps the credential off the entry anyone would print", () => {
+    expect(declaredFields("CachedKeyStatus")).toEqual(["fetchedAtMs", "status"]);
+  });
+
+  it("keeps the credential off the in-flight record too", () => {
+    // The same object under another name: before the split this was
+    // `{ identity, promise }`, and it is reachable from any handler that
+    // awaits the lookup.
+    const declaration = /let inFlightKeyStatus:([^=]+)=/.exec(source)?.[1];
+    expect(declaration, "no declaration for inFlightKeyStatus").toBeDefined();
+    expect(declaration).not.toMatch(/identity/i);
   });
 });

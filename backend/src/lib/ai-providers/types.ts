@@ -20,6 +20,18 @@ export interface AiTextRequest {
   signal?: AbortSignal;
   /** @internal Override reasoning_effort on retry. */
   _reasoningEffortOverride?: string;
+  /**
+   * @internal How many provider HTTP requests this logical call has issued.
+   *
+   * Carried on the request rather than in the transport, because the count
+   * has to survive the `{ ...request }` spread `generateAiText` and
+   * `streamAiText` retry through -- the spread copies it forward, which is
+   * what makes that retry countable as part of the call that provoked it.
+   * The route charges the shared budget for the first request before it calls
+   * the provider; the transport charges every one after that. Left undefined
+   * by every caller: the transport seeds it.
+   */
+  _providerRequestCount?: number;
 }
 
 export class AiThrottledError extends Error {

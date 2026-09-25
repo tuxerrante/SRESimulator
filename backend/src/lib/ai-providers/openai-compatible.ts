@@ -1,3 +1,4 @@
+import { chargeAiProviderRetry } from "../ai-budget";
 import { getConfiguredModel } from "../ai-config";
 import { logTokenError, logTokenUsage } from "../token-logger";
 import {
@@ -133,6 +134,18 @@ async function runOpenAiCompatibleRequest(
 
   if (request.cacheKey && target.supportsPromptCacheKey) {
     body.prompt_cache_key = request.cacheKey;
+  }
+
+  // Every send goes through here, including each 429 backoff attempt, the
+  // max_tokens-spelling fallback, the missing-deployment fallback and the
+  // reasoning retry that re-enters from ai-runtime. The route paid for the
+  // first one before it called the provider; anything beyond that is a
+  // request the shared budget has not seen, so it is charged here rather than
+  // at any one of the four sites that can cause it.
+  const sent = (request._providerRequestCount ?? 0) + 1;
+  request._providerRequestCount = sent;
+  if (sent > 1) {
+    await chargeAiProviderRetry();
   }
 
   return fetch(target.url, {

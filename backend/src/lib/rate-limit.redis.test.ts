@@ -326,3 +326,177 @@ describe("aiRateLimit Redis store", () => {
     expect(response.headers.get(RATE_LIMIT_STATUS_HEADER)).toBe("fail-open");
   });
 });
+
+describe("releaseSharedWindow against Redis", () => {
+  afterEach(() => {
+    process.env = { ...originalEnv };
+    vi.resetModules();
+    vi.restoreAllMocks();
+    vi.doUnmock("redis");
+  });
+
+  it("gives back the one member it added, so a compensated slot is spendable again", async () => {
+    process.env.AI_RATE_LIMIT_REDIS_URL = "redis://127.0.0.1:6379/0";
+
+    // Modelled as a sorted set keyed by member rather than a count, because
+    // the property under test is *which* entry goes away: a release that
+    // dropped the oldest, or the whole key, would pass a counting double and
+    // silently refund a slot another process was holding.
+    const sortedSets = new Map<string, Map<string, number>>();
+    const redisClient = {
+      isOpen: false,
+      on: vi.fn(),
+      connect: vi.fn(async () => {
+        redisClient.isOpen = true;
+      }),
+      sendCommand: vi.fn(async (args: string[]) => {
+        if (args[0] === "ZREM") {
+          const members = sortedSets.get(args[1]!);
+          return String(members?.delete(args[2]!) ? 1 : 0);
+        }
+
+        const redisKey = args[3]!;
+        const nowMs = Number(args[4]);
+        const windowMs = Number(args[5]);
+        const limit = Number(args[6]);
+        const member = args[7]!;
+        const cutoff = nowMs - windowMs;
+        const members = new Map(
+          [...(sortedSets.get(redisKey) ?? new Map<string, number>())]
+            .filter(([, score]) => score > cutoff),
+        );
+        sortedSets.set(redisKey, members);
+
+        if (members.size >= limit) {
+          const oldest = Math.min(...members.values());
+          return ["0", String(members.size), String(oldest + windowMs)];
+        }
+
+        members.set(member, nowMs);
+        return ["1", String(members.size), String(nowMs + windowMs)];
+      }),
+    };
+    vi.doMock("redis", () => ({ createClient: vi.fn(() => redisClient) }));
+
+    const { consumeSharedWindow, releaseSharedWindow } = await import("./rate-limit");
+
+    const charged = await consumeSharedWindow("global:ai:minute", 60_000, 1);
+    expect(charged.decision.allowed).toBe(true);
+    const releaseToken = charged.decision.releaseToken;
+    expect(releaseToken).toBeTruthy();
+
+    // The positive arm: the slot is genuinely held, so the allow at the end is
+    // the release's doing and not an empty window.
+    const whileHeld = await consumeSharedWindow("global:ai:minute", 60_000, 1);
+    expect(whileHeld.decision.allowed).toBe(false);
+    expect(whileHeld.decision.releaseToken).toBeUndefined();
+
+    await releaseSharedWindow("global:ai:minute", releaseToken!);
+
+    expect(
+      redisClient.sendCommand.mock.calls
+        .map((call) => call[0])
+        .filter((args) => args[0] === "ZREM"),
+    ).toEqual([["ZREM", "sresim:rate-limit:global:ai:minute", releaseToken]]);
+
+    const afterRelease = await consumeSharedWindow("global:ai:minute", 60_000, 1);
+    expect(afterRelease.decision.allowed).toBe(true);
+  }, 30000);
+});
+
+describe("recordSharedWindow against Redis", () => {
+  afterEach(() => {
+    process.env = { ...originalEnv };
+    vi.resetModules();
+    vi.restoreAllMocks();
+    vi.doUnmock("redis");
+  });
+
+  it("lands an entry the capped script would have dropped, and dates it from the front of the window", async () => {
+    process.env.AI_RATE_LIMIT_REDIS_URL = "redis://127.0.0.1:6379/0";
+
+    // Both Lua scripts are interpreted here rather than counted, because the
+    // whole difference between them is what happens once the window is full:
+    // a double that only counts would answer identically for either and the
+    // test would pass against the bug.
+    const sortedSets = new Map<string, Map<string, number>>();
+    const redisClient = {
+      isOpen: false,
+      on: vi.fn(),
+      connect: vi.fn(async () => {
+        redisClient.isOpen = true;
+      }),
+      sendCommand: vi.fn(async (args: string[]) => {
+        const script = args[1]!;
+        const redisKey = args[3]!;
+        const nowMs = Number(args[4]);
+        const windowMs = Number(args[5]);
+        const limit = Number(args[6]);
+        const member = args[7]!;
+        const cutoff = nowMs - windowMs;
+        const members = new Map(
+          [...(sortedSets.get(redisKey) ?? new Map<string, number>())]
+            .filter(([, score]) => score > cutoff),
+        );
+        sortedSets.set(redisKey, members);
+        const oldestScore = (): number => Math.min(...members.values());
+
+        // The capacity branch is the only textual difference between the two
+        // scripts, so it is what tells the double which one it was handed.
+        if (script.includes("if current >= limit") && members.size >= limit) {
+          return ["0", String(members.size), String(oldestScore() + windowMs)];
+        }
+
+        members.set(member, nowMs);
+        return [
+          "1",
+          String(members.size),
+          String((script.includes("if current >= limit") ? nowMs : oldestScore()) + windowMs),
+        ];
+      }),
+    };
+    vi.doMock("redis", () => ({ createClient: vi.fn(() => redisClient) }));
+
+    const { consumeSharedWindow, recordSharedWindow } = await import("./rate-limit");
+    const key = "global:ai:minute";
+    const windowMs = 60_000;
+    const startMs = 1_800_000_000_000;
+
+    expect((await consumeSharedWindow(key, windowMs, 2, startMs)).decision.allowed).toBe(true);
+    expect((await consumeSharedWindow(key, windowMs, 2, startMs)).decision.allowed).toBe(true);
+
+    // The positive arm: the window really is full, so what the retries do next
+    // is the thing under test and not an artefact of an empty key.
+    expect((await consumeSharedWindow(key, windowMs, 2, startMs)).decision.allowed).toBe(false);
+
+    const firstRetry = await recordSharedWindow(key, windowMs, 2, startMs + 30_000);
+    const secondRetry = await recordSharedWindow(key, windowMs, 2, startMs + 30_000);
+
+    expect(firstRetry.distributed).toBe(true);
+    // Floors at zero rather than going negative: an over-capacity window has
+    // to answer the same shape an empty one does.
+    expect(firstRetry.record.remaining).toBe(0);
+    expect(secondRetry.record.remaining).toBe(0);
+
+    // The reset the *script* computes cannot be tested here -- no Lua runs, so
+    // a double can only replay whatever semantics it was written with, and an
+    // assertion on the value would be asserting against itself. What this can
+    // honestly check is the text that was handed to Redis: an unconditional
+    // record with its reset read off the front of the window, which is the
+    // half a behavioural double cannot reach. The value semantics are covered
+    // against real code in `InMemorySlidingWindowStore`.
+    const evalCalls = redisClient.sendCommand.mock.calls
+      .map((call) => call[0])
+      .filter((args) => args[0] === "EVAL");
+    const recordScript = evalCalls[evalCalls.length - 1]?.[1] as string;
+    expect(recordScript).not.toContain("if current >= limit");
+    expect(recordScript).toContain('redis.call("ZRANGE", key, 0, 0, "WITHSCORES")');
+    expect(recordScript).toContain("resetAt = tonumber(oldest[2]) + windowMs");
+
+    // The harm the recording exists to prevent: a minute later the two
+    // original entries have expired, and a consume would find an empty window
+    // and wave the caller through -- past a cap the retries already overran.
+    const afterOriginalsExpire = await consumeSharedWindow(key, windowMs, 2, startMs + 61_000);
+    expect(afterOriginalsExpire.decision.allowed).toBe(false);
+  }, 30000);
+});

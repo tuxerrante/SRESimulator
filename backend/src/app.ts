@@ -44,6 +44,14 @@ export function createApp(): express.Express {
     origin: process.env.CORS_ORIGIN || "http://localhost:3000",
   }));
 
+  // The shared AI budget is *not* mounted here. It is charged inside each
+  // route, immediately before the provider call -- see `chargeAiBudget`.
+  // Middleware runs before the handler validates anything, so mounting it
+  // here charged the shared day for requests that never reach a provider: an
+  // expired session token, a malformed payload, a scenario mismatch, mock
+  // mode, a catalog-sourced scenario, an unready runtime. On an un-credited
+  // account that is 50 requests a day one caller can drain without OpenRouter
+  // seeing one of them, pushing every real player onto simulated answers.
   app.use("/api/chat", jsonRouteParsers.chat, aiRateLimit, chatRouter);
   app.use("/api/command", jsonRouteParsers.command, aiRateLimit, commandRouter);
   app.use("/api/scenario", jsonRouteParsers.scenario, aiRateLimit, scenarioRouter);

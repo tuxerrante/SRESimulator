@@ -8,6 +8,11 @@ import {
 } from "../lib/platform-profiles";
 import { generateAiText, AiQuotaExhaustedError, AiThrottledError } from "../lib/ai-runtime";
 import {
+  chargeAiBudget,
+  markAiBudgetDegraded,
+  rejectWithAiBudgetRefusal,
+} from "../lib/ai-budget";
+import {
   buildScenarioContext,
   buildSimNow,
   buildCommandSystemPrompt,
@@ -197,6 +202,38 @@ commandRouter.post("/", async (req: Request, res: Response) => {
       return;
     }
 
+    // Charged here, after mock mode and the readiness check have returned:
+    // middleware would have charged the shared day for requests that never
+    // reach a provider. A spent budget can only come back 429, so raising the
+    // error the provider would have raised keeps one degraded path, not two.
+    const budget = await chargeAiBudget(res);
+    if (budget === "answered") {
+      return;
+    }
+    if (budget === "exhausted") {
+      if (!shouldDegradeOnQuotaExhausted()) {
+        // Refusing rather than degrading, so the throw below would reach the
+        // generic `AiThrottledError` handler and answer `{ error }` alone --
+        // dropping `Retry-After`, `code`, `scope` and `resetAt`, and leaving
+        // a spent shared day indistinguishable from the per-identity 429 that
+        // clears in a minute. Answered here because only this site knows the
+        // refusal came from the budget rather than from a provider.
+        //
+        // And only the header knows which refusal this is: a window store
+        // that could not be read comes back `exhausted` too, and answering it
+        // "come back tomorrow" would outlast the blip by most of a day.
+        rejectWithAiBudgetRefusal(res);
+        return;
+      }
+      // The existing catch applies `AI_DEGRADE_ON_QUOTA_EXHAUSTED`, so this
+      // route answers a spent shared budget exactly as it answers a spent
+      // provider quota -- one degraded path, not two.
+      throw new AiQuotaExhaustedError(
+        "daily",
+        "The shared AI request budget for today is spent.",
+      );
+    }
+
     const scenarioContext = buildScenarioContext(scenario);
     const simNow = buildSimNow(scenario?.incidentTicket?.reportedTime);
     const systemPrompt = buildCommandSystemPrompt(
@@ -287,6 +324,10 @@ commandRouter.post("/", async (req: Request, res: Response) => {
       console.warn(
         `[command] AI budget exhausted (${error.scope}); returning simulated output`,
       );
+      // Inert when the provider raised the quota error rather than the shared
+      // budget: the header is `ok` on that path and only `daily-exhausted` is
+      // overwritten.
+      markAiBudgetDegraded(res);
       res.json(buildFallbackFromRequest("quota_exhausted"));
       return;
     }

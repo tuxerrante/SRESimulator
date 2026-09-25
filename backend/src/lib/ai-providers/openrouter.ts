@@ -120,3 +120,200 @@ export function buildOpenRouterTarget(request: AiTextRequest): OpenAiCompatibleT
     inspectThrottleBody: true,
   };
 }
+
+export interface OpenRouterKeyStatus {
+  dailyLimit: number | null;
+  dailyRemaining: number | null;
+}
+
+interface CachedKeyStatus {
+  fetchedAtMs: number;
+  status: OpenRouterKeyStatus | null;
+}
+
+let cachedKeyStatus: CachedKeyStatus | null = null;
+
+/**
+ * Which account {@link cachedKeyStatus} describes; see
+ * {@link readAccountIdentity}.
+ *
+ * A sibling variable rather than a field on the entry, and deliberately so:
+ * the entry is the thing a future debug line would print, and this value
+ * carries credential material. Keeping the two apart means no object anyone
+ * would dump holds the credential -- `cachedKeyStatus` is a timestamp and two
+ * numbers.
+ */
+let cachedKeyIdentity: string | null = null;
+
+/**
+ * The refresh in flight, shared by every caller that arrives during it.
+ * `/api/ai/budget` is public and the banner polls it, so without this the
+ * moment the TTL expires turns every concurrent visitor into its own
+ * `GET /key` -- a self-inflicted herd against the rate limit this lookup
+ * exists to report on.
+ *
+ * Tagged with the identity it was opened under, so a refresh started before a
+ * key rotation is never handed to a caller asking about the new account.
+ */
+let inFlightKeyStatus: Promise<OpenRouterKeyStatus | null> | null = null;
+
+/** Which account {@link inFlightKeyStatus} was opened for; see above. */
+let inFlightKeyIdentity: string | null = null;
+
+/**
+ * Which account a reading describes: the API key it was read with, through the
+ * base URL it was read from.
+ *
+ * The cache has to know this because `readLastKnownOpenRouterDailyLimit`
+ * deliberately ignores the TTL. Without an identity, rotating the key in a
+ * long-lived process leaves the *previous* account's tier standing as a
+ * permanent clamp -- and rotating down from a credited 1000/day account to an
+ * un-credited one would then authorise twenty times the new account's real cap,
+ * with nothing left to expire the reading that allowed it.
+ *
+ * A reading is therefore only ever usable by the identity it was taken under.
+ * That also settles the narrow race where a slow lookup lands after a rotation:
+ * the stale write is stamped with the old identity, so the worst it can do is
+ * cost a re-warm, never raise a cap.
+ *
+ * The credential is compared rather than digested, and both reviews that have
+ * reached this line disagree about that, so the reasoning is written down here
+ * rather than re-argued:
+ *
+ * - A digest is what CodeQL's `js/insufficient-password-hash` blocked the merge
+ *   on, and the two remedies it accepts are a slow KDF -- absurd on a path
+ *   every charge runs -- or deriving nothing.
+ * - Retaining the credential to compare it adds no exposure. The same plaintext
+ *   is in `process.env.AI_OPENROUTER_API_KEY` for the whole process lifetime;
+ *   `getOpenRouterApiKey` reads it there on every request. Anything that can
+ *   inspect this heap already has the key, from a place nothing here controls.
+ *
+ * What is left is the diagnostic-dump risk, and that is handled structurally:
+ * the identity lives beside the cache entry rather than on it, so the objects
+ * anyone would print carry only a timestamp and two numbers. Keep it that way
+ * -- this value must not be logged, returned or folded into anything that is.
+ *
+ * The NUL separator keeps the two fields unambiguous -- an environment variable
+ * cannot contain one, so no key-and-base-URL pair can spell another.
+ */
+function readAccountIdentity(apiKey: string): string {
+  return `${apiKey}\u0000${getOpenRouterBaseUrl()}`;
+}
+
+/** Bounds the auxiliary lookup; the banner is not worth a hung request. */
+const KEY_STATUS_TIMEOUT_MS = 5000;
+
+function getQuotaTtlMs(): number {
+  const parsed = Number.parseInt(process.env.AI_OPENROUTER_QUOTA_TTL_MS ?? "", 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 60_000;
+}
+
+function readOptionalNumber(source: Record<string, unknown>, key: string): number | null {
+  const value = source[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+/**
+ * `free_model_daily_requests` is an object -- `{ used, limit, remaining }` --
+ * not a request count, and there is no flat sibling holding either number.
+ *
+ * There is no fallback on purpose. `limit_remaining` is the nearest-looking
+ * field and it is a *credit balance*, a fractional currency amount: reporting
+ * 18.42 as "requests left today" is worse than reporting nothing, because the
+ * banner would render a confident wrong number instead of staying quiet.
+ */
+function readFreeModelDailyRequests(data: Record<string, unknown>): OpenRouterKeyStatus {
+  const raw = data.free_model_daily_requests;
+  if (!raw || typeof raw !== "object") {
+    return { dailyLimit: null, dailyRemaining: null };
+  }
+  const counter = raw as Record<string, unknown>;
+  return {
+    dailyLimit: readOptionalNumber(counter, "limit"),
+    dailyRemaining: readOptionalNumber(counter, "remaining"),
+  };
+}
+
+/**
+ * The last `dailyLimit` this process actually saw, read from the cache with no
+ * fetch and no TTL check.
+ *
+ * Two deliberate departures from `fetchOpenRouterKeyStatus`, both because the
+ * caller is the budget limiter rather than the banner:
+ *
+ * - **It never reaches the network.** A limiter that has to make a request to
+ *   learn its own cap cannot fail closed, so this returns `null` and lets the
+ *   configured figure stand rather than awaiting anything.
+ * - **It ignores the TTL.** The TTL exists to keep a *displayed* remaining
+ *   count fresh; the tier limit behind it moves once, when an account buys
+ *   credit. Expiring it would make the cap flicker back up between banner
+ *   visits, which is the one direction a safety clamp must never move.
+ */
+export function readLastKnownOpenRouterDailyLimit(): number | null {
+  const apiKey = process.env.AI_OPENROUTER_API_KEY?.trim();
+  if (!apiKey || !cachedKeyStatus) return null;
+  // A reading taken on another account says nothing about this one, and
+  // because this read ignores the TTL it would otherwise say it forever.
+  if (cachedKeyIdentity !== readAccountIdentity(apiKey)) return null;
+
+  const limit = cachedKeyStatus.status?.dailyLimit;
+  return typeof limit === "number" && limit > 0 ? limit : null;
+}
+
+/**
+ * Best-effort live view of the account's free-tier budget, cached for
+ * AI_OPENROUTER_QUOTA_TTL_MS.
+ *
+ * Every field is optional on purpose: this response has gained and renamed
+ * keys before, and the banner it feeds must degrade to "no upstream number"
+ * rather than break. It never throws and never rejects -- a budget display
+ * failing is not a reason for an AI route to fail.
+ */
+export async function fetchOpenRouterKeyStatus(): Promise<OpenRouterKeyStatus | null> {
+  const key = process.env.AI_OPENROUTER_API_KEY?.trim();
+  if (!key) return null;
+
+  const identity = readAccountIdentity(key);
+  const nowMs = Date.now();
+  if (
+    cachedKeyStatus &&
+    cachedKeyIdentity === identity &&
+    nowMs - cachedKeyStatus.fetchedAtMs < getQuotaTtlMs()
+  ) {
+    return cachedKeyStatus.status;
+  }
+  if (inFlightKeyStatus && inFlightKeyIdentity === identity) return inFlightKeyStatus;
+
+  const promise = (async () => {
+    let status: OpenRouterKeyStatus | null = null;
+    try {
+      const response = await fetch(`${getOpenRouterBaseUrl()}/key`, {
+        headers: { authorization: `Bearer ${key}` },
+        signal: AbortSignal.timeout(KEY_STATUS_TIMEOUT_MS),
+      });
+      if (response.ok) {
+        const payload = (await response.json()) as { data?: Record<string, unknown> };
+        const data = payload?.data;
+        if (data && typeof data === "object") {
+          status = readFreeModelDailyRequests(data);
+        }
+      }
+    } catch {
+      status = null;
+    }
+    cachedKeyStatus = { fetchedAtMs: Date.now(), status };
+    cachedKeyIdentity = identity;
+    return status;
+  })().finally(() => {
+    // Only retire our own entry: a rotation may have opened a newer one while
+    // this lookup was still in the air.
+    if (inFlightKeyStatus === promise) {
+      inFlightKeyStatus = null;
+      inFlightKeyIdentity = null;
+    }
+  });
+  inFlightKeyStatus = promise;
+  inFlightKeyIdentity = identity;
+
+  return promise;
+}

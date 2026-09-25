@@ -3,6 +3,11 @@ import { loadKnowledgeSections, queryKnowledgeSections } from "../lib/knowledge"
 import { getRuntimePlatformProfile } from "../lib/platform-profiles";
 import { buildSystemPrompt } from "../lib/prompts/system";
 import { getAiReadiness, shouldDegradeOnQuotaExhausted } from "../lib/ai-config";
+import {
+  chargeAiBudget,
+  markAiBudgetDegraded,
+  rejectWithAiBudgetRefusal,
+} from "../lib/ai-budget";
 import { generateMockChatResponse } from "../lib/mock-ai";
 import {
   streamAiText,
@@ -140,6 +145,56 @@ chatRouter.post("/", async (req: Request, res: Response) => {
         error: "AI runtime configuration is invalid",
         details: readiness.reasons,
       });
+      return;
+    }
+
+    // Charged here, after every branch above that answers without a
+    // provider: a malformed payload, an expired session, a scenario
+    // mismatch, mock mode and an unready runtime have all returned already,
+    // so none of them can spend a slot the provider never saw. Before any
+    // prompt is built, because a spent budget can only come back 429 and a
+    // 429 here would read as an outage for the rest of the day.
+    const budget = await chargeAiBudget(res);
+    if (budget === "answered") {
+      // Already refused with the structured budget body -- code, scope,
+      // resetAt -- which is strictly more than this route could say alone.
+      return;
+    }
+    if (budget === "exhausted" && !shouldDegradeOnQuotaExhausted()) {
+      // Degradation switched off: answer the way a provider throttle is
+      // answered, but without spending a request proving what is already known.
+      //
+      // The same body the middleware-side refusal writes, rather than a bare
+      // `{ error }`: a client that cannot tell this from the per-identity 429
+      // retries in a minute, all day, against a cap that only clears at
+      // midnight UTC.
+      //
+      // Which refusal it writes depends on why the budget said no. A window
+      // store this route could not read is not a spent day: nothing was
+      // observed and nothing spent, so it answers 503 and asks for a retry in
+      // a minute rather than sending the client away until midnight.
+      rejectWithAiBudgetRefusal(res);
+      return;
+    }
+    if (budget === "exhausted") {
+      // The same frames the mid-stream quota path emits, so the client cannot
+      // tell which side of the call ran out.
+      console.warn("[chat] AI budget exhausted (daily); returning simulated response");
+      // Before flushHeaders: an SSE client reads these once, and this is the
+      // only place it can learn the stream below is simulated without waiting
+      // for the marker frame.
+      markAiBudgetDegraded(res);
+      res.setHeader("Content-Type", "text/event-stream");
+      res.setHeader("Cache-Control", "no-cache");
+      res.setHeader("Connection", "keep-alive");
+      res.flushHeaders();
+      const mockText = generateMockChatResponse(currentPhase, session.platform);
+      res.write(`data: ${JSON.stringify({ text: mockText })}\n\n`);
+      res.write(
+        `data: ${JSON.stringify({ degraded: true, degradedReason: "quota_exhausted" })}\n\n`,
+      );
+      res.write("data: [DONE]\n\n");
+      res.end();
       return;
     }
 
