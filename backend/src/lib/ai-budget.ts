@@ -284,8 +284,12 @@ export function markAiBudgetDegraded(res: Response): void {
  * the scarce shared resource (50 requests on an un-credited account), so a
  * caller could drain it without a single request reaching OpenRouter, and
  * every real player would be pushed onto simulated answers by traffic the
- * provider never saw. The three call sites are the points each route had
- * already chosen as its provider boundary.
+ * provider never saw. Three of the four call sites -- chat, command and
+ * scenario -- are the points those routes had already chosen as their
+ * provider boundary. The fourth is `/api/ai/probe?live=true`, which reaches
+ * `generateAiText` directly rather than through a gameplay route and so had
+ * no such boundary to reuse; its charge sits below the branches that answer
+ * from configuration alone, for the same reason.
  *
  * The two windows are consumed in order and the daily one is only charged
  * once the minute one allowed the request: a caller refused on the minute

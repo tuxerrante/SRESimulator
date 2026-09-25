@@ -1,4 +1,6 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { readFileSync, readdirSync } from "node:fs";
+import { resolve } from "node:path";
 import type { Response } from "express";
 import type { AiBudgetOutcome } from "./ai-budget";
 
@@ -765,5 +767,31 @@ describe("getAiBudgetSnapshot", () => {
       enabled: true,
       upstream: null,
     });
+  });
+});
+
+describe("the charge contract's own documentation", () => {
+  // `chargeAiBudget` is called by the routes rather than mounted as
+  // middleware, so the count in its docblock is the only inventory of who
+  // charges the shared account -- and it is what a reader consults before
+  // adding a route. It had already drifted once, from three to four, when the
+  // live probe gained a charge in this PR. A doc claim is a claim.
+  const NUMERALS: Record<number, string> = { 2: "two", 3: "three", 4: "four", 5: "five", 6: "six" };
+  // Vitest runs from `backend/`, the convention the other source-reading
+  // suite (`integration/helm-runtime-contracts.test.ts`) already follows.
+  const routesDir = resolve(process.cwd(), "src/routes");
+
+  it("counts the routes that actually charge", () => {
+    const callSites = readdirSync(routesDir)
+      .filter((name) => name.endsWith(".ts") && !name.endsWith(".test.ts"))
+      .filter((name) =>
+        readFileSync(resolve(routesDir, name), "utf8").includes("chargeAiBudget(res)"),
+      );
+
+    const source = readFileSync(resolve(process.cwd(), "src/lib/ai-budget.ts"), "utf8");
+    const documented = NUMERALS[callSites.length];
+
+    expect(documented, `no numeral for ${callSites.length} call sites`).toBeDefined();
+    expect(source).toContain(`of the ${documented} call sites`);
   });
 });
