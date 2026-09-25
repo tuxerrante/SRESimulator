@@ -423,6 +423,7 @@ Limiter tuning is controlled by these backend env vars:
 | `AI_RATE_LIMIT_MAX` | `15` | Maximum requests allowed inside one sliding window |
 | `AI_RATE_LIMIT_WINDOW_MS` | `60000` | Sliding-window duration in milliseconds |
 | `AI_RATE_LIMIT_REDIS_URL` | unset | Shared Redis store for deployed or multi-replica backends |
+| `AI_BUDGET_READ_RATE_LIMIT_MAX` | `120` | Cap for `GET /api/ai/budget`, which is read by every visitor |
 
 The limiter uses Redis when `AI_RATE_LIMIT_REDIS_URL` is configured, which is
 the intended multi-replica/deployed mode. When Redis is unset, the backend
@@ -744,5 +745,5 @@ prevention, rate-limit enforcement, and token-metrics recording.
 | Reasoning | `AI_REASONING_EFFORT` (`low` / `medium` / `high`) global default; per-route `AI_REASONING_EFFORT_<ROUTE>` (e.g. `_CHAT`, `_COMMAND`, `_SCENARIO`) overrides it. The `command` route defaults to `low`. |
 | Token budgets | `AI_MAX_CHAT_TOKENS` (default `16384`), `AI_MAX_COMMAND_TOKENS` (default `8192`) |
 | Compaction tuning | `COMPACTION_TOKEN_BUDGET`, `COMPACTION_TAIL_MESSAGES` |
-| Rate limiting | `AI_RATE_LIMIT_WINDOW_MS`, `AI_RATE_LIMIT_MAX`, `AI_RATE_LIMIT_REDIS_URL` |
+| Rate limiting | `AI_RATE_LIMIT_WINDOW_MS`, `AI_RATE_LIMIT_MAX`, `AI_BUDGET_READ_RATE_LIMIT_MAX`, `AI_RATE_LIMIT_REDIS_URL` |
 | Production gates | `AI_LIVE_PROBE_TOKEN` |

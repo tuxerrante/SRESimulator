@@ -42,6 +42,12 @@ interface SlidingWindowStore {
 const DEFAULT_AI_RATE_LIMIT_WINDOW_MS = 60 * 1000;
 const DEFAULT_AI_RATE_LIMIT_MAX = 15;
 const DEFAULT_GAMEPLAY_TELEMETRY_RATE_LIMIT_MAX = 60;
+/**
+ * The budget read is a public GET with no per-visitor identity to key on, so
+ * this is a front-door flood guard for a whole deployment rather than a
+ * per-player allowance -- see `aiBudgetReadRateLimit`.
+ */
+const DEFAULT_AI_BUDGET_READ_RATE_LIMIT_MAX = 120;
 const MIN_RATE_LIMIT_WINDOW_SECONDS = 1;
 const REDIS_KEY_PREFIX = "sresim:rate-limit";
 const RATE_LIMIT_STATUS_HEADER = "x-sresim-rate-limit-status";
@@ -540,6 +546,11 @@ const cachedGameplayTelemetryRateLimitMax: CachedLimitValue = {
   parsed: DEFAULT_GAMEPLAY_TELEMETRY_RATE_LIMIT_MAX,
   initialized: false,
 };
+const cachedAiBudgetReadRateLimitMax: CachedLimitValue = {
+  raw: undefined,
+  parsed: DEFAULT_AI_BUDGET_READ_RATE_LIMIT_MAX,
+  initialized: false,
+};
 
 function getInMemoryStore(): InMemorySlidingWindowStore {
   inMemoryStore ??= new InMemorySlidingWindowStore();
@@ -592,6 +603,14 @@ function getAiRateLimitMax(): number {
   );
 }
 
+function getAiBudgetReadRateLimitMax(): number {
+  return readCachedPositiveLimit(
+    cachedAiBudgetReadRateLimitMax,
+    process.env.AI_BUDGET_READ_RATE_LIMIT_MAX,
+    DEFAULT_AI_BUDGET_READ_RATE_LIMIT_MAX,
+  );
+}
+
 function applyRateLimitHeaders(
   res: Response,
   limit: number,
@@ -616,11 +635,21 @@ function createSlidingWindowRateLimit(options: {
   max: () => number;
   windowMs: () => number;
   message: { error: string };
+  /**
+   * Namespaces this limiter's buckets. The store is keyed by the identity
+   * string alone, so two limiters that resolve the same identity share one
+   * bucket of timestamps and then read it against different caps -- a budget
+   * read would spend a player's gameplay allowance, and a player at their cap
+   * would lose the banner explaining why. Omitted, the bucket stays exactly
+   * where it was, which is what keeps `aiRateLimit` unchanged.
+   */
+  keyPrefix?: string;
 }): RequestHandler {
   return async (req: Request, res: Response, next: NextFunction) => {
     const limit = options.max();
     const windowMs = options.windowMs();
-    const key = await getRateLimitKey(req);
+    const identity = await getRateLimitKey(req);
+    const key = options.keyPrefix ? `${options.keyPrefix}:${identity}` : identity;
     const nowMs = Date.now();
 
     try {
@@ -678,6 +707,33 @@ export const aiRateLimit: RequestHandler = createSlidingWindowRateLimit({
   max: getAiRateLimitMax,
   message: {
     error: "Too many requests. Please slow down and try again in a moment.",
+  },
+});
+
+/**
+ * Reading the budget is not spending it, so it cannot share `aiRateLimit`.
+ *
+ * That limiter exists to ration one player's provider calls, and 15 a minute
+ * is the right number for an identity. This endpoint has no identity to
+ * ration: the Next.js proxy strips every caller-supplied IP header and only
+ * re-adds a signed one when the operator sets `TRUST_PROXY_HEADERS`, so by
+ * default `getRateLimitKey` falls back to the proxy's own address and every
+ * anonymous visitor arrives as the same caller. Under `aiRateLimit` the
+ * sixteenth home page in a minute is answered 429 and its banner silently
+ * disappears -- hiding the warning exactly when traffic makes it most likely
+ * the budget is spent.
+ *
+ * The cap is therefore sized as a flood guard for a whole deployment's front
+ * door. It can be, because a read costs a map lookup plus an upstream figure
+ * that is TTL-cached and single-flighted; it is not a proxy for provider
+ * spend, which `aiGlobalBudgetLimit` accounts for separately.
+ */
+export const aiBudgetReadRateLimit: RequestHandler = createSlidingWindowRateLimit({
+  windowMs: getAiRateLimitWindowMs,
+  max: getAiBudgetReadRateLimitMax,
+  keyPrefix: "ai-budget-read",
+  message: {
+    error: "Too many budget checks. Please slow down and try again in a moment.",
   },
 });
 

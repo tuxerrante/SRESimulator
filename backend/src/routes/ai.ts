@@ -7,7 +7,7 @@ import {
   getAiBudgetSnapshot,
   isAiBudgetStoreUnavailable,
 } from "../lib/ai-budget";
-import { aiRateLimit } from "../lib/rate-limit";
+import { aiBudgetReadRateLimit } from "../lib/rate-limit";
 
 export const aiRouter = Router();
 
@@ -158,8 +158,13 @@ aiRouter.get("/token-metrics", (_req: Request, res: Response) => {
 /**
  * Public, unauthenticated and secret-free: the home page banner reads it to
  * explain why answers may be simulated. Rate-limited because /api/ai/* is not,
- * and this one is polled by every visitor.
+ * and this one is read by every visitor.
+ *
+ * Its own limiter, not `aiRateLimit`: behind the Next.js proxy every anonymous
+ * visitor resolves to the same identity, so a per-player cap of 15 a minute
+ * would hide the banner from the sixteenth visitor -- see
+ * `aiBudgetReadRateLimit`.
  */
-aiRouter.get("/budget", aiRateLimit, async (_req: Request, res: Response) => {
+aiRouter.get("/budget", aiBudgetReadRateLimit, async (_req: Request, res: Response) => {
   res.json(await getAiBudgetSnapshot());
 });

@@ -12,6 +12,8 @@ const TEST_ENV_KEYS = [
   "AI_MOCK_MODE",
   "AI_OPENROUTER_API_KEY",
   "AI_OPENROUTER_MODEL",
+  "AI_BUDGET_READ_RATE_LIMIT_MAX",
+  "AI_RATE_LIMIT_MAX",
   "AI_RATE_LIMIT_REDIS_URL",
   "NODE_ENV",
 ] as const;
@@ -143,10 +145,75 @@ describe("GET /api/ai/budget", () => {
     await withAiServer(async (baseUrl) => {
       const response = await fetch(`${baseUrl}/budget`);
 
-      // The banner polls this endpoint from every visitor, and /api/ai/* is
+      // The banner reads this endpoint from every visitor, and /api/ai/* is
       // otherwise unlimited.
       expect(response.headers.get("ratelimit-limit")).not.toBeNull();
     });
+  });
+
+  it("does not ration the banner at one player's gameplay allowance", async () => {
+    // Behind the Next.js proxy every anonymous visitor resolves to the same
+    // identity, so a per-player cap would answer the sixteenth home page 429
+    // and hide the banner precisely when traffic makes a spent budget likely.
+    process.env.AI_RATE_LIMIT_MAX = "1";
+
+    await withAiServer(async (baseUrl) => {
+      const first = await fetch(`${baseUrl}/budget`);
+      const second = await fetch(`${baseUrl}/budget`);
+      const third = await fetch(`${baseUrl}/budget`);
+
+      expect([first.status, second.status, third.status]).toEqual([200, 200, 200]);
+      expect(first.headers.get("ratelimit-limit")).toBe("120");
+    });
+  });
+
+  it("refuses a flood once its own cap is reached", async () => {
+    // The cap is generous, not absent: /api/ai/* has no limiter of its own.
+    process.env.AI_BUDGET_READ_RATE_LIMIT_MAX = "2";
+
+    await withAiServer(async (baseUrl) => {
+      await fetch(`${baseUrl}/budget`);
+      await fetch(`${baseUrl}/budget`);
+      const third = await fetch(`${baseUrl}/budget`);
+
+      expect(third.status).toBe(429);
+    });
+  });
+
+  it("reading the budget does not spend a player's gameplay allowance", async () => {
+    // Both limiters resolve the same identity, and the store is keyed by that
+    // identity alone. Without a namespace they share one bucket of timestamps:
+    // checking the banner would consume gameplay slots, and a player at their
+    // cap would lose the banner that explains why.
+    process.env.AI_RATE_LIMIT_MAX = "1";
+
+    vi.resetModules();
+    const { aiBudgetReadRateLimit, aiRateLimit } = await import("../lib/rate-limit");
+    const app = express();
+    app.get("/budget", aiBudgetReadRateLimit, (_req, res) => {
+      res.json({ ok: true });
+    });
+    app.get("/gameplay", aiRateLimit, (_req, res) => {
+      res.json({ ok: true });
+    });
+
+    const server = await new Promise<Server>((resolve) => {
+      const listeningServer = app.listen(0, "127.0.0.1", () => resolve(listeningServer));
+    });
+
+    try {
+      const { port } = server.address() as AddressInfo;
+      const baseUrl = `http://127.0.0.1:${port}`;
+
+      await fetch(`${baseUrl}/budget`);
+      await fetch(`${baseUrl}/budget`);
+      await fetch(`${baseUrl}/budget`);
+      const gameplay = await fetch(`${baseUrl}/gameplay`);
+
+      expect(gameplay.status).toBe(200);
+    } finally {
+      await close(server);
+    }
   });
 
   it("does not spend the budget it reports", async () => {
