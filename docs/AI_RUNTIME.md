@@ -403,6 +403,15 @@ fails, and deliberately has **no fallback field**: `limit_remaining` is a
 fractional credit balance, and rendering it as "requests left today" would be
 a confident wrong number where silence is correct.
 
+`degraded` is true when *either* view reports the day spent: the local counter
+at zero, or the provider reporting its own account-wide counter at zero while
+this process still holds slots. Both make every remaining slot buy a refusal,
+so reporting only the local half would answer `degraded: false` beside an
+`upstream.dailyRemaining` of `0` in the same response. The upstream half needs
+both `dailyLimit` and `dailyRemaining` to be numbers, mirroring the
+both-or-neither rule the banner renders by, so a partial reading degrades
+nothing.
+
 ---
 
 ## Rate Limiting & Throttle Handling

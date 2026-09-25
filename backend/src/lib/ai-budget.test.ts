@@ -887,6 +887,53 @@ describe("getAiBudgetSnapshot", () => {
     expect(snapshot.resetAt).toBeNull();
   });
 
+  it("calls the deployment degraded when only the provider knows the day is spent", async () => {
+    // `/api/ai/budget` is documented, and a response carrying
+    // `upstream.dailyRemaining: 0` beside `degraded: false` contradicts
+    // itself: this process has local slots left, but every one of them now
+    // buys a refusal from the provider. Only the banner's own fallback
+    // noticed, so anything else reading the endpoint was told the deployment
+    // was healthy.
+    process.env.AI_OPENROUTER_API_KEY = "test-key";
+    vi.stubGlobal("fetch", vi.fn(async () =>
+      new Response(
+        JSON.stringify({
+          data: { free_model_daily_requests: { used: 50, limit: 50, remaining: 0 } },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+    ));
+    const { getAiBudgetSnapshot } = await loadBudget();
+
+    const snapshot = await getAiBudgetSnapshot();
+
+    // The local counter is untouched, so this is the upstream half alone.
+    expect(snapshot.dailyRemaining).toBe(1000);
+    expect(snapshot.degraded).toBe(true);
+  });
+
+  it("does not call it degraded on a partial reading from the provider", async () => {
+    // Same both-or-neither gate the reset uses. A reading with no limit is a
+    // reading, not a zero, and degrading on it would tell every consumer the
+    // deployment is spent because one field was missing from an answer the
+    // provider was under no obligation to give.
+    process.env.AI_OPENROUTER_API_KEY = "test-key";
+    vi.stubGlobal("fetch", vi.fn(async () =>
+      new Response(
+        JSON.stringify({
+          data: { free_model_daily_requests: { used: 50, remaining: 0 } },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+    ));
+    const { getAiBudgetSnapshot } = await loadBudget();
+
+    const snapshot = await getAiBudgetSnapshot();
+
+    expect(snapshot.upstream).toEqual({ dailyLimit: null, dailyRemaining: 0 });
+    expect(snapshot.degraded).toBe(false);
+  });
+
   it("does not ask OpenRouter about an account that is not serving the traffic", async () => {
     // AI_GLOBAL_BUDGET_ENABLED is honoured on any provider, and a deployment
     // that moved to Azure may still carry the key from an earlier experiment.

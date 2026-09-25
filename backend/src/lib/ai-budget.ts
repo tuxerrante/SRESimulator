@@ -652,7 +652,16 @@ export async function getAiBudgetSnapshot(): Promise<AiBudgetSnapshot> {
     dailyRemaining,
     minuteLimit,
     minuteRemaining: minute?.remaining ?? minuteLimit,
-    degraded: enabled && dailyRemaining <= 0,
+    // Both sources count, because either one alone can make the deployment
+    // degraded: this process stops reaching the provider once the local
+    // counter is spent, and the provider stops answering once the account is.
+    // Reporting the account-wide exhaustion as `degraded: false` while
+    // `upstream.dailyRemaining: 0` sits in the same response made the
+    // documented endpoint contradict itself, and left the banner's own
+    // fallback as the only consumer that noticed. The upstream half keeps its
+    // both-fields gate, so a partial reading from the provider degrades
+    // nothing.
+    degraded: enabled && (dailyRemaining <= 0 || upstreamExhausted),
     exhaustedBehaviour: getExhaustedBehaviour(),
     resetAt: resetAtMs === null ? null : new Date(resetAtMs).toISOString(),
     upstream,
