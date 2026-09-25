@@ -1036,4 +1036,37 @@ describe("the charge contract's own documentation", () => {
     expect(section, "no GET /api/ai/budget section in docs/AI_RUNTIME.md").toBeDefined();
     expect(section).toContain(`\`${registered}\``);
   });
+
+  // Third time the same drift: a limiter shipped and its knob was documented
+  // nowhere, so the only way to discover it was to read `rate-limit.ts`. An
+  // operator tuning a flood guard they cannot find leaves it at the default.
+  // An inventory rather than a string match, so the next limiter added is
+  // caught by the same case instead of needing one of its own.
+  it("documents every AI limiter cap it reads from the environment", () => {
+    const limiterSource = readFileSync(
+      resolve(process.cwd(), "src/lib/rate-limit.ts"),
+      "utf8",
+    );
+    const knobs = [
+      ...new Set(limiterSource.match(/process\.env\.AI_\w*RATE_LIMIT_MAX\b/g) ?? []),
+    ].map((match) => match.replace("process.env.", ""));
+    expect(knobs.length, "no AI rate-limit caps found in rate-limit.ts").toBeGreaterThan(0);
+
+    const runtimeDoc = readFileSync(resolve(process.cwd(), "../docs/AI_RUNTIME.md"), "utf8");
+    const envExample = readFileSync(resolve(process.cwd(), ".env.local.example"), "utf8");
+
+    for (const knob of knobs) {
+      // A table row, not a mention: the capability index near the end of the
+      // file names every limiter knob in one line, so `toContain` passes on a
+      // cap that has no documented default and no meaning beside it.
+      expect(
+        runtimeDoc,
+        `${knob} has no row in the limiter tuning table in docs/AI_RUNTIME.md`,
+      ).toMatch(new RegExp(`^\\|\\s*\\\`${knob}\\\`\\s*\\|`, "m"));
+      expect(
+        envExample,
+        `${knob} is missing from backend/.env.local.example`,
+      ).toContain(`${knob}=`);
+    }
+  });
 });
