@@ -17,6 +17,11 @@ const generateAiTextMock = vi.fn();
 const warmupAiModelMock = vi.fn();
 const captureBackendRouteErrorMock = vi.fn();
 const loadKnowledgeBaseMock = vi.fn().mockResolvedValue("");
+const chargeAiBudgetMock = vi.fn(async () => "ok");
+
+vi.mock("../lib/ai-budget", () => ({
+  chargeAiBudget: chargeAiBudgetMock,
+}));
 
 vi.mock("../lib/ai-config", () => ({
   getAiReadiness() {
@@ -61,12 +66,9 @@ function createApp(
   const app = express();
   app.use(express.json());
   if (options.budgetExhausted) {
-    // What aiGlobalBudgetLimit leaves behind for the route when the shared
-    // daily budget is spent and the mode is degrade.
-    app.use("/api/scenario", (_req, res, next) => {
-      res.locals.aiBudgetExhausted = true;
-      next();
-    });
+    // What chargeAiBudget answers the route when the shared daily budget is
+    // spent and the mode is degrade: nothing written, decision handed back.
+    chargeAiBudgetMock.mockResolvedValue("exhausted");
   }
   app.use("/api/scenario", scenarioRouter);
   return app;
@@ -209,6 +211,7 @@ describe("scenario reservation before AI generation", () => {
         })
     );
     captureBackendRouteErrorMock.mockReset();
+    chargeAiBudgetMock.mockReset().mockResolvedValue("ok");
     vi.resetModules();
   });
 

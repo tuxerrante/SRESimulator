@@ -16,6 +16,11 @@ const mocks = vi.hoisted(() => ({
   estimateTokens: vi.fn(),
   getSessionStore: vi.fn(),
   sessionGet: vi.fn(),
+  chargeAiBudget: vi.fn(),
+}));
+
+vi.mock("../lib/ai-budget", () => ({
+  chargeAiBudget: mocks.chargeAiBudget,
 }));
 
 vi.mock("../lib/knowledge", () => ({
@@ -144,12 +149,9 @@ async function withChatServer(
   const app = express();
   app.use(express.json());
   if (options.budgetExhausted) {
-    // What aiGlobalBudgetLimit leaves behind for the route when the shared
-    // daily budget is spent and the mode is degrade.
-    app.use("/api/chat", (_req, res, next) => {
-      res.locals.aiBudgetExhausted = true;
-      next();
-    });
+    // What chargeAiBudget answers the route when the shared daily budget is
+    // spent and the mode is degrade: nothing written, decision handed back.
+    mocks.chargeAiBudget.mockResolvedValue("exhausted");
   }
   app.use("/api/chat", chatRouter);
 
@@ -207,6 +209,7 @@ describe("chatRouter", () => {
     vi.clearAllMocks();
     mocks.getAiReadiness.mockReturnValue({ ready: true, mockMode: false });
     mocks.shouldDegradeOnQuotaExhausted.mockReturnValue(true);
+    mocks.chargeAiBudget.mockResolvedValue("ok");
     mocks.loadKnowledgeSections.mockResolvedValue([]);
     mocks.queryKnowledgeSections.mockReturnValue("");
     mocks.buildSystemPrompt.mockReturnValue("system prompt");
@@ -341,9 +344,40 @@ describe("chatRouter", () => {
       await expect(response.text()).resolves.toContain("mock chat response");
       expect(mocks.sessionGet).toHaveBeenCalledTimes(1);
       expect(mocks.sessionGet).toHaveBeenCalledWith(sessionToken);
+      // Mock mode answers above the charge point, so no provider is reached
+      // and no slot of the shared budget is spent.
+      expect(mocks.chargeAiBudget).not.toHaveBeenCalled();
     } finally {
       await close(server);
     }
+  });
+
+  it("charges nothing when the AI runtime is unready and the route answers 503", async () => {
+    mocks.getAiReadiness.mockReturnValue({
+      ready: false,
+      mockMode: false,
+      reasons: ["AI_AZURE_OPENAI_API_KEY is not set"],
+    });
+
+    await withChatServer(async (url) => {
+      const response = await fetch(url, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(defaultChatBody()),
+      });
+
+      expect(response.status).toBe(503);
+      await expect(response.json()).resolves.toEqual({
+        error: "AI runtime configuration is invalid",
+        details: ["AI_AZURE_OPENAI_API_KEY is not set"],
+      });
+    });
+
+    // The readiness refusal is the one exemption an app-level store assertion
+    // cannot reach -- a well-formed body gets past payload validation, so only
+    // the route's own ordering keeps this request off the shared budget.
+    expect(mocks.chargeAiBudget).not.toHaveBeenCalled();
+    expect(mocks.streamAiText).not.toHaveBeenCalled();
   });
 
   it("captures stream failures after SSE headers are sent", async () => {

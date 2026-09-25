@@ -1,4 +1,4 @@
-import type { NextFunction, Request, RequestHandler, Response } from "express";
+import type { Response } from "express";
 import { getAiReadiness, getConfiguredProvider } from "./ai-config";
 import { fetchOpenRouterKeyStatus } from "./ai-providers/openrouter";
 import { consumeSharedWindow } from "./rate-limit";
@@ -120,10 +120,22 @@ function readWindow(scope: BudgetScope, nowMs: number): WindowState | undefined 
   return state;
 }
 
-/** Set by the middleware when the day budget is spent and the mode is degrade. */
-export function isAiBudgetExhausted(res: Response): boolean {
-  return res.locals.aiBudgetExhausted === true;
-}
+/**
+ * What the caller must do next.
+ *
+ * - `ok`         the request is charged and may call the provider.
+ * - `exhausted`  the day budget is spent (or unverifiable while failing
+ *                closed). Nothing was charged and no response was written:
+ *                answer the way this route already answers a provider quota
+ *                exhaustion. Deliberately *not* named `degraded` -- whether
+ *                the answer degrades is `AI_DEGRADE_ON_QUOTA_EXHAUSTED`, and
+ *                the routes disagree about what it means. Chat and command
+ *                turn it off into a 429; scenario relabels its catalog
+ *                fallback `throttled` and still returns a playable session.
+ *                Deciding that here would have quietly made scenario 429.
+ * - `answered`   a response has already been written (429 or 503). Return.
+ */
+export type AiBudgetOutcome = "ok" | "exhausted" | "answered";
 
 /**
  * A store outage is not an exhausted account, and saying so misleads exactly
@@ -166,105 +178,114 @@ function rejectWithBudgetExhausted(
 }
 
 /**
- * Global spend budget for the shared AI account, composed *after* the
- * per-identity limiter.
+ * Charge the shared AI account for one provider call.
+ *
+ * **Called by the route, immediately before the provider call -- not as
+ * middleware.** It was middleware, and that was wrong in a way worth writing
+ * down: Express runs middleware before the handler validates anything, so a
+ * request with an expired session, a malformed payload, or one that goes on
+ * to return the readiness 503 still burned a daily slot. The day budget is
+ * the scarce shared resource (50 requests on an un-credited account), so a
+ * caller could drain it without a single request reaching OpenRouter, and
+ * every real player would be pushed onto simulated answers by traffic the
+ * provider never saw. The three call sites are the points each route had
+ * already chosen as its provider boundary.
  *
  * The two windows are consumed in order and the daily one is only charged
  * once the minute one allowed the request: a caller refused on the minute
  * window never reached the provider, so charging the day for it would leak
- * budget that was never spent. `willCallProvider` extends that same rule to
- * routes that can answer without a provider call at all.
+ * budget that was never spent.
  *
- * @param willCallProvider evaluated per request; `false` passes the request
- *   through uncharged. Read at call time, not at mount time, because the
- *   environment it consults is read at call time everywhere else too.
+ * The same rule covers the routes that can answer without a provider at all.
+ * `AI_MOCK_MODE` and `SCENARIO_SOURCE=catalog` both return from their routes
+ * above every call site here, so neither can charge -- structurally, rather
+ * than through a predicate the caller has to remember to pass. That matters
+ * for the free-e2e gate, which drives four simulated players through chat and
+ * command with mock AI.
  */
-export function createAiGlobalBudgetLimit(
-  willCallProvider: () => boolean = () => true,
-): RequestHandler {
-  return async (_req: Request, res: Response, next: NextFunction) => {
-    if (!isAiGlobalBudgetEnabled() || !willCallProvider()) {
-      next();
-      return;
-    }
+export async function chargeAiBudget(res: Response): Promise<AiBudgetOutcome> {
+  if (!isAiGlobalBudgetEnabled()) {
+    return "ok";
+  }
 
-    const minuteMax = getGlobalMinuteMax();
-    const dailyMax = getGlobalDailyMax();
-    const nowMs = Date.now();
+  const minuteMax = getGlobalMinuteMax();
+  const dailyMax = getGlobalDailyMax();
+  const nowMs = Date.now();
 
-    let minute;
-    let day;
-    try {
-      minute = await consumeSharedWindow(MINUTE_KEY, MINUTE_MS, minuteMax, nowMs);
-      rememberWindow("minute", {
-        limit: minuteMax,
-        remaining: minute.decision.remaining,
-        resetAtMs: minute.decision.resetAtMs,
-      });
+  let minute;
+  let day;
+  try {
+    minute = await consumeSharedWindow(MINUTE_KEY, MINUTE_MS, minuteMax, nowMs);
+    rememberWindow("minute", {
+      limit: minuteMax,
+      remaining: minute.decision.remaining,
+      resetAtMs: minute.decision.resetAtMs,
+    });
 
-      if (!minute.decision.allowed) {
-        // Transient by construction: the window rolls in under a minute, so a
-        // retry genuinely helps and simulated output would be a worse answer.
-        rejectWithBudgetExhausted(
-          res,
-          "minute",
-          minute.decision.retryAfterSeconds,
-          minute.decision.resetAtMs,
-        );
-        return;
-      }
-
-      day = await consumeSharedWindow(DAY_KEY, DAY_MS, dailyMax, nowMs);
-      rememberWindow("daily", {
-        limit: dailyMax,
-        remaining: day.decision.remaining,
-        resetAtMs: day.decision.resetAtMs,
-      });
-    } catch (error) {
-      if (!shouldFailClosed()) {
-        console.warn("[ai-budget] budget store unavailable, failing open", error);
-        res.setHeader(AI_BUDGET_HEADER, "fail-open");
-        next();
-        return;
-      }
-
-      console.warn("[ai-budget] budget store unavailable, failing closed", error);
-      if (!shouldDegradeOnDailyExhaustion()) {
-        rejectWithBudgetUnavailable(res, 60);
-        return;
-      }
-      res.setHeader(AI_BUDGET_HEADER, "degraded");
-      res.locals.aiBudgetExhausted = true;
-      next();
-      return;
-    }
-
-    if (day.decision.allowed) {
-      res.setHeader(AI_BUDGET_HEADER, "ok");
-      next();
-      return;
-    }
-
-    if (!shouldDegradeOnDailyExhaustion()) {
+    if (!minute.decision.allowed) {
+      // Transient by construction: the window rolls in under a minute, so a
+      // retry genuinely helps and simulated output would be a worse answer.
       rejectWithBudgetExhausted(
         res,
-        "daily",
-        day.decision.retryAfterSeconds,
-        day.decision.resetAtMs,
+        "minute",
+        minute.decision.retryAfterSeconds,
+        minute.decision.resetAtMs,
       );
-      return;
+      return "answered";
     }
 
-    // Degrading here rather than at the provider saves a round trip that can
-    // only come back 429, and lets the route answer with the same simulated
-    // output it already produces for an exhausted provider budget.
-    res.setHeader(AI_BUDGET_HEADER, "degraded");
-    res.locals.aiBudgetExhausted = true;
-    next();
-  };
-}
+    day = await consumeSharedWindow(DAY_KEY, DAY_MS, dailyMax, nowMs);
+    rememberWindow("daily", {
+      limit: dailyMax,
+      remaining: day.decision.remaining,
+      resetAtMs: day.decision.resetAtMs,
+    });
+  } catch (error) {
+    if (!shouldFailClosed()) {
+      console.warn("[ai-budget] budget store unavailable, failing open", error);
+      res.setHeader(AI_BUDGET_HEADER, "fail-open");
+      return "ok";
+    }
 
-export const aiGlobalBudgetLimit: RequestHandler = createAiGlobalBudgetLimit();
+    console.warn("[ai-budget] budget store unavailable, failing closed", error);
+    if (!shouldDegradeOnDailyExhaustion()) {
+      rejectWithBudgetUnavailable(res, 60);
+      return "answered";
+    }
+    // The header says `store-unavailable`, not `daily-exhausted`: nothing was
+    // observed here, let alone spent, and an operator reading these during an
+    // incident needs the outage to be distinguishable from a real cap. The
+    // route's own body will still say `quota_exhausted`, because that is the
+    // only vocabulary the degraded-answer contract has and it is the one the
+    // client can act on -- the cause lives in this header and the log line.
+    res.setHeader(AI_BUDGET_HEADER, "store-unavailable");
+    return "exhausted";
+  }
+
+  if (day.decision.allowed) {
+    res.setHeader(AI_BUDGET_HEADER, "ok");
+    return "ok";
+  }
+
+  if (!shouldDegradeOnDailyExhaustion()) {
+    rejectWithBudgetExhausted(
+      res,
+      "daily",
+      day.decision.retryAfterSeconds,
+      day.decision.resetAtMs,
+    );
+    return "answered";
+  }
+
+  // Handing back here rather than at the provider saves a round trip that can
+  // only come back 429. The header states what was observed -- the day is
+  // spent -- rather than predicting how the route will answer, which is the
+  // route's decision and not the same one everywhere. A header that promised
+  // `degraded` was a lie on every route that answers a spent quota with a
+  // 429, and it was written before the answer existed.
+  res.setHeader(AI_BUDGET_HEADER, "daily-exhausted");
+  return "exhausted";
+}
 
 export interface AiBudgetSnapshot {
   enabled: boolean;

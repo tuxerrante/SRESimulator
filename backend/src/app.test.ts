@@ -1,6 +1,6 @@
 import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
-import type { Express } from "express";
+import type { Express, Response } from "express";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 async function close(server: Server): Promise<void> {
@@ -218,7 +218,7 @@ describe("createApp", { timeout: 15000 }, () => {
   });
 });
 
-describe("AI route middleware order", { timeout: 15000 }, () => {
+describe("AI shared-budget charging", { timeout: 15000 }, () => {
   const ENV_KEYS = [
     "AI_PROVIDER",
     "AI_MOCK_MODE",
@@ -242,12 +242,16 @@ describe("AI route middleware order", { timeout: 15000 }, () => {
    * Mounts the real app with the per-identity limiter replaced by one whose
    * verdict the test controls, and the shared-window store replaced by one
    * that records which keys were charged. What the budget *reports* is written
-   * by the middleware only on the path it takes, so only the store can say
-   * whether a refused request cost anything.
+   * only on the path it takes, so only the store can say whether a request
+   * that never reached a provider cost anything.
    */
   async function loadAppWithRecordingBudget(
     identityVerdict: "allow" | "refuse",
-  ): Promise<{ app: Express; consumedKeys: string[] }> {
+  ): Promise<{
+    app: Express;
+    consumedKeys: string[];
+    chargeAiBudget: typeof import("./lib/ai-budget").chargeAiBudget;
+  }> {
     vi.resetModules();
     const consumedKeys: string[] = [];
     const actual = await vi.importActual<typeof import("./lib/rate-limit")>("./lib/rate-limit");
@@ -278,7 +282,8 @@ describe("AI route middleware order", { timeout: 15000 }, () => {
       },
     }));
     const { createApp } = await import("./app");
-    return { app: createApp(), consumedKeys };
+    const { chargeAiBudget } = await import("./lib/ai-budget");
+    return { app: createApp(), consumedKeys, chargeAiBudget };
   }
 
   async function postJson(app: Express, path: string): Promise<number> {
@@ -297,10 +302,31 @@ describe("AI route middleware order", { timeout: 15000 }, () => {
     }
   }
 
+  /**
+   * Proves the recorder is wired into the app's own module graph before any
+   * test reads an empty list as an exemption. Without it every assertion below
+   * would pass just as well against a limiter that was never loaded.
+   */
+  async function assertRecorderIsLive(
+    chargeAiBudget: typeof import("./lib/ai-budget").chargeAiBudget,
+    consumedKeys: string[],
+  ): Promise<void> {
+    const headers: Record<string, string> = {};
+    const res = {
+      setHeader(name: string, value: string | number) {
+        headers[name] = String(value);
+      },
+    } as unknown as Response;
+    await expect(chargeAiBudget(res)).resolves.toBe("ok");
+    expect(consumedKeys).toEqual(["global:ai:minute", "global:ai:day"]);
+    consumedKeys.length = 0;
+  }
+
   it("does not charge the shared account for a request the per-identity limiter refused", async () => {
     process.env.AI_PROVIDER = "openrouter";
     delete process.env.AI_MOCK_MODE;
-    const { app, consumedKeys } = await loadAppWithRecordingBudget("refuse");
+    const { app, consumedKeys, chargeAiBudget } = await loadAppWithRecordingBudget("refuse");
+    await assertRecorderIsLive(chargeAiBudget, consumedKeys);
 
     const status = await postJson(app, "/api/chat");
 
@@ -311,27 +337,40 @@ describe("AI route middleware order", { timeout: 15000 }, () => {
     expect(consumedKeys).toEqual([]);
   });
 
-  it("still charges the shared account for a request the per-identity limiter allowed", async () => {
+  it("charges nothing for a request no route would have sent to a provider", async () => {
+    // The reason the budget is charged inside the routes and not as
+    // middleware. An empty body is refused by all three routes' own
+    // validation, long before a prompt exists -- but middleware runs first,
+    // so mounted there it charged the shared day for every one of them. On an
+    // un-credited account that is 50 requests a day one caller can spend
+    // without OpenRouter seeing a single request, and every real player is
+    // pushed onto simulated answers by traffic that never happened.
     process.env.AI_PROVIDER = "openrouter";
     delete process.env.AI_MOCK_MODE;
-    const { app, consumedKeys } = await loadAppWithRecordingBudget("allow");
+    const { app, consumedKeys, chargeAiBudget } = await loadAppWithRecordingBudget("allow");
+    await assertRecorderIsLive(chargeAiBudget, consumedKeys);
 
-    await postJson(app, "/api/chat");
+    const statuses = [
+      await postJson(app, "/api/chat"),
+      await postJson(app, "/api/command"),
+    ];
 
-    expect(consumedKeys).toEqual(["global:ai:minute", "global:ai:day"]);
+    expect(statuses).toEqual([400, 400]);
+    expect(consumedKeys).toEqual([]);
   });
 
   it("charges nothing on /api/scenario when the catalog serves it without a model", async () => {
+    // Under SCENARIO_SOURCE=catalog the route answers from the curated
+    // catalog and returns above the charge, so the exemption the middleware
+    // needed a predicate for is now a property of where the call sits.
     process.env.AI_PROVIDER = "openrouter";
     process.env.SCENARIO_SOURCE = "catalog";
     delete process.env.AI_MOCK_MODE;
-    const { app, consumedKeys } = await loadAppWithRecordingBudget("allow");
+    const { app, consumedKeys, chargeAiBudget } = await loadAppWithRecordingBudget("allow");
+    await assertRecorderIsLive(chargeAiBudget, consumedKeys);
 
     await postJson(app, "/api/scenario");
-    // The control within the test: the same app charges chat, so an empty
-    // list here is the exemption and not a dead limiter.
-    await postJson(app, "/api/chat");
 
-    expect(consumedKeys).toEqual(["global:ai:minute", "global:ai:day"]);
+    expect(consumedKeys).toEqual([]);
   });
 });
