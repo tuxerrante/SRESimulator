@@ -347,6 +347,61 @@ export async function chargeAiBudget(res: Response): Promise<AiBudgetOutcome> {
   return "exhausted";
 }
 
+/**
+ * Charge the shared account for a provider request the route did not pay for.
+ *
+ * `chargeAiBudget` charges one slot and the route then makes *one* call --
+ * but a call is not a request. The OpenAI-compatible transport re-sends on a
+ * 429 with backoff, re-sends once more when a provider rejects the
+ * `max_tokens` spelling, re-sends against the fallback deployment when the
+ * route-specific one is missing, and `generateAiText` re-sends the whole
+ * thing when the provider spent its completion budget on reasoning and
+ * returned no text. Each of those is a second request against an account cap
+ * counted in requests, so one charged slot could spend several -- and the
+ * limiter exists precisely to keep this deployment under that cap.
+ *
+ * Deliberately charges *both* windows unconditionally, which is the opposite
+ * of the ordering rule `chargeAiBudget` follows. That rule exists because a
+ * caller refused on the minute window never reached the provider; here the
+ * request is already going out, so both windows have to reflect it or they
+ * describe a spend that did not happen the way they say.
+ *
+ * It never refuses and never throws. The first request of this call was
+ * already paid for and is in flight, so declining the retry would abandon a
+ * slot already spent and hand the caller a 500 where the degraded answer is
+ * strictly better. What it does instead is record the overspend, which is
+ * what makes the *next* caller get refused on time. A store outage is logged
+ * and swallowed for the same reason -- failing closed here would convert a
+ * Redis blip into a lost answer rather than into a refusal.
+ */
+export async function chargeAiProviderRetry(): Promise<void> {
+  if (!isAiGlobalBudgetEnabled()) {
+    return;
+  }
+
+  const nowMs = Date.now();
+  const minuteMax = getGlobalMinuteMax();
+  const dailyMax = getGlobalDailyMax();
+
+  try {
+    const minute = await consumeSharedWindow(MINUTE_KEY, MINUTE_MS, minuteMax, nowMs);
+    rememberWindow("minute", {
+      limit: minuteMax,
+      remaining: minute.decision.remaining,
+      resetAtMs: minute.decision.resetAtMs,
+    });
+
+    const day = await consumeSharedWindow(dayKeyForUtcDate(nowMs), DAY_MS, dailyMax, nowMs);
+    rememberWindow("daily", {
+      limit: dailyMax,
+      remaining: day.decision.remaining,
+      resetAtMs: nextUtcMidnightMs(nowMs),
+    });
+  } catch (error) {
+    console.warn("[ai-budget] could not charge a provider retry", error);
+  }
+}
+
 export interface AiBudgetSnapshot {
   enabled: boolean;
   dailyLimit: number;
