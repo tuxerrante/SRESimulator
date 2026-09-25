@@ -405,14 +405,30 @@ fractional credit balance, and rendering it as "requests left today" would be
 a confident wrong number where silence is correct.
 
 `exhaustedBehaviour` says what this deployment answers with once the budget
-is spent, and a consumer cannot derive it: `simulated` means the routes return
-a playable mock answer at HTTP 200, `rejected` means they return 429. It is
-`simulated` only when **both** `AI_GLOBAL_DAILY_EXHAUSTED_MODE=degrade` and
+is spent, and a consumer cannot derive it: `simulated` means a playable mock
+answer at HTTP 200, `rejected` means 429. It is `simulated` only when **both**
+`AI_GLOBAL_DAILY_EXHAUSTED_MODE=degrade` and
 `AI_DEGRADE_ON_QUOTA_EXHAUSTED=true` hold -- either switch alone leaves one
 path refusing -- so promising a playable answer off the first switch would be
 wrong on a deployment that set only it. The banner renders the two cases with
 different copy, which is the whole reason the field is in the response rather
 than in the operator's head.
+
+It describes the **deployment**, not a per-route response status, and four
+routes charge the budget. `/api/chat` and `/api/command` match it in every
+configuration. The other two do not, and a consumer reading `rejected` as
+"expect a 429 here" will be wrong on both:
+
+- `/api/scenario` never answers 429 under `degrade`. With
+  `AI_DEGRADE_ON_QUOTA_EXHAUSTED=false` -- the one combination that reports
+  `rejected` without `AI_GLOBAL_DAILY_EXHAUSTED_MODE=reject` -- it still serves
+  a catalog scenario at HTTP 200, labelled `degradedReason: "throttled"` rather
+  than `"quota_exhausted"`. Only `AI_GLOBAL_DAILY_EXHAUSTED_MODE=reject` makes
+  it refuse, and that mode refuses above every route alike.
+- `/api/ai/probe?live=true` always refuses, `simulated` included. A mock
+  "pong" would assert nothing about the provider, which is the one thing the
+  probe exists to check, and the refusal says which cause it is: 429 for a
+  spent day, 503 for an unreachable window store.
 
 `degraded` is true when *either* view reports the day spent: the local counter
 at zero, or the provider reporting its own account-wide counter at zero while

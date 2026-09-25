@@ -1310,4 +1310,42 @@ describe("the charge contract's own documentation", () => {
     expect(missing, "fields the response carries but the example omits").toEqual([]);
     expect(extra, "fields the example shows but the response does not carry").toEqual([]);
   });
+
+  // Fifth instance, and the one a consumer acts on: `exhaustedBehaviour` is a
+  // single deployment-wide field, and two of the four charging routes diverge
+  // from it -- `/api/scenario` still serves a catalog scenario at 200 under
+  // `degrade` with `AI_DEGRADE_ON_QUOTA_EXHAUSTED=false`, and the live probe
+  // refuses even when the field reads `simulated`. Documented as if it
+  // described every route, it tells a client to expect a 429 it will not get.
+  // An inventory again rather than a string match: the routes are read out of
+  // `src/routes/`, so a fifth charging route cannot be added without the
+  // field's own prose accounting for it.
+  it("scopes exhaustedBehaviour to every route that charges", () => {
+    const charging = readdirSync(routesDir)
+      .filter((name) => name.endsWith(".ts") && !name.endsWith(".test.ts"))
+      .filter((name) =>
+        readFileSync(resolve(routesDir, name), "utf8").includes("chargeAiBudget(res)"),
+      )
+      .map((name) => name.replace(/\.ts$/, ""));
+    expect(charging.length, "no routes call chargeAiBudget(res)").toBeGreaterThan(0);
+
+    const runtimeDoc = readFileSync(resolve(process.cwd(), "../docs/AI_RUNTIME.md"), "utf8");
+    const section = runtimeDoc.split("### `GET /api/ai/budget`")[1]?.split("\n### ")[0];
+    expect(section, "no GET /api/ai/budget section in docs/AI_RUNTIME.md").toBeDefined();
+
+    // Scoped to the field's own prose, not the whole section: the section is
+    // about `GET /api/ai/budget`, so `/api/ai` appears in it whatever the
+    // paragraph says, and a section-wide search would pass on the very
+    // omission this case exists for.
+    const prose = (section ?? "")
+      .split("`exhaustedBehaviour` says")[1]
+      ?.split("`degraded` is true")[0];
+    expect(prose, "no `exhaustedBehaviour` prose in the budget section").toBeDefined();
+
+    const unaccounted = charging.filter((name) => !(prose ?? "").includes(`/api/${name}`));
+    expect(
+      unaccounted,
+      "routes that charge the budget but are absent from the exhaustedBehaviour prose",
+    ).toEqual([]);
+  });
 });
