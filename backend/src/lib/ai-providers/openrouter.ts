@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { getOpenRouterBaseUrl } from "../ai-config";
 import type { AiRoute } from "../token-logger";
 import { AiQuotaExhaustedError, type AiTextRequest, type OpenAiCompatibleTarget } from "./types";
@@ -129,6 +130,8 @@ export interface OpenRouterKeyStatus {
 interface CachedKeyStatus {
   fetchedAtMs: number;
   status: OpenRouterKeyStatus | null;
+  /** Which account this reading describes; see {@link readAccountIdentity}. */
+  identity: string;
 }
 
 let cachedKeyStatus: CachedKeyStatus | null = null;
@@ -139,8 +142,40 @@ let cachedKeyStatus: CachedKeyStatus | null = null;
  * moment the TTL expires turns every concurrent visitor into its own
  * `GET /key` -- a self-inflicted herd against the rate limit this lookup
  * exists to report on.
+ *
+ * Tagged with the identity it was opened under, so a refresh started before a
+ * key rotation is never handed to a caller asking about the new account.
  */
-let inFlightKeyStatus: Promise<OpenRouterKeyStatus | null> | null = null;
+let inFlightKeyStatus:
+  | { identity: string; promise: Promise<OpenRouterKeyStatus | null> }
+  | null = null;
+
+/**
+ * Which account a reading describes: the API key it was read with, through the
+ * base URL it was read from.
+ *
+ * The cache has to carry this because `readLastKnownOpenRouterDailyLimit`
+ * deliberately ignores the TTL. Without an identity, rotating the key in a
+ * long-lived process leaves the *previous* account's tier standing as a
+ * permanent clamp -- and rotating down from a credited 1000/day account to an
+ * un-credited one would then authorise twenty times the new account's real cap,
+ * with nothing left to expire the reading that allowed it.
+ *
+ * A reading is therefore only ever usable by the identity it was taken under.
+ * That also settles the narrow race where a slow lookup lands after a rotation:
+ * the stale write is stamped with the old identity, so the worst it can do is
+ * cost a re-warm, never raise a cap.
+ *
+ * Hashed rather than stored, because the value only needs comparing and a cache
+ * object is exactly the kind of thing that ends up in a debug log. The NUL
+ * separator keeps the two fields unambiguous -- an environment variable cannot
+ * contain one.
+ */
+function readAccountIdentity(apiKey: string): string {
+  return createHash("sha256")
+    .update(`${apiKey}\u0000${getOpenRouterBaseUrl()}`)
+    .digest("hex");
+}
 
 /** Bounds the auxiliary lookup; the banner is not worth a hung request. */
 const KEY_STATUS_TIMEOUT_MS = 5000;
@@ -192,7 +227,13 @@ function readFreeModelDailyRequests(data: Record<string, unknown>): OpenRouterKe
  *   visits, which is the one direction a safety clamp must never move.
  */
 export function readLastKnownOpenRouterDailyLimit(): number | null {
-  const limit = cachedKeyStatus?.status?.dailyLimit;
+  const apiKey = process.env.AI_OPENROUTER_API_KEY?.trim();
+  if (!apiKey || !cachedKeyStatus) return null;
+  // A reading taken on another account says nothing about this one, and
+  // because this read ignores the TTL it would otherwise say it forever.
+  if (cachedKeyStatus.identity !== readAccountIdentity(apiKey)) return null;
+
+  const limit = cachedKeyStatus.status?.dailyLimit;
   return typeof limit === "number" && limit > 0 ? limit : null;
 }
 
@@ -209,13 +250,18 @@ export async function fetchOpenRouterKeyStatus(): Promise<OpenRouterKeyStatus | 
   const key = process.env.AI_OPENROUTER_API_KEY?.trim();
   if (!key) return null;
 
+  const identity = readAccountIdentity(key);
   const nowMs = Date.now();
-  if (cachedKeyStatus && nowMs - cachedKeyStatus.fetchedAtMs < getQuotaTtlMs()) {
+  if (
+    cachedKeyStatus &&
+    cachedKeyStatus.identity === identity &&
+    nowMs - cachedKeyStatus.fetchedAtMs < getQuotaTtlMs()
+  ) {
     return cachedKeyStatus.status;
   }
-  if (inFlightKeyStatus) return inFlightKeyStatus;
+  if (inFlightKeyStatus?.identity === identity) return inFlightKeyStatus.promise;
 
-  inFlightKeyStatus = (async () => {
+  const promise = (async () => {
     let status: OpenRouterKeyStatus | null = null;
     try {
       const response = await fetch(`${getOpenRouterBaseUrl()}/key`, {
@@ -232,11 +278,14 @@ export async function fetchOpenRouterKeyStatus(): Promise<OpenRouterKeyStatus | 
     } catch {
       status = null;
     }
-    cachedKeyStatus = { fetchedAtMs: Date.now(), status };
+    cachedKeyStatus = { fetchedAtMs: Date.now(), status, identity };
     return status;
   })().finally(() => {
-    inFlightKeyStatus = null;
+    // Only retire our own entry: a rotation may have opened a newer one while
+    // this lookup was still in the air.
+    if (inFlightKeyStatus?.promise === promise) inFlightKeyStatus = null;
   });
+  inFlightKeyStatus = { identity, promise };
 
-  return inFlightKeyStatus;
+  return promise;
 }

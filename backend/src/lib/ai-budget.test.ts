@@ -1113,6 +1113,30 @@ describe("the daily cap against the account's own limit", () => {
     expect(vi.mocked(globalThis.fetch)).toHaveBeenCalledTimes(afterObservation);
   });
 
+  it("forgets the old account's tier when the key is rotated", async () => {
+    // The snapshot describes; this is the half that spends. The clamp read
+    // ignores the TTL on purpose, so without an identity on the cache a reading
+    // is not merely stale, it is permanent: rotating a credited 1000/day key
+    // out for an un-credited one would keep authorising 1000 on an account
+    // allowed 50, and nothing would ever expire the reading.
+    process.env.AI_GLOBAL_MINUTE_MAX = "500";
+    stubKeyStatus(1000, 1000);
+    const { chargeAiBudget, getAiBudgetSnapshot } = await loadBudget();
+    await expect(getAiBudgetSnapshot()).resolves.toMatchObject({ dailyLimit: 1000 });
+
+    process.env.AI_OPENROUTER_API_KEY = "a-different-account";
+    // The new account is never answered for, so the cap under test is the one
+    // the clamp falls back to on its own -- not a fresh reading, and not the
+    // old account's, which the warm would otherwise be skipped on.
+    vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(() => undefined)));
+
+    for (let sent = 0; sent < 50; sent += 1) {
+      expect((await charge(chargeAiBudget)).outcome).toBe("ok");
+    }
+
+    expect((await charge(chargeAiBudget)).outcome).toBe("exhausted");
+  });
+
   it("refuses at the clamped cap, not at the configured one", async () => {
     stubKeyStatus(2, 2);
     const { chargeAiBudget, getAiBudgetSnapshot } = await loadBudget();

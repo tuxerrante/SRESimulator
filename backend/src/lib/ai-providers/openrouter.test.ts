@@ -582,6 +582,53 @@ describe("the account's own free-tier counter", () => {
     }
   });
 
+  it("does not answer for one account out of the cache of another", async () => {
+    // Within the TTL the cached reading is served without a request. That is
+    // right for a refresh and wrong for a rotation: the two keys are two
+    // accounts, and the second one has never been looked up.
+    const fetchMock = vi.fn().mockImplementation(() =>
+      keyResponse({ free_model_daily_requests: { limit: 1000, remaining: 940 } }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const fetchKeyStatus = await freshKeyStatus();
+    await fetchKeyStatus();
+    await fetchKeyStatus();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    process.env.AI_OPENROUTER_API_KEY = "a-different-account";
+    await fetchKeyStatus();
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const [, second] = fetchMock.mock.calls[1] as [string, RequestInit];
+    expect((second.headers as Record<string, string>).authorization).toBe(
+      "Bearer a-different-account",
+    );
+  });
+
+  it("does not hand a refresh opened on one account to a caller on another", async () => {
+    // The coalescing above is what makes this reachable: a rotation during a
+    // slow lookup would otherwise be answered by the request already in the
+    // air, which is asking the wrong account.
+    let release: (() => void) | undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const fetchMock = vi.fn().mockImplementation(async () => {
+      await gate;
+      return keyResponse({ free_model_daily_requests: { limit: 1000, remaining: 940 } });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const fetchKeyStatus = await freshKeyStatus();
+
+    const first = fetchKeyStatus();
+    process.env.AI_OPENROUTER_API_KEY = "a-different-account";
+    const second = fetchKeyStatus();
+    release?.();
+    await Promise.all([first, second]);
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
   it("never throws, whatever the lookup does", async () => {
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("network unreachable")));
 
