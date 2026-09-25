@@ -132,7 +132,7 @@ spec:
             {{- end }}
             {{- if .Values.database.enabled }}
             - name: STORAGE_BACKEND
-              value: mssql
+              value: {{ .Values.database.driver | default "mssql" }}
             - name: DATABASE_URL
               valueFrom:
                 secretKeyRef:

@@ -36,6 +36,13 @@ describe("initStorage production guard", () => {
       vi.doUnmock("./mssql-metrics-store");
       vi.doUnmock("./mssql-player-store");
       vi.doUnmock("./mssql-anonymous-trial-store");
+      vi.doUnmock("pg");
+      vi.doUnmock("./migrate-pg");
+      vi.doUnmock("./pg-session-store");
+      vi.doUnmock("./pg-leaderboard-store");
+      vi.doUnmock("./pg-metrics-store");
+      vi.doUnmock("./pg-player-store");
+      vi.doUnmock("./pg-anonymous-trial-store");
       vi.resetModules();
     }
   });
@@ -46,7 +53,8 @@ describe("initStorage production guard", () => {
     const storage = await loadStorageModule();
 
     await expect(storage.initStorage()).rejects.toThrow(
-      'Refusing to start with STORAGE_BACKEND=json in production or deployed mode. Set STORAGE_BACKEND=mssql and DATABASE_URL.'
+      'Refusing to start with STORAGE_BACKEND=json in production or deployed mode. '
+      + 'Set STORAGE_BACKEND=mssql or STORAGE_BACKEND=postgres, and DATABASE_URL.'
     );
   });
 
@@ -58,7 +66,8 @@ describe("initStorage production guard", () => {
     const storage = await loadStorageModule();
 
     await expect(storage.initStorage()).rejects.toThrow(
-      'Refusing to start with STORAGE_BACKEND=json in production or deployed mode. Set STORAGE_BACKEND=mssql and DATABASE_URL.'
+      'Refusing to start with STORAGE_BACKEND=json in production or deployed mode. '
+      + 'Set STORAGE_BACKEND=mssql or STORAGE_BACKEND=postgres, and DATABASE_URL.'
     );
   });
 
@@ -166,5 +175,103 @@ describe("initStorage production guard", () => {
     expect(runMigrations).toHaveBeenCalledTimes(1);
     expect(query).toHaveBeenCalledWith("SELECT 1");
     expect(storage.getSessionStore()).toBeInstanceOf(FakeSessionStore);
+  });
+  test("rejects an unknown STORAGE_BACKEND by name", async () => {
+    process.env.STORAGE_BACKEND = "cockroach";
+
+    const storage = await loadStorageModule();
+
+    expect(() => storage.getStorageBackend()).toThrow(
+      'Invalid STORAGE_BACKEND: cockroach. Must be "json", "mssql" or "postgres".',
+    );
+  });
+
+  test("rejects whitespace-only DATABASE_URL for postgres", async () => {
+    process.env.NODE_ENV = "production";
+    process.env.STORAGE_BACKEND = "postgres";
+    process.env.DATABASE_URL = "   ";
+
+    const storage = await loadStorageModule();
+
+    await expect(storage.initStorage()).rejects.toThrow(
+      "DATABASE_URL is required when STORAGE_BACKEND=postgres",
+    );
+  });
+
+  test("allows production-like runtimes to proceed with postgres", async () => {
+    process.env.NODE_ENV = "production";
+    process.env.STORAGE_BACKEND = "postgres";
+    process.env.DATABASE_URL = "postgres://user:pass@localhost:5432/sresimulator";
+
+    const query = vi.fn().mockResolvedValue({ rows: [], rowCount: 0 });
+    const end = vi.fn().mockResolvedValue(undefined);
+    const on = vi.fn();
+    const runPgMigrations = vi.fn().mockResolvedValue(undefined);
+    const poolConfigs: unknown[] = [];
+
+    class FakePool {
+      query = query;
+      end = end;
+      on = on;
+
+      constructor(config: unknown) {
+        poolConfigs.push(config);
+      }
+    }
+
+    class FakePgSessionStore {}
+    class FakePgLeaderboardStore {}
+    class FakePgMetricsStore {}
+    class FakePgPlayerStore {}
+    class FakePgAnonymousTrialStore {}
+
+    vi.doMock("pg", () => ({ default: { Pool: FakePool } }));
+    vi.doMock("./migrate-pg", () => ({ runPgMigrations }));
+    vi.doMock("./pg-session-store", () => ({ PgSessionStore: FakePgSessionStore }));
+    vi.doMock("./pg-leaderboard-store", () => ({ PgLeaderboardStore: FakePgLeaderboardStore }));
+    vi.doMock("./pg-metrics-store", () => ({ PgMetricsStore: FakePgMetricsStore }));
+    vi.doMock("./pg-player-store", () => ({ PgPlayerStore: FakePgPlayerStore }));
+    vi.doMock("./pg-anonymous-trial-store", () => ({
+      PgAnonymousTrialStore: FakePgAnonymousTrialStore,
+    }));
+
+    const storage = await loadStorageModule();
+
+    await expect(storage.initStorage()).resolves.toBeUndefined();
+    expect(storage.getStorageBackend()).toBe("postgres");
+    expect(runPgMigrations).toHaveBeenCalledTimes(1);
+    expect(query).toHaveBeenCalledWith("SELECT 1");
+    expect(storage.getSessionStore()).toBeInstanceOf(FakePgSessionStore);
+    expect(storage.getAnonymousTrialStore()).toBeInstanceOf(FakePgAnonymousTrialStore);
+
+    // The idle-client handler is the difference between a suspended Neon
+    // compute and a dead Node process, so assert it was attached rather than
+    // trusting that the pool module was imported.
+    expect(on).toHaveBeenCalledWith("error", expect.any(Function));
+
+    await storage.shutdownStorage();
+    expect(end).toHaveBeenCalledTimes(1);
+  });
+
+  test("closes the postgres pool when the connection check fails", async () => {
+    process.env.NODE_ENV = "production";
+    process.env.STORAGE_BACKEND = "postgres";
+    process.env.DATABASE_URL = "postgres://user:pass@localhost:5432/sresimulator";
+
+    const end = vi.fn().mockResolvedValue(undefined);
+
+    class FakePool {
+      query = vi.fn().mockRejectedValue(new Error("ECONNREFUSED"));
+      end = end;
+      on = vi.fn();
+    }
+
+    vi.doMock("pg", () => ({ default: { Pool: FakePool } }));
+    vi.doMock("./migrate-pg", () => ({ runPgMigrations: vi.fn() }));
+
+    const storage = await loadStorageModule();
+
+    await expect(storage.initStorage()).rejects.toThrow("ECONNREFUSED");
+    expect(end).toHaveBeenCalledTimes(1);
   });
 });

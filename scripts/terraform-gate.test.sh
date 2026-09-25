@@ -1188,9 +1188,10 @@ assert_contains "| tr -d '[:space:]' || true" "$SHAPE_FILE"
 #
 # Asserted here rather than anywhere else because this suite is one of the
 # scripts that inclusion admits, so the precondition for running it belongs
-# with it. Block-scoped: the file already carries the flag on two other jobs,
-# so a file-wide grep would pass while both of these jobs kept the token.
-for shell_caller in integration-test integration-test-mssql; do
+# with it. Block-scoped: the file already carries the flag on other jobs, so a
+# file-wide grep would pass while any one of these jobs kept the token.
+for shell_caller in integration-test integration-test-mssql \
+    integration-test-postgres; do
   job_block "$shell_caller" > "$SHELL_CALLER_FILE"
   [ -s "$SHELL_CALLER_FILE" ] ||
     fail "$shell_caller job not found in $WORKFLOW"

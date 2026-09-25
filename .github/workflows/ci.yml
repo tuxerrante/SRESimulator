@@ -457,6 +457,88 @@ jobs:
             Password=${{ env.MSSQL_SA_PASSWORD }};TrustServerCertificate=true
         run: make smoke-backend-mssql
 
+  integration-test-postgres:
+    needs:
+      - changes
+    if: needs.changes.outputs.run_integration == 'true'
+    runs-on: ubuntu-latest
+    env:
+      # No punctuation: the value is interpolated into a URL userinfo field,
+      # where a reserved character would have to be percent-encoded in every
+      # consumer below.
+      POSTGRES_PASSWORD: ${{ format('ciRun{0}aA', github.run_id) }}
+      POSTGRES_USER: sresimulator
+      POSTGRES_DB: sresimulator
+    services:
+      # POSTGRES_DB creates the database on first start, so this job needs no
+      # equivalent of the MSSQL job's "Create sresimulator database" step.
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: ${{ env.POSTGRES_USER }}
+          POSTGRES_PASSWORD: ${{ env.POSTGRES_PASSWORD }}
+          POSTGRES_DB: ${{ env.POSTGRES_DB }}
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U sresimulator -d sresimulator"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - name: Harden runner
+        # v2.21.0
+        uses: >-
+          step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        # v6.0.2
+        uses: >-
+          actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          # `make test-integration` depends on `make test-shell`, which runs
+          # every scripts/*.test.sh in the PR's own tree -- PR-authored shell,
+          # with network access, as the runner's own user. Left at the
+          # default, checkout leaves this job's GITHUB_TOKEN in .git/config,
+          # so one of those scripts could read and send it. The `env -i` on
+          # each invocation is no defence: it clears the environment, and the
+          # token is on disk.
+          #
+          # Nothing in this job talks to git after the checkout, so removing
+          # the credential costs it nothing.
+          persist-credentials: false
+
+      - name: Setup Bun toolchain
+        uses: ./.github/actions/setup-bun-toolchain
+
+      - name: Install backend dependencies
+        run: make install-backend
+
+      - name: Setup Helm
+        # v5.0.0
+        uses: >-
+          azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310
+
+      - name: Run Postgres integration tests
+        env:
+          STORAGE_BACKEND: postgres
+          # Folded scalars join lines with a SPACE, which would corrupt a URL.
+          # The break sits inside the ${{ }} braces, where a space is legal
+          # expression syntax; do not move it outside them.
+          DATABASE_URL: >-
+            postgres://sresimulator:${{ env.POSTGRES_PASSWORD
+            }}@localhost:5432/sresimulator
+        run: make test-integration
+
+      - name: Smoke startup with Postgres backend
+        env:
+          POSTGRES_DATABASE_URL: >-
+            postgres://sresimulator:${{ env.POSTGRES_PASSWORD
+            }}@localhost:5432/sresimulator
+        run: make smoke-backend-postgres
+
   security:
     runs-on: ubuntu-latest
     env:
@@ -1424,6 +1506,7 @@ jobs:
       - test
       - integration-test
       - integration-test-mssql
+      - integration-test-postgres
       - security
       - helm-validate
       - docker-build
@@ -1441,7 +1524,8 @@ jobs:
         needs.changes.outputs.run_integration != 'true' ||
         (
           needs.integration-test.result == 'success' &&
-          needs.integration-test-mssql.result == 'success'
+          needs.integration-test-mssql.result == 'success' &&
+          needs.integration-test-postgres.result == 'success'
         )
       )
     runs-on: ubuntu-latest
@@ -1712,6 +1796,184 @@ jobs:
             --logs \
             --timeout 4m
 
+      - name: Start Postgres in the cluster
+        run: |
+          set -euo pipefail
+          # values-oci.yaml's real database is Neon, which is external and
+          # needs a credential no PR run may hold, so an in-cluster
+          # postgres:17-alpine stands in for it. What this phase gates is the
+          # chart-side wiring - database.driver reaching STORAGE_BACKEND, the
+          # DATABASE_URL secret, and initStorage() running its migrations
+          # from inside the pod. integration-test-postgres covers none of
+          # that: it drives the stores directly and never boots the chart.
+          pg_password="$(openssl rand -hex 16)"
+          echo "::add-mask::${pg_password}"
+          # Built in two steps on purpose. A single line would not fit, and
+          # folding it in YAML would join the halves with a space, silently
+          # corrupting the URL.
+          pg_url="postgres://sresimulator:${pg_password}"
+          pg_url="${pg_url}@free-e2e-postgres:5432/sresimulator"
+          kubectl -n "${E2E_NAMESPACE}" create secret generic \
+            free-e2e-postgres \
+            --from-literal=postgres-password="${pg_password}" \
+            --from-literal=connection-string="${pg_url}" \
+            --dry-run=client -o yaml |
+            kubectl apply -f -
+          kubectl -n "${E2E_NAMESPACE}" apply -f - <<'MANIFEST'
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: free-e2e-postgres
+          spec:
+            replicas: 1
+            selector:
+              matchLabels:
+                app: free-e2e-postgres
+            template:
+              metadata:
+                labels:
+                  app: free-e2e-postgres
+              spec:
+                containers:
+                  - name: postgres
+                    image: postgres:17-alpine
+                    env:
+                      - name: POSTGRES_USER
+                        value: sresimulator
+                      - name: POSTGRES_DB
+                        value: sresimulator
+                      - name: PGDATA
+                        value: /var/lib/postgresql/data/pgdata
+                      - name: POSTGRES_PASSWORD
+                        valueFrom:
+                          secretKeyRef:
+                            name: free-e2e-postgres
+                            key: postgres-password
+                    ports:
+                      - containerPort: 5432
+                    readinessProbe:
+                      exec:
+                        command:
+                          - pg_isready
+                          - -U
+                          - sresimulator
+                          - -d
+                          - sresimulator
+                      initialDelaySeconds: 5
+                      periodSeconds: 5
+                    volumeMounts:
+                      - name: data
+                        mountPath: /var/lib/postgresql/data
+                volumes:
+                  - name: data
+                    emptyDir: {}
+          ---
+          apiVersion: v1
+          kind: Service
+          metadata:
+            name: free-e2e-postgres
+          spec:
+            selector:
+              app: free-e2e-postgres
+            ports:
+              - port: 5432
+                targetPort: 5432
+          MANIFEST
+          kubectl -n "${E2E_NAMESPACE}" rollout status \
+            deploy/free-e2e-postgres --timeout=180s
+
+      - name: Redeploy on the Postgres backend
+        run: |
+          set -euo pipefail
+          # --reuse-values keeps the entire flag set the first deploy already
+          # proved, so the storage backend is the only difference between the
+          # two releases. allowDeployedJsonStorageForTests goes back to false
+          # deliberately: with a real database attached, a silent fall back
+          # to the JSON stores would make every assertion below vacuous.
+          #
+          # This phase has to stay after the PVC assertion, not before it:
+          # templates/pvc.yaml renders only when database.enabled is false,
+          # so the redeploy deletes the claim. Measured on k3d - the release
+          # goes from 8 rendered resources to 7 and the backend loses its
+          # /data mount, which is the chart working as intended and not
+          # something to wait on here.
+          helm upgrade "${E2E_RELEASE}" ./helm/sre-simulator \
+            --namespace "${E2E_NAMESPACE}" \
+            --reuse-values \
+            --set database.enabled=true \
+            --set-string database.driver=postgres \
+            --set-string database.existingSecretName=free-e2e-postgres \
+            --set backend.allowDeployedJsonStorageForTests=false \
+            --wait --timeout 5m
+
+      - name: Assert the backend really is on Postgres
+        run: |
+          set -euo pipefail
+          # Read what changed state, not what describes it. A Deployment spec
+          # carrying STORAGE_BACKEND=postgres proves only that helm rendered
+          # it; these read the running pod's own log and then the database it
+          # wrote to.
+          # Pick the pod explicitly. `kubectl logs deployment/...` chooses an
+          # arbitrary pod when more than one matches, and the JSON-storage
+          # pod is still terminating right after the upgrade, so the
+          # deployment form can replay the previous release's log and report
+          # success whatever the new pod did. Proven by control: with the
+          # backend reverted to JSON storage the deployment form still
+          # passed every assertion below.
+          backend_pod="$(kubectl -n "${E2E_NAMESPACE}" get pod \
+            -l app.kubernetes.io/component=backend \
+            --field-selector=status.phase=Running \
+            --sort-by=.metadata.creationTimestamp \
+            -o jsonpath='{.items[-1:].metadata.name}')"
+          echo "backend pod: ${backend_pod}"
+          log="$(kubectl -n "${E2E_NAMESPACE}" logs "${backend_pod}" \
+            --tail=400)"
+          for line in \
+            "[storage] Postgres connection verified" \
+            "[storage] migrations complete" \
+            "[storage] backend=postgres ready"; do
+            if ! grep -qF "${line}" <<<"${log}"; then
+              echo "::error::backend log is missing: ${line}"
+              tail -50 <<<"${log}"
+              exit 1
+            fi
+          done
+
+          pg_pod="$(kubectl -n "${E2E_NAMESPACE}" get pod \
+            -l app=free-e2e-postgres \
+            -o jsonpath='{.items[0].metadata.name}')"
+          run_sql() {
+            kubectl -n "${E2E_NAMESPACE}" exec "${pg_pod}" -- \
+              psql -U sresimulator -d sresimulator -tAc "$1"
+          }
+
+          # _migrations is written by the backend's own pool, so a row here
+          # is the one thing in this phase that proves a write reached the
+          # database rather than only that the app said it had.
+          applied="$(run_sql "SELECT name FROM _migrations ORDER BY name")"
+          echo "applied migrations: ${applied}"
+          if ! grep -qF "001_init.sql" <<<"${applied}"; then
+            echo "::error::the backend recorded no migration"
+            exit 1
+          fi
+
+          for table in sessions leaderboard_entries gameplay_metrics \
+            players anonymous_trial_claims; do
+            sql="SELECT to_regclass('public.${table}') IS NOT NULL"
+            if [[ "$(run_sql "${sql}")" != "t" ]]; then
+              echo "::error::table ${table} is absent after migration"
+              exit 1
+            fi
+          done
+
+      - name: Helm test (Postgres backend)
+        run: |
+          set -euo pipefail
+          helm test "${E2E_RELEASE}" \
+            --namespace "${E2E_NAMESPACE}" \
+            --logs \
+            --timeout 4m
+
       - name: Collect diagnostics
         if: failure()
         run: |
@@ -1731,6 +1993,9 @@ jobs:
             "deployment/${E2E_RELEASE}-backend" --tail=200 || true
           echo "--- traefik logs ---"
           kubectl -n kube-system logs deploy/traefik --tail=200 || true
+          echo "--- postgres logs ---"
+          kubectl -n "${E2E_NAMESPACE}" logs \
+            deploy/free-e2e-postgres --tail=100 || true
           # `helm test --logs` prints only the test container, which never
           # starts when the wait-for-network-policy init container times out.
           echo "--- helm test pod logs (all containers) ---"
@@ -1759,6 +2024,7 @@ jobs:
       - test
       - integration-test
       - integration-test-mssql
+      - integration-test-postgres
       - security
       - helm-validate
       - docker-build
@@ -1779,7 +2045,8 @@ jobs:
         needs.changes.outputs.run_integration != 'true' ||
         (
           needs.integration-test.result == 'success' &&
-          needs.integration-test-mssql.result == 'success'
+          needs.integration-test-mssql.result == 'success' &&
+          needs.integration-test-postgres.result == 'success'
         )
       )
     runs-on: ubuntu-latest
@@ -1951,6 +2218,7 @@ jobs:
       - test
       - integration-test
       - integration-test-mssql
+      - integration-test-postgres
       - security
       - helm-validate
       - terraform-validate
@@ -1971,6 +2239,8 @@ jobs:
           TEST_RESULT: ${{ needs.test.result }}
           INTEGRATION_RESULT: ${{ needs.integration-test.result }}
           INTEGRATION_MSSQL_RESULT: ${{ needs.integration-test-mssql.result }}
+          INTEGRATION_POSTGRES_RESULT: >-
+            ${{ needs.integration-test-postgres.result }}
           SECURITY_RESULT: ${{ needs.security.result }}
           HELM_RESULT: ${{ needs.helm-validate.result }}
           TERRAFORM_RESULT: ${{ needs.terraform-validate.result }}
@@ -2017,6 +2287,7 @@ jobs:
           echo "  test:                       ${TEST_RESULT}"
           echo "  integration-test:           ${INTEGRATION_RESULT}"
           echo "  integration-test-mssql:     ${INTEGRATION_MSSQL_RESULT}"
+          echo "  integration-test-postgres:  ${INTEGRATION_POSTGRES_RESULT}"
           echo "  security:                   ${SECURITY_RESULT}"
           echo "  helm-validate:              ${HELM_RESULT}"
           echo "  terraform-validate:         ${TERRAFORM_RESULT}"
@@ -2135,7 +2406,8 @@ jobs:
           if [[ "${RUN_INTEGRATION}" == "true" ]]; then
             for name_result in \
               "integration-test:${INTEGRATION_RESULT}" \
-              "integration-test-mssql:${INTEGRATION_MSSQL_RESULT}"; do
+              "integration-test-mssql:${INTEGRATION_MSSQL_RESULT}" \
+              "integration-test-postgres:${INTEGRATION_POSTGRES_RESULT}"; do
               name="${name_result%%:*}"
               result="${name_result#*:}"
               if [[ "$result" != "success" ]]; then
@@ -2164,6 +2436,7 @@ jobs:
       - test
       - integration-test
       - integration-test-mssql
+      - integration-test-postgres
       - security
       - helm-validate
       - docker-build

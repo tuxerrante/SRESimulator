@@ -2,8 +2,8 @@
        fmt fmt-check \
        lint lint-ts lint-backend lint-unused-exports lint-yaml lint-md \
        typecheck typecheck-backend validate \
-       security audit lockfile-lint gitleaks grype require-mssql-sa-password require-mssql-database-url \
-       test test-shell test-integration test-e2e-live playwright-install test-mssql dev-db smoke-backend-mssql smoke-local-vertex release-prepare verify-release-version env-check dependabot-e2e-kubeconfig dependabot-e2e-pool cleanup-e2e-namespaces cluster-capacity-report aro-login aks-login e2e-azure-route e2e-azure-route-up e2e-azure-route-refresh e2e-azure-route-down \
+       security audit lockfile-lint gitleaks grype require-mssql-sa-password require-mssql-database-url require-postgres-database-url \
+       test test-shell test-integration test-e2e-live playwright-install test-mssql dev-db smoke-backend-mssql smoke-backend-postgres smoke-local-vertex release-prepare verify-release-version env-check dependabot-e2e-kubeconfig dependabot-e2e-pool cleanup-e2e-namespaces cluster-capacity-report aro-login aks-login e2e-azure-route e2e-azure-route-up e2e-azure-route-refresh e2e-azure-route-down \
        prod-up prod-up-tag prod-down prod-status public-exposure-audit db-mode-check db-port-forward-check db-inspect db-inspect-live db-admin-stats db-admin-stats-live geneva-suppression-check prod-up-final \
        build dev start capture-readme-hero \
        docker-build-frontend docker-build-backend docker-build \
@@ -409,6 +409,14 @@ require-mssql-database-url:
 	echo "Use an operator-provided value from your shell or an untracked env file such as $(BACKEND_DIR)/.env.local."; \
 	exit 1
 
+require-postgres-database-url:
+	@if [ -n "$${POSTGRES_DATABASE_URL:-}" ]; then \
+		exit 0; \
+	fi; \
+	echo "Set POSTGRES_DATABASE_URL before running this target."; \
+	echo "Use an operator-provided value from your shell or an untracked env file such as $(BACKEND_DIR)/.env.local."; \
+	exit 1
+
 dev-db: require-mssql-sa-password ## Start Azure SQL Edge container for local development
 	@set -e; \
 	LOCAL_SERVER_URL="Server=localhost;User Id=sa;Password=$${MSSQL_SA_PASSWORD};TrustServerCertificate=true"; \
@@ -495,6 +503,54 @@ smoke-backend-mssql: require-mssql-database-url ## Start backend with MSSQL and 
 		exit 1; \
 	fi; \
 	echo "DB smoke check passed (backend + MSSQL path is healthy)."; \
+	kill $$PID >/dev/null 2>&1 || true; \
+	pkill -P $$PID >/dev/null 2>&1 || true; \
+	rm -f "$$RESPONSE_FILE"
+
+smoke-backend-postgres: require-postgres-database-url ## Start backend with Postgres and verify DB-backed route responds
+	@set -e; \
+	PORT="$${PORT:-18082}"; \
+	LOG_FILE="$${LOG_FILE:-/tmp/sre-backend-postgres-smoke.log}"; \
+	RESPONSE_FILE="$$(mktemp "$${TMPDIR:-/tmp}/sre-db-smoke-response.XXXXXX")"; \
+	DATABASE_URL="$${POSTGRES_DATABASE_URL}"; \
+	trap 'rm -f "$$RESPONSE_FILE"' EXIT INT TERM; \
+	if ! NODE_PATH="$(CURDIR)/$(BACKEND_DIR)/node_modules" DATABASE_URL="$$DATABASE_URL" node -e " \
+		const { Client } = require('pg'); \
+		const client = new Client({ connectionString: process.env.DATABASE_URL }); \
+		client.connect() \
+		  .then(() => client.query('SELECT 1').then(() => client.end())) \
+		  .then(() => process.exit(0)) \
+		  .catch(() => process.exit(1));"; then \
+		echo "Postgres endpoint is not reachable at POSTGRES_DATABASE_URL."; \
+		echo "Start a local postgres container or provide a reachable Postgres endpoint."; \
+		exit 1; \
+	fi; \
+	echo "Starting backend with STORAGE_BACKEND=postgres on port $$PORT"; \
+	STORAGE_BACKEND=postgres \
+	DATABASE_URL="$$DATABASE_URL" \
+	AI_MOCK_MODE=true \
+	AI_STRICT_STARTUP=true \
+	PORT="$$PORT" \
+	npm --prefix "$(BACKEND_DIR)" run dev >"$$LOG_FILE" 2>&1 & \
+	PID=$$!; \
+	trap 'kill $$PID >/dev/null 2>&1 || true; pkill -P $$PID >/dev/null 2>&1 || true; rm -f "$$RESPONSE_FILE"' EXIT INT TERM; \
+	READY=0; \
+	i=0; \
+	while [ $$i -lt 40 ]; do \
+		CODE=$$(curl -s -o "$$RESPONSE_FILE" -w '%{http_code}' "http://127.0.0.1:$$PORT/api/scores?difficulty=easy" || true); \
+		if [ "$$CODE" = "200" ]; then \
+			READY=1; \
+			break; \
+		fi; \
+		i=$$((i + 1)); \
+		sleep 1; \
+	done; \
+	if [ "$$READY" -ne 1 ]; then \
+		echo "DB smoke check failed (expected 200 from /api/scores, got $$CODE)."; \
+		echo "Backend log: $$LOG_FILE"; \
+		exit 1; \
+	fi; \
+	echo "DB smoke check passed (backend + Postgres path is healthy)."; \
 	kill $$PID >/dev/null 2>&1 || true; \
 	pkill -P $$PID >/dev/null 2>&1 || true; \
 	rm -f "$$RESPONSE_FILE"
