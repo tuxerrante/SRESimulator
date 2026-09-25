@@ -367,6 +367,10 @@ export function markAiBudgetDegraded(res: Response): void {
  * window never reached the provider, so charging the day for it would leak
  * budget that was never spent.
  *
+ * The same rule running the other way is `releaseChargedMinute`: once the day
+ * refuses, the minute slot already taken is handed back, because that request
+ * reaches no provider either.
+ *
  * The same rule covers the routes that can answer without a provider at all.
  * `AI_MOCK_MODE` and `SCENARIO_SOURCE=catalog` both return from their routes
  * above every call site here, so neither can charge -- structurally, rather
@@ -375,12 +379,22 @@ export function markAiBudgetDegraded(res: Response): void {
  * command with mock AI.
  */
 /**
- * Give back the minute slot when the daily consume failed after it was taken.
+ * Give back the minute slot a request took on its way to being refused.
  *
- * Deliberately swallows its own failure: the caller is already refusing the
- * request because the store is unreachable, so a release that fails for the
- * same reason must not mask the original error. When it fails the entry ages
- * out of its own window anyway, which is what happens today.
+ * The minute window is charged before the day window, so every path that
+ * refuses below that point is holding a slot for a request that reaches no
+ * provider: a day consume that throws, a spent day answered with a 429, and a
+ * spent day answered with simulated output. The last one is the expensive
+ * case -- it is every request for the rest of the day -- and it is also the
+ * one that makes the minute window lie across the UTC reset, because a caller
+ * arriving just after midnight can be refused on a window filled entirely by
+ * requests that never left this process.
+ *
+ * Deliberately swallows its own failure: on the outage path the caller is
+ * already refusing the request because the store is unreachable, so a release
+ * that fails for the same reason must not mask the original error. When it
+ * fails the entry ages out of its own window anyway, which is what happens
+ * today.
  *
  * Rejected alternatives, both of which would be worse than best-effort here:
  * an atomic two-key Lua script breaks Redis Cluster with CROSSSLOT, because
@@ -389,7 +403,8 @@ export function markAiBudgetDegraded(res: Response): void {
  * key is calendar-scoped while the minute window rolls.
  */
 async function releaseChargedMinute(
-  minute: { decision: { allowed: boolean; releaseToken?: string } } | undefined,
+  minute: Awaited<ReturnType<typeof consumeSharedWindow>> | undefined,
+  minuteMax: number,
 ): Promise<void> {
   const releaseToken = minute?.decision.releaseToken;
   if (!minute?.decision.allowed || !releaseToken) {
@@ -400,7 +415,19 @@ async function releaseChargedMinute(
     await releaseSharedWindow(MINUTE_KEY, releaseToken);
   } catch (releaseError) {
     console.warn("[ai-budget] could not release the charged minute slot", releaseError);
+    return;
   }
+
+  // The window state was remembered before the release, and `/api/ai/budget`
+  // reports that map rather than reading the store, so leaving it would show
+  // the banner one slot fewer than the window actually holds. Only after a
+  // release that happened: when it failed, the pessimistic figure is the true
+  // one.
+  rememberWindow("minute", {
+    limit: minuteMax,
+    remaining: Math.min(minuteMax, minute.decision.remaining + 1),
+    resetAtMs: minute.decision.resetAtMs,
+  });
 }
 
 export async function chargeAiBudget(res: Response): Promise<AiBudgetOutcome> {
@@ -449,7 +476,7 @@ export async function chargeAiBudget(res: Response): Promise<AiBudgetOutcome> {
     // The minute slot is charged before the day is, so a day consume that
     // throws leaves a request that never reached a provider holding a minute
     // slot until the window rolls. Hand it back before answering.
-    await releaseChargedMinute(minute);
+    await releaseChargedMinute(minute, minuteMax);
 
     if (!shouldFailClosed()) {
       console.warn("[ai-budget] budget store unavailable, failing open", error);
@@ -476,6 +503,13 @@ export async function chargeAiBudget(res: Response): Promise<AiBudgetOutcome> {
     res.setHeader(AI_BUDGET_HEADER, "ok");
     return "ok";
   }
+
+  // The day is spent, so this request reaches no provider whichever way the
+  // route answers it -- the 429 below, or the simulated output the degraded
+  // path produces. It charged a minute slot on the way in; hand that back, on
+  // the same rule that stops a request refused on the minute window charging
+  // the day.
+  await releaseChargedMinute(minute, minuteMax);
 
   if (!shouldDegradeOnDailyExhaustion()) {
     rejectWithBudgetExhausted(

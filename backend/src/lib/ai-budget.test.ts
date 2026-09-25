@@ -441,6 +441,60 @@ describe("chargeAiBudget", () => {
     expect(afterRecovery.res.headers["x-sresim-ai-budget"]).toBe("ok");
   });
 
+  it("hands the minute slot back when a spent day is answered with simulated output", async () => {
+    // Two slots a minute, one for the whole day. Every request after the first
+    // is answered from the simulated path and reaches no provider, so five of
+    // them must not be able to fill a window that holds two.
+    process.env.AI_GLOBAL_MINUTE_MAX = "2";
+    process.env.AI_GLOBAL_DAILY_MAX = "1";
+    const budget = await loadBudget();
+
+    expect((await charge(budget.chargeAiBudget)).outcome).toBe("ok");
+
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      const degraded = await charge(budget.chargeAiBudget);
+      expect(degraded.outcome, `attempt ${attempt + 1}`).toBe("exhausted");
+      expect(degraded.res.headers["x-sresim-ai-budget"]).toBe("daily-exhausted");
+      expect(degraded.res.statusCode).toBeNull();
+    }
+  });
+
+  it("keeps a spent day from being reported as a minute refusal", async () => {
+    // Same shape with degradation off, where the leak is visible to the client
+    // rather than only to the next caller: a minute scope tells them to retry
+    // in seconds for a budget that does not come back until tomorrow.
+    process.env.AI_GLOBAL_MINUTE_MAX = "2";
+    process.env.AI_GLOBAL_DAILY_MAX = "1";
+    process.env.AI_GLOBAL_DAILY_EXHAUSTED_MODE = "reject";
+    const budget = await loadBudget();
+
+    expect((await charge(budget.chargeAiBudget)).outcome).toBe("ok");
+
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      const refused = await charge(budget.chargeAiBudget);
+      expect(refused.outcome, `attempt ${attempt + 1}`).toBe("answered");
+      expect(refused.res.statusCode).toBe(429);
+      expect(refused.res.body?.scope, `attempt ${attempt + 1}`).toBe("daily");
+      expect(refused.res.headers["x-sresim-ai-budget"]).toBe("daily-exhausted");
+    }
+  });
+
+  it("reports the minute slot it gave back, not the one the refusal briefly held", async () => {
+    // The snapshot reads the remembered decision rather than the store, and
+    // the decision was remembered before the release. Left uncorrected the
+    // banner under-reports the minute window for the rest of the window.
+    process.env.AI_GLOBAL_MINUTE_MAX = "5";
+    process.env.AI_GLOBAL_DAILY_MAX = "1";
+    const { chargeAiBudget, getAiBudgetSnapshot } = await loadBudget();
+
+    await charge(chargeAiBudget);
+    await expect(getAiBudgetSnapshot()).resolves.toMatchObject({ minuteRemaining: 4 });
+
+    const degraded = await charge(chargeAiBudget);
+    expect(degraded.outcome).toBe("exhausted");
+    await expect(getAiBudgetSnapshot()).resolves.toMatchObject({ minuteRemaining: 4 });
+  });
+
   it("charges nothing in mock mode, where no request reaches a provider", async () => {
     process.env.AI_MOCK_MODE = "true";
     process.env.AI_GLOBAL_MINUTE_MAX = "1";
