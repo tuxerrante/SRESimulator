@@ -660,6 +660,57 @@ describe("getAiBudgetSnapshot", () => {
     expect(init.headers).toMatchObject({ authorization: "Bearer test-key" });
   });
 
+  it("dates the reset when only the provider knows the day is spent", async () => {
+    // The local counter is untouched -- this process has served nothing today --
+    // but the banner reads the provider's pair in preference to it, so it
+    // renders the exhausted copy. Without a reset the copy promises simulated
+    // answers with no indication of when real ones return.
+    process.env.AI_OPENROUTER_API_KEY = "test-key";
+    vi.stubGlobal("fetch", vi.fn(async () =>
+      new Response(
+        JSON.stringify({
+          data: { free_model_daily_requests: { used: 50, limit: 50, remaining: 0 } },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+    ));
+    const { getAiBudgetSnapshot } = await loadBudget();
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date("2026-09-18T12:00:00.000Z"));
+
+      const snapshot = await getAiBudgetSnapshot();
+
+      expect(snapshot.upstream).toEqual({ dailyLimit: 50, dailyRemaining: 0 });
+      expect(snapshot.dailyRemaining).toBe(1000);
+      expect(snapshot.resetAt).toBe("2026-09-19T00:00:00.000Z");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("stays quiet about a reset the banner will not show", async () => {
+    // An incomplete upstream reading sends the banner back to the local pair,
+    // which is healthy, so nothing is exhausted and there is nothing to date.
+    // The gate has to mirror that both-or-neither rule or it dates a message
+    // no one sees.
+    process.env.AI_OPENROUTER_API_KEY = "test-key";
+    vi.stubGlobal("fetch", vi.fn(async () =>
+      new Response(
+        JSON.stringify({
+          data: { free_model_daily_requests: { used: 50, remaining: 0 } },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+    ));
+    const { getAiBudgetSnapshot } = await loadBudget();
+
+    const snapshot = await getAiBudgetSnapshot();
+
+    expect(snapshot.upstream).toEqual({ dailyLimit: null, dailyRemaining: 0 });
+    expect(snapshot.resetAt).toBeNull();
+  });
+
   it("does not ask OpenRouter about an account that is not serving the traffic", async () => {
     // AI_GLOBAL_BUDGET_ENABLED is honoured on any provider, and a deployment
     // that moved to Azure may still carry the key from an earlier experiment.

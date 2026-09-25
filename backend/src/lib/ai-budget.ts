@@ -483,6 +483,19 @@ export async function getAiBudgetSnapshot(): Promise<AiBudgetSnapshot> {
       : null;
   const dailyRemaining = day?.remaining ?? dailyLimit;
 
+  // The banner prefers the provider's own pair over the local counter and
+  // renders both numbers or neither, so an account the provider reports spent
+  // reads as exhausted on screen whether or not this process has charged a
+  // local slot yet. Without a local window there was no `resetAt`, which left
+  // that copy with no recovery time on precisely the deployment that has one:
+  // the daily scope is a UTC calendar day, so the answer is the same midnight
+  // a local window would have carried.
+  const upstreamExhausted =
+    typeof upstream?.dailyLimit === "number" &&
+    typeof upstream?.dailyRemaining === "number" &&
+    upstream.dailyRemaining <= 0;
+  const resetAtMs = day?.resetAtMs ?? (upstreamExhausted ? nextUtcMidnightMs(nowMs) : null);
+
   return {
     enabled,
     dailyLimit,
@@ -491,7 +504,7 @@ export async function getAiBudgetSnapshot(): Promise<AiBudgetSnapshot> {
     minuteRemaining: minute?.remaining ?? minuteLimit,
     degraded: enabled && dailyRemaining <= 0,
     exhaustedBehaviour: getExhaustedBehaviour(),
-    resetAt: day ? new Date(day.resetAtMs).toISOString() : null,
+    resetAt: resetAtMs === null ? null : new Date(resetAtMs).toISOString(),
     upstream,
   };
 }
