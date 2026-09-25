@@ -15,16 +15,22 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_GLOBAL_MINUTE_MAX = 20;
 /**
  * OpenRouter's free-model allowance is tiered: 50 requests/day below 10
- * lifetime credits and 1000/day at or above it. The default matches the
- * post-purchase tier this deployment targets; an account that has not bought
- * credit must set `AI_GLOBAL_DAILY_MAX=50` or it will spend past the real cap
- * and learn about it from provider 429s. Those degrade rather than fail, and
- * `/api/ai/budget` reports the account's own `free_model_daily_requests.limit`
- * alongside this number, so the discrepancy is visible rather than inferred --
- * but the enforced figure is deliberately local, because a limiter that has to
- * reach the network to know its own limit cannot fail closed.
+ * lifetime credits and 1000/day at or above it. This default is the
+ * post-purchase tier the deployment targets, and it is what an operator who
+ * says nothing gets on every other provider.
+ *
+ * On OpenRouter it is not enforced until the account's own limit has been
+ * observed -- see `getGlobalDailyMax`. A default that guesses the generous
+ * tier is only safe once something has checked, and the check is not on the
+ * charge path.
  */
 const DEFAULT_GLOBAL_DAILY_MAX = 1000;
+/**
+ * What an OpenRouter account gets below 10 lifetime credits, and therefore the
+ * only figure that is safe to enforce before this process has observed which
+ * tier the account is on.
+ */
+const UNOBSERVED_OPENROUTER_DAILY_MAX = 50;
 const MINUTE_KEY = "global:ai:minute";
 const DAY_KEY_PREFIX = "global:ai:day";
 const AI_BUDGET_HEADER = "x-sresim-ai-budget";
@@ -118,30 +124,100 @@ function getGlobalMinuteMax(): number {
 }
 
 /**
- * The configured cap, clamped down to the account's own limit once this
- * process has seen one.
+ * What the operator asked for, and whether they asked at all.
  *
- * `DEFAULT_GLOBAL_DAILY_MAX` is the post-purchase tier, so an account that has
- * not bought credit sits under a 50/day provider cap while the limiter thinks
- * it has 1000 -- the deployment then spends 950 requests learning about 429s
- * it could have predicted. The documented remedy is to set
- * `AI_GLOBAL_DAILY_MAX=50`, which every deployment on an un-credited account
- * has to remember; this makes the common case need no configuration at all.
+ * The difference matters only on OpenRouter, and only before the account's
+ * limit has been observed: a figure the operator set is a claim about their
+ * own account, while the default is this code guessing. `getGlobalDailyMax`
+ * honours the first and refuses to spend on the second.
+ */
+function readConfiguredDailyMax(): { value: number; stated: boolean } {
+  const parsed = Number.parseInt(process.env.AI_GLOBAL_DAILY_MAX ?? "", 10);
+  const stated = Number.isFinite(parsed) && parsed > 0;
+  return { value: stated ? parsed : DEFAULT_GLOBAL_DAILY_MAX, stated };
+}
+
+/**
+ * Ask OpenRouter what this account's limit is, without waiting for the answer.
  *
- * Two properties keep the docblock above honest. It only ever **tightens**:
- * `Math.min` cannot raise a cap past what the operator configured, so a wrong
- * or stale upstream reading can overspend nothing. And it reaches no network
- * -- `readLastKnownOpenRouterDailyLimit` is a cache read, returning `null`
- * until some other caller has already fetched -- so the enforced figure stays
- * local and the limiter still fails closed on its own.
+ * The charge path must not await a network call -- a limiter that has to reach
+ * the network to know its own cap cannot fail closed -- so this fires and
+ * returns, and the request that triggered it is decided from the conservative
+ * figure in `getGlobalDailyMax`. What it buys is the *bound* on how long that
+ * lasts: one HTTP round trip rather than "until somebody loads the home page",
+ * which for a deployment driven entirely by API clients is never.
+ *
+ * `fetchOpenRouterKeyStatus` returns without a request when no key is
+ * configured, coalesces concurrent callers onto one in-flight promise, and
+ * resolves rather than rejects on failure -- a failed lookup caches a null
+ * status, so the retry is paced by `AI_OPENROUTER_QUOTA_TTL_MS` rather than
+ * firing once per charge.
+ *
+ * It stops once there is an answer, and that guard has to be its own rather
+ * than the TTL's. While the cache is warm the lookup returns without a request
+ * either way; when it expires, the clamp deliberately keeps the stale tier
+ * reading, so re-entering the lookup would buy nothing and spend a request --
+ * against the very rate limit it reports on -- on every charge for the rest of
+ * the day.
+ *
+ * Called only from `chargeAiBudget`, the one place the cap is enforced rather
+ * than reported. A retry is charged with `record`, which cannot refuse, and
+ * the send it belongs to already warmed this on its way through.
+ */
+function warmOpenRouterDailyLimit(): void {
+  if (getConfiguredProvider() !== "openrouter") {
+    return;
+  }
+  if (readLastKnownOpenRouterDailyLimit() !== null) {
+    return;
+  }
+
+  void fetchOpenRouterKeyStatus().catch(() => undefined);
+}
+
+/**
+ * The enforced daily cap: the account's own limit once observed, the operator's
+ * figure if they stated one, and the un-credited tier until then.
+ *
+ * The clamp alone was not enough, and the gap is the interesting part.
+ * `readLastKnownOpenRouterDailyLimit` is a cache read that answers `null` until
+ * some *other* caller has fetched -- in practice the banner. So a process that
+ * has just started enforces the generous default, and the requests that land
+ * before the first `/api/ai/budget` poll are exactly the ones nothing is
+ * protecting. A direct API client never makes that poll at all. Leaning on an
+ * observational read to protect the account gets the dependency backwards.
+ *
+ * So before any observation the answer is `UNOBSERVED_OPENROUTER_DAILY_MAX`,
+ * which is the tier an account is on if nobody has established otherwise --
+ * unless the operator stated a figure, in which case that is their account and
+ * their call. `warmOpenRouterDailyLimit`, which `chargeAiBudget` fires beside
+ * this, bounds how long the unobserved case lasts: the credited deployment that configures nothing still reaches 1000
+ * within one round trip of its first request, and the minute window (20/min)
+ * means no plausible burst can spend 50 inside it.
+ *
+ * Three properties hold whatever branch is taken. It never **waits** on the
+ * network: every return is computed from local state. It never **raises** a cap
+ * past what the operator configured, so a wrong or stale upstream reading can
+ * overspend nothing. And it never **guesses upward**: the only figure it
+ * invents on its own behalf is the conservative one.
+ *
+ * Cost, stated because it is real: an account on the 1000/day tier whose `/key`
+ * lookup keeps failing sits at 50 with `AI_GLOBAL_DAILY_MAX` unset. That is the
+ * safe direction to be wrong in, and `AI_GLOBAL_DAILY_MAX=1000` says so in one
+ * line.
  */
 function getGlobalDailyMax(): number {
-  const configured = parsePositiveInt(process.env.AI_GLOBAL_DAILY_MAX, DEFAULT_GLOBAL_DAILY_MAX);
-  const upstreamLimit = readLastKnownOpenRouterDailyLimit();
-  if (upstreamLimit === null || getConfiguredProvider() !== "openrouter") {
+  const { value: configured, stated } = readConfiguredDailyMax();
+  if (getConfiguredProvider() !== "openrouter") {
     return configured;
   }
-  return Math.min(configured, upstreamLimit);
+
+  const upstreamLimit = readLastKnownOpenRouterDailyLimit();
+  if (upstreamLimit !== null) {
+    return Math.min(configured, upstreamLimit);
+  }
+
+  return stated ? configured : Math.min(configured, UNOBSERVED_OPENROUTER_DAILY_MAX);
 }
 
 /** `degrade` answers with simulated output; `reject` answers 429. */
@@ -462,6 +538,7 @@ export async function chargeAiBudget(res: Response): Promise<AiBudgetOutcome> {
   }
 
   const minuteMax = getGlobalMinuteMax();
+  warmOpenRouterDailyLimit();
   const dailyMax = getGlobalDailyMax();
   const nowMs = Date.now();
   const dayResetAtMs = nextUtcMidnightMs(nowMs);

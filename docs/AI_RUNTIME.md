@@ -557,11 +557,11 @@ it drained.
 | --------------------------------- | -------------------------------- | ----------------------------------------------------- |
 | `AI_GLOBAL_BUDGET_ENABLED` | `true` when `AI_PROVIDER=openrouter` | Master switch |
 | `AI_GLOBAL_MINUTE_MAX` | `20` | Requests allowed across all callers per minute |
-| `AI_GLOBAL_DAILY_MAX` | `1000` | Requests allowed across all callers per day, **clamped down to the account's own limit** once `/api/ai/budget` has read one (see below). The default matches OpenRouter's post-purchase tier; an account below 10 lifetime credits is allowed 50, and the clamp applies that without configuration. |
+| `AI_GLOBAL_DAILY_MAX` | `1000`, or `50` on OpenRouter until the account's limit is observed | Requests allowed across all callers per day, **clamped down to the account's own limit** once one has been read (see below). The default matches OpenRouter's post-purchase tier; an account below 10 lifetime credits is allowed 50, so on OpenRouter an unset value enforces 50 until the account has been observed. Setting this is a claim about your own account and is honoured immediately. |
 | `AI_GLOBAL_DAILY_EXHAUSTED_MODE` | `degrade` | `degrade` answers with simulated output; `reject` answers 429 |
 | `AI_GLOBAL_BUDGET_FAIL_MODE` | `closed` | Behaviour when the window store cannot answer |
 
-Five properties are deliberate and each is covered by a test:
+Six properties are deliberate and each is covered by a test:
 
 - **The configured cap is clamped down to the account's own daily limit.** The
   default is the post-purchase tier, so an un-credited account would otherwise
@@ -572,6 +572,16 @@ Five properties are deliberate and each is covered by a test:
   overspend nothing. It deliberately ignores the `AI_OPENROUTER_QUOTA_TTL_MS`
   expiry: that TTL keeps a *displayed* remaining count fresh, while the tier
   limit moves once, when an account buys credit.
+- **Before anything has been observed, OpenRouter is enforced at the
+  un-credited tier.** The clamp above reads a cache the banner fills, so a
+  process that has just started has nothing to clamp against — and a
+  deployment driven by API clients never fills it at all. Enforcing the
+  generous default there protects nothing, so an unset `AI_GLOBAL_DAILY_MAX`
+  enforces 50 until a limit has been read. A figure the operator *stated* is a
+  claim about their own account and is honoured with no wait. To bound how
+  long the unobserved window lasts, a charge that finds no reading fires the
+  `/key` lookup fire-and-forget: it never waits on the answer, and once there
+  is one it stops asking.
 - **The minute window is charged first, and a request it refuses never charges
   the day.** A caller refused on the minute window never reached the provider,
   so charging the day for it would leak budget that was never spent.
@@ -764,7 +774,7 @@ prevention, rate-limit enforcement, and token-metrics recording.
 | OpenRouter | `AI_OPENROUTER_API_KEY`, `AI_OPENROUTER_MODEL`, `AI_OPENROUTER_BASE_URL` (default `https://openrouter.ai/api/v1`), `AI_OPENROUTER_SITE_URL`, `AI_OPENROUTER_APP_TITLE`. **Process environment only** — the Helm chart has no OpenRouter secret key or configmap entry yet; see "The Helm chart cannot select this provider yet" above |
 | Per-route models | `AI_OPENROUTER_MODEL_CHAT`, `_COMMAND`, `_SCENARIO`, `_PROBE` |
 | Quota degradation | `AI_DEGRADE_ON_QUOTA_EXHAUSTED` (default `true`) |
-| Global AI budget | `AI_GLOBAL_BUDGET_ENABLED` (default on for OpenRouter), `AI_GLOBAL_DAILY_MAX` (default `1000`), `AI_GLOBAL_MINUTE_MAX` (default `20`), `AI_GLOBAL_DAILY_EXHAUSTED_MODE` (default `degrade`), `AI_GLOBAL_BUDGET_FAIL_MODE` (default `closed`), `AI_OPENROUTER_QUOTA_TTL_MS` (default `60000`) |
+| Global AI budget | `AI_GLOBAL_BUDGET_ENABLED` (default on for OpenRouter), `AI_GLOBAL_DAILY_MAX` (default `1000`; `50` on OpenRouter until observed), `AI_GLOBAL_MINUTE_MAX` (default `20`), `AI_GLOBAL_DAILY_EXHAUSTED_MODE` (default `degrade`), `AI_GLOBAL_BUDGET_FAIL_MODE` (default `closed`), `AI_OPENROUTER_QUOTA_TTL_MS` (default `60000`) |
 | Reasoning | `AI_REASONING_EFFORT` (`low` / `medium` / `high`) global default; per-route `AI_REASONING_EFFORT_<ROUTE>` (e.g. `_CHAT`, `_COMMAND`, `_SCENARIO`) overrides it. The `command` route defaults to `low`. |
 | Token budgets | `AI_MAX_CHAT_TOKENS` (default `16384`), `AI_MAX_COMMAND_TOKENS` (default `8192`) |
 | Compaction tuning | `COMPACTION_TOKEN_BUDGET`, `COMPACTION_TAIL_MESSAGES` |

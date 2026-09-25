@@ -1044,12 +1044,73 @@ describe("the daily cap against the account's own limit", () => {
     await expect(getAiBudgetSnapshot()).resolves.toMatchObject({ dailyLimit: 20 });
   });
 
-  it("leaves the configured cap alone until it has seen the account's limit", async () => {
-    // A cache read, never a fetch: the limiter still fails closed on its own,
-    // which is what the enforced figure being local buys.
+  it("enforces the un-credited tier before it has observed the account", async () => {
+    // The clamp reads a cache the banner fills, so on a process that has just
+    // started there is nothing to clamp against. Enforcing the generous default
+    // there leaves the first requests of every deployment -- and every request
+    // of a deployment nobody loads the home page for -- unprotected.
+    const { getAiBudgetSnapshot } = await loadBudget();
+
+    await expect(getAiBudgetSnapshot()).resolves.toMatchObject({ dailyLimit: 50 });
+  });
+
+  it("honours a cap the operator stated, without waiting to observe one", async () => {
+    // An operator who names a figure is describing their own account. The
+    // conservative fallback is for the case where nobody has said anything and
+    // nothing has been read -- not a veto on what the deployment was told.
+    process.env.AI_GLOBAL_DAILY_MAX = "1000";
     const { getAiBudgetSnapshot } = await loadBudget();
 
     await expect(getAiBudgetSnapshot()).resolves.toMatchObject({ dailyLimit: 1000 });
+  });
+
+  it("refuses at the un-credited tier on a process that has observed nothing", async () => {
+    // The snapshot describes; this is the half that spends. A direct API client
+    // never polls /api/ai/budget, so without this the 51st request of the day
+    // reaches the provider on an account allowed 50.
+    process.env.AI_GLOBAL_MINUTE_MAX = "500";
+    const { chargeAiBudget } = await loadBudget();
+
+    for (let sent = 0; sent < 50; sent += 1) {
+      expect((await charge(chargeAiBudget)).outcome).toBe("ok");
+    }
+
+    expect((await charge(chargeAiBudget)).outcome).toBe("exhausted");
+  });
+
+  it("asks the provider for the account's limit without waiting for the answer", async () => {
+    // What bounds the unobserved window to one round trip instead of to the
+    // next home-page visit. It must stay fire-and-forget: a charge that awaited
+    // the lookup could not fail closed when the lookup hangs, which is what
+    // this never-settling fetch stands in for -- an awaited call times the
+    // test out rather than failing an assertion.
+    process.env.AI_OPENROUTER_API_KEY = "test-key";
+    const fetchMock = vi.fn(() => new Promise<Response>(() => undefined));
+    vi.stubGlobal("fetch", fetchMock);
+    const { chargeAiBudget } = await loadBudget();
+
+    expect((await charge(chargeAiBudget)).outcome).toBe("ok");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("stops asking once it has the account's limit", async () => {
+    // The warm runs on the charge path, so the skip has to hold past the TTL,
+    // and only there does it mean anything: while the cache is warm the lookup
+    // returns without a request whether or not the warm fires. The clamp keeps
+    // a stale tier reading on purpose, so re-entering the lookup when the TTL
+    // expires buys nothing and spends a request -- against the very rate limit
+    // it reports on -- for every charge for the rest of the day.
+    process.env.AI_OPENROUTER_QUOTA_TTL_MS = "1";
+    stubKeyStatus(50, 50);
+    const { chargeAiBudget, getAiBudgetSnapshot } = await loadBudget();
+    await getAiBudgetSnapshot();
+    const afterObservation = vi.mocked(globalThis.fetch).mock.calls.length;
+    await new Promise((settle) => setTimeout(settle, 5));
+
+    await charge(chargeAiBudget);
+    await charge(chargeAiBudget);
+
+    expect(vi.mocked(globalThis.fetch)).toHaveBeenCalledTimes(afterObservation);
   });
 
   it("refuses at the clamped cap, not at the configured one", async () => {
