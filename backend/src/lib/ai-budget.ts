@@ -1,11 +1,22 @@
 import type { NextFunction, Request, RequestHandler, Response } from "express";
-import { getConfiguredProvider } from "./ai-config";
+import { getAiReadiness, getConfiguredProvider } from "./ai-config";
 import { fetchOpenRouterKeyStatus } from "./ai-providers/openrouter";
 import { consumeSharedWindow } from "./rate-limit";
 
 const MINUTE_MS = 60 * 1000;
 const DAY_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_GLOBAL_MINUTE_MAX = 20;
+/**
+ * OpenRouter's free-model allowance is tiered: 50 requests/day below 10
+ * lifetime credits and 1000/day at or above it. The default matches the
+ * post-purchase tier this deployment targets; an account that has not bought
+ * credit must set `AI_GLOBAL_DAILY_MAX=50` or it will spend past the real cap
+ * and learn about it from provider 429s. Those degrade rather than fail, and
+ * `/api/ai/budget` reports the account's own `free_model_daily_requests.limit`
+ * alongside this number, so the discrepancy is visible rather than inferred --
+ * but the enforced figure is deliberately local, because a limiter that has to
+ * reach the network to know its own limit cannot fail closed.
+ */
 const DEFAULT_GLOBAL_DAILY_MAX = 1000;
 const MINUTE_KEY = "global:ai:minute";
 const DAY_KEY = "global:ai:day";
@@ -50,6 +61,11 @@ function parsePositiveInt(raw: string | undefined, fallback: number): number {
  * there would only add a second limiter nobody asked for.
  */
 function isAiGlobalBudgetEnabled(): boolean {
+  // Mock mode never reaches a provider, so there is no shared account to
+  // protect and every charge would be pure leakage -- worst of all in the
+  // free-e2e gate, which drives four simulated players through chat and
+  // command with `AI_MOCK_MODE=true`.
+  if (getAiReadiness().mockMode) return false;
   return parseBoolean(
     process.env.AI_GLOBAL_BUDGET_ENABLED,
     getConfiguredProvider() === "openrouter",
@@ -87,9 +103,43 @@ function rememberWindow(scope: BudgetScope, state: WindowState): void {
   lastWindowState.set(scope, state);
 }
 
+/**
+ * A remembered decision describes the window it was taken in and nothing
+ * after it. Once `resetAtMs` passes the window is empty again, so returning
+ * the old `remaining: 0` would leave the banner insisting answers are
+ * simulated until the next AI request happens to refresh the map -- which on
+ * a quiet deployment is exactly the request the banner just discouraged.
+ */
+function readWindow(scope: BudgetScope, nowMs: number): WindowState | undefined {
+  const state = lastWindowState.get(scope);
+  if (!state) return undefined;
+  if (nowMs >= state.resetAtMs) {
+    lastWindowState.delete(scope);
+    return undefined;
+  }
+  return state;
+}
+
 /** Set by the middleware when the day budget is spent and the mode is degrade. */
 export function isAiBudgetExhausted(res: Response): boolean {
   return res.locals.aiBudgetExhausted === true;
+}
+
+/**
+ * A store outage is not an exhausted account, and saying so misleads exactly
+ * the reader who needs the truth: the operator reading logs during an
+ * incident, and a client told to come back tomorrow for a Redis blip. The
+ * budget is untouched here -- nothing was observed, let alone spent.
+ */
+function rejectWithBudgetUnavailable(res: Response, retryAfterSeconds: number): void {
+  res.setHeader(AI_BUDGET_HEADER, "store-unavailable");
+  res.setHeader("Retry-After", String(retryAfterSeconds));
+  res.status(503).json({
+    error: "The shared AI budget cannot be checked right now. Please retry shortly.",
+    code: "ai_budget_unavailable",
+    retryAfterSeconds,
+    degraded: false,
+  });
 }
 
 function rejectWithBudgetExhausted(
@@ -116,98 +166,105 @@ function rejectWithBudgetExhausted(
 }
 
 /**
- * Global spend budget for the shared AI account, composed before the
+ * Global spend budget for the shared AI account, composed *after* the
  * per-identity limiter.
  *
  * The two windows are consumed in order and the daily one is only charged
  * once the minute one allowed the request: a caller refused on the minute
  * window never reached the provider, so charging the day for it would leak
- * budget that was never spent.
+ * budget that was never spent. `willCallProvider` extends that same rule to
+ * routes that can answer without a provider call at all.
+ *
+ * @param willCallProvider evaluated per request; `false` passes the request
+ *   through uncharged. Read at call time, not at mount time, because the
+ *   environment it consults is read at call time everywhere else too.
  */
-export const aiGlobalBudgetLimit: RequestHandler = async (
-  _req: Request,
-  res: Response,
-  next: NextFunction,
-) => {
-  if (!isAiGlobalBudgetEnabled()) {
-    next();
-    return;
-  }
-
-  const minuteMax = getGlobalMinuteMax();
-  const dailyMax = getGlobalDailyMax();
-  const nowMs = Date.now();
-
-  let minute;
-  let day;
-  try {
-    minute = await consumeSharedWindow(MINUTE_KEY, MINUTE_MS, minuteMax, nowMs);
-    rememberWindow("minute", {
-      limit: minuteMax,
-      remaining: minute.decision.remaining,
-      resetAtMs: minute.decision.resetAtMs,
-    });
-
-    if (!minute.decision.allowed) {
-      // Transient by construction: the window rolls in under a minute, so a
-      // retry genuinely helps and simulated output would be a worse answer.
-      rejectWithBudgetExhausted(
-        res,
-        "minute",
-        minute.decision.retryAfterSeconds,
-        minute.decision.resetAtMs,
-      );
-      return;
-    }
-
-    day = await consumeSharedWindow(DAY_KEY, DAY_MS, dailyMax, nowMs);
-    rememberWindow("daily", {
-      limit: dailyMax,
-      remaining: day.decision.remaining,
-      resetAtMs: day.decision.resetAtMs,
-    });
-  } catch (error) {
-    if (!shouldFailClosed()) {
-      console.warn("[ai-budget] budget store unavailable, failing open", error);
-      res.setHeader(AI_BUDGET_HEADER, "fail-open");
+export function createAiGlobalBudgetLimit(
+  willCallProvider: () => boolean = () => true,
+): RequestHandler {
+  return async (_req: Request, res: Response, next: NextFunction) => {
+    if (!isAiGlobalBudgetEnabled() || !willCallProvider()) {
       next();
       return;
     }
 
-    console.warn("[ai-budget] budget store unavailable, failing closed", error);
-    if (!shouldDegradeOnDailyExhaustion()) {
-      rejectWithBudgetExhausted(res, "daily", 60, nowMs + MINUTE_MS);
+    const minuteMax = getGlobalMinuteMax();
+    const dailyMax = getGlobalDailyMax();
+    const nowMs = Date.now();
+
+    let minute;
+    let day;
+    try {
+      minute = await consumeSharedWindow(MINUTE_KEY, MINUTE_MS, minuteMax, nowMs);
+      rememberWindow("minute", {
+        limit: minuteMax,
+        remaining: minute.decision.remaining,
+        resetAtMs: minute.decision.resetAtMs,
+      });
+
+      if (!minute.decision.allowed) {
+        // Transient by construction: the window rolls in under a minute, so a
+        // retry genuinely helps and simulated output would be a worse answer.
+        rejectWithBudgetExhausted(
+          res,
+          "minute",
+          minute.decision.retryAfterSeconds,
+          minute.decision.resetAtMs,
+        );
+        return;
+      }
+
+      day = await consumeSharedWindow(DAY_KEY, DAY_MS, dailyMax, nowMs);
+      rememberWindow("daily", {
+        limit: dailyMax,
+        remaining: day.decision.remaining,
+        resetAtMs: day.decision.resetAtMs,
+      });
+    } catch (error) {
+      if (!shouldFailClosed()) {
+        console.warn("[ai-budget] budget store unavailable, failing open", error);
+        res.setHeader(AI_BUDGET_HEADER, "fail-open");
+        next();
+        return;
+      }
+
+      console.warn("[ai-budget] budget store unavailable, failing closed", error);
+      if (!shouldDegradeOnDailyExhaustion()) {
+        rejectWithBudgetUnavailable(res, 60);
+        return;
+      }
+      res.setHeader(AI_BUDGET_HEADER, "degraded");
+      res.locals.aiBudgetExhausted = true;
+      next();
       return;
     }
+
+    if (day.decision.allowed) {
+      res.setHeader(AI_BUDGET_HEADER, "ok");
+      next();
+      return;
+    }
+
+    if (!shouldDegradeOnDailyExhaustion()) {
+      rejectWithBudgetExhausted(
+        res,
+        "daily",
+        day.decision.retryAfterSeconds,
+        day.decision.resetAtMs,
+      );
+      return;
+    }
+
+    // Degrading here rather than at the provider saves a round trip that can
+    // only come back 429, and lets the route answer with the same simulated
+    // output it already produces for an exhausted provider budget.
     res.setHeader(AI_BUDGET_HEADER, "degraded");
     res.locals.aiBudgetExhausted = true;
     next();
-    return;
-  }
+  };
+}
 
-  if (day.decision.allowed) {
-    res.setHeader(AI_BUDGET_HEADER, "ok");
-    next();
-    return;
-  }
-
-  if (!shouldDegradeOnDailyExhaustion()) {
-    rejectWithBudgetExhausted(
-      res,
-      "daily",
-      day.decision.retryAfterSeconds,
-      day.decision.resetAtMs,
-    );
-    return;
-  }
-
-  // Degrading here rather than at the provider saves a round trip that can
-  // only come back 429, and lets the route answer with the same simulated
-  // output it already produces for an exhausted provider budget.
-  res.setHeader(AI_BUDGET_HEADER, "degraded");
-  res.locals.aiBudgetExhausted = true;
-  next();
-};
+export const aiGlobalBudgetLimit: RequestHandler = createAiGlobalBudgetLimit();
 
 export interface AiBudgetSnapshot {
   enabled: boolean;
@@ -229,11 +286,19 @@ export interface AiBudgetSnapshot {
 export async function getAiBudgetSnapshot(): Promise<AiBudgetSnapshot> {
   const dailyLimit = getGlobalDailyMax();
   const minuteLimit = getGlobalMinuteMax();
-  const day = lastWindowState.get("daily");
-  const minute = lastWindowState.get("minute");
+  const nowMs = Date.now();
+  const day = readWindow("daily", nowMs);
+  const minute = readWindow("minute", nowMs);
   const enabled = isAiGlobalBudgetEnabled();
 
-  const upstream = enabled ? await fetchOpenRouterKeyStatus() : null;
+  // Gated on the provider, not on `enabled`: AI_GLOBAL_BUDGET_ENABLED=true is
+  // supported on Azure and Vertex, and a deployment that still carries an
+  // OpenRouter key from an earlier experiment would otherwise have the banner
+  // report an unrelated account's quota.
+  const upstream =
+    enabled && getConfiguredProvider() === "openrouter"
+      ? await fetchOpenRouterKeyStatus()
+      : null;
   const dailyRemaining = day?.remaining ?? dailyLimit;
 
   return {

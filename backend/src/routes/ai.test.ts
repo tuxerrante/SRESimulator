@@ -100,7 +100,9 @@ describe("GET /api/ai/budget", () => {
     process.env.AI_OPENROUTER_API_KEY = "sk-or-secret-value";
     vi.stubGlobal("fetch", vi.fn(async () =>
       new Response(
-        JSON.stringify({ data: { free_model_daily_requests: 1000 } }),
+        JSON.stringify({
+          data: { free_model_daily_requests: { used: 0, limit: 1000, remaining: 1000 } },
+        }),
         { status: 200, headers: { "content-type": "application/json" } },
       ),
     ));

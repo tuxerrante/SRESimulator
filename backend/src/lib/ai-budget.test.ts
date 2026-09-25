@@ -3,6 +3,7 @@ import type { Request, RequestHandler, Response } from "express";
 
 const TEST_ENV_KEYS = [
   "AI_PROVIDER",
+  "AI_MOCK_MODE",
   "AI_GLOBAL_BUDGET_ENABLED",
   "AI_GLOBAL_DAILY_MAX",
   "AI_GLOBAL_MINUTE_MAX",
@@ -141,6 +142,7 @@ describe("aiGlobalBudgetLimit", () => {
     process.env.AI_PROVIDER = "openrouter";
     delete process.env.AI_RATE_LIMIT_REDIS_URL;
     delete process.env.AI_OPENROUTER_API_KEY;
+    delete process.env.AI_MOCK_MODE;
   });
 
   afterEach(() => {
@@ -277,15 +279,57 @@ describe("aiGlobalBudgetLimit", () => {
     expect(isAiBudgetExhausted(res as unknown as Response)).toBe(true);
   });
 
-  it("fails closed to a 429 when degradation is switched off", async () => {
+  it("says the store is unreadable, not that the day is spent, when it refuses", async () => {
     process.env.AI_GLOBAL_DAILY_EXHAUSTED_MODE = "reject";
     const { aiGlobalBudgetLimit } = await loadBudgetWithBrokenStore();
 
     const { res, nextCalls } = await run(aiGlobalBudgetLimit);
 
     expect(nextCalls).toBe(0);
-    expect(res.statusCode).toBe(429);
-    expect(res.body).toMatchObject({ scope: "daily" });
+    // 503, not 429: nothing was observed and nothing was spent. Calling this
+    // a daily exhaustion would tell the client to come back tomorrow for what
+    // is usually a blip, and would send the operator reading the response
+    // looking at the budget instead of at the store.
+    expect(res.statusCode).toBe(503);
+    expect(res.headers["x-sresim-ai-budget"]).toBe("store-unavailable");
+    expect(Object.keys(res.body ?? {})[0]).toBe("error");
+    expect(res.body).toMatchObject({ code: "ai_budget_unavailable", degraded: false });
+    expect(res.body).not.toHaveProperty("scope");
+    expect(res.headers["retry-after"]).toBe("60");
+  });
+
+  it("charges nothing in mock mode, where no request reaches a provider", async () => {
+    process.env.AI_MOCK_MODE = "true";
+    process.env.AI_GLOBAL_MINUTE_MAX = "1";
+    const { budget, consumedKeys } = await loadBudgetWithRecordingStore();
+
+    const first = await run(budget.aiGlobalBudgetLimit);
+    const second = await run(budget.aiGlobalBudgetLimit);
+
+    // The minute limit of 1 would have refused the second request if the
+    // budget were charged. The free-e2e gate drives four players through this
+    // path with AI_MOCK_MODE=true.
+    expect(first.nextCalls).toBe(1);
+    expect(second.nextCalls).toBe(1);
+    expect(second.res.headers).toEqual({});
+    expect(consumedKeys).toEqual([]);
+  });
+
+  it("charges nothing on a route that answers without calling a provider", async () => {
+    process.env.AI_GLOBAL_MINUTE_MAX = "1";
+    const { budget, consumedKeys } = await loadBudgetWithRecordingStore();
+    let callsProvider = false;
+    const limit = budget.createAiGlobalBudgetLimit(() => callsProvider);
+
+    const exempt = await run(limit);
+    callsProvider = true;
+    const billable = await run(limit);
+
+    expect(exempt.nextCalls).toBe(1);
+    expect(exempt.res.headers).toEqual({});
+    expect(billable.res.headers["x-sresim-ai-budget"]).toBe("ok");
+    // The predicate is read per request, not captured at mount time.
+    expect(consumedKeys).toEqual(["global:ai:minute", "global:ai:day"]);
   });
 
   it("fails open only when explicitly configured to", async () => {
@@ -308,6 +352,7 @@ describe("getAiBudgetSnapshot", () => {
     process.env.AI_PROVIDER = "openrouter";
     delete process.env.AI_RATE_LIMIT_REDIS_URL;
     delete process.env.AI_OPENROUTER_API_KEY;
+    delete process.env.AI_MOCK_MODE;
   });
 
   afterEach(() => {
@@ -378,8 +423,9 @@ describe("getAiBudgetSnapshot", () => {
     process.env.AI_OPENROUTER_API_KEY = "test-key";
     const fetchMock = vi.fn(async () =>
       new Response(
+        // The real shape: a nested counter, not two flat siblings.
         JSON.stringify({
-          data: { free_model_daily_requests: 1000, free_model_daily_requests_remaining: 940 },
+          data: { free_model_daily_requests: { used: 60, limit: 1000, remaining: 940 } },
         }),
         { status: 200, headers: { "content-type": "application/json" } },
       ),
@@ -394,6 +440,48 @@ describe("getAiBudgetSnapshot", () => {
     const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
     expect(url).toBe("https://openrouter.ai/api/v1/key");
     expect(init.headers).toMatchObject({ authorization: "Bearer test-key" });
+  });
+
+  it("does not ask OpenRouter about an account that is not serving the traffic", async () => {
+    // AI_GLOBAL_BUDGET_ENABLED is honoured on any provider, and a deployment
+    // that moved to Azure may still carry the key from an earlier experiment.
+    // Reporting that account's quota would describe a budget nothing spends.
+    process.env.AI_PROVIDER = "azure";
+    process.env.AI_GLOBAL_BUDGET_ENABLED = "true";
+    process.env.AI_OPENROUTER_API_KEY = "test-key";
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const { getAiBudgetSnapshot } = await loadBudget();
+
+    const snapshot = await getAiBudgetSnapshot();
+
+    expect(snapshot.enabled).toBe(true);
+    expect(snapshot.upstream).toBeNull();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("stops calling the day spent once the window it was spent in has rolled", async () => {
+    process.env.AI_GLOBAL_DAILY_MAX = "1";
+    const { aiGlobalBudgetLimit, getAiBudgetSnapshot } = await loadBudget();
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date("2026-09-18T12:00:00.000Z"));
+      await run(aiGlobalBudgetLimit);
+      const spent = await getAiBudgetSnapshot();
+      expect(spent.degraded).toBe(true);
+
+      // A remembered decision describes its own window only. Without expiry
+      // the banner would keep saying "simulated" until the next AI request
+      // refreshed the map -- the very request the banner discouraged.
+      vi.setSystemTime(new Date(Date.parse(spent.resetAt as string) + 1000));
+      const rolled = await getAiBudgetSnapshot();
+
+      expect(rolled.degraded).toBe(false);
+      expect(rolled.dailyRemaining).toBe(1);
+      expect(rolled.resetAt).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("still answers when the provider's own numbers are unavailable", async () => {
