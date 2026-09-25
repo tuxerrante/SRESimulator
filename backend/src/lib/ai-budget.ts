@@ -198,6 +198,16 @@ export type AiBudgetOutcome = "ok" | "exhausted" | "answered";
  * incident, and a client told to come back tomorrow for a Redis blip. The
  * budget is untouched here -- nothing was observed, let alone spent.
  */
+/**
+ * How long a client should wait out a budget-store outage.
+ *
+ * A minute, not the daily reset: nothing was observed and nothing was spent,
+ * so the account may well be answerable again long before midnight. Exported
+ * so the live probe's own 503 quotes the same interval as the middleware's --
+ * they describe one outage and a monitor should not get two answers.
+ */
+export const AI_BUDGET_UNAVAILABLE_RETRY_AFTER_SECONDS = 60;
+
 function rejectWithBudgetUnavailable(res: Response, retryAfterSeconds: number): void {
   res.setHeader(AI_BUDGET_HEADER, "store-unavailable");
   res.setHeader("Retry-After", String(retryAfterSeconds));
@@ -252,14 +262,45 @@ function rejectWithBudgetExhausted(
  * this process happens to hold window state for it.
  */
 export function rejectWithAiDailyBudgetExhausted(res: Response): void {
-  const nowMs = Date.now();
-  const resetAtMs = nextUtcMidnightMs(nowMs);
+  const reset = describeAiDailyBudgetReset();
   rejectWithBudgetExhausted(
     res,
-    "daily",
-    Math.max(1, Math.ceil((resetAtMs - nowMs) / 1000)),
-    resetAtMs,
+    reset.scope,
+    reset.retryAfterSeconds,
+    reset.resetAtMs,
   );
+}
+
+/**
+ * When the shared day comes back, in the fields a client can act on.
+ *
+ * Extracted because two refusals describe the same event in different
+ * envelopes and must not disagree about it. `rejectWithAiDailyBudgetExhausted`
+ * writes the documented `{ error, code, scope, retryAfterSeconds, resetAt }`
+ * body; the live probe answers in its own `{ ok, mode, reason, code }` shape,
+ * which its success and 503 siblings already use and an operator's monitor
+ * already parses, so it cannot adopt that body -- but it needs the same three
+ * fields and the same `Retry-After`. Deriving the reset twice is how they
+ * would drift.
+ *
+ * The derivation is `nextUtcMidnightMs` rather than a remembered window,
+ * because the daily scope *is* the UTC calendar day (see the note above
+ * `DEFAULT_GLOBAL_DAILY_MAX`) -- so the answer is the same whether or not the
+ * refusing process holds window state for it.
+ */
+export function describeAiDailyBudgetReset(nowMs: number = Date.now()): {
+  scope: "daily";
+  retryAfterSeconds: number;
+  resetAt: string;
+  resetAtMs: number;
+} {
+  const resetAtMs = nextUtcMidnightMs(nowMs);
+  return {
+    scope: "daily",
+    retryAfterSeconds: Math.max(1, Math.ceil((resetAtMs - nowMs) / 1000)),
+    resetAt: new Date(resetAtMs).toISOString(),
+    resetAtMs,
+  };
 }
 
 /**
@@ -384,7 +425,7 @@ export async function chargeAiBudget(res: Response): Promise<AiBudgetOutcome> {
 
     console.warn("[ai-budget] budget store unavailable, failing closed", error);
     if (!shouldDegradeOnDailyExhaustion()) {
-      rejectWithBudgetUnavailable(res, 60);
+      rejectWithBudgetUnavailable(res, AI_BUDGET_UNAVAILABLE_RETRY_AFTER_SECONDS);
       return "answered";
     }
     // The header says `store-unavailable`, not `daily-exhausted`: nothing was

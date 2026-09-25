@@ -1,14 +1,11 @@
-import {
-  Router,
-  type Request,
-  type RequestHandler,
-  type Response,
-} from "express";
+import { Router, type Request, type Response } from "express";
 import { getAiReadiness } from "../lib/ai-config";
 import { generateAiText } from "../lib/ai-runtime";
 import { getTokenMetrics } from "../lib/token-logger";
 import {
+  AI_BUDGET_UNAVAILABLE_RETRY_AFTER_SECONDS,
   chargeAiBudget,
+  describeAiDailyBudgetReset,
   getAiBudgetSnapshot,
   isAiBudgetStoreUnavailable,
 } from "../lib/ai-budget";
@@ -25,23 +22,40 @@ function isLiveProbeRequest(req: Request): boolean {
 }
 
 /**
- * Rate-limit the probe only on the query that reaches a provider.
+ * Rate-limit the probe at the point it is about to reach a provider.
  *
- * Without the query the handler answers out of `getAiReadiness()` -- a
- * synchronous read of configuration that spends nothing and charges nothing
- * -- and the same is true in mock mode. Limiting those would ration a
- * config echo and, worse, would make the guard look like it covers the probe
- * generally when the only thing worth covering is the live call. So the
- * predicate is the same one the handler branches on, taken from one place so
- * the two cannot drift apart.
+ * As route middleware this ran ahead of the handler's own branches, and a
+ * predicate could only ever restate them: the handler answers from
+ * `getAiReadiness()` alone for an unready runtime, for mock mode and for a
+ * probe without `?live=true`, and refuses an unauthorized production caller
+ * 403 -- four paths that reach no provider and charge nothing, all of which
+ * were spending the bucket. Two consequences, both wrong: five unauthorized
+ * probes exhausted the deployment-wide cap and the next *authorized* operator
+ * probe was refused 429, and a mock-mode deployment rationed a config echo.
+ *
+ * Running it here instead means the guard covers exactly the requests it
+ * claims to, without a predicate that has to be kept in step with four
+ * branches -- the drift this comment used to promise was impossible.
+ *
+ * Resolves `false` when the limiter refused, which is also when it has already
+ * written its own 429 and will never call `next`. An unexpected store error
+ * rejects, which Express 5 forwards to the error handler exactly as `next(err)`
+ * did from the middleware position.
  */
-const liveProbeFloodGuard: RequestHandler = (req, res, next) => {
-  if (!isLiveProbeRequest(req)) {
-    next();
-    return;
-  }
-  aiLiveProbeRateLimit(req, res, next);
-};
+function runLiveProbeFloodGuard(req: Request, res: Response): Promise<boolean> {
+  return new Promise<boolean>((resolve, reject) => {
+    const onRefused = () => resolve(false);
+    res.once("finish", onRefused);
+    aiLiveProbeRateLimit(req, res, (error?: unknown) => {
+      res.removeListener("finish", onRefused);
+      if (error) {
+        reject(error instanceof Error ? error : new Error(String(error)));
+        return;
+      }
+      resolve(true);
+    });
+  });
+}
 
 aiRouter.get("/readiness", (_req: Request, res: Response) => {
   const readiness = getAiReadiness();
@@ -49,7 +63,7 @@ aiRouter.get("/readiness", (_req: Request, res: Response) => {
   res.status(statusCode).json(readiness);
 });
 
-aiRouter.get("/probe", liveProbeFloodGuard, async (req: Request, res: Response) => {
+aiRouter.get("/probe", async (req: Request, res: Response) => {
   const readiness = getAiReadiness();
   const liveProbe = isLiveProbeRequest(req);
 
@@ -97,11 +111,19 @@ aiRouter.get("/probe", liveProbeFloodGuard, async (req: Request, res: Response) 
   // players the day was intact while it drained, and the limiter would refuse
   // them late -- which is the failure the account-wide cap exists to prevent.
   //
-  // Charged here rather than at the top of the handler: the branches above
-  // answer from configuration alone (invalid readiness, mock mode, a
-  // non-live probe, an unauthorized production caller) and reach no provider,
-  // so charging them would spend the players' day on requests that never left
-  // the process. Same rule the gameplay routes follow via `willCallProvider`.
+  // Guarded and charged here rather than at the top of the handler: the
+  // branches above answer from configuration alone (invalid readiness, mock
+  // mode, a non-live probe, an unauthorized production caller) and reach no
+  // provider, so rationing or charging them would spend the players' day --
+  // and the operator's own probe allowance -- on requests that never left the
+  // process. Same rule the gameplay routes follow via `willCallProvider`.
+  //
+  // The flood guard runs first of the two: it is what stops a loop reaching
+  // the charge at all, and a request it refuses must not spend a slot.
+  if (!(await runLiveProbeFloodGuard(req, res))) {
+    return;
+  }
+
   const budget = await chargeAiBudget(res);
   if (budget === "answered") {
     return;
@@ -119,21 +141,43 @@ aiRouter.get("/probe", liveProbeFloodGuard, async (req: Request, res: Response) 
     // operator most likely to be reading it: nothing was observed and nothing
     // was spent, and the outage may be over by the time they act on it. The
     // header already carries the cause -- this is the body catching up.
+    //
+    // Either way the refusal has to say when to come back. The probe keeps its
+    // own `{ ok, mode, reason, code }` envelope -- its success and 503 answers
+    // use it and a monitor parses it -- so it cannot reuse the shared
+    // `{ error, ... }` body, but the retry fields are the same event described
+    // once: `describeAiDailyBudgetReset` and
+    // `AI_BUDGET_UNAVAILABLE_RETRY_AFTER_SECONDS` are read from `ai-budget` so
+    // this endpoint cannot disagree with the middleware about it. The
+    // `x-sresim-ai-budget` header is already set by `chargeAiBudget`.
     if (isAiBudgetStoreUnavailable(res)) {
+      res.setHeader(
+        "Retry-After",
+        String(AI_BUDGET_UNAVAILABLE_RETRY_AFTER_SECONDS),
+      );
       res.status(503).json({
         ok: false,
         mode: "live",
         reason:
           "The shared AI budget cannot be checked right now; the live probe was not sent",
         code: "ai_budget_unavailable",
+        retryAfterSeconds: AI_BUDGET_UNAVAILABLE_RETRY_AFTER_SECONDS,
+        degraded: false,
       });
       return;
     }
+    const reset = describeAiDailyBudgetReset();
+    res.setHeader("Retry-After", String(reset.retryAfterSeconds));
     res.status(429).json({
       ok: false,
       mode: "live",
-      reason: "The shared AI budget is spent; the live probe was not sent",
+      reason:
+        "The shared AI budget for today is spent; the live probe was not sent",
       code: "ai_budget_exhausted",
+      scope: reset.scope,
+      retryAfterSeconds: reset.retryAfterSeconds,
+      resetAt: reset.resetAt,
+      degraded: false,
     });
     return;
   }

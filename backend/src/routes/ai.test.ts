@@ -464,6 +464,115 @@ describe("GET /api/ai/probe", () => {
     }
   });
 
+  it("does not let an unauthorized flood spend the operator's probe allowance", async () => {
+    // The guard used to run as route middleware, ahead of every branch the
+    // handler takes. A caller with no token reaches no provider -- it is
+    // answered 403 -- but each attempt still came out of the deployment-wide
+    // bucket, so a short unauthorized loop locked the operator out of the one
+    // endpoint that tells them whether the provider is alive. Turning a
+    // rejected caller into a denial of service against the check is a worse
+    // outcome than the flood the guard exists to stop.
+    process.env.NODE_ENV = "production";
+    process.env.AI_LIVE_PROBE_TOKEN = "expected-token";
+    process.env.AI_LIVE_PROBE_RATE_LIMIT_MAX = "2";
+
+    await withAiServer(async (baseUrl) => {
+      const unauthorized = [];
+      for (let attempt = 0; attempt < 4; attempt += 1) {
+        unauthorized.push(
+          (await fetch(`${baseUrl}/probe?live=true`, {
+            headers: { "x-ai-probe-token": "wrong-token" },
+          })).status,
+        );
+      }
+
+      const authorized = await fetch(`${baseUrl}/probe?live=true`, {
+        headers: { "x-ai-probe-token": "expected-token" },
+      });
+
+      // Every unauthorized attempt is refused by the token check, and by the
+      // token check alone -- a 429 here would mean the bucket answered first.
+      expect(unauthorized).toEqual([403, 403, 403, 403]);
+      expect(authorized.status).toBe(200);
+      expect(generateAiText).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it("does not ration a live probe that mock mode answers without a provider", async () => {
+    // Same defect, the branch the free-e2e gate takes: in mock mode a
+    // `?live=true` probe is answered from configuration and reaches nothing,
+    // so rationing it rations a config echo. The old comment claimed the guard
+    // covered only provider-reaching calls while the code contradicted it.
+    process.env.AI_MOCK_MODE = "true";
+    process.env.AI_LIVE_PROBE_RATE_LIMIT_MAX = "1";
+
+    await withAiServer(async (baseUrl) => {
+      const statuses = [];
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        statuses.push((await fetch(`${baseUrl}/probe?live=true`)).status);
+      }
+
+      expect(statuses).toEqual([200, 200, 200]);
+      expect(generateAiText).not.toHaveBeenCalled();
+      expect(chargedKeys).toEqual([]);
+    });
+  });
+
+  it("tells a refused probe when the shared day comes back", async () => {
+    // The probe keeps its own `{ ok, mode, reason, code }` envelope, so it
+    // cannot carry the shared `{ error, ... }` body -- but a monitor reading
+    // this 429 could not tell a spent day from a per-identity throttle that
+    // clears in a minute, because the retry fields the budget contract
+    // documents were all missing.
+    process.env.AI_GLOBAL_DAILY_MAX = "1";
+
+    await withAiServer(async (baseUrl) => {
+      await fetch(`${baseUrl}/probe?live=true`);
+      const response = await fetch(`${baseUrl}/probe?live=true`);
+      const body = (await response.json()) as Record<string, unknown>;
+
+      expect(response.status).toBe(429);
+      expect(body).toMatchObject({
+        ok: false,
+        mode: "live",
+        code: "ai_budget_exhausted",
+        scope: "daily",
+        degraded: false,
+      });
+      // The header and the body must agree; two retry answers for one refusal
+      // is how a client ends up trusting the wrong one.
+      expect(response.headers.get("Retry-After")).toBe(
+        String(body.retryAfterSeconds),
+      );
+      expect(body.retryAfterSeconds).toBeGreaterThan(0);
+      // The daily scope *is* the UTC calendar day, so the reset is midnight
+      // UTC and not "24 hours from the refusal".
+      expect(body.resetAt).toMatch(/^\d{4}-\d{2}-\d{2}T00:00:00\.000Z$/);
+    });
+  });
+
+  it("tells a probe refused by a store outage to retry in a minute, not tomorrow", async () => {
+    // Nothing was observed and nothing was spent, so the outage may be over
+    // long before midnight. Quoting the middleware's own interval rather than
+    // a second number invented here is the point.
+    storeFailure = new Error("redis unreachable");
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    await withAiServer(async (baseUrl) => {
+      const response = await fetch(`${baseUrl}/probe?live=true`);
+      const body = (await response.json()) as Record<string, unknown>;
+
+      expect(response.status).toBe(503);
+      expect(body).toMatchObject({
+        code: "ai_budget_unavailable",
+        retryAfterSeconds: 60,
+        degraded: false,
+      });
+      expect(response.headers.get("Retry-After")).toBe("60");
+      expect(body.resetAt).toBeUndefined();
+    });
+  });
+
   it("charges nothing for a production probe it then rejects as unauthorized", async () => {
     process.env.NODE_ENV = "production";
     process.env.AI_LIVE_PROBE_TOKEN = "expected-token";
