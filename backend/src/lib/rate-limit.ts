@@ -398,6 +398,19 @@ export async function getRateLimitKey(
 }
 
 /**
+ * Each entry carries an id of its own, so a release removes the charge it was
+ * handed rather than whichever charge happens to share its millisecond. The
+ * Redis store has always identified entries this way -- its sorted-set members
+ * carry a process prefix and a sequence, and `release` issues `ZREM` on the
+ * member it returned -- and matching that here stops the two stores from
+ * disagreeing about what a release token means.
+ */
+interface SlidingWindowEntry {
+  id: string;
+  timestampMs: number;
+}
+
+/**
  * A bucket remembers the window it was written under. The periodic sweep
  * visits every key, and until the global AI budget arrived that was harmless
  * because every key in this store was a per-identity window of the same
@@ -407,13 +420,24 @@ export async function getRateLimitKey(
  */
 interface SlidingWindowBucket {
   windowMs: number;
-  timestamps: number[];
+  entries: SlidingWindowEntry[];
 }
 
 export class InMemorySlidingWindowStore implements SlidingWindowStore {
   readonly distributed = false;
   private readonly buckets = new Map<string, SlidingWindowBucket>();
   private operationsSinceSweep = 0;
+  private entrySequence = 0;
+
+  /**
+   * Unique for the lifetime of the store, which is all this needs: the
+   * in-memory store is per process by construction, so unlike the Redis
+   * member there is nothing to disambiguate it from.
+   */
+  private nextEntryId(nowMs: number): string {
+    this.entrySequence += 1;
+    return `${nowMs.toString(36)}-${this.entrySequence.toString(36)}`;
+  }
 
   /**
    * Each bucket is pruned against its own window, never the caller's. With a
@@ -425,24 +449,24 @@ export class InMemorySlidingWindowStore implements SlidingWindowStore {
    */
   private pruneExpiredBuckets(nowMs: number): void {
     for (const [bucketKey, bucket] of this.buckets.entries()) {
-      const activeTimestamps = bucket.timestamps
-        .filter((timestamp) => timestamp > nowMs - bucket.windowMs);
-      if (activeTimestamps.length === 0) {
+      const activeEntries = bucket.entries
+        .filter((entry) => entry.timestampMs > nowMs - bucket.windowMs);
+      if (activeEntries.length === 0) {
         this.buckets.delete(bucketKey);
         continue;
       }
-      this.buckets.set(bucketKey, { windowMs: bucket.windowMs, timestamps: activeTimestamps });
+      this.buckets.set(bucketKey, { windowMs: bucket.windowMs, entries: activeEntries });
     }
   }
 
-  private readActiveBucket(key: string, cutoff: number): number[] {
-    const activeTimestamps = (this.buckets.get(key)?.timestamps ?? [])
-      .filter((timestamp) => timestamp > cutoff);
-    if (activeTimestamps.length === 0) {
+  private readActiveBucket(key: string, cutoff: number): SlidingWindowEntry[] {
+    const activeEntries = (this.buckets.get(key)?.entries ?? [])
+      .filter((entry) => entry.timestampMs > cutoff);
+    if (activeEntries.length === 0) {
       this.buckets.delete(key);
       return [];
     }
-    return activeTimestamps;
+    return activeEntries;
   }
 
   async consume(
@@ -461,8 +485,8 @@ export class InMemorySlidingWindowStore implements SlidingWindowStore {
     const existing = this.readActiveBucket(key, cutoff);
 
     if (existing.length >= limit) {
-      const resetAtMs = (existing[0] ?? nowMs) + windowMs;
-      this.buckets.set(key, { windowMs, timestamps: existing });
+      const resetAtMs = (existing[0]?.timestampMs ?? nowMs) + windowMs;
+      this.buckets.set(key, { windowMs, entries: existing });
       return {
         allowed: false,
         remaining: 0,
@@ -471,15 +495,16 @@ export class InMemorySlidingWindowStore implements SlidingWindowStore {
       };
     }
 
-    existing.push(nowMs);
-    this.buckets.set(key, { windowMs, timestamps: existing });
+    const entry: SlidingWindowEntry = { id: this.nextEntryId(nowMs), timestampMs: nowMs };
+    existing.push(entry);
+    this.buckets.set(key, { windowMs, entries: existing });
 
     return {
       allowed: true,
       remaining: Math.max(limit - existing.length, 0),
       resetAtMs: nowMs + windowMs,
       retryAfterSeconds: Math.max(1, Math.ceil(windowMs / 1000)),
-      releaseToken: String(nowMs),
+      releaseToken: entry.id,
     };
   }
 
@@ -496,41 +521,42 @@ export class InMemorySlidingWindowStore implements SlidingWindowStore {
       this.operationsSinceSweep = 0;
     }
 
-    const timestamps = this.readActiveBucket(key, cutoff);
-    timestamps.push(nowMs);
-    this.buckets.set(key, { windowMs, timestamps });
+    const entries = this.readActiveBucket(key, cutoff);
+    entries.push({ id: this.nextEntryId(nowMs), timestampMs: nowMs });
+    this.buckets.set(key, { windowMs, entries });
 
     return {
-      remaining: Math.max(limit - timestamps.length, 0),
-      resetAtMs: (timestamps[0] ?? nowMs) + windowMs,
+      remaining: Math.max(limit - entries.length, 0),
+      resetAtMs: (entries[0]?.timestampMs ?? nowMs) + windowMs,
     };
   }
 
   /**
-   * Entries here are bare timestamps, so two slots taken in the same
-   * millisecond are indistinguishable -- which is exactly why removing the
-   * first match is correct rather than approximate: there is no observable
-   * difference between "the" entry and "an" entry carrying that value.
+   * The token is the entry's own id, so this removes the charge the caller was
+   * granted even when several were granted in the same millisecond. An earlier
+   * version released by timestamp and removed the first match, which counted
+   * correctly -- one release, one entry gone -- but only because entries
+   * sharing a millisecond were interchangeable. That is a property of the
+   * representation, not of the contract, and the Redis store never had it.
    */
   async release(key: string, releaseToken: string): Promise<void> {
-    const timestamp = Number(releaseToken);
     const bucket = this.buckets.get(key);
-    if (!bucket || !Number.isFinite(timestamp)) {
+    if (!bucket) {
       return;
     }
 
-    const index = bucket.timestamps.indexOf(timestamp);
+    const index = bucket.entries.findIndex((entry) => entry.id === releaseToken);
     if (index < 0) {
       return;
     }
 
-    const timestamps = bucket.timestamps.slice();
-    timestamps.splice(index, 1);
-    if (timestamps.length === 0) {
+    const entries = bucket.entries.slice();
+    entries.splice(index, 1);
+    if (entries.length === 0) {
       this.buckets.delete(key);
       return;
     }
-    this.buckets.set(key, { windowMs: bucket.windowMs, timestamps });
+    this.buckets.set(key, { windowMs: bucket.windowMs, entries });
   }
 }
 

@@ -511,4 +511,46 @@ describe("InMemorySlidingWindowStore", () => {
     // past a cap the recorded request already overran.
     expect((await store.consume(key, 61_000, MINUTE_MS, 2)).allowed).toBe(false);
   });
+
+  // The token used to be the entry's timestamp, so two charges taken in the
+  // same millisecond were handed the same one. The count still came out right
+  // -- one release removed one entry -- but only because those entries were
+  // interchangeable, which is a property of the representation rather than of
+  // the contract. The Redis store never had it: its members carry a sequence
+  // and `release` issues `ZREM` on the exact member it returned.
+  it("identifies same-millisecond charges apart from one another", async () => {
+    const store = new InMemorySlidingWindowStore();
+    const key = "global:ai:minute";
+
+    const first = await store.consume(key, 0, MINUTE_MS, 5);
+    const second = await store.consume(key, 0, MINUTE_MS, 5);
+
+    expect(first.releaseToken).toBeTruthy();
+    expect(second.releaseToken).toBeTruthy();
+    expect(first.releaseToken).not.toBe(second.releaseToken);
+  });
+
+  // The observable consequence, and the reason the parity is worth having: a
+  // release is compensation for one charge, so repeating it must give back
+  // nothing. Released by timestamp the repeat matched the *other*
+  // same-millisecond charge and handed back a slot that was still in flight.
+  it("gives one slot back however many times the same charge is released", async () => {
+    const store = new InMemorySlidingWindowStore();
+    const key = "global:ai:minute";
+    const limit = 5;
+
+    const charged = await store.consume(key, 0, MINUTE_MS, limit);
+    await store.consume(key, 0, MINUTE_MS, limit);
+
+    await store.release(key, charged.releaseToken!);
+    await store.release(key, charged.releaseToken!);
+
+    // One charge outstanding, so four slots are left. Six would mean the
+    // second release took the other charge's entry with it.
+    let granted = 0;
+    while ((await store.consume(key, 0, MINUTE_MS, limit)).allowed) {
+      granted += 1;
+    }
+    expect(granted).toBe(4);
+  });
 });
