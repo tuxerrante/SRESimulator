@@ -1,5 +1,9 @@
 import type { Response } from "express";
-import { getAiReadiness, getConfiguredProvider } from "./ai-config";
+import {
+  getAiReadiness,
+  getConfiguredProvider,
+  shouldDegradeOnQuotaExhausted,
+} from "./ai-config";
 import { fetchOpenRouterKeyStatus } from "./ai-providers/openrouter";
 import { consumeSharedWindow } from "./rate-limit";
 
@@ -119,6 +123,23 @@ function shouldDegradeOnDailyExhaustion(): boolean {
   return (process.env.AI_GLOBAL_DAILY_EXHAUSTED_MODE ?? "degrade")
     .trim()
     .toLowerCase() !== "reject";
+}
+
+/**
+ * What an exhausted budget actually answers with, so the banner can say it
+ * rather than assume it.
+ *
+ * `simulated` requires *both* switches to degrade. The snapshot cannot tell
+ * which exhaustion the reader is about to hit -- the local counter answers
+ * under `AI_GLOBAL_DAILY_EXHAUSTED_MODE`, a provider 429 under
+ * `AI_DEGRADE_ON_QUOTA_EXHAUSTED` -- so promising a playable answer while
+ * either path returns 429 is the same confidently-wrong sentence the upstream
+ * pairing rule already refuses to render.
+ */
+function getExhaustedBehaviour(): AiExhaustedBehaviour {
+  return shouldDegradeOnDailyExhaustion() && shouldDegradeOnQuotaExhausted()
+    ? "simulated"
+    : "rejected";
 }
 
 /**
@@ -422,6 +443,9 @@ export async function chargeAiProviderRetry(): Promise<void> {
   }
 }
 
+/** Whether a spent budget still answers playably, or answers 429. */
+export type AiExhaustedBehaviour = "simulated" | "rejected";
+
 export interface AiBudgetSnapshot {
   enabled: boolean;
   dailyLimit: number;
@@ -429,6 +453,8 @@ export interface AiBudgetSnapshot {
   minuteLimit: number;
   minuteRemaining: number;
   degraded: boolean;
+  /** What this deployment answers with once the budget is spent. */
+  exhaustedBehaviour: AiExhaustedBehaviour;
   resetAt: string | null;
   /** Live numbers from the provider, or null when unavailable. */
   upstream: { dailyLimit: number | null; dailyRemaining: number | null } | null;
@@ -464,6 +490,7 @@ export async function getAiBudgetSnapshot(): Promise<AiBudgetSnapshot> {
     minuteLimit,
     minuteRemaining: minute?.remaining ?? minuteLimit,
     degraded: enabled && dailyRemaining <= 0,
+    exhaustedBehaviour: getExhaustedBehaviour(),
     resetAt: day ? new Date(day.resetAtMs).toISOString() : null,
     upstream,
   };

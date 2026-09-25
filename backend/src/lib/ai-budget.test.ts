@@ -588,8 +588,29 @@ describe("getAiBudgetSnapshot", () => {
       minuteLimit: 7,
       minuteRemaining: 7,
       degraded: false,
+      exhaustedBehaviour: "simulated",
       resetAt: null,
       upstream: null,
+    });
+  });
+
+  it("reports that a spent budget is answered 429, not simulated", async () => {
+    // The banner cannot tell which exhaustion the next request will hit, so a
+    // deployment that rejects on either path must not be described as playable.
+    process.env.AI_GLOBAL_DAILY_EXHAUSTED_MODE = "reject";
+    const { getAiBudgetSnapshot } = await loadBudget();
+
+    await expect(getAiBudgetSnapshot()).resolves.toMatchObject({
+      exhaustedBehaviour: "rejected",
+    });
+  });
+
+  it("reports rejected when provider quota failures are not degraded", async () => {
+    process.env.AI_DEGRADE_ON_QUOTA_EXHAUSTED = "false";
+    const { getAiBudgetSnapshot } = await loadBudget();
+
+    await expect(getAiBudgetSnapshot()).resolves.toMatchObject({
+      exhaustedBehaviour: "rejected",
     });
   });
 

@@ -1,5 +1,8 @@
 "use client";
 
+/** Whether a spent budget still answers playably, or answers 429. */
+export type AiExhaustedBehaviour = "simulated" | "rejected";
+
 /** Shape of `GET /api/ai/budget`. Every field is server-computed and public. */
 export interface AiBudgetSnapshot {
   enabled: boolean;
@@ -8,6 +11,7 @@ export interface AiBudgetSnapshot {
   minuteLimit: number;
   minuteRemaining: number;
   degraded: boolean;
+  exhaustedBehaviour: AiExhaustedBehaviour;
   resetAt: string | null;
   upstream: { dailyLimit: number | null; dailyRemaining: number | null } | null;
 }
@@ -48,6 +52,23 @@ function formatResetAt(resetAt: string | null): string | null {
   return parsed.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
+/**
+ * A spent budget is only playable when the deployment degrades to simulated
+ * output. Under `AI_GLOBAL_DAILY_EXHAUSTED_MODE=reject` or
+ * `AI_DEGRADE_ON_QUOTA_EXHAUSTED=false` the gameplay request is answered 429
+ * instead, and telling that player their answers are merely simulated sends
+ * them to retry something that cannot succeed.
+ */
+function exhaustedCopy(
+  behaviour: AiExhaustedBehaviour,
+  resetLabel: string | null,
+): string {
+  const until = resetLabel ? ` until ${resetLabel}` : "";
+  return behaviour === "simulated"
+    ? `The shared AI budget for today is spent, so answers are simulated${until}. Everything else still works.`
+    : `The shared AI budget for today is spent, so AI replies are unavailable${until}. Everything else still works.`;
+}
+
 export function AiBudgetBanner({ snapshot }: { snapshot: AiBudgetSnapshot | null }) {
   if (!snapshot?.enabled) {
     return null;
@@ -71,9 +92,7 @@ export function AiBudgetBanner({ snapshot }: { snapshot: AiBudgetSnapshot | null
       className="mt-6 px-4 py-2 rounded-lg bg-amber-950/50 border border-amber-800/50 text-amber-400 text-sm max-w-md text-center"
     >
       {exhausted
-        ? `The shared AI budget for today is spent, so answers are simulated${
-            resetLabel ? ` until ${resetLabel}` : ""
-          }. Everything else still works.`
+        ? exhaustedCopy(snapshot.exhaustedBehaviour, resetLabel)
         : `The shared AI budget is running low: ${remaining} of ${limit} requests left today.`}
     </div>
   );

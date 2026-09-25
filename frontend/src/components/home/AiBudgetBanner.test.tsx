@@ -10,6 +10,7 @@ function makeSnapshot(overrides: Partial<AiBudgetSnapshot> = {}): AiBudgetSnapsh
     minuteLimit: 20,
     minuteRemaining: 20,
     degraded: false,
+    exhaustedBehaviour: "simulated",
     resetAt: null,
     upstream: null,
     ...overrides,
@@ -57,6 +58,26 @@ describe("AiBudgetBanner", () => {
     const text = screen.getByRole("status").textContent ?? "";
     expect(text).toContain("answers are simulated");
     expect(text).toContain("Everything else still works");
+  });
+
+  it("does not promise simulated answers when the deployment rejects instead", () => {
+    // AI_GLOBAL_DAILY_EXHAUSTED_MODE=reject and AI_DEGRADE_ON_QUOTA_EXHAUSTED=false
+    // both answer gameplay 429. Telling that player their answers are merely
+    // simulated sends them to retry something that cannot succeed.
+    render(
+      <AiBudgetBanner
+        snapshot={makeSnapshot({
+          dailyRemaining: 0,
+          degraded: true,
+          exhaustedBehaviour: "rejected",
+          resetAt: "2026-09-19T00:00:00.000Z",
+        })}
+      />,
+    );
+
+    const text = screen.getByRole("status").textContent ?? "";
+    expect(text).toContain("AI replies are unavailable");
+    expect(text).not.toContain("answers are simulated");
   });
 
   it("prefers the provider's own count over the local one", () => {
