@@ -811,7 +811,8 @@ export const aiRateLimit: RequestHandler = createSlidingWindowRateLimit({
  * The cap is therefore sized as a flood guard for a whole deployment's front
  * door. It can be, because a read costs a map lookup plus an upstream figure
  * that is TTL-cached and single-flighted; it is not a proxy for provider
- * spend, which `aiGlobalBudgetLimit` accounts for separately.
+ * spend, which `chargeAiBudget` accounts for separately at the routes that
+ * actually reach a provider.
  */
 export const aiBudgetReadRateLimit: RequestHandler = createSlidingWindowRateLimit({
   windowMs: getAiRateLimitWindowMs,
