@@ -19,6 +19,7 @@ const TEST_ENV_KEYS = [
   "AI_AZURE_OPENAI_ENDPOINT",
   "AI_AZURE_OPENAI_API_KEY",
   "AI_AZURE_OPENAI_DEPLOYMENT",
+  "AI_GLOBAL_BUDGET_ENABLED",
 ] as const;
 
 const ORIGINAL_ENV_VALUES: Record<string, string | undefined> = {};
@@ -459,6 +460,28 @@ describe("keep-alive warmups and a shared account-wide budget", () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("stops warming up Azure once the operator says the account is capped", async () => {
+    // `warmupCostsSharedQuota` is a property of the provider; this is the
+    // operator saying the same thing about their own account, and it is
+    // accepted on every provider. A warmup is fire-and-forget by design --
+    // nothing in it can be refused -- so it cannot be routed through the
+    // budget the way a route is, and charging it would let a keep-alive ping
+    // spend the slot a player's next request needed.
+    process.env.AI_PROVIDER = "azure-openai";
+    process.env.AI_MODEL = "gpt-5.2";
+    process.env.AI_AZURE_OPENAI_ENDPOINT = "https://example.openai.azure.com";
+    process.env.AI_AZURE_OPENAI_API_KEY = "test-key";
+    process.env.AI_AZURE_OPENAI_DEPLOYMENT = "gpt-5.2";
+    process.env.AI_GLOBAL_BUDGET_ENABLED = "true";
+    const fetchMock = vi.fn().mockImplementation(() => okResponse("ping"));
+    vi.stubGlobal("fetch", fetchMock);
+
+    (await freshWarmup())("chat");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });
 

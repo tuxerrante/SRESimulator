@@ -475,12 +475,14 @@ describe("scenario reservation before AI generation", () => {
     // No doomed round trip: the provider is never asked for a request the
     // shared account already cannot afford.
     expect(generateAiTextMock).not.toHaveBeenCalled();
-    // Nor is the prompt built for it. This is the assertion that pins the
-    // check *ahead* of the knowledge-base read: that read shares the request
-    // deadline, so on a slow filesystem it can expire first and relabel a
-    // spent budget as a timeout -- the one degraded reason that sends the
-    // operator looking at latency instead of at the budget.
-    expect(loadKnowledgeBaseMock).not.toHaveBeenCalled();
+    // The prompt context *is* built first, and deliberately so. The charge
+    // sits at the provider boundary, past every `return` that answers without
+    // reaching a model, so the only requests it can spend a slot on are the
+    // ones about to call out. Reading the knowledge base first costs a
+    // `degradedReason` if that read eats the deadline -- the answer is a
+    // catalog scenario either way -- where charging first costs a real slot
+    // out of an account capped at 50 requests a day.
+    expect(loadKnowledgeBaseMock).toHaveBeenCalledTimes(1);
     // The session below is playable and the scenario is a real one from the
     // catalog, so the header has to stop describing the budget and start
     // describing the response -- read off the wire, not off the mock.
@@ -714,6 +716,11 @@ describe("scenario reservation before AI generation", () => {
     expect(JSON.stringify(scenario)).not.toContain("{{minutesAgo:");
     expect(JSON.stringify(scenario)).not.toContain("{{daysAgo:");
     expect(generateAiTextMock).not.toHaveBeenCalled();
+    // The other half of putting the charge at the provider boundary: this
+    // route answers from the curated catalog above every call site, so a
+    // deployment serving curated scenarios spends nothing. That is a property
+    // of where the call sits, not of a predicate a caller has to remember.
+    expect(chargeAiBudgetMock).not.toHaveBeenCalled();
     expect(warmupAiModelMock).toHaveBeenCalledTimes(2);
   });
 

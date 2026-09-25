@@ -2,7 +2,11 @@ import { Router, type Request, type Response } from "express";
 import { getAiReadiness } from "../lib/ai-config";
 import { generateAiText } from "../lib/ai-runtime";
 import { getTokenMetrics } from "../lib/token-logger";
-import { chargeAiBudget, getAiBudgetSnapshot } from "../lib/ai-budget";
+import {
+  chargeAiBudget,
+  getAiBudgetSnapshot,
+  isAiBudgetStoreUnavailable,
+} from "../lib/ai-budget";
 import { aiRateLimit } from "../lib/rate-limit";
 
 export const aiRouter = Router();
@@ -79,9 +83,24 @@ aiRouter.get("/probe", async (req: Request, res: Response) => {
     // back on -- "pong" from the mock generator would assert nothing about the
     // provider, which is the single thing this endpoint exists to check -- and
     // a live call with the day spent comes back as the provider's own 429
-    // anyway: the same answer, one slot poorer. `chargeAiBudget` has already
-    // set `x-sresim-ai-budget` to the cause, so an operator can tell a spent
-    // day from an unreachable window store.
+    // anyway: the same answer, one slot poorer.
+    //
+    // Which refusal, though, is not the same question. Failing closed on an
+    // unreachable window store also returns `exhausted`, and answering that
+    // with "the day is spent, come back tomorrow" is a wrong answer to the
+    // operator most likely to be reading it: nothing was observed and nothing
+    // was spent, and the outage may be over by the time they act on it. The
+    // header already carries the cause -- this is the body catching up.
+    if (isAiBudgetStoreUnavailable(res)) {
+      res.status(503).json({
+        ok: false,
+        mode: "live",
+        reason:
+          "The shared AI budget cannot be checked right now; the live probe was not sent",
+        code: "ai_budget_unavailable",
+      });
+      return;
+    }
     res.status(429).json({
       ok: false,
       mode: "live",

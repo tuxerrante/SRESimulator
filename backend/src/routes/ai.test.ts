@@ -278,6 +278,41 @@ describe("GET /api/ai/probe", () => {
     });
   });
 
+  it("says the budget could not be read, not that the day is spent, on a store outage", async () => {
+    // Failing closed and finding the day spent both come back as `exhausted`,
+    // and answering an outage with 429 "come back tomorrow" is a wrong answer
+    // to the operator most likely to be running this probe during one:
+    // nothing was observed, nothing was spent, and the blip may already be
+    // over. Driven through a throwing store rather than a stubbed outcome,
+    // because the two cases are indistinguishable at the return value.
+    vi.doMock("../lib/rate-limit", async () => {
+      const actual = await vi.importActual<typeof import("../lib/rate-limit")>(
+        "../lib/rate-limit",
+      );
+      return {
+        ...actual,
+        consumeSharedWindow: () => {
+          throw new Error("redis unreachable");
+        },
+      };
+    });
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    await withAiServer(async (baseUrl) => {
+      const response = await fetch(`${baseUrl}/probe?live=true`);
+
+      expect(response.status).toBe(503);
+      await expect(response.json()).resolves.toMatchObject({
+        ok: false,
+        mode: "live",
+        code: "ai_budget_unavailable",
+      });
+      expect(response.headers.get("x-sresim-ai-budget")).toBe("store-unavailable");
+      // Failing closed still means failing closed: the provider is not asked.
+      expect(generateAiText).not.toHaveBeenCalled();
+    });
+  });
+
   it("charges nothing for a production probe it then rejects as unauthorized", async () => {
     process.env.NODE_ENV = "production";
     process.env.AI_LIVE_PROBE_TOKEN = "expected-token";

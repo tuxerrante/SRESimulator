@@ -94,7 +94,7 @@ function parsePositiveInt(raw: string | undefined, fallback: number): number {
  * Azure and Vertex bill per token with no shared daily cliff, so enabling it
  * there would only add a second limiter nobody asked for.
  */
-function isAiGlobalBudgetEnabled(): boolean {
+export function isAiGlobalBudgetEnabled(): boolean {
   // Mock mode never reaches a provider, so there is no shared account to
   // protect and every charge would be pure leakage -- worst of all in the
   // free-e2e gate, which drives four simulated players through chat and
@@ -209,6 +209,26 @@ function rejectWithBudgetExhausted(
     resetAt: new Date(resetAtMs).toISOString(),
     degraded: false,
   });
+}
+
+/**
+ * Did the budget fail to *observe* the account, rather than find it spent?
+ *
+ * `chargeAiBudget` returns `exhausted` for both, deliberately: the three
+ * gameplay routes answer them the same way -- a simulated answer, because that
+ * is the only thing a player can use -- and collapsing them there keeps the
+ * degraded-answer contract to one case. The cause is still recorded, in the
+ * header, which is also where `markAiBudgetDegraded` reads it.
+ *
+ * The live probe is the one caller that must tell them apart. It has no
+ * simulated answer to give -- "pong" from the mock generator asserts nothing
+ * about the provider, which is the single thing the endpoint exists to check
+ * -- so it refuses either way, and a refusal has to name its reason. Telling
+ * an operator the day is spent when a Redis blip is the truth sends them away
+ * until tomorrow over an outage that may already be over.
+ */
+export function isAiBudgetStoreUnavailable(res: Response): boolean {
+  return res.getHeader(AI_BUDGET_HEADER) === "store-unavailable";
 }
 
 /**
