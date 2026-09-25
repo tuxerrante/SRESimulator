@@ -4,7 +4,10 @@ import {
   getConfiguredProvider,
   shouldDegradeOnQuotaExhausted,
 } from "./ai-config";
-import { fetchOpenRouterKeyStatus } from "./ai-providers/openrouter";
+import {
+  fetchOpenRouterKeyStatus,
+  readLastKnownOpenRouterDailyLimit,
+} from "./ai-providers/openrouter";
 import { consumeSharedWindow, recordSharedWindow, releaseSharedWindow } from "./rate-limit";
 
 const MINUTE_MS = 60 * 1000;
@@ -114,8 +117,31 @@ function getGlobalMinuteMax(): number {
   return parsePositiveInt(process.env.AI_GLOBAL_MINUTE_MAX, DEFAULT_GLOBAL_MINUTE_MAX);
 }
 
+/**
+ * The configured cap, clamped down to the account's own limit once this
+ * process has seen one.
+ *
+ * `DEFAULT_GLOBAL_DAILY_MAX` is the post-purchase tier, so an account that has
+ * not bought credit sits under a 50/day provider cap while the limiter thinks
+ * it has 1000 -- the deployment then spends 950 requests learning about 429s
+ * it could have predicted. The documented remedy is to set
+ * `AI_GLOBAL_DAILY_MAX=50`, which every deployment on an un-credited account
+ * has to remember; this makes the common case need no configuration at all.
+ *
+ * Two properties keep the docblock above honest. It only ever **tightens**:
+ * `Math.min` cannot raise a cap past what the operator configured, so a wrong
+ * or stale upstream reading can overspend nothing. And it reaches no network
+ * -- `readLastKnownOpenRouterDailyLimit` is a cache read, returning `null`
+ * until some other caller has already fetched -- so the enforced figure stays
+ * local and the limiter still fails closed on its own.
+ */
 function getGlobalDailyMax(): number {
-  return parsePositiveInt(process.env.AI_GLOBAL_DAILY_MAX, DEFAULT_GLOBAL_DAILY_MAX);
+  const configured = parsePositiveInt(process.env.AI_GLOBAL_DAILY_MAX, DEFAULT_GLOBAL_DAILY_MAX);
+  const upstreamLimit = readLastKnownOpenRouterDailyLimit();
+  if (upstreamLimit === null || getConfiguredProvider() !== "openrouter") {
+    return configured;
+  }
+  return Math.min(configured, upstreamLimit);
 }
 
 /** `degrade` answers with simulated output; `reject` answers 429. */
@@ -616,7 +642,6 @@ export interface AiBudgetSnapshot {
  * because polling the provider per request would itself spend the rate limit.
  */
 export async function getAiBudgetSnapshot(): Promise<AiBudgetSnapshot> {
-  const dailyLimit = getGlobalDailyMax();
   const minuteLimit = getGlobalMinuteMax();
   const nowMs = Date.now();
   const day = readWindow("daily", nowMs);
@@ -631,7 +656,17 @@ export async function getAiBudgetSnapshot(): Promise<AiBudgetSnapshot> {
     enabled && getConfiguredProvider() === "openrouter"
       ? await fetchOpenRouterKeyStatus()
       : null;
-  const dailyRemaining = day?.remaining ?? dailyLimit;
+
+  // Read after the lookup, not before: the lookup is what fills the cache the
+  // clamp reads, so taking the cap first would report the unclamped figure to
+  // whichever visitor happened to load the banner first and the clamped one to
+  // everybody after them.
+  const dailyLimit = getGlobalDailyMax();
+  // A window charged before the clamp learned the account's limit can hold
+  // more slots than the cap now allows; reporting `dailyRemaining` above
+  // `dailyLimit` would make the documented response contradict itself until
+  // the next charge re-counted against the tighter figure.
+  const dailyRemaining = Math.min(day?.remaining ?? dailyLimit, dailyLimit);
 
   // The banner prefers the provider's own pair over the local counter and
   // renders both numbers or neither, so an account the provider reports spent

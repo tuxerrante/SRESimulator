@@ -858,7 +858,7 @@ describe("getAiBudgetSnapshot", () => {
       const snapshot = await getAiBudgetSnapshot();
 
       expect(snapshot.upstream).toEqual({ dailyLimit: 50, dailyRemaining: 0 });
-      expect(snapshot.dailyRemaining).toBe(1000);
+      expect(snapshot.dailyRemaining).toBe(50);
       expect(snapshot.resetAt).toBe("2026-09-19T00:00:00.000Z");
     } finally {
       vi.useRealTimers();
@@ -907,8 +907,10 @@ describe("getAiBudgetSnapshot", () => {
 
     const snapshot = await getAiBudgetSnapshot();
 
-    // The local counter is untouched, so this is the upstream half alone.
-    expect(snapshot.dailyRemaining).toBe(1000);
+    // The local counter is untouched, so this is the upstream half alone --
+    // reported against the account's own cap, which the reading above is what
+    // taught the limiter.
+    expect(snapshot.dailyRemaining).toBe(50);
     expect(snapshot.degraded).toBe(true);
   });
 
@@ -988,6 +990,129 @@ describe("getAiBudgetSnapshot", () => {
       enabled: true,
       upstream: null,
     });
+  });
+});
+
+describe("the daily cap against the account's own limit", () => {
+  beforeEach(() => {
+    restoreTestEnv();
+    vi.doUnmock("./rate-limit");
+    vi.unstubAllGlobals();
+    process.env.AI_PROVIDER = "openrouter";
+    delete process.env.AI_RATE_LIMIT_REDIS_URL;
+    delete process.env.AI_OPENROUTER_API_KEY;
+    delete process.env.AI_MOCK_MODE;
+  });
+
+  afterEach(() => {
+    restoreTestEnv();
+    vi.unstubAllGlobals();
+  });
+
+  function stubKeyStatus(limit: number, remaining: number): void {
+    process.env.AI_OPENROUTER_API_KEY = "test-key";
+    vi.stubGlobal("fetch", vi.fn(async () =>
+      new Response(
+        JSON.stringify({
+          data: { free_model_daily_requests: { used: limit - remaining, limit, remaining } },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+    ));
+  }
+
+  it("clamps the configured cap down to the limit the account actually has", async () => {
+    // The default is the post-purchase tier. On an account that never bought
+    // credit the provider stops at 50, so a deployment that left the default
+    // alone spends 950 requests discovering 429s it could have predicted.
+    stubKeyStatus(50, 50);
+    const { getAiBudgetSnapshot } = await loadBudget();
+
+    const snapshot = await getAiBudgetSnapshot();
+
+    expect(snapshot.dailyLimit).toBe(50);
+  });
+
+  it("never raises the configured cap to the provider's", async () => {
+    // Strictly tightening: an operator who deliberately budgets below their
+    // allowance keeps that budget, and a wrong or stale upstream reading can
+    // overspend nothing.
+    process.env.AI_GLOBAL_DAILY_MAX = "20";
+    stubKeyStatus(1000, 1000);
+    const { getAiBudgetSnapshot } = await loadBudget();
+
+    await expect(getAiBudgetSnapshot()).resolves.toMatchObject({ dailyLimit: 20 });
+  });
+
+  it("leaves the configured cap alone until it has seen the account's limit", async () => {
+    // A cache read, never a fetch: the limiter still fails closed on its own,
+    // which is what the enforced figure being local buys.
+    const { getAiBudgetSnapshot } = await loadBudget();
+
+    await expect(getAiBudgetSnapshot()).resolves.toMatchObject({ dailyLimit: 1000 });
+  });
+
+  it("refuses at the clamped cap, not at the configured one", async () => {
+    stubKeyStatus(2, 2);
+    const { chargeAiBudget, getAiBudgetSnapshot } = await loadBudget();
+    await getAiBudgetSnapshot();
+
+    await charge(chargeAiBudget);
+    await charge(chargeAiBudget);
+    const third = await charge(chargeAiBudget);
+
+    // Reporting the tighter number and then charging against the looser one
+    // would make the banner a decoration rather than a description.
+    expect(third.outcome).toBe("exhausted");
+  });
+
+  it("never reports more slots left than the clamped cap allows", async () => {
+    // The window was charged while the cap was still the default, so its
+    // remembered remainder outruns the limit the account turns out to have.
+    const { chargeAiBudget, getAiBudgetSnapshot } = await loadBudget();
+    await charge(chargeAiBudget);
+    stubKeyStatus(50, 50);
+
+    const snapshot = await getAiBudgetSnapshot();
+
+    expect(snapshot.dailyLimit).toBe(50);
+    expect(snapshot.dailyRemaining).toBeLessThanOrEqual(50);
+  });
+
+  it("keeps the clamp after the banner's own cache has gone stale", async () => {
+    // The TTL exists to keep a *displayed* remaining count fresh. The tier
+    // limit behind it moves once, when an account buys credit, so expiring the
+    // clamp would let the cap drift back up between banner visits -- and on a
+    // quiet deployment nobody visits, which is exactly when the cap matters.
+    process.env.AI_OPENROUTER_QUOTA_TTL_MS = "1";
+    stubKeyStatus(2, 2);
+    const { chargeAiBudget, getAiBudgetSnapshot } = await loadBudget();
+    await getAiBudgetSnapshot();
+    await new Promise((settle) => setTimeout(settle, 5));
+
+    await charge(chargeAiBudget);
+    await charge(chargeAiBudget);
+    const third = await charge(chargeAiBudget);
+
+    // A charge never fetches, so a TTL-honouring read would find nothing here
+    // and fall back to the 1000-request default.
+    expect(third.outcome).toBe("exhausted");
+  });
+
+  it("does not clamp a deployment that is not on openrouter", async () => {
+    // The cache belongs to one account; a deployment that has since been
+    // pointed at Azure must not have its cap set by numbers read from an
+    // account it no longer uses.
+    stubKeyStatus(50, 50);
+    const { getAiBudgetSnapshot } = await loadBudget();
+    await getAiBudgetSnapshot();
+
+    process.env.AI_PROVIDER = "azure-openai";
+    process.env.AI_GLOBAL_BUDGET_ENABLED = "true";
+    const snapshot = await getAiBudgetSnapshot();
+
+    expect(snapshot.upstream).toBeNull();
+    expect(snapshot.dailyLimit).toBe(1000);
   });
 });
 

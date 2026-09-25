@@ -177,6 +177,26 @@ function readFreeModelDailyRequests(data: Record<string, unknown>): OpenRouterKe
 }
 
 /**
+ * The last `dailyLimit` this process actually saw, read from the cache with no
+ * fetch and no TTL check.
+ *
+ * Two deliberate departures from `fetchOpenRouterKeyStatus`, both because the
+ * caller is the budget limiter rather than the banner:
+ *
+ * - **It never reaches the network.** A limiter that has to make a request to
+ *   learn its own cap cannot fail closed, so this returns `null` and lets the
+ *   configured figure stand rather than awaiting anything.
+ * - **It ignores the TTL.** The TTL exists to keep a *displayed* remaining
+ *   count fresh; the tier limit behind it moves once, when an account buys
+ *   credit. Expiring it would make the cap flicker back up between banner
+ *   visits, which is the one direction a safety clamp must never move.
+ */
+export function readLastKnownOpenRouterDailyLimit(): number | null {
+  const limit = cachedKeyStatus?.status?.dailyLimit;
+  return typeof limit === "number" && limit > 0 ? limit : null;
+}
+
+/**
  * Best-effort live view of the account's free-tier budget, cached for
  * AI_OPENROUTER_QUOTA_TTL_MS.
  *

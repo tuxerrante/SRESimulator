@@ -557,12 +557,21 @@ it drained.
 | --------------------------------- | -------------------------------- | ----------------------------------------------------- |
 | `AI_GLOBAL_BUDGET_ENABLED` | `true` when `AI_PROVIDER=openrouter` | Master switch |
 | `AI_GLOBAL_MINUTE_MAX` | `20` | Requests allowed across all callers per minute |
-| `AI_GLOBAL_DAILY_MAX` | `1000` | Requests allowed across all callers per day. **Set `50` on an account below 10 lifetime credits** — that is OpenRouter's free-model allowance until the credit purchase, and the default matches the post-purchase tier. |
+| `AI_GLOBAL_DAILY_MAX` | `1000` | Requests allowed across all callers per day, **clamped down to the account's own limit** once `/api/ai/budget` has read one (see below). The default matches OpenRouter's post-purchase tier; an account below 10 lifetime credits is allowed 50, and the clamp applies that without configuration. |
 | `AI_GLOBAL_DAILY_EXHAUSTED_MODE` | `degrade` | `degrade` answers with simulated output; `reject` answers 429 |
 | `AI_GLOBAL_BUDGET_FAIL_MODE` | `closed` | Behaviour when the window store cannot answer |
 
-Four properties are deliberate and each is covered by a test:
+Five properties are deliberate and each is covered by a test:
 
+- **The configured cap is clamped down to the account's own daily limit.** The
+  default is the post-purchase tier, so an un-credited account would otherwise
+  spend 950 requests discovering 429s the provider had already announced. The
+  clamp reads the `free_model_daily_requests.limit` that `/api/ai/budget`
+  caches — a cache read, never a fetch, so the limiter still fails closed on
+  its own — and it only ever tightens, so a wrong or stale reading can
+  overspend nothing. It deliberately ignores the `AI_OPENROUTER_QUOTA_TTL_MS`
+  expiry: that TTL keeps a *displayed* remaining count fresh, while the tier
+  limit moves once, when an account buys credit.
 - **The minute window is charged first, and a request it refuses never charges
   the day.** A caller refused on the minute window never reached the provider,
   so charging the day for it would leak budget that was never spent.
