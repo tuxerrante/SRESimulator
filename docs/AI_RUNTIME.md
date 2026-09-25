@@ -505,21 +505,25 @@ capped per account (20 requests/minute, and 50 or 1000 requests/day depending
 on lifetime credit), so fifteen well-behaved players are enough to spend a
 day's budget between them.
 
-`aiGlobalBudgetLimit` runs **after** `aiRateLimit` on `/api/chat`,
-`/api/command` and `/api/scenario`. The shared budget is still consulted on
-every request that gets that far, which is what makes it independent of who
-sent it; running it second means a caller the per-identity limiter already
-refused cannot spend the shared account on requests that never reach a
-provider.
+`chargeAiBudget(res)` is called **inside** `/api/chat`, `/api/command` and
+`/api/scenario`, at the point each route had already chosen as its provider
+boundary — not as middleware. Middleware is what it was, and it was wrong:
+Express runs it before the handler validates anything, so an expired session,
+a malformed payload or a request that goes on to return the readiness 503
+still burned a slot from the scarce shared day. The charge sits after the
+per-identity limiter (`aiRateLimit`, mounted on the same routes) for the same
+reason: a caller that limiter already refused must not spend the shared
+account.
 
-Two routes are exempt from the charge for the same reason, both checked per
-request rather than at mount time:
+Two exemptions follow from where the call sits rather than from a predicate
+anyone has to remember to pass:
 
 - **`AI_MOCK_MODE=true`** — no provider is reached, so there is no balance to
-  protect. This matters most in the `free-e2e` gate, which drives four
-  simulated players through chat and command with mock AI.
+  protect. Every route returns above the call site in mock mode. This matters
+  most in the `free-e2e` gate, which drives four simulated players through
+  chat and command with mock AI.
 - **`SCENARIO_SOURCE=catalog`** — `/api/scenario` serves a curated scenario and
-  never calls a model.
+  returns before the charge.
 
 | Variable | Default | Meaning |
 | --------------------------------- | -------------------------------- | ----------------------------------------------------- |
@@ -529,7 +533,7 @@ request rather than at mount time:
 | `AI_GLOBAL_DAILY_EXHAUSTED_MODE` | `degrade` | `degrade` answers with simulated output; `reject` answers 429 |
 | `AI_GLOBAL_BUDGET_FAIL_MODE` | `closed` | Behaviour when the window store cannot answer |
 
-Three properties are deliberate and each is covered by a test:
+Four properties are deliberate and each is covered by a test:
 
 - **The minute window is charged first, and a request it refuses never charges
   the day.** A caller refused on the minute window never reached the provider,
@@ -539,11 +543,20 @@ Three properties are deliberate and each is covered by a test:
   backwards for spend: an unreadable counter must not authorise spending on a
   shared account. Failing closed is affordable only because a spent budget is
   playable — it degrades rather than erroring.
+- **The daily cap is a UTC calendar day, not a rolling 24 hours.** The counter
+  lives under a date-suffixed key (`global:ai:day:YYYY-MM-DD`) so it starts
+  empty at midnight UTC, which is when OpenRouter's own free-model allowance
+  resets. A sliding window is wrong in both directions against that: a burst
+  at 23:50 would keep the deployment degraded into a day the provider is
+  already serving, and a request at 00:10 would still carry spend the provider
+  has forgiven. The window handed to the store stays 24 hours — that is what
+  expires the key, so yesterday's counters do not accumulate — while
+  `Retry-After` and `resetAt` are computed from the calendar.
 - **A spent daily budget is answered inside the route, not by the provider.**
-  The middleware sets `res.locals.aiBudgetExhausted`; each route then raises
-  the same `AiQuotaExhaustedError` the provider would have raised, so the
-  degraded answer and its reason label are decided in exactly one place. The
-  doomed round trip is never made.
+  `chargeAiBudget` returns `exhausted` and each route answers the way it
+  already answers a spent provider quota, so the degraded answer and its
+  reason label are decided in exactly one place. The doomed round trip is
+  never made.
 
 Every response from the three AI routes carries `x-sresim-ai-budget`, so a
 streaming response can be read without parsing a body:
@@ -553,9 +566,19 @@ streaming response can be read without parsing a body:
 | `ok` | Charged, within budget |
 | `minute-exhausted` | Refused on the per-minute window (429, retry helps) |
 | `daily-exhausted` | Refused on the daily window (429, `reject` mode only) |
-| `degraded` | Daily budget spent, answering with simulated output |
-| `store-unavailable` | Window store unreadable under `reject` mode (503) |
+| `degraded` | Daily budget spent and this response is simulated output |
+| `store-unavailable` | Window store unreadable: 503 under `reject` mode, or a simulated answer under `degrade` |
 | `fail-open` | Store unavailable and `AI_GLOBAL_BUDGET_FAIL_MODE=open` |
+
+`chargeAiBudget` writes the *cause* it observed and the route overwrites it
+with `degraded` once it has actually chosen simulated output, because the
+routes disagree: with `AI_DEGRADE_ON_QUOTA_EXHAUSTED=false`, chat and command
+answer a spent budget with a 429 while `/api/scenario` still returns a
+playable catalog session. A header set before the answer exists would be a
+guess on two routes out of three. `store-unavailable` is deliberately *not*
+overwritten: it is the only signal that the window store, rather than the
+account, is what degraded the deployment, and an operator reading logs during
+an incident needs the two to stay distinguishable.
 
 The 429 body keeps `error` as its first key so existing clients surface a
 sane message, and adds `code: "ai_budget_exhausted"`, `scope`,

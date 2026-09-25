@@ -19,10 +19,44 @@ const DEFAULT_GLOBAL_MINUTE_MAX = 20;
  */
 const DEFAULT_GLOBAL_DAILY_MAX = 1000;
 const MINUTE_KEY = "global:ai:minute";
-const DAY_KEY = "global:ai:day";
+const DAY_KEY_PREFIX = "global:ai:day";
 const AI_BUDGET_HEADER = "x-sresim-ai-budget";
 
 type BudgetScope = "minute" | "daily";
+
+/**
+ * The daily cap is a **UTC calendar day**, not a 24-hour sliding window.
+ *
+ * OpenRouter resets the free-model allowance at midnight UTC, and a sliding
+ * window is wrong in both directions against that: a burst at 23:50 keeps the
+ * deployment degraded well into the next UTC day, when the provider would
+ * already be serving again, and a request at 00:10 is still charged for
+ * yesterday's spend that the provider has already forgiven. The enforced
+ * figure is local (see `DEFAULT_GLOBAL_DAILY_MAX`), so the least it can do is
+ * roll over when the thing it is modelling does.
+ *
+ * Implemented by the key rather than by the window: one sorted set per UTC
+ * date, so the count starts empty at midnight with nothing to prune. The
+ * window duration handed to the store stays 24 hours, which is what expires
+ * the key -- a day-old set is dropped by Redis's PEXPIRE and by the in-memory
+ * sweep, so yesterday's keys do not accumulate. Shortening the window to
+ * "time since midnight" would look tidier and would be a bug: early in the
+ * day it sets a TTL of seconds, and a quiet minute would silently reset the
+ * count.
+ */
+function dayKeyForUtcDate(nowMs: number): string {
+  return `${DAY_KEY_PREFIX}:${new Date(nowMs).toISOString().slice(0, 10)}`;
+}
+
+/** Midnight UTC after `nowMs` -- when the provider's own allowance resets. */
+function nextUtcMidnightMs(nowMs: number): number {
+  const now = new Date(nowMs);
+  return Date.UTC(
+    now.getUTCFullYear(),
+    now.getUTCMonth(),
+    now.getUTCDate() + 1,
+  );
+}
 
 interface WindowState {
   limit: number;
@@ -178,6 +212,27 @@ function rejectWithBudgetExhausted(
 }
 
 /**
+ * Record that the route answered this request with simulated output.
+ *
+ * `chargeAiBudget` sets the *cause* -- what the budget observed -- and cannot
+ * set the *outcome*, because the outcome is the route's decision and the three
+ * routes disagree: with `AI_DEGRADE_ON_QUOTA_EXHAUSTED=false`, chat and command
+ * answer a spent budget with a 429 while scenario still returns a playable
+ * catalog session. So the route says so once it has chosen, and a streaming
+ * client reading only headers can tell a refusal from a simulated answer.
+ *
+ * It refuses to overwrite `store-unavailable`: that value is the one signal an
+ * operator has that the window store, not the account, is what degraded the
+ * deployment, and the response is equally simulated either way.
+ */
+export function markAiBudgetDegraded(res: Response): void {
+  if (res.getHeader(AI_BUDGET_HEADER) !== "daily-exhausted") {
+    return;
+  }
+  res.setHeader(AI_BUDGET_HEADER, "degraded");
+}
+
+/**
  * Charge the shared AI account for one provider call.
  *
  * **Called by the route, immediately before the provider call -- not as
@@ -211,6 +266,7 @@ export async function chargeAiBudget(res: Response): Promise<AiBudgetOutcome> {
   const minuteMax = getGlobalMinuteMax();
   const dailyMax = getGlobalDailyMax();
   const nowMs = Date.now();
+  const dayResetAtMs = nextUtcMidnightMs(nowMs);
 
   let minute;
   let day;
@@ -234,11 +290,15 @@ export async function chargeAiBudget(res: Response): Promise<AiBudgetOutcome> {
       return "answered";
     }
 
-    day = await consumeSharedWindow(DAY_KEY, DAY_MS, dailyMax, nowMs);
+    day = await consumeSharedWindow(dayKeyForUtcDate(nowMs), DAY_MS, dailyMax, nowMs);
+    // The store's own `resetAtMs` is oldest-entry + 24h, which is the sliding
+    // window this key deliberately is not. Everything the caller is told about
+    // the daily scope -- Retry-After, `resetAt`, the banner -- comes from the
+    // calendar instead.
     rememberWindow("daily", {
       limit: dailyMax,
       remaining: day.decision.remaining,
-      resetAtMs: day.decision.resetAtMs,
+      resetAtMs: dayResetAtMs,
     });
   } catch (error) {
     if (!shouldFailClosed()) {
@@ -271,8 +331,8 @@ export async function chargeAiBudget(res: Response): Promise<AiBudgetOutcome> {
     rejectWithBudgetExhausted(
       res,
       "daily",
-      day.decision.retryAfterSeconds,
-      day.decision.resetAtMs,
+      Math.max(1, Math.ceil((dayResetAtMs - nowMs) / 1000)),
+      dayResetAtMs,
     );
     return "answered";
   }
@@ -280,9 +340,9 @@ export async function chargeAiBudget(res: Response): Promise<AiBudgetOutcome> {
   // Handing back here rather than at the provider saves a round trip that can
   // only come back 429. The header states what was observed -- the day is
   // spent -- rather than predicting how the route will answer, which is the
-  // route's decision and not the same one everywhere. A header that promised
-  // `degraded` was a lie on every route that answers a spent quota with a
-  // 429, and it was written before the answer existed.
+  // route's decision and not the same one everywhere. The route that does
+  // answer with simulated output calls `markAiBudgetDegraded` and overwrites
+  // it, so no client is told `degraded` before the answer exists.
   res.setHeader(AI_BUDGET_HEADER, "daily-exhausted");
   return "exhausted";
 }

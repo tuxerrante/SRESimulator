@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import express from "express";
+import type { Response } from "express";
 import { mkdir, mkdtemp, rm, writeFile } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
@@ -17,10 +18,14 @@ const generateAiTextMock = vi.fn();
 const warmupAiModelMock = vi.fn();
 const captureBackendRouteErrorMock = vi.fn();
 const loadKnowledgeBaseMock = vi.fn().mockResolvedValue("");
-const chargeAiBudgetMock = vi.fn(async () => "ok");
+const chargeAiBudgetMock = vi.fn<(res: Response) => Promise<string>>(
+  async () => "ok",
+);
+const markAiBudgetDegradedMock = vi.fn();
 
 vi.mock("../lib/ai-budget", () => ({
   chargeAiBudget: chargeAiBudgetMock,
+  markAiBudgetDegraded: markAiBudgetDegradedMock,
 }));
 
 vi.mock("../lib/ai-config", () => ({
@@ -66,9 +71,19 @@ function createApp(
   const app = express();
   app.use(express.json());
   if (options.budgetExhausted) {
-    // What chargeAiBudget answers the route when the shared daily budget is
-    // spent and the mode is degrade: nothing written, decision handed back.
-    chargeAiBudgetMock.mockResolvedValue("exhausted");
+    // A faithful stand-in for the real pair: chargeAiBudget records the cause
+    // it observed, markAiBudgetDegraded upgrades it to the outcome the route
+    // chose and refuses to overwrite anything else.
+    chargeAiBudgetMock.mockImplementation(async (res: Response) => {
+      res.setHeader("x-sresim-ai-budget", "daily-exhausted");
+      return "exhausted";
+    });
+    markAiBudgetDegradedMock.mockImplementation((res: Response) => {
+      if (res.getHeader("x-sresim-ai-budget") !== "daily-exhausted") {
+        return;
+      }
+      res.setHeader("x-sresim-ai-budget", "degraded");
+    });
   }
   app.use("/api/scenario", scenarioRouter);
   return app;
@@ -79,7 +94,11 @@ async function postJson(
   path: string,
   body: unknown,
   headers: Record<string, string> = {}
-): Promise<{ status: number; body: Record<string, unknown> }> {
+): Promise<{
+  status: number;
+  body: Record<string, unknown>;
+  headers: Record<string, string | string[] | undefined>;
+}> {
   const { request } = await import("http");
   return new Promise((resolve, reject) => {
     const server = app.listen(0, "127.0.0.1", () => {
@@ -110,6 +129,7 @@ async function postJson(
             resolve({
               status: res.statusCode ?? 500,
               body: JSON.parse(data),
+              headers: res.headers,
             });
           });
         }
@@ -212,6 +232,7 @@ describe("scenario reservation before AI generation", () => {
     );
     captureBackendRouteErrorMock.mockReset();
     chargeAiBudgetMock.mockReset().mockResolvedValue("ok");
+    markAiBudgetDegradedMock.mockReset();
     vi.resetModules();
   });
 
@@ -253,6 +274,65 @@ describe("scenario reservation before AI generation", () => {
     ]);
 
     expect([first.status, second.status].sort()).toEqual([200, 429]);
+    expect(generateAiTextMock).toHaveBeenCalledTimes(1);
+  }, 60000);
+
+  it("releases the reserved claim when the budget answers the request itself", async () => {
+    const storageModule = await import("../lib/storage");
+    await storageModule.initStorage();
+    const scenarioModule = await import("./scenario");
+    const app = createApp(scenarioModule.scenarioRouter);
+    const fingerprintHash = "fp_budget_refused";
+    const ip = "203.0.113.45";
+    const headers = {
+      cookie: createAnonymousProofCookie(fingerprintHash),
+      "user-agent": anonymousUserAgent,
+      ...createSignedClientIpHeaders(ip),
+    };
+    const claimKeys = buildAnonymousClaimKeys(
+      { fingerprintHash, ip, userAgent: anonymousUserAgent },
+      "test-hmac"
+    );
+
+    // A refusal on the shared minute window: chargeAiBudget writes the 429
+    // itself and reports "answered", which is what the real one does.
+    chargeAiBudgetMock.mockImplementationOnce(async (res: Response) => {
+      res.status(429).json({ error: "The shared AI budget is busy." });
+      return "answered";
+    });
+
+    const refused = await postJson(
+      app,
+      "/api/scenario",
+      { difficulty: "easy", turnstileToken: "pass" },
+      headers
+    );
+
+    expect(refused.status).toBe(429);
+    expect(generateAiTextMock).not.toHaveBeenCalled();
+
+    // Polled rather than read once: the refusal is written inside
+    // chargeAiBudget, so the client has its answer before the route reaches
+    // the release. The store is the thing that changed state, and it is what
+    // the next request will read.
+    await vi.waitFor(async () => {
+      expect(
+        await storageModule.getAnonymousTrialStore().hasActiveClaim(claimKeys[0]!),
+      ).toBe(false);
+    });
+
+    // The refusal spent nothing, so the one daily trial this identity has must
+    // still be there. Without the release the claim stays reserved and the
+    // retry the 429 invited is answered with a second 429 -- the caller is
+    // locked out for a day by a request that never reached a provider.
+    const retried = await postJson(
+      app,
+      "/api/scenario",
+      { difficulty: "easy", turnstileToken: "pass" },
+      headers
+    );
+
+    expect(retried.status).toBe(200);
     expect(generateAiTextMock).toHaveBeenCalledTimes(1);
   }, 60000);
 
@@ -401,6 +481,10 @@ describe("scenario reservation before AI generation", () => {
     // spent budget as a timeout -- the one degraded reason that sends the
     // operator looking at latency instead of at the budget.
     expect(loadKnowledgeBaseMock).not.toHaveBeenCalled();
+    // The session below is playable and the scenario is a real one from the
+    // catalog, so the header has to stop describing the budget and start
+    // describing the response -- read off the wire, not off the mock.
+    expect(response.headers["x-sresim-ai-budget"]).toBe("degraded");
   });
 
   it("uses the catalog fallback when AI returns schema-invalid JSON", async () => {

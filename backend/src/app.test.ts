@@ -318,7 +318,10 @@ describe("AI shared-budget charging", { timeout: 15000 }, () => {
       },
     } as unknown as Response;
     await expect(chargeAiBudget(res)).resolves.toBe("ok");
-    expect(consumedKeys).toEqual(["global:ai:minute", "global:ai:day"]);
+    expect(consumedKeys).toEqual([
+      "global:ai:minute",
+      `global:ai:day:${new Date().toISOString().slice(0, 10)}`,
+    ]);
     consumedKeys.length = 0;
   }
 

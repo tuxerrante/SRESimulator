@@ -24,15 +24,19 @@ interface Remaining {
  * The provider's own count wins when it is available: the local counter only
  * knows what this process served, and the account is shared with anything else
  * using the same key.
+ *
+ * Both upstream numbers or neither. Either can be absent on its own, and
+ * pairing an upstream remaining with the locally configured limit renders a
+ * sentence that is confidently wrong -- "3 of 1000 requests left" against an
+ * account whose real cap is 50. The two numbers only mean something together,
+ * so an incomplete upstream reading falls back to the local pair, which is at
+ * least internally consistent.
  */
 function resolveRemaining(snapshot: AiBudgetSnapshot): Remaining {
   const upstreamRemaining = snapshot.upstream?.dailyRemaining;
   const upstreamLimit = snapshot.upstream?.dailyLimit;
-  if (typeof upstreamRemaining === "number") {
-    return {
-      remaining: upstreamRemaining,
-      limit: typeof upstreamLimit === "number" ? upstreamLimit : snapshot.dailyLimit,
-    };
+  if (typeof upstreamRemaining === "number" && typeof upstreamLimit === "number") {
+    return { remaining: upstreamRemaining, limit: upstreamLimit };
   }
   return { remaining: snapshot.dailyRemaining, limit: snapshot.dailyLimit };
 }

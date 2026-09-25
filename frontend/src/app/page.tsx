@@ -31,6 +31,11 @@ import {
 } from "@shared/telemetry/constants";
 
 const LOCAL_TURNSTILE_TEST_TOKEN = "local-turnstile-test-token";
+/** Matches the backend's default upstream-quota cache TTL; polling faster only
+ * re-reads the same cached provider numbers. */
+const AI_BUDGET_POLL_INTERVAL_MS = 60_000;
+/** Floor between reads, so returning to the tab cannot outpace the poll. */
+const AI_BUDGET_MIN_REFRESH_MS = 15_000;
 
 export default function HomePage() {
   const router = useRouter();
@@ -119,23 +124,6 @@ export default function HomePage() {
       }
     })();
 
-    void (async () => {
-      try {
-        setAiBudget(
-          (await fetchJsonObject(
-            "/api/ai/budget",
-            { cache: "no-store" },
-            "Failed to load AI budget",
-          )) as unknown as AiBudgetSnapshot,
-        );
-      } catch {
-        // Deliberately silent: the budget is an explanation, not a feature.
-        // Failing to read it must never look like the game is broken, and it
-        // is not worth an error report on every visit when AI is unreachable.
-        setAiBudget(null);
-      }
-    })();
-
     const params = new URLSearchParams(window.location.search);
     if (params.get("error")) {
       const timeoutId = window.setTimeout(() => {
@@ -145,6 +133,61 @@ export default function HomePage() {
       return () => window.clearTimeout(timeoutId);
     }
   }, [clearViewer, hydrateNickname, hydrateSelectedPlatform, setViewer]);
+
+  // The shared budget is spent by everyone, not by this tab, so a value read
+  // once at mount goes stale without anything on this page happening. Poll it,
+  // and refresh when the tab comes back: the two states the banner explains --
+  // "answers are simulated" and its disappearance when the window rolls -- are
+  // both caused elsewhere.
+  useEffect(() => {
+    let cancelled = false;
+    let lastReadAtMs = 0;
+
+    const refresh = async () => {
+      const nowMs = Date.now();
+      // The endpoint sits behind the per-identity AI limiter, so a tab flipped
+      // to and away repeatedly would spend a player's own allowance describing
+      // a budget that cannot have moved in the meantime.
+      if (nowMs - lastReadAtMs < AI_BUDGET_MIN_REFRESH_MS) {
+        return;
+      }
+      lastReadAtMs = nowMs;
+      try {
+        const snapshot = (await fetchJsonObject(
+          "/api/ai/budget",
+          { cache: "no-store" },
+          "Failed to load AI budget",
+        )) as unknown as AiBudgetSnapshot;
+        if (!cancelled) {
+          setAiBudget(snapshot);
+        }
+      } catch {
+        // Deliberately silent: the budget is an explanation, not a feature.
+        // Failing to read it must never look like the game is broken, and it
+        // is not worth an error report on every visit when AI is unreachable.
+        if (!cancelled) {
+          setAiBudget(null);
+        }
+      }
+    };
+
+    // Hidden tabs poll nothing; the visibility listener catches them up.
+    const refreshIfVisible = () => {
+      if (document.visibilityState !== "hidden") {
+        void refresh();
+      }
+    };
+
+    void refresh();
+    const intervalId = window.setInterval(refreshIfVisible, AI_BUDGET_POLL_INTERVAL_MS);
+    document.addEventListener("visibilitychange", refreshIfVisible);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+      document.removeEventListener("visibilitychange", refreshIfVisible);
+    };
+  }, []);
 
   useEffect(() => {
     if (!sessionReady || viewer) {

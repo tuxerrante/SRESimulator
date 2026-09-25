@@ -7,7 +7,7 @@ import {
   getSessionStore,
 } from "../lib/storage";
 import { getAiReadiness, shouldDegradeOnQuotaExhausted } from "../lib/ai-config";
-import { chargeAiBudget } from "../lib/ai-budget";
+import { chargeAiBudget, markAiBudgetDegraded } from "../lib/ai-budget";
 import { generateMockScenario } from "../lib/mock-ai";
 import {
   generateAiText,
@@ -751,9 +751,24 @@ scenarioRouter.post("/", async (req: Request, res: Response) => {
     // this used to need is now a property of where the call sits.
     const budget = await chargeAiBudget(res);
     if (budget === "answered") {
+      // The refusal is already written, so the outer catch -- the only thing
+      // that releases the reservation -- never runs. Without this an anonymous
+      // caller refused on the minute window, or by a fail-closed store, spends
+      // their one daily trial on a request that created no session and is then
+      // blocked from the retry the 429 just told them to make.
+      await releaseClaimKeysSafely(
+        reservedClaimKeys,
+        "ai-budget-refused",
+        cleanupReserveMs,
+      );
+      reservedClaimKeys = [];
       return;
     }
     if (budget === "exhausted") {
+      // The answer below is a catalog scenario, not a model one, on both
+      // labels: the header stops describing the budget and starts describing
+      // the response.
+      markAiBudgetDegraded(res);
       await respondWithCatalogFallback(
         shouldDegradeOnQuotaExhausted() ? "quota_exhausted" : "throttled",
         new AiQuotaExhaustedError(
