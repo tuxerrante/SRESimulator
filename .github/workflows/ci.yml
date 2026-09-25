@@ -497,6 +497,18 @@ jobs:
         # v6.0.2
         uses: >-
           actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          # `make test-integration` depends on `make test-shell`, which runs
+          # every scripts/*.test.sh in the PR's own tree -- PR-authored shell,
+          # with network access, as the runner's own user. Left at the
+          # default, checkout leaves this job's GITHUB_TOKEN in .git/config,
+          # so one of those scripts could read and send it. The `env -i` on
+          # each invocation is no defence: it clears the environment, and the
+          # token is on disk.
+          #
+          # Nothing in this job talks to git after the checkout, so removing
+          # the credential costs it nothing.
+          persist-credentials: false
 
       - name: Setup Bun toolchain
         uses: ./.github/actions/setup-bun-toolchain
