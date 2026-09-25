@@ -13,6 +13,7 @@ const TEST_ENV_KEYS = [
   "AI_OPENROUTER_API_KEY",
   "AI_OPENROUTER_MODEL",
   "AI_BUDGET_READ_RATE_LIMIT_MAX",
+  "AI_LIVE_PROBE_RATE_LIMIT_MAX",
   "AI_RATE_LIMIT_MAX",
   "AI_RATE_LIMIT_REDIS_URL",
   "NODE_ENV",
@@ -382,6 +383,85 @@ describe("GET /api/ai/probe", () => {
       // Failing closed still means failing closed: the provider is not asked.
       expect(generateAiText).not.toHaveBeenCalled();
     });
+  });
+
+  it("refuses a flood of live probes before the provider is reached", async () => {
+    // `app.ts` mounts the gameplay routes behind `aiRateLimit` and mounts
+    // `/api/ai` behind nothing. That was defensible while the probe spent only
+    // the deployer's own account; it stopped being defensible when the probe
+    // was wired into the shared budget, because a looped probe now degrades
+    // every player to simulated answers -- from an endpoint that needs no
+    // session, no scenario and no credential outside production.
+    process.env.AI_LIVE_PROBE_RATE_LIMIT_MAX = "2";
+
+    await withAiServer(async (baseUrl) => {
+      await fetch(`${baseUrl}/probe?live=true`);
+      await fetch(`${baseUrl}/probe?live=true`);
+      const chargedBeforeRefusal = [...chargedKeys];
+      const third = await fetch(`${baseUrl}/probe?live=true`);
+
+      expect(third.status).toBe(429);
+      expect(generateAiText).toHaveBeenCalledTimes(2);
+      // Asserted against the store rather than against the response: the
+      // guard is only worth having if it sits *ahead* of the charge, so a
+      // refused probe must leave the shared day exactly where it was.
+      expect(chargedKeys).toEqual(chargedBeforeRefusal);
+    });
+  });
+
+  it("does not ration the probe that answers from configuration alone", async () => {
+    // Without `?live=true` the handler answers out of `getAiReadiness()` -- a
+    // synchronous config read that reaches no provider and charges nothing.
+    // Rationing it would ration a config echo, and would make the guard look
+    // like it covers the probe generally when the live call is the only thing
+    // worth covering.
+    process.env.AI_LIVE_PROBE_RATE_LIMIT_MAX = "1";
+
+    await withAiServer(async (baseUrl) => {
+      const first = await fetch(`${baseUrl}/probe`);
+      const second = await fetch(`${baseUrl}/probe`);
+      const third = await fetch(`${baseUrl}/probe`);
+
+      expect([first.status, second.status, third.status]).toEqual([200, 200, 200]);
+      expect(generateAiText).not.toHaveBeenCalled();
+    });
+  });
+
+  it("probing does not spend a player's gameplay allowance", async () => {
+    // The store is keyed by identity alone, so two limiters without distinct
+    // namespaces share one bucket of timestamps and then read it against
+    // different caps. Behind the Next.js proxy both resolve the same identity,
+    // so an operator's monitor would quietly consume the players' slots.
+    process.env.AI_RATE_LIMIT_MAX = "2";
+    process.env.AI_LIVE_PROBE_RATE_LIMIT_MAX = "5";
+
+    vi.resetModules();
+    const { aiLiveProbeRateLimit, aiRateLimit } = await import("../lib/rate-limit");
+    const app = express();
+    app.get("/probe", aiLiveProbeRateLimit, (_req, res) => {
+      res.json({ ok: true });
+    });
+    app.get("/gameplay", aiRateLimit, (_req, res) => {
+      res.json({ ok: true });
+    });
+
+    const server = await new Promise<Server>((resolve) => {
+      const listeningServer = app.listen(0, "127.0.0.1", () => resolve(listeningServer));
+    });
+
+    try {
+      const { port } = server.address() as AddressInfo;
+      const baseUrl = `http://127.0.0.1:${port}`;
+
+      await fetch(`${baseUrl}/probe`);
+      await fetch(`${baseUrl}/probe`);
+      await fetch(`${baseUrl}/probe`);
+      const gameplay = await fetch(`${baseUrl}/gameplay`);
+
+      expect(gameplay.status).toBe(200);
+    } finally {
+      await close(server);
+    }
   });
 
   it("charges nothing for a production probe it then rejects as unauthorized", async () => {

@@ -1,4 +1,9 @@
-import { Router, type Request, type Response } from "express";
+import {
+  Router,
+  type Request,
+  type RequestHandler,
+  type Response,
+} from "express";
 import { getAiReadiness } from "../lib/ai-config";
 import { generateAiText } from "../lib/ai-runtime";
 import { getTokenMetrics } from "../lib/token-logger";
@@ -7,7 +12,7 @@ import {
   getAiBudgetSnapshot,
   isAiBudgetStoreUnavailable,
 } from "../lib/ai-budget";
-import { aiBudgetReadRateLimit } from "../lib/rate-limit";
+import { aiBudgetReadRateLimit, aiLiveProbeRateLimit } from "../lib/rate-limit";
 
 export const aiRouter = Router();
 
@@ -15,15 +20,38 @@ function isProductionRuntime(): boolean {
   return (process.env.NODE_ENV ?? "").trim().toLowerCase() === "production";
 }
 
+function isLiveProbeRequest(req: Request): boolean {
+  return req.query.live === "true";
+}
+
+/**
+ * Rate-limit the probe only on the query that reaches a provider.
+ *
+ * Without the query the handler answers out of `getAiReadiness()` -- a
+ * synchronous read of configuration that spends nothing and charges nothing
+ * -- and the same is true in mock mode. Limiting those would ration a
+ * config echo and, worse, would make the guard look like it covers the probe
+ * generally when the only thing worth covering is the live call. So the
+ * predicate is the same one the handler branches on, taken from one place so
+ * the two cannot drift apart.
+ */
+const liveProbeFloodGuard: RequestHandler = (req, res, next) => {
+  if (!isLiveProbeRequest(req)) {
+    next();
+    return;
+  }
+  aiLiveProbeRateLimit(req, res, next);
+};
+
 aiRouter.get("/readiness", (_req: Request, res: Response) => {
   const readiness = getAiReadiness();
   const statusCode = readiness.ready ? 200 : 503;
   res.status(statusCode).json(readiness);
 });
 
-aiRouter.get("/probe", async (req: Request, res: Response) => {
+aiRouter.get("/probe", liveProbeFloodGuard, async (req: Request, res: Response) => {
   const readiness = getAiReadiness();
-  const liveProbe = req.query.live === "true";
+  const liveProbe = isLiveProbeRequest(req);
 
   if (!readiness.ready) {
     res.status(503).json({

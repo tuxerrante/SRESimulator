@@ -48,6 +48,11 @@ const DEFAULT_GAMEPLAY_TELEMETRY_RATE_LIMIT_MAX = 60;
  * per-player allowance -- see `aiBudgetReadRateLimit`.
  */
 const DEFAULT_AI_BUDGET_READ_RATE_LIMIT_MAX = 120;
+/**
+ * Deliberately small. The live probe is an operator check run by hand or by a
+ * monitor every few minutes, not a player action -- see `aiLiveProbeRateLimit`.
+ */
+const DEFAULT_AI_LIVE_PROBE_RATE_LIMIT_MAX = 5;
 const MIN_RATE_LIMIT_WINDOW_SECONDS = 1;
 const REDIS_KEY_PREFIX = "sresim:rate-limit";
 const RATE_LIMIT_STATUS_HEADER = "x-sresim-rate-limit-status";
@@ -551,6 +556,11 @@ const cachedAiBudgetReadRateLimitMax: CachedLimitValue = {
   parsed: DEFAULT_AI_BUDGET_READ_RATE_LIMIT_MAX,
   initialized: false,
 };
+const cachedAiLiveProbeRateLimitMax: CachedLimitValue = {
+  raw: undefined,
+  parsed: DEFAULT_AI_LIVE_PROBE_RATE_LIMIT_MAX,
+  initialized: false,
+};
 
 function getInMemoryStore(): InMemorySlidingWindowStore {
   inMemoryStore ??= new InMemorySlidingWindowStore();
@@ -608,6 +618,14 @@ function getAiBudgetReadRateLimitMax(): number {
     cachedAiBudgetReadRateLimitMax,
     process.env.AI_BUDGET_READ_RATE_LIMIT_MAX,
     DEFAULT_AI_BUDGET_READ_RATE_LIMIT_MAX,
+  );
+}
+
+function getAiLiveProbeRateLimitMax(): number {
+  return readCachedPositiveLimit(
+    cachedAiLiveProbeRateLimitMax,
+    process.env.AI_LIVE_PROBE_RATE_LIMIT_MAX,
+    DEFAULT_AI_LIVE_PROBE_RATE_LIMIT_MAX,
   );
 }
 
@@ -734,6 +752,39 @@ export const aiBudgetReadRateLimit: RequestHandler = createSlidingWindowRateLimi
   keyPrefix: "ai-budget-read",
   message: {
     error: "Too many budget checks. Please slow down and try again in a moment.",
+  },
+});
+
+/**
+ * A flood guard for `/api/ai/probe?live=true`, the one unauthenticated route
+ * that reaches the provider.
+ *
+ * `app.ts` mounts the gameplay routes behind `aiRateLimit` and mounts
+ * `/api/ai` behind nothing, which was defensible while the probe spent only
+ * its own account: the token check gates it in production
+ * (`NODE_ENV=production` plus `AI_LIVE_PROBE_TOKEN`), and outside production
+ * the cost of an abused probe fell on whoever deployed it. It stopped being
+ * defensible when the probe was wired into the shared budget, because a
+ * looped probe now spends the *players'* day and degrades everyone to
+ * simulated answers -- a denial of service against the game from an endpoint
+ * that needs no session, no scenario and no credential.
+ *
+ * Sized for a monitor, not a player: this is an operator check, so five a
+ * minute is generous and anything above it is a loop. The cap is
+ * deployment-wide for the same reason `aiBudgetReadRateLimit` is -- behind
+ * the Next.js proxy every anonymous caller resolves to one identity -- and
+ * that is the right shape here, because the thing being rationed is the
+ * shared account rather than any one caller's allowance.
+ *
+ * It does not replace the budget. The budget caps the day; this caps the rate
+ * at which one unauthenticated endpoint is allowed to eat it.
+ */
+export const aiLiveProbeRateLimit: RequestHandler = createSlidingWindowRateLimit({
+  windowMs: getAiRateLimitWindowMs,
+  max: getAiLiveProbeRateLimitMax,
+  keyPrefix: "ai-live-probe",
+  message: {
+    error: "Too many live AI probes. Please slow down and try again in a moment.",
   },
 });
 
