@@ -2,6 +2,8 @@ import { Router, type Request, type Response } from "express";
 import { getAiReadiness } from "../lib/ai-config";
 import { generateAiText } from "../lib/ai-runtime";
 import { getTokenMetrics } from "../lib/token-logger";
+import { getAiBudgetSnapshot } from "../lib/ai-budget";
+import { aiRateLimit } from "../lib/rate-limit";
 
 export const aiRouter = Router();
 
@@ -99,4 +101,13 @@ aiRouter.get("/token-metrics", (_req: Request, res: Response) => {
     }
   }
   res.json(getTokenMetrics());
+});
+
+/**
+ * Public, unauthenticated and secret-free: the home page banner reads it to
+ * explain why answers may be simulated. Rate-limited because /api/ai/* is not,
+ * and this one is polled by every visitor.
+ */
+aiRouter.get("/budget", aiRateLimit, async (_req: Request, res: Response) => {
+  res.json(await getAiBudgetSnapshot());
 });

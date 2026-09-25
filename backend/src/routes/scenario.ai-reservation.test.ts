@@ -53,9 +53,20 @@ vi.mock("../lib/telemetry/capture", () => ({
   captureBackendRouteError: captureBackendRouteErrorMock,
 }));
 
-function createApp(scenarioRouter: import("express").Router) {
+function createApp(
+  scenarioRouter: import("express").Router,
+  options: { budgetExhausted?: boolean } = {},
+) {
   const app = express();
   app.use(express.json());
+  if (options.budgetExhausted) {
+    // What aiGlobalBudgetLimit leaves behind for the route when the shared
+    // daily budget is spent and the mode is degrade.
+    app.use("/api/scenario", (_req, res, next) => {
+      res.locals.aiBudgetExhausted = true;
+      next();
+    });
+  }
   app.use("/api/scenario", scenarioRouter);
   return app;
 }
@@ -353,6 +364,32 @@ describe("scenario reservation before AI generation", () => {
     expect(response.status).toBe(200);
     expect(response.body.mode).toBe("degraded");
     expect(response.body.degradedReason).toBe("quota_exhausted");
+  });
+
+  it("labels a spent shared budget the same way a spent provider budget is labelled", async () => {
+    const storageModule = await import("../lib/storage");
+    await storageModule.initStorage();
+    const scenarioModule = await import("./scenario");
+    const app = createApp(scenarioModule.scenarioRouter, { budgetExhausted: true });
+    const headers = {
+      cookie: createAnonymousProofCookie("fp_global_budget"),
+      "user-agent": anonymousUserAgent,
+      ...createSignedClientIpHeaders("203.0.113.47"),
+    };
+
+    const response = await postJson(
+      app,
+      "/api/scenario",
+      { platform: "aro-classic", difficulty: "easy", turnstileToken: "pass" },
+      headers,
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.body.mode).toBe("degraded");
+    expect(response.body.degradedReason).toBe("quota_exhausted");
+    // No doomed round trip: the provider is never asked for a request the
+    // shared account already cannot afford.
+    expect(generateAiTextMock).not.toHaveBeenCalled();
   });
 
   it("uses the catalog fallback when AI returns schema-invalid JSON", async () => {

@@ -7,6 +7,7 @@ import {
   isCommandTypeAllowedForPlatform,
 } from "../lib/platform-profiles";
 import { generateAiText, AiQuotaExhaustedError, AiThrottledError } from "../lib/ai-runtime";
+import { isAiBudgetExhausted } from "../lib/ai-budget";
 import {
   buildScenarioContext,
   buildSimNow,
@@ -195,6 +196,16 @@ commandRouter.post("/", async (req: Request, res: Response) => {
         details: readiness.reasons,
       });
       return;
+    }
+
+    // The shared daily budget is already spent, so the provider can only
+    // answer 429. Raising the same error the provider would raise keeps one
+    // degraded path instead of two.
+    if (isAiBudgetExhausted(res)) {
+      throw new AiQuotaExhaustedError(
+        "daily",
+        "The shared AI request budget for today is spent.",
+      );
     }
 
     const scenarioContext = buildScenarioContext(scenario);

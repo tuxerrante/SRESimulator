@@ -7,6 +7,7 @@ import {
   getSessionStore,
 } from "../lib/storage";
 import { getAiReadiness, shouldDegradeOnQuotaExhausted } from "../lib/ai-config";
+import { isAiBudgetExhausted } from "../lib/ai-budget";
 import { generateMockScenario } from "../lib/mock-ai";
 import {
   generateAiText,
@@ -783,6 +784,15 @@ scenarioRouter.post("/", async (req: Request, res: Response) => {
       return;
     }
     try {
+      // A spent shared budget reaches the same classifier below as a spent
+      // provider budget, so the catalog fallback and its reason label are
+      // decided in exactly one place.
+      if (isAiBudgetExhausted(res)) {
+        throw new AiQuotaExhaustedError(
+          "daily",
+          "The shared AI request budget for today is spent.",
+        );
+      }
       responseText = await withAbortTimeout(
         (signal) =>
           generateAiText({

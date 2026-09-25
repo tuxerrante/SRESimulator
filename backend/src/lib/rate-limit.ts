@@ -22,7 +22,7 @@ interface CachedSessionLookup {
   session: GameSession | null;
 }
 
-interface SlidingWindowDecision {
+export interface SlidingWindowDecision {
   allowed: boolean;
   remaining: number;
   resetAtMs: number;
@@ -533,6 +533,26 @@ function getSlidingWindowStore(): SlidingWindowStore {
 
   redisStore ??= new RedisSlidingWindowStore(redisUrl);
   return redisStore;
+}
+
+/**
+ * Consume one slot of a window against whichever store is configured.
+ *
+ * Shared with the global AI budget limiter, which needs the same Redis/memory
+ * selection and the same sliding-window semantics but the opposite failure
+ * posture: a per-identity limiter fails open, a shared spend budget must not.
+ * So this deliberately neither catches nor reports -- the caller decides what
+ * an unavailable store means.
+ */
+export async function consumeSharedWindow(
+  key: string,
+  windowMs: number,
+  limit: number,
+  nowMs: number = Date.now(),
+): Promise<{ decision: SlidingWindowDecision; distributed: boolean }> {
+  const store = getSlidingWindowStore();
+  const decision = await store.consume(key, nowMs, windowMs, limit);
+  return { decision, distributed: store.distributed };
 }
 
 function getAiRateLimitWindowMs(): number {

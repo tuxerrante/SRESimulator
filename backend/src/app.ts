@@ -15,6 +15,7 @@ import {
   jsonRouteParsers,
 } from "./lib/http-hardening";
 import { aiRateLimit } from "./lib/rate-limit";
+import { aiGlobalBudgetLimit } from "./lib/ai-budget";
 import { isSentryEnabled } from "./lib/telemetry/sentry";
 
 export function shouldTrustProxyHeaders(): boolean {
@@ -44,9 +45,12 @@ export function createApp(): express.Express {
     origin: process.env.CORS_ORIGIN || "http://localhost:3000",
   }));
 
-  app.use("/api/chat", jsonRouteParsers.chat, aiRateLimit, chatRouter);
-  app.use("/api/command", jsonRouteParsers.command, aiRateLimit, commandRouter);
-  app.use("/api/scenario", jsonRouteParsers.scenario, aiRateLimit, scenarioRouter);
+  // The global budget runs before the per-identity limiter: it protects a
+  // shared account balance, so a request that the account cannot afford must
+  // not depend on which player sent it.
+  app.use("/api/chat", jsonRouteParsers.chat, aiGlobalBudgetLimit, aiRateLimit, chatRouter);
+  app.use("/api/command", jsonRouteParsers.command, aiGlobalBudgetLimit, aiRateLimit, commandRouter);
+  app.use("/api/scenario", jsonRouteParsers.scenario, aiGlobalBudgetLimit, aiRateLimit, scenarioRouter);
   app.use("/api/scores", jsonRouteParsers.scores, scoresRouter);
   app.use("/api/gameplay", jsonRouteParsers.gameplay, gameplayRouter);
   app.use("/api/ai", aiRouter);

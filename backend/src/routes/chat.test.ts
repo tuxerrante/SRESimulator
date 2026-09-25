@@ -137,9 +137,20 @@ async function close(server: Server): Promise<void> {
   });
 }
 
-async function withChatServer(run: (baseUrl: string) => Promise<void>): Promise<void> {
+async function withChatServer(
+  run: (baseUrl: string) => Promise<void>,
+  options: { budgetExhausted?: boolean } = {},
+): Promise<void> {
   const app = express();
   app.use(express.json());
+  if (options.budgetExhausted) {
+    // What aiGlobalBudgetLimit leaves behind for the route when the shared
+    // daily budget is spent and the mode is degrade.
+    app.use("/api/chat", (_req, res, next) => {
+      res.locals.aiBudgetExhausted = true;
+      next();
+    });
+  }
   app.use("/api/chat", chatRouter);
 
   const server = await new Promise<Server>((resolve) => {
@@ -568,5 +579,47 @@ describe("chatRouter", () => {
 
       await expect(response.text()).resolves.toContain('data: {"error":"Chat stream failed"}');
     });
+  });
+  it("answers a spent shared budget in frames without opening a stream", async () => {
+    mocks.generateMockChatResponse.mockReturnValue("simulated mentor reply");
+
+    await withChatServer(async (url) => {
+      const response = await fetch(url, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(defaultChatBody()),
+      });
+
+      expect(response.status).toBe(200);
+      const body = await response.text();
+      // Byte-for-byte the frames the mid-stream quota path emits, so the
+      // client cannot tell which side of the call ran out.
+      expect(body).toContain('data: {"text":"simulated mentor reply"}');
+      expect(body).toContain('data: {"degraded":true,"degradedReason":"quota_exhausted"}');
+      expect(body).toContain("data: [DONE]");
+    }, { budgetExhausted: true });
+
+    expect(mocks.streamAiText).not.toHaveBeenCalled();
+  });
+
+  it("answers a spent shared budget with 429 when degradation is switched off", async () => {
+    mocks.shouldDegradeOnQuotaExhausted.mockReturnValue(false);
+
+    await withChatServer(async (url) => {
+      const response = await fetch(url, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(defaultChatBody()),
+      });
+
+      // A 429 is still available here only because nothing has been written
+      // yet; once the stream starts the quota path has to answer in frames.
+      expect(response.status).toBe(429);
+      await expect(response.json()).resolves.toEqual({
+        error: "The shared AI request budget for today is spent.",
+      });
+    }, { budgetExhausted: true });
+
+    expect(mocks.streamAiText).not.toHaveBeenCalled();
   });
 });
