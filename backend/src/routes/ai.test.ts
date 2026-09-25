@@ -168,6 +168,14 @@ describe("GET /api/ai/budget", () => {
 describe("GET /api/ai/probe", () => {
   let chargedKeys: string[] = [];
   let generateAiText: ReturnType<typeof vi.fn>;
+  /**
+   * Set by a test that needs the window store to be unreachable. It is a flag
+   * rather than a second `vi.doMock` of `../lib/rate-limit`: two registrations
+   * for one specifier race, and the loser is silent -- the store answers
+   * normally, the probe returns 200, and the test fails roughly a third of the
+   * time for a reason that looks nothing like its subject.
+   */
+  let storeFailure: Error | null = null;
 
   /**
    * Records what the *window store* was charged, not what the endpoint says it
@@ -177,6 +185,7 @@ describe("GET /api/ai/probe", () => {
    */
   function mockBudgetStoreAndRuntime(): void {
     chargedKeys = [];
+    storeFailure = null;
     generateAiText = vi.fn(async () => "pong");
 
     vi.doMock("../lib/ai-runtime", () => ({ generateAiText }));
@@ -187,6 +196,11 @@ describe("GET /api/ai/probe", () => {
       return {
         ...actual,
         consumeSharedWindow: (key: string, ...rest: unknown[]) => {
+          // Throws before recording: an unreachable store observes nothing and
+          // therefore charges nothing.
+          if (storeFailure) {
+            throw storeFailure;
+          }
           chargedKeys.push(key);
           return (actual.consumeSharedWindow as never as (
             ...args: unknown[]
@@ -285,17 +299,7 @@ describe("GET /api/ai/probe", () => {
     // nothing was observed, nothing was spent, and the blip may already be
     // over. Driven through a throwing store rather than a stubbed outcome,
     // because the two cases are indistinguishable at the return value.
-    vi.doMock("../lib/rate-limit", async () => {
-      const actual = await vi.importActual<typeof import("../lib/rate-limit")>(
-        "../lib/rate-limit",
-      );
-      return {
-        ...actual,
-        consumeSharedWindow: () => {
-          throw new Error("redis unreachable");
-        },
-      };
-    });
+    storeFailure = new Error("redis unreachable");
     vi.spyOn(console, "warn").mockImplementation(() => {});
 
     await withAiServer(async (baseUrl) => {
