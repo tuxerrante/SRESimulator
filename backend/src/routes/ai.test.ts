@@ -8,8 +8,12 @@ const TEST_ENV_KEYS = [
   "AI_GLOBAL_BUDGET_ENABLED",
   "AI_GLOBAL_DAILY_MAX",
   "AI_GLOBAL_MINUTE_MAX",
+  "AI_LIVE_PROBE_TOKEN",
+  "AI_MOCK_MODE",
   "AI_OPENROUTER_API_KEY",
+  "AI_OPENROUTER_MODEL",
   "AI_RATE_LIMIT_REDIS_URL",
+  "NODE_ENV",
 ] as const;
 
 const ORIGINAL_ENV_VALUES: Record<string, string | undefined> = {};
@@ -157,6 +161,135 @@ describe("GET /api/ai/budget", () => {
         dailyRemaining: 1,
         degraded: false,
       });
+    });
+  });
+});
+
+describe("GET /api/ai/probe", () => {
+  let chargedKeys: string[] = [];
+  let generateAiText: ReturnType<typeof vi.fn>;
+
+  /**
+   * Records what the *window store* was charged, not what the endpoint says it
+   * charged. A probe that reports a spent day while spending nothing, and one
+   * that spends a slot while reporting success, are both failures this suite
+   * exists to catch, and only the store can tell them apart.
+   */
+  function mockBudgetStoreAndRuntime(): void {
+    chargedKeys = [];
+    generateAiText = vi.fn(async () => "pong");
+
+    vi.doMock("../lib/ai-runtime", () => ({ generateAiText }));
+    vi.doMock("../lib/rate-limit", async () => {
+      const actual = await vi.importActual<typeof import("../lib/rate-limit")>(
+        "../lib/rate-limit",
+      );
+      return {
+        ...actual,
+        consumeSharedWindow: (key: string, ...rest: unknown[]) => {
+          chargedKeys.push(key);
+          return (actual.consumeSharedWindow as never as (
+            ...args: unknown[]
+          ) => unknown)(key, ...rest);
+        },
+      };
+    });
+  }
+
+  beforeEach(() => {
+    restoreTestEnv();
+    vi.unstubAllGlobals();
+    process.env.AI_PROVIDER = "openrouter";
+    process.env.AI_OPENROUTER_API_KEY = "sk-or-test-key";
+    process.env.AI_OPENROUTER_MODEL = "vendor/free-model";
+    delete process.env.AI_MOCK_MODE;
+    delete process.env.AI_RATE_LIMIT_REDIS_URL;
+    mockBudgetStoreAndRuntime();
+  });
+
+  afterEach(() => {
+    vi.doUnmock("../lib/ai-runtime");
+    vi.doUnmock("../lib/rate-limit");
+    vi.resetModules();
+    restoreTestEnv();
+    vi.unstubAllGlobals();
+  });
+
+  it("charges the shared budget for a live probe, which reaches the provider", async () => {
+    await withAiServer(async (baseUrl) => {
+      const response = await fetch(`${baseUrl}/probe?live=true`);
+
+      expect(response.status).toBe(200);
+      expect(generateAiText).toHaveBeenCalledTimes(1);
+      // Minute first, then the day -- the same ordering the gameplay routes
+      // get, so a probe refused on the minute window costs no daily slot.
+      expect(chargedKeys).toEqual([
+        "global:ai:minute",
+        expect.stringMatching(/^global:ai:day:\d{4}-\d{2}-\d{2}$/),
+      ]);
+      expect(response.headers.get("x-sresim-ai-budget")).toBe("ok");
+    });
+  });
+
+  it("refuses a live probe once the day is spent, and sends nothing", async () => {
+    process.env.AI_GLOBAL_DAILY_MAX = "1";
+
+    await withAiServer(async (baseUrl) => {
+      await fetch(`${baseUrl}/probe?live=true`);
+      const response = await fetch(`${baseUrl}/probe?live=true`);
+
+      expect(response.status).toBe(429);
+      await expect(response.json()).resolves.toMatchObject({
+        ok: false,
+        mode: "live",
+        code: "ai_budget_exhausted",
+      });
+      expect(response.headers.get("x-sresim-ai-budget")).toBe("daily-exhausted");
+      // The whole point: the second probe never reached the provider, so the
+      // account-wide cap was not spent past the limiter.
+      expect(generateAiText).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it("charges nothing for a probe that answers from configuration alone", async () => {
+    await withAiServer(async (baseUrl) => {
+      const response = await fetch(`${baseUrl}/probe`);
+
+      expect(response.status).toBe(200);
+      expect(generateAiText).not.toHaveBeenCalled();
+      expect(chargedKeys).toEqual([]);
+    });
+  });
+
+  // Holds at the budget layer rather than at the call site -- `chargeAiBudget`
+  // is inert in mock mode -- so unlike the two above it does not lock where the
+  // charge sits. It is here because the free-e2e gate probes with
+  // `AI_MOCK_MODE=true`, and a charged mock probe would be pure leakage.
+  it("charges nothing in mock mode, where no provider is reached", async () => {
+    process.env.AI_MOCK_MODE = "true";
+
+    await withAiServer(async (baseUrl) => {
+      const response = await fetch(`${baseUrl}/probe?live=true`);
+
+      expect(response.status).toBe(200);
+      await expect(response.json()).resolves.toMatchObject({ mode: "mock" });
+      expect(generateAiText).not.toHaveBeenCalled();
+      expect(chargedKeys).toEqual([]);
+    });
+  });
+
+  it("charges nothing for a production probe it then rejects as unauthorized", async () => {
+    process.env.NODE_ENV = "production";
+    process.env.AI_LIVE_PROBE_TOKEN = "expected-token";
+
+    await withAiServer(async (baseUrl) => {
+      const response = await fetch(`${baseUrl}/probe?live=true`, {
+        headers: { "x-ai-probe-token": "wrong-token" },
+      });
+
+      expect(response.status).toBe(403);
+      expect(generateAiText).not.toHaveBeenCalled();
+      expect(chargedKeys).toEqual([]);
     });
   });
 });

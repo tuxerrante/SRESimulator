@@ -505,9 +505,9 @@ capped per account (20 requests/minute, and 50 or 1000 requests/day depending
 on lifetime credit), so fifteen well-behaved players are enough to spend a
 day's budget between them.
 
-`chargeAiBudget(res)` is called **inside** `/api/chat`, `/api/command` and
-`/api/scenario`, at the point each route had already chosen as its provider
-boundary — not as middleware. Middleware is what it was, and it was wrong:
+`chargeAiBudget(res)` is called **inside** `/api/chat`, `/api/command`,
+`/api/scenario` and `/api/ai/probe?live=true`, at the point each route had
+already chosen as its provider boundary — not as middleware. Middleware is what it was, and it was wrong:
 Express runs it before the handler validates anything, so an expired session,
 a malformed payload or a request that goes on to return the readiness 503
 still burned a slot from the scarce shared day. The charge sits after the
@@ -524,6 +524,19 @@ anyone has to remember to pass:
   chat and command with mock AI.
 - **`SCENARIO_SOURCE=catalog`** — `/api/scenario` serves a curated scenario and
   returns before the charge.
+- **Every probe that answers from configuration alone** — an invalid readiness,
+  a probe without `?live=true`, and an unauthorized production caller all
+  return above the call site, because none of them sends anything.
+
+`/api/ai/probe?live=true` is the one charged route that **refuses** a spent day
+instead of degrading (429, `code: "ai_budget_exhausted"`). It has no simulated
+answer worth giving: a mock "pong" asserts nothing about the provider, which is
+the single thing the endpoint exists to check, and a live call with the day
+spent comes back as the provider's own 429 anyway — the same answer, one slot
+poorer. It is easy to forget precisely because it is not a gameplay route:
+before this it called `generateAiText` directly and spent the shared account
+without moving `global:ai:*`, so the banner kept reporting an intact day while
+it drained.
 
 | Variable | Default | Meaning |
 | --------------------------------- | -------------------------------- | ----------------------------------------------------- |
@@ -558,14 +571,14 @@ Four properties are deliberate and each is covered by a test:
   reason label are decided in exactly one place. The doomed round trip is
   never made.
 
-Every response from the three AI routes carries `x-sresim-ai-budget`, so a
+Every response from the four charged routes carries `x-sresim-ai-budget`, so a
 streaming response can be read without parsing a body:
 
 | Header value | Meaning |
 | ------------------- | ------------------------------------------------------- |
 | `ok` | Charged, within budget |
 | `minute-exhausted` | Refused on the per-minute window (429, retry helps) |
-| `daily-exhausted` | Refused on the daily window (429, `reject` mode only) |
+| `daily-exhausted` | Refused on the daily window (429). Reached under `reject` mode, and always on the live probe, which has no simulated answer to degrade to |
 | `degraded` | Daily budget spent and this response is simulated output |
 | `store-unavailable` | Window store unreadable: 503 under `reject` mode, or a simulated answer under `degrade` |
 | `fail-open` | Store unavailable and `AI_GLOBAL_BUDGET_FAIL_MODE=open` |
