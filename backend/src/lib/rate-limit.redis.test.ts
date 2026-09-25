@@ -326,3 +326,80 @@ describe("aiRateLimit Redis store", () => {
     expect(response.headers.get(RATE_LIMIT_STATUS_HEADER)).toBe("fail-open");
   });
 });
+
+describe("releaseSharedWindow against Redis", () => {
+  afterEach(() => {
+    process.env = { ...originalEnv };
+    vi.resetModules();
+    vi.restoreAllMocks();
+    vi.doUnmock("redis");
+  });
+
+  it("gives back the one member it added, so a compensated slot is spendable again", async () => {
+    process.env.AI_RATE_LIMIT_REDIS_URL = "redis://127.0.0.1:6379/0";
+
+    // Modelled as a sorted set keyed by member rather than a count, because
+    // the property under test is *which* entry goes away: a release that
+    // dropped the oldest, or the whole key, would pass a counting double and
+    // silently refund a slot another process was holding.
+    const sortedSets = new Map<string, Map<string, number>>();
+    const redisClient = {
+      isOpen: false,
+      on: vi.fn(),
+      connect: vi.fn(async () => {
+        redisClient.isOpen = true;
+      }),
+      sendCommand: vi.fn(async (args: string[]) => {
+        if (args[0] === "ZREM") {
+          const members = sortedSets.get(args[1]!);
+          return String(members?.delete(args[2]!) ? 1 : 0);
+        }
+
+        const redisKey = args[3]!;
+        const nowMs = Number(args[4]);
+        const windowMs = Number(args[5]);
+        const limit = Number(args[6]);
+        const member = args[7]!;
+        const cutoff = nowMs - windowMs;
+        const members = new Map(
+          [...(sortedSets.get(redisKey) ?? new Map<string, number>())]
+            .filter(([, score]) => score > cutoff),
+        );
+        sortedSets.set(redisKey, members);
+
+        if (members.size >= limit) {
+          const oldest = Math.min(...members.values());
+          return ["0", String(members.size), String(oldest + windowMs)];
+        }
+
+        members.set(member, nowMs);
+        return ["1", String(members.size), String(nowMs + windowMs)];
+      }),
+    };
+    vi.doMock("redis", () => ({ createClient: vi.fn(() => redisClient) }));
+
+    const { consumeSharedWindow, releaseSharedWindow } = await import("./rate-limit");
+
+    const charged = await consumeSharedWindow("global:ai:minute", 60_000, 1);
+    expect(charged.decision.allowed).toBe(true);
+    const releaseToken = charged.decision.releaseToken;
+    expect(releaseToken).toBeTruthy();
+
+    // The positive arm: the slot is genuinely held, so the allow at the end is
+    // the release's doing and not an empty window.
+    const whileHeld = await consumeSharedWindow("global:ai:minute", 60_000, 1);
+    expect(whileHeld.decision.allowed).toBe(false);
+    expect(whileHeld.decision.releaseToken).toBeUndefined();
+
+    await releaseSharedWindow("global:ai:minute", releaseToken!);
+
+    expect(
+      redisClient.sendCommand.mock.calls
+        .map((call) => call[0])
+        .filter((args) => args[0] === "ZREM"),
+    ).toEqual([["ZREM", "sresim:rate-limit:global:ai:minute", releaseToken]]);
+
+    const afterRelease = await consumeSharedWindow("global:ai:minute", 60_000, 1);
+    expect(afterRelease.decision.allowed).toBe(true);
+  }, 30000);
+});

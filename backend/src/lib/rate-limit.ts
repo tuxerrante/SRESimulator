@@ -27,6 +27,11 @@ export interface SlidingWindowDecision {
   remaining: number;
   resetAtMs: number;
   retryAfterSeconds: number;
+  /**
+   * Identifies the entry this call added, for `release` to hand back. Set only
+   * when the slot was granted -- a refusal added nothing to give back.
+   */
+  releaseToken?: string;
 }
 
 interface SlidingWindowStore {
@@ -37,6 +42,13 @@ interface SlidingWindowStore {
     windowMs: number,
     limit: number,
   ): Promise<SlidingWindowDecision>;
+  /**
+   * Best-effort compensation for a multi-window charge that failed partway.
+   * Not a general refund: the only caller is a failure path that has already
+   * decided to refuse the request, so a release that itself fails must leave
+   * the caller no worse off than doing nothing.
+   */
+  release(key: string, releaseToken: string): Promise<void>;
 }
 
 const DEFAULT_AI_RATE_LIMIT_WINDOW_MS = 60 * 1000;
@@ -421,7 +433,35 @@ export class InMemorySlidingWindowStore implements SlidingWindowStore {
       remaining: Math.max(limit - existing.length, 0),
       resetAtMs: nowMs + windowMs,
       retryAfterSeconds: Math.max(1, Math.ceil(windowMs / 1000)),
+      releaseToken: String(nowMs),
     };
+  }
+
+  /**
+   * Entries here are bare timestamps, so two slots taken in the same
+   * millisecond are indistinguishable -- which is exactly why removing the
+   * first match is correct rather than approximate: there is no observable
+   * difference between "the" entry and "an" entry carrying that value.
+   */
+  async release(key: string, releaseToken: string): Promise<void> {
+    const timestamp = Number(releaseToken);
+    const bucket = this.buckets.get(key);
+    if (!bucket || !Number.isFinite(timestamp)) {
+      return;
+    }
+
+    const index = bucket.timestamps.indexOf(timestamp);
+    if (index < 0) {
+      return;
+    }
+
+    const timestamps = bucket.timestamps.slice();
+    timestamps.splice(index, 1);
+    if (timestamps.length === 0) {
+      this.buckets.delete(key);
+      return;
+    }
+    this.buckets.set(key, { windowMs: bucket.windowMs, timestamps });
   }
 }
 
@@ -519,6 +559,7 @@ class RedisSlidingWindowStore implements SlidingWindowStore {
   ): Promise<SlidingWindowDecision> {
     const client = await this.getClient();
     const redisKey = `${REDIS_KEY_PREFIX}:${key}`;
+    const member = this.nextMember(nowMs);
     const result = await client.sendCommand<string[]>([
       "EVAL",
       REDIS_SLIDING_WINDOW_SCRIPT,
@@ -527,9 +568,20 @@ class RedisSlidingWindowStore implements SlidingWindowStore {
       String(nowMs),
       String(windowMs),
       String(limit),
-      this.nextMember(nowMs),
+      member,
     ]);
-    return this.parseResult(result, nowMs, windowMs, limit);
+    const decision = this.parseResult(result, nowMs, windowMs, limit);
+    return decision.allowed ? { ...decision, releaseToken: member } : decision;
+  }
+
+  /**
+   * Members are unique per process and per call, so this removes the one entry
+   * this process added and nothing else. The key keeps its PEXPIRE from the
+   * consume that created it -- a release is never the last word on a window.
+   */
+  async release(key: string, releaseToken: string): Promise<void> {
+    const client = await this.getClient();
+    await client.sendCommand(["ZREM", `${REDIS_KEY_PREFIX}:${key}`, releaseToken]);
   }
 }
 
@@ -595,6 +647,21 @@ export async function consumeSharedWindow(
   const store = getSlidingWindowStore();
   const decision = await store.consume(key, nowMs, windowMs, limit);
   return { decision, distributed: store.distributed };
+}
+
+/**
+ * Hand back a slot taken by `consumeSharedWindow`.
+ *
+ * Only for the caller that charges two windows in sequence and has to refuse
+ * the request after the first one was already spent. It is best-effort by
+ * design: if the store is unreachable the release fails too, and the entry
+ * simply ages out of its window -- the same outcome as not trying. So this
+ * cannot make the failure path worse than it is today, and when the store is
+ * merely intermittent it stops a refused request from leaking a slot.
+ */
+export async function releaseSharedWindow(key: string, releaseToken: string): Promise<void> {
+  const store = getSlidingWindowStore();
+  await store.release(key, releaseToken);
 }
 
 function getAiRateLimitWindowMs(): number {

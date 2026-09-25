@@ -5,7 +5,7 @@ import {
   shouldDegradeOnQuotaExhausted,
 } from "./ai-config";
 import { fetchOpenRouterKeyStatus } from "./ai-providers/openrouter";
-import { consumeSharedWindow } from "./rate-limit";
+import { consumeSharedWindow, releaseSharedWindow } from "./rate-limit";
 
 const MINUTE_MS = 60 * 1000;
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -374,6 +374,35 @@ export function markAiBudgetDegraded(res: Response): void {
  * for the free-e2e gate, which drives four simulated players through chat and
  * command with mock AI.
  */
+/**
+ * Give back the minute slot when the daily consume failed after it was taken.
+ *
+ * Deliberately swallows its own failure: the caller is already refusing the
+ * request because the store is unreachable, so a release that fails for the
+ * same reason must not mask the original error. When it fails the entry ages
+ * out of its own window anyway, which is what happens today.
+ *
+ * Rejected alternatives, both of which would be worse than best-effort here:
+ * an atomic two-key Lua script breaks Redis Cluster with CROSSSLOT, because
+ * these keys carry no hash tags; and merging both windows into one sorted set
+ * regresses the minute guard across the UTC midnight boundary, since the day
+ * key is calendar-scoped while the minute window rolls.
+ */
+async function releaseChargedMinute(
+  minute: { decision: { allowed: boolean; releaseToken?: string } } | undefined,
+): Promise<void> {
+  const releaseToken = minute?.decision.releaseToken;
+  if (!minute?.decision.allowed || !releaseToken) {
+    return;
+  }
+
+  try {
+    await releaseSharedWindow(MINUTE_KEY, releaseToken);
+  } catch (releaseError) {
+    console.warn("[ai-budget] could not release the charged minute slot", releaseError);
+  }
+}
+
 export async function chargeAiBudget(res: Response): Promise<AiBudgetOutcome> {
   if (!isAiGlobalBudgetEnabled()) {
     return "ok";
@@ -417,6 +446,11 @@ export async function chargeAiBudget(res: Response): Promise<AiBudgetOutcome> {
       resetAtMs: dayResetAtMs,
     });
   } catch (error) {
+    // The minute slot is charged before the day is, so a day consume that
+    // throws leaves a request that never reached a provider holding a minute
+    // slot until the window rolls. Hand it back before answering.
+    await releaseChargedMinute(minute);
+
     if (!shouldFailClosed()) {
       console.warn("[ai-budget] budget store unavailable, failing open", error);
       res.setHeader(AI_BUDGET_HEADER, "fail-open");

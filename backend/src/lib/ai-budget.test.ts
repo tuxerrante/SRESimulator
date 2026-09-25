@@ -133,6 +133,42 @@ async function loadBudgetWithRecordingStore(): Promise<{
   return { budget: await import("./ai-budget"), consumedKeys, consumedWindowsMs };
 }
 
+/**
+ * Same, with the *real* in-process store behind a seam that can break the day
+ * window alone. Delegating the counting to the real store is what makes the
+ * case that uses this behavioural: what it asserts is whether a later request
+ * is allowed, which only the store can decide, rather than a call count a
+ * hand-written double would have kept.
+ */
+async function loadBudgetWithFailingDayWindow(): Promise<{
+  budget: typeof import("./ai-budget");
+  failDayWindow: (failing: boolean) => void;
+}> {
+  vi.resetModules();
+  let failing = false;
+  vi.doMock("./rate-limit", async () => {
+    const actual = await vi.importActual<typeof import("./rate-limit")>("./rate-limit");
+    return {
+      ...actual,
+      consumeSharedWindow: async (key: string, ...rest: unknown[]) => {
+        if (failing && key.startsWith("global:ai:day:")) {
+          throw new Error("budget store unavailable");
+        }
+        return (actual.consumeSharedWindow as never as (
+          ...args: unknown[]
+        ) => Promise<unknown>)(key, ...rest);
+      },
+    };
+  });
+
+  return {
+    budget: await import("./ai-budget"),
+    failDayWindow: (nextFailing: boolean) => {
+      failing = nextFailing;
+    },
+  };
+}
+
 /** Same, with the shared window store replaced by one that cannot answer. */
 async function loadBudgetWithBrokenStore(): Promise<typeof import("./ai-budget")> {
   vi.resetModules();
@@ -379,6 +415,30 @@ describe("chargeAiBudget", () => {
     expect(res.body).toMatchObject({ code: "ai_budget_unavailable", degraded: false });
     expect(res.body).not.toHaveProperty("scope");
     expect(res.headers["retry-after"]).toBe("60");
+  });
+
+  it("hands the minute slot back when the day window fails after it was charged", async () => {
+    // One slot for the whole minute, so the next request's fate is a direct
+    // readout of whether the refused one is still holding it.
+    process.env.AI_GLOBAL_MINUTE_MAX = "1";
+    const { budget, failDayWindow } = await loadBudgetWithFailingDayWindow();
+
+    failDayWindow(true);
+    const refused = await charge(budget.chargeAiBudget);
+    expect(refused.outcome).toBe("exhausted");
+    expect(refused.res.headers["x-sresim-ai-budget"]).toBe("store-unavailable");
+
+    failDayWindow(false);
+    const afterRecovery = await charge(budget.chargeAiBudget);
+
+    // The minute is charged before the day is, so the refused request took a
+    // slot and then reached no provider. Without the compensating release it
+    // keeps that slot until the window rolls, and this request -- arriving
+    // after the store recovered -- is refused 429 for spending someone else
+    // never did.
+    expect(afterRecovery.outcome).toBe("ok");
+    expect(afterRecovery.res.statusCode).toBeNull();
+    expect(afterRecovery.res.headers["x-sresim-ai-budget"]).toBe("ok");
   });
 
   it("charges nothing in mock mode, where no request reaches a provider", async () => {
