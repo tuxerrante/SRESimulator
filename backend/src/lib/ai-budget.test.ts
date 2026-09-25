@@ -1279,4 +1279,35 @@ describe("the charge contract's own documentation", () => {
       ).toContain(`${knob}=`);
     }
   });
+
+  // Fourth instance of the same drift, and the one a consumer pays for: the
+  // documented response example omitted `exhaustedBehaviour`, so anyone
+  // building against the published shape rendered the wrong exhaustion
+  // message. An inventory again rather than a string match -- the example is
+  // parsed and its keys compared against the interface, so the next field
+  // added to the snapshot is caught here instead of needing its own case.
+  it("documents every field the budget response carries", () => {
+    const source = readFileSync(resolve(process.cwd(), "src/lib/ai-budget.ts"), "utf8");
+    const interfaceBody = /export interface AiBudgetSnapshot \{\n([\s\S]*?)\n\}/.exec(source)?.[1];
+    expect(interfaceBody, "no AiBudgetSnapshot interface in ai-budget.ts").toBeDefined();
+    // Two-space indent is the top level of the interface; a nested or wrapped
+    // line is indented further and must not be read as a field of its own.
+    const fields = [...(interfaceBody ?? "").matchAll(/^ {2}(\w+)\??:/gm)].map((m) => m[1]);
+    expect(fields.length, "no fields parsed from AiBudgetSnapshot").toBeGreaterThan(0);
+
+    const runtimeDoc = readFileSync(resolve(process.cwd(), "../docs/AI_RUNTIME.md"), "utf8");
+    const section = runtimeDoc.split("### `GET /api/ai/budget`")[1]?.split("\n### ")[0];
+    expect(section, "no GET /api/ai/budget section in docs/AI_RUNTIME.md").toBeDefined();
+    const example = /```json\n([\s\S]*?)```/.exec(section ?? "")?.[1];
+    expect(example, "no JSON response example in the budget section").toBeDefined();
+
+    // Parsed, not grepped: a field named only in the prose below the example
+    // still leaves the documented shape wrong, which is the defect this case
+    // exists for.
+    const documented = Object.keys(JSON.parse(example ?? "{}"));
+    const missing = fields.filter((field) => !documented.includes(field));
+    const extra = documented.filter((field) => !fields.includes(field));
+    expect(missing, "fields the response carries but the example omits").toEqual([]);
+    expect(extra, "fields the example shows but the response does not carry").toEqual([]);
+  });
 });

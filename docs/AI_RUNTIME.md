@@ -382,6 +382,7 @@ banner exactly when traffic makes a spent budget most likely.
 {
   "enabled": true, "dailyLimit": 1000, "dailyRemaining": 940,
   "minuteLimit": 20, "minuteRemaining": 19, "degraded": false,
+  "exhaustedBehaviour": "simulated",
   "resetAt": "2026-09-19T00:00:00.000Z",
   "upstream": { "dailyLimit": 1000, "dailyRemaining": 940 }
 }
@@ -402,6 +403,16 @@ request each the moment the cache expires. It is `null` whenever the lookup
 fails, and deliberately has **no fallback field**: `limit_remaining` is a
 fractional credit balance, and rendering it as "requests left today" would be
 a confident wrong number where silence is correct.
+
+`exhaustedBehaviour` says what this deployment answers with once the budget
+is spent, and a consumer cannot derive it: `simulated` means the routes return
+a playable mock answer at HTTP 200, `rejected` means they return 429. It is
+`simulated` only when **both** `AI_GLOBAL_DAILY_EXHAUSTED_MODE=degrade` and
+`AI_DEGRADE_ON_QUOTA_EXHAUSTED=true` hold -- either switch alone leaves one
+path refusing -- so promising a playable answer off the first switch would be
+wrong on a deployment that set only it. The banner renders the two cases with
+different copy, which is the whole reason the field is in the response rather
+than in the operator's head.
 
 `degraded` is true when *either* view reports the day spent: the local counter
 at zero, or the provider reporting its own account-wide counter at zero while
