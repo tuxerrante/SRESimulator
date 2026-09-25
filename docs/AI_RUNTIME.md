@@ -371,8 +371,12 @@ in production.
 ### `GET /api/ai/budget`
 
 Public, unauthenticated and secret-free: the home-page banner polls it to
-explain why answers may be simulated. Rate-limited with `aiRateLimit` because
-`/api/ai/*` is otherwise unlimited and every visitor reads this one.
+explain why answers may be simulated. Rate-limited with its own
+`aiBudgetReadRateLimit` (default 120/min, `AI_BUDGET_READ_RATE_LIMIT_MAX`), not
+the per-identity `aiRateLimit`: `/api/ai/*` is otherwise unlimited and every
+visitor reads this one, but the read is deployment-wide and costs a map lookup
+plus a TTL-cached upstream figure, so rationing it per player would hide the
+banner exactly when traffic makes a spent budget most likely.
 
 ```json
 {

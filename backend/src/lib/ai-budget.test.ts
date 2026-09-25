@@ -854,4 +854,25 @@ describe("the charge contract's own documentation", () => {
     expect(documented, `no numeral for ${callSites.length} call sites`).toBeDefined();
     expect(source).toContain(`of the ${documented} call sites`);
   });
+
+  // The same failure one file over: the runtime doc told operators that
+  // `GET /api/ai/budget` is rationed by the per-identity `aiRateLimit`, two
+  // lines of code after the route registered a different limiter with a
+  // twenty-fold larger cap. Reading the name out of the route is what keeps
+  // the claim tied to the registration rather than to whatever was true once.
+  it("names the limiter the budget route actually registers", () => {
+    const routeSource = readFileSync(resolve(routesDir, "ai.ts"), "utf8");
+    const registered = /aiRouter\.get\(\s*"\/budget",\s*(\w+)/.exec(routeSource)?.[1];
+    expect(registered, "no middleware registered on GET /budget").toBeDefined();
+
+    const runtimeDoc = readFileSync(
+      resolve(process.cwd(), "../docs/AI_RUNTIME.md"),
+      "utf8",
+    );
+    const section = runtimeDoc
+      .split("### `GET /api/ai/budget`")[1]
+      ?.split("\n### ")[0];
+    expect(section, "no GET /api/ai/budget section in docs/AI_RUNTIME.md").toBeDefined();
+    expect(section).toContain(`\`${registered}\``);
+  });
 });
