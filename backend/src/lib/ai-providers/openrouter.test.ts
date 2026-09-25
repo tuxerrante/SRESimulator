@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { generateAiText, streamAiText } from "../ai-runtime";
 import { AiQuotaExhaustedError, AiThrottledError } from "./types";
@@ -652,5 +654,44 @@ describe("the account's own free-tier counter", () => {
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("network unreachable")));
 
     await expect((await freshKeyStatus())()).resolves.toBeNull();
+  });
+});
+
+describe("the quota cache's own shape", () => {
+  // The account identity is the API key, in plaintext, and the review that
+  // asked for it to be digested named diagnostic dumps as the exposure. It is
+  // not digested -- a digest is what CodeQL blocked the merge on -- so the
+  // hazard is closed structurally instead: the identity lives *beside* the
+  // cache entry, never on it, so the objects a debug line would print carry a
+  // timestamp and two numbers and nothing else.
+  //
+  // That is a property of a declaration, and a declaration is exactly the kind
+  // of thing a later change reverts without noticing. Reading it back out of
+  // the source is what keeps it true.
+  const source = readFileSync(
+    // Vitest runs from `backend/`, the convention the other source-reading
+    // suites already follow.
+    resolve(process.cwd(), "src/lib/ai-providers/openrouter.ts"),
+    "utf8",
+  );
+
+  function declaredFields(interfaceName: string): string[] {
+    const start = source.indexOf(`interface ${interfaceName} {`);
+    expect(start, `no declaration for ${interfaceName}`).toBeGreaterThan(-1);
+    const body = source.slice(start, source.indexOf("\n}", start));
+    return [...body.matchAll(/^\s{2}(\w+)[?]?:/gm)].map((match) => match[1]);
+  }
+
+  it("keeps the credential off the entry anyone would print", () => {
+    expect(declaredFields("CachedKeyStatus")).toEqual(["fetchedAtMs", "status"]);
+  });
+
+  it("keeps the credential off the in-flight record too", () => {
+    // The same object under another name: before the split this was
+    // `{ identity, promise }`, and it is reachable from any handler that
+    // awaits the lookup.
+    const declaration = /let inFlightKeyStatus:([^=]+)=/.exec(source)?.[1];
+    expect(declaration, "no declaration for inFlightKeyStatus").toBeDefined();
+    expect(declaration).not.toMatch(/identity/i);
   });
 });

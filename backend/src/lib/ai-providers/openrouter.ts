@@ -129,14 +129,21 @@ export interface OpenRouterKeyStatus {
 interface CachedKeyStatus {
   fetchedAtMs: number;
   status: OpenRouterKeyStatus | null;
-  /**
-   * Which account this reading describes; see {@link readAccountIdentity}.
-   * Carries credential material, so this object stays module-private.
-   */
-  identity: string;
 }
 
 let cachedKeyStatus: CachedKeyStatus | null = null;
+
+/**
+ * Which account {@link cachedKeyStatus} describes; see
+ * {@link readAccountIdentity}.
+ *
+ * A sibling variable rather than a field on the entry, and deliberately so:
+ * the entry is the thing a future debug line would print, and this value
+ * carries credential material. Keeping the two apart means no object anyone
+ * would dump holds the credential -- `cachedKeyStatus` is a timestamp and two
+ * numbers.
+ */
+let cachedKeyIdentity: string | null = null;
 
 /**
  * The refresh in flight, shared by every caller that arrives during it.
@@ -148,15 +155,16 @@ let cachedKeyStatus: CachedKeyStatus | null = null;
  * Tagged with the identity it was opened under, so a refresh started before a
  * key rotation is never handed to a caller asking about the new account.
  */
-let inFlightKeyStatus:
-  | { identity: string; promise: Promise<OpenRouterKeyStatus | null> }
-  | null = null;
+let inFlightKeyStatus: Promise<OpenRouterKeyStatus | null> | null = null;
+
+/** Which account {@link inFlightKeyStatus} was opened for; see above. */
+let inFlightKeyIdentity: string | null = null;
 
 /**
  * Which account a reading describes: the API key it was read with, through the
  * base URL it was read from.
  *
- * The cache has to carry this because `readLastKnownOpenRouterDailyLimit`
+ * The cache has to know this because `readLastKnownOpenRouterDailyLimit`
  * deliberately ignores the TTL. Without an identity, rotating the key in a
  * long-lived process leaves the *previous* account's tier standing as a
  * permanent clamp -- and rotating down from a credited 1000/day account to an
@@ -168,13 +176,22 @@ let inFlightKeyStatus:
  * the stale write is stamped with the old identity, so the worst it can do is
  * cost a re-warm, never raise a cap.
  *
- * The credential is compared rather than digested. A digest of a credential is
- * what `js/insufficient-password-hash` objects to, and it objects correctly:
- * the honest remedies are a slow KDF, which is absurd on a path every charge
- * runs, or not deriving anything. Nothing is lost by comparing, because
- * `cachedKeyStatus` is module-private and never escapes -- callers receive
- * `.status`, which holds two numbers. Keep it that way: this value must not be
- * logged, returned or folded into anything that is.
+ * The credential is compared rather than digested, and both reviews that have
+ * reached this line disagree about that, so the reasoning is written down here
+ * rather than re-argued:
+ *
+ * - A digest is what CodeQL's `js/insufficient-password-hash` blocked the merge
+ *   on, and the two remedies it accepts are a slow KDF -- absurd on a path
+ *   every charge runs -- or deriving nothing.
+ * - Retaining the credential to compare it adds no exposure. The same plaintext
+ *   is in `process.env.AI_OPENROUTER_API_KEY` for the whole process lifetime;
+ *   `getOpenRouterApiKey` reads it there on every request. Anything that can
+ *   inspect this heap already has the key, from a place nothing here controls.
+ *
+ * What is left is the diagnostic-dump risk, and that is handled structurally:
+ * the identity lives beside the cache entry rather than on it, so the objects
+ * anyone would print carry only a timestamp and two numbers. Keep it that way
+ * -- this value must not be logged, returned or folded into anything that is.
  *
  * The NUL separator keeps the two fields unambiguous -- an environment variable
  * cannot contain one, so no key-and-base-URL pair can spell another.
@@ -237,7 +254,7 @@ export function readLastKnownOpenRouterDailyLimit(): number | null {
   if (!apiKey || !cachedKeyStatus) return null;
   // A reading taken on another account says nothing about this one, and
   // because this read ignores the TTL it would otherwise say it forever.
-  if (cachedKeyStatus.identity !== readAccountIdentity(apiKey)) return null;
+  if (cachedKeyIdentity !== readAccountIdentity(apiKey)) return null;
 
   const limit = cachedKeyStatus.status?.dailyLimit;
   return typeof limit === "number" && limit > 0 ? limit : null;
@@ -260,12 +277,12 @@ export async function fetchOpenRouterKeyStatus(): Promise<OpenRouterKeyStatus | 
   const nowMs = Date.now();
   if (
     cachedKeyStatus &&
-    cachedKeyStatus.identity === identity &&
+    cachedKeyIdentity === identity &&
     nowMs - cachedKeyStatus.fetchedAtMs < getQuotaTtlMs()
   ) {
     return cachedKeyStatus.status;
   }
-  if (inFlightKeyStatus?.identity === identity) return inFlightKeyStatus.promise;
+  if (inFlightKeyStatus && inFlightKeyIdentity === identity) return inFlightKeyStatus;
 
   const promise = (async () => {
     let status: OpenRouterKeyStatus | null = null;
@@ -284,14 +301,19 @@ export async function fetchOpenRouterKeyStatus(): Promise<OpenRouterKeyStatus | 
     } catch {
       status = null;
     }
-    cachedKeyStatus = { fetchedAtMs: Date.now(), status, identity };
+    cachedKeyStatus = { fetchedAtMs: Date.now(), status };
+    cachedKeyIdentity = identity;
     return status;
   })().finally(() => {
     // Only retire our own entry: a rotation may have opened a newer one while
     // this lookup was still in the air.
-    if (inFlightKeyStatus?.promise === promise) inFlightKeyStatus = null;
+    if (inFlightKeyStatus === promise) {
+      inFlightKeyStatus = null;
+      inFlightKeyIdentity = null;
+    }
   });
-  inFlightKeyStatus = { identity, promise };
+  inFlightKeyStatus = promise;
+  inFlightKeyIdentity = identity;
 
   return promise;
 }
