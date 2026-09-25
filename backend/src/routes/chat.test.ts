@@ -20,10 +20,20 @@ const mocks = vi.hoisted(() => ({
   markAiBudgetDegraded: vi.fn(),
 }));
 
-vi.mock("../lib/ai-budget", () => ({
-  chargeAiBudget: mocks.chargeAiBudget,
-  markAiBudgetDegraded: mocks.markAiBudgetDegraded,
-}));
+// The two stubs are the seams this suite drives; everything else stays real.
+// `rejectWithAiDailyBudgetExhausted` in particular writes the refusal body the
+// tests below read off the wire -- stubbing it would assert the route calls
+// something, which is a weaker claim than the client getting a usable answer.
+vi.mock("../lib/ai-budget", async () => {
+  const actual = await vi.importActual<typeof import("../lib/ai-budget")>(
+    "../lib/ai-budget",
+  );
+  return {
+    ...actual,
+    chargeAiBudget: mocks.chargeAiBudget,
+    markAiBudgetDegraded: mocks.markAiBudgetDegraded,
+  };
+});
 
 vi.mock("../lib/knowledge", () => ({
   loadKnowledgeSections: mocks.loadKnowledgeSections,
@@ -186,6 +196,41 @@ function defaultChatBody() {
     scenario: null,
     currentPhase: "reading",
   };
+}
+
+/**
+ * The client-facing half of a refusal, asserted whole rather than field by
+ * field.
+ *
+ * A bare `{ error }` 429 here is indistinguishable from the per-identity
+ * limiter's 429, whose advice is "retry in a moment" -- against a cap that
+ * only clears at midnight UTC. The fields below are what let a client tell
+ * the two apart and wait the right amount of time, and the header is what
+ * lets the frontend react without parsing a body.
+ */
+async function expectDailyBudgetRefusal(response: Response): Promise<void> {
+  expect(response.status).toBe(429);
+  expect(response.headers.get("x-sresim-ai-budget")).toBe("daily-exhausted");
+
+  const body = (await response.json()) as Record<string, unknown>;
+  expect(body).toMatchObject({
+    error: "The shared AI budget for today is spent. Please try again tomorrow.",
+    code: "ai_budget_exhausted",
+    scope: "daily",
+    degraded: false,
+  });
+
+  const retryAfterSeconds = body.retryAfterSeconds;
+  expect(typeof retryAfterSeconds).toBe("number");
+  expect(retryAfterSeconds as number).toBeGreaterThan(0);
+  expect(retryAfterSeconds as number).toBeLessThanOrEqual(86_400);
+  expect(response.headers.get("retry-after")).toBe(String(retryAfterSeconds));
+
+  // The daily scope is the UTC calendar day, so the reset is midnight UTC --
+  // derived, because a route refusing the request may hold no window state.
+  const resetAt = body.resetAt as string;
+  expect(resetAt).toMatch(/^\d{4}-\d{2}-\d{2}T00:00:00\.000Z$/);
+  expect(Date.parse(resetAt)).toBeGreaterThan(Date.now());
 }
 
 describe("chatRouter", () => {
@@ -679,13 +724,8 @@ describe("chatRouter", () => {
 
       // A 429 is still available here only because nothing has been written
       // yet; once the stream starts the quota path has to answer in frames.
-      expect(response.status).toBe(429);
-      await expect(response.json()).resolves.toEqual({
-        error: "The shared AI request budget for today is spent.",
-      });
-
       // Nothing was simulated on this path, so the header stays on the cause.
-      expect(response.headers.get("x-sresim-ai-budget")).toBe("daily-exhausted");
+      await expectDailyBudgetRefusal(response);
     }, { budgetExhausted: true });
 
     expect(mocks.streamAiText).not.toHaveBeenCalled();

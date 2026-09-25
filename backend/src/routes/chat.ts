@@ -3,7 +3,11 @@ import { loadKnowledgeSections, queryKnowledgeSections } from "../lib/knowledge"
 import { getRuntimePlatformProfile } from "../lib/platform-profiles";
 import { buildSystemPrompt } from "../lib/prompts/system";
 import { getAiReadiness, shouldDegradeOnQuotaExhausted } from "../lib/ai-config";
-import { chargeAiBudget, markAiBudgetDegraded } from "../lib/ai-budget";
+import {
+  chargeAiBudget,
+  markAiBudgetDegraded,
+  rejectWithAiDailyBudgetExhausted,
+} from "../lib/ai-budget";
 import { generateMockChatResponse } from "../lib/mock-ai";
 import {
   streamAiText,
@@ -159,9 +163,12 @@ chatRouter.post("/", async (req: Request, res: Response) => {
     if (budget === "exhausted" && !shouldDegradeOnQuotaExhausted()) {
       // Degradation switched off: answer the way a provider throttle is
       // answered, but without spending a request proving what is already known.
-      res.status(429).json({
-        error: "The shared AI request budget for today is spent.",
-      });
+      //
+      // The same body the middleware-side refusal writes, rather than a bare
+      // `{ error }`: a client that cannot tell this from the per-identity 429
+      // retries in a minute, all day, against a cap that only clears at
+      // midnight UTC.
+      rejectWithAiDailyBudgetExhausted(res);
       return;
     }
     if (budget === "exhausted") {

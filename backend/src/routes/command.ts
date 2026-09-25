@@ -7,7 +7,11 @@ import {
   isCommandTypeAllowedForPlatform,
 } from "../lib/platform-profiles";
 import { generateAiText, AiQuotaExhaustedError, AiThrottledError } from "../lib/ai-runtime";
-import { chargeAiBudget, markAiBudgetDegraded } from "../lib/ai-budget";
+import {
+  chargeAiBudget,
+  markAiBudgetDegraded,
+  rejectWithAiDailyBudgetExhausted,
+} from "../lib/ai-budget";
 import {
   buildScenarioContext,
   buildSimNow,
@@ -207,6 +211,16 @@ commandRouter.post("/", async (req: Request, res: Response) => {
       return;
     }
     if (budget === "exhausted") {
+      if (!shouldDegradeOnQuotaExhausted()) {
+        // Refusing rather than degrading, so the throw below would reach the
+        // generic `AiThrottledError` handler and answer `{ error }` alone --
+        // dropping `Retry-After`, `code`, `scope` and `resetAt`, and leaving
+        // a spent shared day indistinguishable from the per-identity 429 that
+        // clears in a minute. Answered here because only this site knows the
+        // refusal came from the budget rather than from a provider.
+        rejectWithAiDailyBudgetExhausted(res);
+        return;
+      }
       // The existing catch applies `AI_DEGRADE_ON_QUOTA_EXHAUSTED`, so this
       // route answers a spent shared budget exactly as it answers a spent
       // provider quota -- one degraded path, not two.

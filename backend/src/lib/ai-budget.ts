@@ -233,6 +233,36 @@ function rejectWithBudgetExhausted(
 }
 
 /**
+ * The same structured refusal, for the routes that decline to degrade.
+ *
+ * `chargeAiBudget` answers a spent day by returning `exhausted` and leaving
+ * the response to the caller, because most callers degrade. The two that
+ * refuse instead -- chat and command under
+ * `AI_DEGRADE_ON_QUOTA_EXHAUSTED=false` -- were each writing their own bare
+ * `{ error }` body, which drops everything a client can act on: no
+ * `Retry-After`, no `code` to branch on, no `resetAt`. A 429 from a spent
+ * shared day then reads exactly like a 429 from the per-identity limiter,
+ * where the advice is "retry in a moment" rather than "tomorrow", and the
+ * `x-sresim-ai-budget` header the frontend watches on streaming responses was
+ * not set at all.
+ *
+ * The reset is derived rather than read from the remembered window: the daily
+ * scope *is* the UTC calendar day (see the note above
+ * `DEFAULT_GLOBAL_DAILY_MAX`), so midnight UTC is the answer whether or not
+ * this process happens to hold window state for it.
+ */
+export function rejectWithAiDailyBudgetExhausted(res: Response): void {
+  const nowMs = Date.now();
+  const resetAtMs = nextUtcMidnightMs(nowMs);
+  rejectWithBudgetExhausted(
+    res,
+    "daily",
+    Math.max(1, Math.ceil((resetAtMs - nowMs) / 1000)),
+    resetAtMs,
+  );
+}
+
+/**
  * Did the budget fail to *observe* the account, rather than find it spent?
  *
  * `chargeAiBudget` returns `exhausted` for both, deliberately: the three
