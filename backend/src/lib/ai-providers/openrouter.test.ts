@@ -605,6 +605,25 @@ describe("the account's own free-tier counter", () => {
     );
   });
 
+  it("does not answer for one base URL out of the cache of another", async () => {
+    // The key is only half of what selects an account: the same credential
+    // against a different gateway is a different account with its own tier.
+    const fetchMock = vi.fn().mockImplementation(() =>
+      keyResponse({ free_model_daily_requests: { limit: 1000, remaining: 940 } }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const fetchKeyStatus = await freshKeyStatus();
+    await fetchKeyStatus();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    process.env.AI_OPENROUTER_BASE_URL = "https://gateway.test/v1";
+    await fetchKeyStatus();
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const [secondUrl] = fetchMock.mock.calls[1] as [string];
+    expect(secondUrl).toBe("https://gateway.test/v1/key");
+  });
+
   it("does not hand a refresh opened on one account to a caller on another", async () => {
     // The coalescing above is what makes this reachable: a rotation during a
     // slow lookup would otherwise be answered by the request already in the

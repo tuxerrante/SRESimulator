@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { getOpenRouterBaseUrl } from "../ai-config";
 import type { AiRoute } from "../token-logger";
 import { AiQuotaExhaustedError, type AiTextRequest, type OpenAiCompatibleTarget } from "./types";
@@ -130,7 +129,10 @@ export interface OpenRouterKeyStatus {
 interface CachedKeyStatus {
   fetchedAtMs: number;
   status: OpenRouterKeyStatus | null;
-  /** Which account this reading describes; see {@link readAccountIdentity}. */
+  /**
+   * Which account this reading describes; see {@link readAccountIdentity}.
+   * Carries credential material, so this object stays module-private.
+   */
   identity: string;
 }
 
@@ -166,15 +168,19 @@ let inFlightKeyStatus:
  * the stale write is stamped with the old identity, so the worst it can do is
  * cost a re-warm, never raise a cap.
  *
- * Hashed rather than stored, because the value only needs comparing and a cache
- * object is exactly the kind of thing that ends up in a debug log. The NUL
- * separator keeps the two fields unambiguous -- an environment variable cannot
- * contain one.
+ * The credential is compared rather than digested. A digest of a credential is
+ * what `js/insufficient-password-hash` objects to, and it objects correctly:
+ * the honest remedies are a slow KDF, which is absurd on a path every charge
+ * runs, or not deriving anything. Nothing is lost by comparing, because
+ * `cachedKeyStatus` is module-private and never escapes -- callers receive
+ * `.status`, which holds two numbers. Keep it that way: this value must not be
+ * logged, returned or folded into anything that is.
+ *
+ * The NUL separator keeps the two fields unambiguous -- an environment variable
+ * cannot contain one, so no key-and-base-URL pair can spell another.
  */
 function readAccountIdentity(apiKey: string): string {
-  return createHash("sha256")
-    .update(`${apiKey}\u0000${getOpenRouterBaseUrl()}`)
-    .digest("hex");
+  return `${apiKey}\u0000${getOpenRouterBaseUrl()}`;
 }
 
 /** Bounds the auxiliary lookup; the banner is not worth a hung request. */
