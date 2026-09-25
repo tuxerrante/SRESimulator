@@ -6,7 +6,7 @@ import { getAiReadiness, shouldDegradeOnQuotaExhausted } from "../lib/ai-config"
 import {
   chargeAiBudget,
   markAiBudgetDegraded,
-  rejectWithAiDailyBudgetExhausted,
+  rejectWithAiBudgetRefusal,
 } from "../lib/ai-budget";
 import { generateMockChatResponse } from "../lib/mock-ai";
 import {
@@ -168,7 +168,12 @@ chatRouter.post("/", async (req: Request, res: Response) => {
       // `{ error }`: a client that cannot tell this from the per-identity 429
       // retries in a minute, all day, against a cap that only clears at
       // midnight UTC.
-      rejectWithAiDailyBudgetExhausted(res);
+      //
+      // Which refusal it writes depends on why the budget said no. A window
+      // store this route could not read is not a spent day: nothing was
+      // observed and nothing spent, so it answers 503 and asks for a retry in
+      // a minute rather than sending the client away until midnight.
+      rejectWithAiBudgetRefusal(res);
       return;
     }
     if (budget === "exhausted") {

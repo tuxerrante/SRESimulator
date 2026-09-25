@@ -156,10 +156,20 @@ async function close(server: Server): Promise<void> {
 
 async function withChatServer(
   run: (baseUrl: string) => Promise<void>,
-  options: { budgetExhausted?: boolean } = {},
+  options: { budgetExhausted?: boolean; budgetStoreUnavailable?: boolean } = {},
 ): Promise<void> {
   const app = express();
   app.use(express.json());
+  if (options.budgetStoreUnavailable) {
+    // The other way `chargeAiBudget` answers `exhausted`: the window store
+    // could not be read, so under `degrade` mode the request is meant to get
+    // a simulated answer rather than a provider call. The header is the only
+    // thing that tells this apart from a real cap.
+    mocks.chargeAiBudget.mockImplementation(async (res: express.Response) => {
+      res.setHeader("x-sresim-ai-budget", "store-unavailable");
+      return "exhausted";
+    });
+  }
   if (options.budgetExhausted) {
     // A faithful stand-in for the real pair: chargeAiBudget records the cause
     // it observed, markAiBudgetDegraded upgrades it to the outcome the route
@@ -208,6 +218,29 @@ function defaultChatBody() {
  * the two apart and wait the right amount of time, and the header is what
  * lets the frontend react without parsing a body.
  */
+/**
+ * The other refusal, which must not read as the first one.
+ *
+ * A store outage spent nothing and observed nothing, so telling the client to
+ * come back tomorrow would outlast a blip by most of a day. 503 plus a
+ * one-minute `Retry-After` is the middleware's own answer to the same cause,
+ * and the route has to match it.
+ */
+async function expectBudgetUnavailableRefusal(response: Response): Promise<void> {
+  expect(response.status).toBe(503);
+  expect(response.headers.get("x-sresim-ai-budget")).toBe("store-unavailable");
+
+  const body = (await response.json()) as Record<string, unknown>;
+  expect(body).toMatchObject({
+    error: "The shared AI budget cannot be checked right now. Please retry shortly.",
+    code: "ai_budget_unavailable",
+    retryAfterSeconds: 60,
+    degraded: false,
+  });
+  expect(body).not.toHaveProperty("resetAt");
+  expect(response.headers.get("retry-after")).toBe("60");
+}
+
 async function expectDailyBudgetRefusal(response: Response): Promise<void> {
   expect(response.status).toBe(429);
   expect(response.headers.get("x-sresim-ai-budget")).toBe("daily-exhausted");
@@ -727,6 +760,25 @@ describe("chatRouter", () => {
       // Nothing was simulated on this path, so the header stays on the cause.
       await expectDailyBudgetRefusal(response);
     }, { budgetExhausted: true });
+
+    expect(mocks.streamAiText).not.toHaveBeenCalled();
+  });
+
+  it("answers an unreadable budget store with 503, not 'come back tomorrow'", async () => {
+    mocks.shouldDegradeOnQuotaExhausted.mockReturnValue(false);
+
+    await withChatServer(async (url) => {
+      const response = await fetch(url, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(defaultChatBody()),
+      });
+
+      // Same `exhausted` verdict as the case above and a different refusal:
+      // nothing was observed and nothing spent, so the client is asked back in
+      // a minute rather than at midnight UTC.
+      await expectBudgetUnavailableRefusal(response);
+    }, { budgetStoreUnavailable: true });
 
     expect(mocks.streamAiText).not.toHaveBeenCalled();
   });

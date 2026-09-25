@@ -10,7 +10,7 @@ import { generateAiText, AiQuotaExhaustedError, AiThrottledError } from "../lib/
 import {
   chargeAiBudget,
   markAiBudgetDegraded,
-  rejectWithAiDailyBudgetExhausted,
+  rejectWithAiBudgetRefusal,
 } from "../lib/ai-budget";
 import {
   buildScenarioContext,
@@ -218,7 +218,11 @@ commandRouter.post("/", async (req: Request, res: Response) => {
         // a spent shared day indistinguishable from the per-identity 429 that
         // clears in a minute. Answered here because only this site knows the
         // refusal came from the budget rather than from a provider.
-        rejectWithAiDailyBudgetExhausted(res);
+        //
+        // And only the header knows which refusal this is: a window store
+        // that could not be read comes back `exhausted` too, and answering it
+        // "come back tomorrow" would outlast the blip by most of a day.
+        rejectWithAiBudgetRefusal(res);
         return;
       }
       // The existing catch applies `AI_DEGRADE_ON_QUOTA_EXHAUSTED`, so this

@@ -363,7 +363,7 @@ function rejectWithBudgetExhausted(
  * `DEFAULT_GLOBAL_DAILY_MAX`), so midnight UTC is the answer whether or not
  * this process happens to hold window state for it.
  */
-export function rejectWithAiDailyBudgetExhausted(res: Response): void {
+function rejectWithAiDailyBudgetExhausted(res: Response): void {
   const reset = describeAiDailyBudgetReset();
   rejectWithBudgetExhausted(
     res,
@@ -371,6 +371,33 @@ export function rejectWithAiDailyBudgetExhausted(res: Response): void {
     reset.retryAfterSeconds,
     reset.resetAtMs,
   );
+}
+
+/**
+ * Refuse the request the budget declined, saying which of the two things
+ * happened.
+ *
+ * `chargeAiBudget` answers `exhausted` for both a spent day and a window store
+ * it could not read -- under `degrade` mode a store outage is meant to produce
+ * a simulated answer, so it comes back as the same "no provider call" verdict.
+ * The two are told apart by the header, and only by the header: the outage
+ * path sets `store-unavailable` where a real cap sets `daily-exhausted`.
+ *
+ * A route that declines to degrade has to answer both, and answering them the
+ * same way is wrong in the expensive direction. A blip in the window store
+ * would send every client away until midnight UTC over an outage that may
+ * already be over, on a budget where nothing was observed and nothing spent.
+ * The middleware-side refusal already makes this distinction (503
+ * `ai_budget_unavailable` against 429 `ai_budget_exhausted`) and so does the
+ * live probe; this is the same distinction for the routes, from one place, so
+ * chat and command cannot drift apart from each other or from the docs.
+ */
+export function rejectWithAiBudgetRefusal(res: Response): void {
+  if (isAiBudgetStoreUnavailable(res)) {
+    rejectWithBudgetUnavailable(res, AI_BUDGET_UNAVAILABLE_RETRY_AFTER_SECONDS);
+    return;
+  }
+  rejectWithAiDailyBudgetExhausted(res);
 }
 
 /**
