@@ -45,7 +45,7 @@ jobs:
       - name: Harden runner
         # v2.21.0
         uses: >-
-          step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c
+          step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25
         with:
           egress-policy: audit
 
@@ -122,14 +122,14 @@ jobs:
       - name: Harden runner
         # v2.21.0
         uses: >-
-          step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c
+          step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25
         with:
           egress-policy: audit
 
       - name: Download unprivileged image artifact
         # v4.3.0
         uses: >-
-          actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+          actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
           name: >-
             dependabot-e2e-${{ matrix.component }}-${{
@@ -218,7 +218,7 @@ jobs:
       - name: Harden runner
         # v2.21.0
         uses: >-
-          step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c
+          step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25
         with:
           egress-policy: audit
 
@@ -420,7 +420,7 @@ jobs:
         if: always()
         # v4.6.2
         uses: >-
-          actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+          actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: dependabot-e2e-pr-${{ needs.resolve.outputs.pr_number }}
           path: ${{ env.LIVE_E2E_ARTIFACT_DIR }}
