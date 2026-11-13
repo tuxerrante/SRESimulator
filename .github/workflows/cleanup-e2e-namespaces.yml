@@ -70,7 +70,7 @@ jobs:
       - name: Harden runner
         # v2.21.0
         uses: >-
-          step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c
+          step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a
         with:
           egress-policy: audit
 
@@ -82,7 +82,7 @@ jobs:
       - name: Setup Helm
         # v5.0.0
         uses: >-
-          azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310
+          azure/setup-helm@2f5e7bc67f1f9972ab16657bb795f36d8f04de0e
 
       - name: Validate cleanup configuration
         run: |
@@ -102,7 +102,7 @@ jobs:
       - name: Azure login
         # v3.0.0
         uses: >-
-          azure/login@f5d393ae46f8fde4be8b75f32e3fc50e654ad0ca
+          azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
